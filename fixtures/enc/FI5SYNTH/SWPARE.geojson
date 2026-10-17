@@ -1,0 +1,39 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              22,
+              60.009
+            ],
+            [
+              22.035,
+              60.009
+            ],
+            [
+              22.035,
+              60.011
+            ],
+            [
+              22,
+              60.011
+            ],
+            [
+              22,
+              60.009
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "DRVAL1": 8,
+        "LNAM": "FI5-SWEPT"
+      }
+    }
+  ]
+}

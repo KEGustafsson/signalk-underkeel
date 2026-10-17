@@ -1,0 +1,38 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              22.025,
+              60.013
+            ],
+            [
+              22.03,
+              60.013
+            ],
+            [
+              22.03,
+              60.016
+            ],
+            [
+              22.025,
+              60.016
+            ],
+            [
+              22.025,
+              60.013
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "LNAM": "FI5-ISLAND"
+      }
+    }
+  ]
+}

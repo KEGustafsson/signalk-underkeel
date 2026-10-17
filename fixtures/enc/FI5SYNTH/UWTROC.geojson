@@ -1,0 +1,20 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          22.02,
+          60.01
+        ]
+      },
+      "properties": {
+        "VALSOU": 3.5,
+        "WATLEV": 3,
+        "LNAM": "FI5-ROCK"
+      }
+    }
+  ]
+}
