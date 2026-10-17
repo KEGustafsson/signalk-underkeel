@@ -124,6 +124,48 @@ export const SCHEMA = {
         }
       }
     },
+    livechart: {
+      type: "object",
+      title: "Living chart (own soundings)",
+      properties: {
+        enabled: { type: "boolean", title: "Enabled", default: false },
+        source: {
+          type: "string",
+          enum: ["belowSurface", "belowTransducer"],
+          default: "belowSurface",
+          title: "Depth path (environment.depth.*)"
+        },
+        transducerDepth: {
+          type: "number",
+          title: "Transducer depth below the surface (m), for belowTransducer",
+          default: 0
+        },
+        forward: {
+          type: "number",
+          title: "Transducer forward of the GNSS antenna (m)",
+          default: 0
+        },
+        starboard: {
+          type: "number",
+          title: "Transducer to starboard of the GNSS antenna (m)",
+          default: 0
+        },
+        writeNotes: {
+          type: "boolean",
+          title: "Write suspected shoals as Signal K notes",
+          default: true
+        },
+        vesselId: { type: "string", title: "CSB export: vessel identifier", default: "" },
+        vesselIdType: {
+          type: "string",
+          enum: ["MMSI", "IMO", "Other"],
+          default: "Other",
+          title: "CSB export: identifier type"
+        },
+        sounderMake: { type: "string", title: "CSB export: sounder make" },
+        sounderModel: { type: "string", title: "CSB export: sounder model" }
+      }
+    },
     mooringZones: {
       type: "array",
       title: "Mooring zones",

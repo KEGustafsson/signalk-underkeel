@@ -706,6 +706,20 @@ suppress the same way, with the zone's name in the reason.
 6. **Export.** Optional IHO CSB GeoJSON, with a vessel identifier and sensor metadata. The
    user decides whether to submit it; nothing is uploaded automatically.
 
+**As built (M5).** The living chart is off by default and reads one depth path
+(`belowSurface`, or `belowTransducer` plus the configured transducer depth). The gate needs a
+known HDOP below 2, a satellite `methodQuality`, |roll| < 15°, a depth of 0.3–200 m and a
+water level that is not a fallback. Cells are the pyramid's z18 tiles (z = leaf zoom when the
+leaf is coarser); the prior is the cell's charted depth and σD without adjustments, and a pass
+starts after a 10-minute gap. A confirmed discrepancy sets a z18 adjustment that every query
+takes beside the chart, through `minDepthOver` and the UKC tiles, so look-ahead, route check,
+`/query` and the overlay all see it. Adjustments only ever lower a cell; later deeper
+readings leave it as it is. Notes are written with `resourcesApi.setResource("notes", …)` and
+rewritten as evidence grows. Posteriors, adjustments and the last 20 000 accepted soundings are
+kept in `livechart.json` beside the index (no database dependency) and saved at most once a
+minute and on stop. The CSB export (`GET /livechart/csb.geojson`) is B-12 GeoJSON of depths as
+measured below the surface; it is never uploaded.
+
 **Rule:** own soundings may make the chart _shallower_. They make it _deeper_ only after the
 user confirms, per cell group, in the UI. A faulty transducer must never be able to switch
 off a hazard.

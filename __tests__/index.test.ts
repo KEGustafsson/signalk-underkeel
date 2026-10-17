@@ -208,6 +208,8 @@ describe("plugin lifecycle", () => {
       "GET /v1/tiles/ukc/:z/:x/:file": "readonly",
       "GET /v1/ukc-style.json": "readonly",
       "GET /v1/acks": "readonly",
+      "GET /v1/livechart/discrepancies": "readonly",
+      "GET /v1/livechart/csb.geojson": "readonly",
       "POST /v1/acks": "readwrite",
       "DELETE /v1/acks/:id": "readwrite"
     });
@@ -468,6 +470,61 @@ describe("plugin lifecycle", () => {
       // Stopping the plugin clears the emergency it raised.
       stopped: { state: "normal", method: [], message: "UKC monitoring stopped" }
     });
+  });
+
+  test("with the living chart on, two passes over a shoal list a discrepancy and write a note", () => {
+    const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 1.5 } } });
+    const notes: string[] = [];
+    (f.app as unknown as { resourcesApi: unknown }).resourcesApi = {
+      setResource: (type: string, id: string) => {
+        notes.push(`${type}/${id}`);
+        return Promise.resolve();
+      }
+    };
+    const clock = fakeClock(T0);
+    const plugin = underkeel(f.app, clock);
+    const { router, call } = fakeRouter();
+    plugin.registerWithRouter?.(router as never);
+    expect(call("/v1/livechart/discrepancies").code).toBe(404);
+    plugin.start(
+      { cellsDir: FIXTURES, leafZoom: 18, livechart: { enabled: true, writeNotes: true } },
+      () => undefined
+    );
+    // The fairway is charted 10 m west of the swept area; the sounder reads 6 m there.
+    const sounding = (t: number) => {
+      const at = T0 + t;
+      const d = navDelta(22.003, 60.0105, 0.3, at);
+      d.updates[0]?.values.push(
+        { path: "navigation.gnss.methodQuality" as never, value: "GNSS Fix" },
+        { path: "navigation.gnss.horizontalDilution" as never, value: 0.8 }
+      );
+      f.send(d);
+      f.send({
+        updates: [
+          {
+            timestamp: new Date(at).toISOString() as never,
+            values: [{ path: "environment.depth.belowSurface" as never, value: 6 }]
+          }
+        ]
+      });
+      clock.advance(at - clock.now());
+    };
+    for (const pass of [0, 20 * 60_000]) {
+      for (let k = 1; k <= 3; k++) {
+        sounding(pass + k * 1000);
+      }
+    }
+    const list = call("/v1/livechart/discrepancies").body as {
+      measured: number;
+      charted: number;
+    }[];
+    expect(list).toHaveLength(1);
+    expect(list[0]?.measured).toBeLessThan(list[0]?.charted as number);
+    expect(notes[0]).toMatch(/^notes\/underkeel-shoal-/);
+    const csb = call("/v1/livechart/csb.geojson").body as { features: unknown[] };
+    expect(csb.features).toHaveLength(6);
+    plugin.stop();
+    expect(fs.existsSync(path.join(dataDir, "livechart.json"))).toBe(true);
   });
 
   test("POST /v1/route-check answers with per-leg results", async () => {

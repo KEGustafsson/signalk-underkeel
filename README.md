@@ -38,6 +38,12 @@ Water-level sources, set under **Water level** in the plugin configuration:
 A source that stops updating falls back to chart datum with a wider σ, and the state carries
 the reason.
 
+**Living chart** (off by default): depth readings that pass a quality gate (good fix, HDOP
+under 2, small roll, a real water level) are reduced to chart datum and kept per ~76 m cell.
+After five readings on two passes 10 minutes apart that put a cell more than 2σ shallower than
+charted, the cell is lowered for every check and a Signal K note marks it. Own soundings never
+make a cell deeper. The IHO CSB export is for you to submit; the plugin uploads nothing.
+
 **Mooring zones**: Signal K region ids listed in the configuration suppress warn and alarm
 to alert inside them, with the zone named. **Grounding detector** (off by default): a sudden
 stop in water as shallow as the keel raises `notifications.grounding`; it is the only part of
@@ -59,6 +65,8 @@ REST, base `/plugins/signalk-underkeel/v1`, open to readonly users:
   heading within ±20° and no less water or more draft than when acknowledged, warn and alarm
   are published as alert with the reason "acknowledged passage". Adding and deleting need a
   readwrite user.
+- `GET /livechart/discrepancies` and `GET /livechart/csb.geojson`, with the living chart on
+  (see below).
 - `GET /tiles/ukc/{z}/{x}/{y}.pbf`: Mapbox vector tiles from zoom 11, one `ukc` layer of cells
   classed `clear`, `caution`, `danger`, `unverified` or `land` for the current draft and water
   level. `GET /ukc-style.json` is a MapLibre style for them.

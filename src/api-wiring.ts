@@ -14,6 +14,7 @@ import type { QueryServiceDeps } from "./query-service";
 import { query, ukcTileReply } from "./query-service";
 import { routeCheck } from "./route-service";
 import { statusReport } from "./status-report";
+import type { LivechartService } from "./livechart-service";
 
 /** The REST handlers bound to the plugin's current state (plan §4.10). */
 
@@ -23,6 +24,7 @@ export interface PluginState {
   config?: PluginConfig;
   acks?: AckStore;
   zoneErrors: string[];
+  livechart?: LivechartService;
   stopped: EngineStatus;
 }
 
@@ -62,7 +64,8 @@ export function apiFor(
         monitor: s.monitor,
         stopped: s.stopped,
         now: clock.now(),
-        zoneErrors: s.zoneErrors
+        zoneErrors: s.zoneErrors,
+        livechart: s.livechart
       }),
     envelope: () =>
       s.monitor
@@ -84,6 +87,14 @@ export function apiFor(
     ukcStyle,
     acks: () => withAcks(listAcks),
     addAck: (body) => withAcks((deps) => addAck(body, deps)),
-    deleteAck: (id) => withAcks((deps) => deleteAck(id, deps))
+    deleteAck: (id) => withAcks((deps) => deleteAck(id, deps)),
+    discrepancies: () =>
+      s.livechart
+        ? { status: 200, body: s.livechart.discrepancies() }
+        : { status: 404, body: { errors: ["living chart is off"] } },
+    csb: () =>
+      s.livechart
+        ? { status: 200, body: s.livechart.csb() }
+        : { status: 404, body: { errors: ["living chart is off"] } }
   };
 }

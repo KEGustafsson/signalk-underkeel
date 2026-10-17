@@ -14,6 +14,7 @@ import { AckStore } from "./ack-store";
 import type { PluginState } from "./api-wiring";
 import { apiFor } from "./api-wiring";
 import { loadZones } from "./zones";
+import { startLivechart } from "./livechart-service";
 import fs from "fs";
 import path from "path";
 
@@ -54,8 +55,9 @@ export = function underkeel(
         app.error(acks.error);
       }
       monitor.useAcks(acks);
+      const livechart = startLivechart(app, clock, config, load.index, monitor);
       monitor.start();
-      Object.assign(state, { config, load, monitor, acks, zoneErrors: [] });
+      Object.assign(state, { config, load, monitor, acks, livechart, zoneErrors: [] });
       void loadZones(config.mooringZones, (id) => app.resourcesApi.getResource("regions", id)).then(
         ({ zones, errors }) => {
           monitor.setZones(zones);
@@ -67,6 +69,8 @@ export = function underkeel(
     },
 
     stop(): void {
+      state.livechart?.save();
+      state.livechart = undefined;
       state.monitor?.stop();
       state.monitor = undefined;
       state.stopped = createStatus("off", "plugin stopped", new Date(clock.now()));

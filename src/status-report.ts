@@ -1,6 +1,7 @@
 import type { EngineStatus } from "./foundation/state";
 import type { IndexLoad } from "./index-loader";
 import type { Monitor } from "./monitor";
+import type { LivechartService } from "./livechart-service";
 
 /** Body of `GET /status`: engine state, index provenance and look-ahead summary. */
 
@@ -36,12 +37,14 @@ export function statusReport(s: {
   load: IndexLoad | undefined;
   monitor: Monitor | undefined;
   zoneErrors?: string[];
+  livechart?: LivechartService;
   stopped: EngineStatus;
   now: number;
 }): unknown {
   return {
     ...(s.monitor ? monitorSection(s.monitor) : { engine: s.stopped, vessel: [] }),
     index: indexSection(s.load),
+    livechart: s.livechart?.status() ?? null,
     mooringZones: {
       loaded: s.monitor?.zones.map((z) => z.name) ?? [],
       errors: s.zoneErrors ?? []

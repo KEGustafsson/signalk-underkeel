@@ -1,3 +1,4 @@
+import { tileKey } from "../foundation/geo";
 import type { NodeStore, NodeValues } from "./node-store";
 import { NO_DATA } from "./node-store";
 
@@ -21,6 +22,44 @@ export interface TileCell {
  * is one cell with that leaf's values.
  */
 export function cellsInTile(
+  store: NodeStore,
+  z: number,
+  x: number,
+  y: number,
+  maxZoom: number
+): TileCell[] {
+  return [...chartCells(store, z, x, y, maxZoom), ...adjustedCells(store, z, x, y)];
+}
+
+/**
+ * Living-chart cells inside the tile, listed after the charted cells so they
+ * draw over them. A tile finer than the living-chart zoom is one cell when
+ * the adjusted cell it lies in exists.
+ */
+function adjustedCells(store: NodeStore, z: number, x: number, y: number): TileCell[] {
+  const az = store.adjustZoom;
+  if (store.adjustments.size === 0) {
+    return [];
+  }
+  if (z >= az) {
+    const shift = 2 ** (z - az);
+    const v = store.adjustments.get(tileKey(az, Math.floor(x / shift), Math.floor(y / shift)));
+    return v ? [{ z, x, y, values: v, bound: false }] : [];
+  }
+  const scale = 2 ** (az - z);
+  const n = 2 ** az;
+  const out: TileCell[] = [];
+  for (const [key, values] of store.adjustments) {
+    const cx = Math.floor(key / n);
+    const cy = key % n;
+    if (Math.floor(cx / scale) === x && Math.floor(cy / scale) === y) {
+      out.push({ z: az, x: cx, y: cy, values, bound: false });
+    }
+  }
+  return out;
+}
+
+function chartCells(
   store: NodeStore,
   z: number,
   x: number,

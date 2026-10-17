@@ -1,6 +1,7 @@
 import type { GroundingOptions } from "./engine/grounding-detect";
 import { DEFAULT_GROUNDING } from "./engine/grounding-detect";
 import type { LookaheadOptions } from "./engine/lookahead";
+import type { LivechartConfig } from "./livechart-service";
 import { DEFAULT_LOOKAHEAD } from "./engine/lookahead";
 import type { HeelModel } from "./model/allowances";
 import type { DatumMapping } from "./ingest/datum";
@@ -30,6 +31,8 @@ export interface PluginConfig {
   dynamics: DynamicsOptions;
   waterLevel: WaterLevelConfig;
   lookahead: LookaheadOptions;
+  /** Undefined when the living chart is off. */
+  livechart?: LivechartConfig;
   /** Signal K region ids treated as mooring zones. */
   mooringZones: string[];
   /** Undefined when the detector is off. */
@@ -162,6 +165,28 @@ function parseLookahead(l: Record<string, unknown>): LookaheadOptions {
   };
 }
 
+function parseLivechart(l: Record<string, unknown>): LivechartConfig | undefined {
+  if (l.enabled !== true) {
+    return undefined;
+  }
+  const below = l.source === "belowTransducer";
+  return {
+    source: {
+      path: below ? "environment.depth.belowTransducer" : "environment.depth.belowSurface",
+      transducerDepth: num(l.transducerDepth, 0, 0, 10),
+      forward: num(l.forward, 0, -100, 100),
+      starboard: num(l.starboard, 0, -50, 50)
+    },
+    writeNotes: l.writeNotes !== false,
+    csb: {
+      id: str(l.vesselId) ?? "anonymous",
+      idType: l.vesselIdType === "MMSI" || l.vesselIdType === "IMO" ? l.vesselIdType : "Other",
+      sounderMake: str(l.sounderMake),
+      sounderModel: str(l.sounderModel)
+    }
+  };
+}
+
 function parseGrounding(g: Record<string, unknown>): GroundingOptions | undefined {
   if (g.enabled !== true) {
     return undefined;
@@ -189,6 +214,7 @@ export function parseConfig(raw: unknown): PluginConfig {
     dynamics: parseDynamics(v),
     waterLevel: parseWaterLevel(record(r.waterLevel)),
     lookahead: parseLookahead(record(r.lookahead)),
+    livechart: parseLivechart(record(r.livechart)),
     mooringZones: (Array.isArray(r.mooringZones) ? r.mooringZones : [])
       .map(str)
       .filter((id): id is string => id !== undefined),

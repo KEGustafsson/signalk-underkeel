@@ -24,6 +24,8 @@ export interface ApiProvider {
   acks(): ApiReply;
   addAck(body: unknown): ApiReply;
   deleteAck(id: string): ApiReply;
+  discrepancies(): ApiReply;
+  csb(): ApiReply;
 }
 
 type Registrar = {
@@ -141,6 +143,12 @@ export function registerRoutes(router: RouterLike, api: ApiProvider): void {
     res.json(api.ukcStyle());
   });
   r.get(`${API_BASE}/acks`, (_req: Request, res: Response) => send(res, api.acks()));
+  r.get(`${API_BASE}/livechart/discrepancies`, (_req: Request, res: Response) =>
+    send(res, api.discrepancies())
+  );
+  r.get(`${API_BASE}/livechart/csb.geojson`, (_req: Request, res: Response) =>
+    send(res, api.csb())
+  );
   const w = readwrite(router);
   w.post(`${API_BASE}/acks`, (req: Request, res: Response) => {
     readJsonBody(req)

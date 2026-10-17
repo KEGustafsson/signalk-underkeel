@@ -68,9 +68,18 @@ export const EMPTY: NodeValues = {
  * whose `split` bit is clear has no children and its values hold exactly for
  * its whole tile. Columns are typed arrays so a large index stays compact.
  */
+/** Zoom of living-chart cells (plan §4.13), capped at the leaf zoom. */
+export const ADJUST_ZOOM = 18;
+
 export class NodeStore {
   readonly minZoom: number;
   readonly leafZoom: number;
+  /**
+   * Living-chart cells at `adjustZoom`, keyed by tileKey: values from own
+   * soundings that queries take beside the charted ones. Taking them can
+   * only lower a result's depth (safety invariant 5).
+   */
+  readonly adjustments = new Map<number, NodeValues>();
   private readonly levels: Map<number, number>[];
   count = 0;
   dMin = new Float64Array(1024);
@@ -87,6 +96,10 @@ export class NodeStore {
     this.minZoom = minZoom;
     this.leafZoom = leafZoom;
     this.levels = Array.from({ length: leafZoom - minZoom + 1 }, () => new Map());
+  }
+
+  get adjustZoom(): number {
+    return Math.min(ADJUST_ZOOM, this.leafZoom);
   }
 
   private grow(): void {

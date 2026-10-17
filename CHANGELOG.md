@@ -6,6 +6,9 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Added
 
+- Living chart (M5, off by default): own soundings through a quality gate and datum reduction
+  update per-cell posteriors; two-pass discrepancies lower the cell for every query and
+  become Signal K notes; `GET /livechart/discrepancies` and an IHO CSB export.
 - Dynamics (M4): CTRV fan of five members scored as one hull per step, GNSS-based position
   σ, along-track footprint growth, escape heading (`navigation.underKeel.escapeHeading`) and
   state hysteresis.
