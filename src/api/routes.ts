@@ -18,6 +18,8 @@ export interface ApiProvider {
   status(): unknown;
   envelope(): { rev: number; envelope: Envelope };
   routeCheck(body: unknown): Promise<ApiReply>;
+  routeRepair(body: unknown): Promise<ApiReply>;
+  departureWindow(body: unknown): Promise<ApiReply>;
   query(body: unknown): ApiReply;
   ukcTile(z: number, x: number, y: number): TileReply;
   ukcStyle(): unknown;
@@ -121,6 +123,17 @@ export function registerRoutes(router: RouterLike, api: ApiProvider): void {
       .then((reply) => res.status(reply.status).json(reply.body))
       .catch((err: Error) => res.status(400).json({ errors: [err.message] }));
   });
+  for (const [route, handler] of [
+    ["route-repair", api.routeRepair],
+    ["departure-window", api.departureWindow]
+  ] as const) {
+    r.post(`${API_BASE}/${route}`, (req: Request, res: Response) => {
+      readJsonBody(req)
+        .then((body) => handler(body))
+        .then((reply) => send(res, reply))
+        .catch((err: Error) => res.status(400).json({ errors: [err.message] }));
+    });
+  }
   r.post(`${API_BASE}/query`, (req: Request, res: Response) => {
     readJsonBody(req)
       .then((body) => {

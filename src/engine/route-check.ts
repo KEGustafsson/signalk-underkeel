@@ -167,7 +167,7 @@ function finiteOrNull(v: number): number | null {
   return Number.isFinite(v) ? Math.round(v * 100) / 100 : null;
 }
 
-function checkLeg(
+export function checkLeg(
   index: ChartIndex,
   input: RouteCheckInput,
   i: number,

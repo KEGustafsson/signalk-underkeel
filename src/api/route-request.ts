@@ -169,3 +169,31 @@ export function routeResourceCoordinates(resource: unknown): LonLat[] | undefine
   const coords = parseCoordinates(r?.feature?.geometry, errors);
   return errors.length === 0 ? coords : undefined;
 }
+
+export const WINDOW_LIMITS = {
+  defaultHorizon: 48 * 3600,
+  maxHorizon: 7 * 86400,
+  defaultStep: 15 * 60,
+  minStep: 5 * 60,
+  maxSteps: 1000
+} as const;
+
+/** `horizon` and `step` of a departure-window request, seconds. */
+export function parseWindowOptions(body: unknown): Parsed<{ horizon: number; step: number }> {
+  const b = (typeof body === "object" && body !== null ? body : {}) as Record<string, unknown>;
+  const horizon = b.horizon ?? WINDOW_LIMITS.defaultHorizon;
+  const step = b.step ?? WINDOW_LIMITS.defaultStep;
+  const errors: string[] = [];
+  if (!inRange(horizon, 0, WINDOW_LIMITS.maxHorizon)) {
+    errors.push(`horizon must be 0..${WINDOW_LIMITS.maxHorizon} s`);
+  }
+  if (!inRange(step, WINDOW_LIMITS.minStep, WINDOW_LIMITS.maxHorizon)) {
+    errors.push(`step must be at least ${WINDOW_LIMITS.minStep} s`);
+  }
+  if (errors.length === 0 && (horizon as number) / (step as number) > WINDOW_LIMITS.maxSteps) {
+    errors.push(`horizon / step must be at most ${WINDOW_LIMITS.maxSteps} departures`);
+  }
+  return errors.length > 0
+    ? { ok: false, errors }
+    : { ok: true, value: { horizon: horizon as number, step: step as number } };
+}

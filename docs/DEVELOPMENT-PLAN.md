@@ -643,6 +643,18 @@ the full forecast horizon), re-checking only the legs whose water level changed.
 intervals in which every leg passes. In Finnish waters this matters during low-water episodes
 with high pressure and easterly winds; in tidal waters it becomes a full tide-gate planner.
 
+**As built (M5).** The repair grid has at most 120 cells on its longer side, at least 10 m
+each, and reaches half the leg's length (at least 300 m) beyond it. A cell is blocked when the
+corridor around it has P at or above the accept threshold, or touches `NO_COVERAGE`,
+`UNASSESSED` or `NO_DEPTH`: a repair must not route through water it cannot check. Costs are
+evaluated lazily as Theta* expands. Simplification replaces a span with its chord whenever the
+chord passes the corridor check, so no simplification makes a leg fail; a path that still fails
+is reported with a reason and no waypoints. Both `/route-repair` and `/departure-window` take
+the `/route-check` body; the window adds `horizon` (default 48 h, at most 7 days) and `step`
+(default 15 min, at least 5 min, at most 1000 departures). Leg results are reused across
+departures for the same water level rounded down to the centimetre (σ rounded up). Measured
+under Jest on the synthetic archipelago: 52 ms per repaired leg.
+
 ### 4.12 Acknowledged passages
 
 On acknowledge, Freeboard POSTs to `/acks` with:

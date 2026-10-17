@@ -204,6 +204,8 @@ describe("plugin lifecycle", () => {
       "GET /v1/status": "readonly",
       "GET /v1/envelope": "readonly",
       "POST /v1/route-check": "readonly",
+      "POST /v1/route-repair": "readonly",
+      "POST /v1/departure-window": "readonly",
       "POST /v1/query": "readonly",
       "GET /v1/tiles/ukc/:z/:x/:file": "readonly",
       "GET /v1/ukc-style.json": "readonly",
@@ -527,6 +529,36 @@ describe("plugin lifecycle", () => {
     expect(fs.existsSync(path.join(dataDir, "livechart.json"))).toBe(true);
   });
 
+  test("POST /v1/route-repair and /v1/departure-window answer for the same route body", async () => {
+    const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 3.6 } } });
+    const plugin = underkeel(f.app, fakeClock(T0));
+    const { router, post } = fakeRouter();
+    plugin.registerWithRouter?.(router as never);
+    plugin.start({ cellsDir: FIXTURES, leafZoom: 18 }, () => undefined);
+    const route = {
+      type: "LineString",
+      coordinates: [
+        [22.004, 60.01],
+        [22.03, 60.01]
+      ]
+    };
+    const repair = await post("/v1/route-repair", { route });
+    expect(repair.code).toBe(200);
+    const repairs = (
+      repair.body as { repairs: { index: number; reason?: string; legs: { status: string }[] }[] }
+    ).repairs;
+    expect(repairs.map((r) => r.index)).toEqual([0]);
+    for (const r of repairs) {
+      expect(r.reason !== undefined || r.legs.every((l) => l.status === "ok")).toBe(true);
+    }
+    const window = await post("/v1/departure-window", { route, horizon: 3600, step: 900 });
+    expect(window.code).toBe(200);
+    expect((window.body as { steps: unknown[] }).steps).toHaveLength(5);
+    expect((window.body as { windows: unknown[] }).windows).toEqual([]);
+    expect((await post("/v1/departure-window", { route, horizon: 1e9 })).code).toBe(400);
+    plugin.stop();
+  });
+
   test("POST /v1/route-check answers with per-leg results", async () => {
     const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 3.6 } } });
     const plugin = underkeel(f.app, fakeClock(T0));
@@ -711,7 +743,7 @@ describe("manifest and step", () => {
     expect(m?.services.navigationSafety).toEqual({
       apiVersion: "1",
       base: "/plugins/signalk-underkeel/v1",
-      provides: ["lookahead", "routeCheck", "query"],
+      provides: ["lookahead", "routeCheck", "routeRepair", "departureWindow", "query", "acks"],
       statePath: "navigation.underKeel",
       notificationPath: "notifications.navigation.underKeel"
     });

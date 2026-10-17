@@ -1,7 +1,15 @@
 import type { ApiReply } from "./api/routes";
-import { parseRouteRequest, routeResourceCoordinates, speedsFor } from "./api/route-request";
+import {
+  parseRouteRequest,
+  parseWindowOptions,
+  routeResourceCoordinates,
+  speedsFor
+} from "./api/route-request";
 import type { PluginConfig } from "./config";
+import { departureWindow } from "./engine/departure-window";
+import type { RouteCheckInput } from "./engine/route-check";
 import { checkRoute } from "./engine/route-check";
+import { repairRoute } from "./engine/route-repair";
 import type { LonLat } from "./foundation/geo";
 import type { WaterLevel } from "./model/uncertainty";
 import type { VesselModel } from "./model/vessel";
@@ -44,7 +52,11 @@ function vesselFor(draft: number | undefined, deps: RouteServiceDeps): VesselMod
   return current ? { ...current, draft } : { draft, ...FALLBACK_HULL };
 }
 
-export async function routeCheck(body: unknown, deps: RouteServiceDeps): Promise<ApiReply> {
+/** Validates the request and resolves route, vessel and speeds into a route-check input. */
+async function prepare(
+  body: unknown,
+  deps: RouteServiceDeps
+): Promise<{ index: ChartIndex; input: RouteCheckInput } | ApiReply> {
   const parsed = parseRouteRequest(body);
   if (!parsed.ok) {
     return { status: 400, body: { errors: parsed.errors } };
@@ -65,9 +77,9 @@ export async function routeCheck(body: unknown, deps: RouteServiceDeps): Promise
   if (typeof speeds === "string") {
     return { status: 400, body: { errors: [speeds] } };
   }
-  const result = checkRoute(
-    deps.index,
-    {
+  return {
+    index: deps.index,
+    input: {
       coordinates: coords,
       departure: req.departure ?? deps.now(),
       speeds,
@@ -78,8 +90,50 @@ export async function routeCheck(body: unknown, deps: RouteServiceDeps): Promise
       waterLevel: deps.waterLevel,
       waveHeight: deps.waveHeight(),
       probability: req.probability ?? deps.config.routeCheck.probability
-    },
-    deps.now()
+    }
+  };
+}
+
+const isReply = (v: unknown): v is ApiReply => typeof (v as ApiReply).status === "number";
+
+export async function routeCheck(body: unknown, deps: RouteServiceDeps): Promise<ApiReply> {
+  const p = await prepare(body, deps);
+  return isReply(p) ? p : { status: 200, body: checkRoute(p.index, p.input, deps.now()) };
+}
+
+/** `POST /route-repair`: suggested waypoints for each failing or marginal leg. */
+export async function routeRepair(body: unknown, deps: RouteServiceDeps): Promise<ApiReply> {
+  const p = await prepare(body, deps);
+  if (isReply(p)) {
+    return p;
+  }
+  const checked = checkRoute(p.index, p.input, deps.now());
+  return {
+    status: 200,
+    body: { checkedAt: checked.checkedAt, repairs: repairRoute(p.index, p.input, checked.legs) }
+  };
+}
+
+/** `POST /departure-window`: departures over the horizon in which every leg is ok. */
+export async function departureWindowReply(
+  body: unknown,
+  deps: RouteServiceDeps
+): Promise<ApiReply> {
+  const opts = parseWindowOptions(body);
+  if (!opts.ok) {
+    return { status: 400, body: { errors: opts.errors } };
+  }
+  const p = await prepare(body, deps);
+  if (isReply(p)) {
+    return p;
+  }
+  const from = p.input.departure;
+  const result = departureWindow(
+    p.index,
+    p.input,
+    from,
+    from + opts.value.horizon * 1000,
+    opts.value.step * 1000
   );
   return { status: 200, body: result };
 }

@@ -6,6 +6,9 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Added
 
+- Route repair and departure window (M5): `POST /route-repair` suggests waypoints around
+  failing legs (Theta\* on a lazy cost grid, simplified only where legs still pass);
+  `POST /departure-window` returns the departures over the horizon in which every leg is ok.
 - Living chart (M5, off by default): own soundings through a quality gate and datum reduction
   update per-cell posteriors; two-pass discrepancies lower the cell for every query and
   become Signal K notes; `GET /livechart/discrepancies` and an IHO CSB export.
