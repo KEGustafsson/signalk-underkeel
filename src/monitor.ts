@@ -152,7 +152,8 @@ export class Monitor {
     }
   }
 
-  private vessel(): VesselModel | undefined {
+  /** The vessel as currently resolved from configuration and Signal K. */
+  vessel(): VesselModel | undefined {
     const draft = selfValue(this.app, "design.draft") as { maximum?: unknown } | undefined;
     const length = selfValue(this.app, "design.length") as { overall?: unknown } | undefined;
     const resolved = resolveVessel({

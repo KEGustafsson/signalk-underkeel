@@ -27,6 +27,8 @@ export interface DepthResult extends NodeValues {
    * charted part's answer visible.
    */
   coveredDMin: number;
+  /** Catalogue indices of the cells that set each examined tile's depth. */
+  cellRefs: number[];
   /** The tile that set dMin, for explanations. */
   worst?: { z: number; x: number; y: number; center: LonLat };
   /** Tiles examined, for the performance budget. */
@@ -38,7 +40,8 @@ export interface QueryOptions {
   bufferMetres?: number;
   /**
    * Stop descending where a tile's lower bound is already at least this
-   * deep. The bound is returned as is, so the answer stays conservative.
+   * deep and the tile carries no coverage or assessment flags. The bound is
+   * returned as is, so the answer stays conservative.
    */
   clearAbove?: number;
 }
@@ -59,6 +62,7 @@ interface Walk {
   clearAbove: number;
   result: NodeValues;
   coveredDMin: number;
+  cells: Set<number>;
   worst?: { z: number; x: number; y: number };
   visits: number;
 }
@@ -71,7 +75,17 @@ function take(w: Walk, v: NodeValues, z: number, x: number, y: number): void {
   if ((v.flags & FLAGS.NO_DEPTH) === 0) {
     w.coveredDMin = Math.min(w.coveredDMin, v.dMin);
   }
+  if (v.cellRef >= 0) {
+    w.cells.add(v.cellRef);
+  }
 }
+
+/**
+ * A split tile's flags are the union of its children's, so stopping early
+ * at one carrying these would report a gap or an unassessed survey that
+ * the footprint itself may not touch. Such tiles are always descended.
+ */
+const PRECISE_FLAGS = FLAGS.NO_COVERAGE | FLAGS.UNASSESSED | FLAGS.NO_DEPTH;
 
 function visit(w: Walk, z: number, x: number, y: number): void {
   const rect = tileRect(z, x, y);
@@ -85,7 +99,7 @@ function visit(w: Walk, z: number, x: number, y: number): void {
     return;
   }
   const v = w.store.values(i);
-  if (!w.store.isSplit(i) || v.dMin >= w.clearAbove) {
+  if (!w.store.isSplit(i) || (v.dMin >= w.clearAbove && (v.flags & PRECISE_FLAGS) === 0)) {
     take(w, v, z, x, y);
     return;
   }
@@ -115,6 +129,7 @@ export function minDepthOver(store: NodeStore, geom: Geom, opts: QueryOptions = 
     clearAbove: opts.clearAbove ?? Infinity,
     result: EMPTY,
     coveredDMin: Infinity,
+    cells: new Set(),
     visits: 0
   };
   const range = tileRange(store.minZoom, expandRect(bounds, buffer));
@@ -123,7 +138,12 @@ export function minDepthOver(store: NodeStore, geom: Geom, opts: QueryOptions = 
       visit(w, store.minZoom, x, y);
     }
   }
-  const out: DepthResult = { ...w.result, coveredDMin: w.coveredDMin, visits: w.visits };
+  const out: DepthResult = {
+    ...w.result,
+    coveredDMin: w.coveredDMin,
+    cellRefs: [...w.cells].sort((a, b) => a - b),
+    visits: w.visits
+  };
   if (w.worst) {
     const r = tileRect(w.worst.z, w.worst.x, w.worst.y);
     out.worst = { ...w.worst, center: fromMercator((r.minX + r.maxX) / 2, (r.minY + r.maxY) / 2) };

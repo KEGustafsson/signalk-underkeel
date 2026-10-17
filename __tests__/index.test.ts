@@ -10,13 +10,12 @@ import { stepFor, DEFAULT_LOOKAHEAD } from "../src/engine/lookahead";
 import underkeel = require("../src/index");
 import { FIXTURES, M_PER_DEG_LON, ROCK } from "./helpers/fixture-index";
 
-type Handler = (
-  req: { query?: Record<string, string> },
-  res: {
-    json: (body: unknown) => void;
-    status: (code: number) => { end: () => void };
-  }
-) => void;
+interface FakeRes {
+  json: (body: unknown) => void;
+  status: (code: number) => FakeRes & { end: () => void };
+}
+
+type Handler = (req: { query?: Record<string, string>; body?: unknown }, res: FakeRes) => void;
 
 interface FakeClock extends Clock {
   advance(ms: number): void;
@@ -80,34 +79,42 @@ function fakeApp(dataDir: string, self: Record<string, unknown> = {}) {
 function fakeRouter(withAccess = true) {
   const routes = new Map<string, Handler>();
   const levels = new Map<string, string>();
-  const plain = { get: (p: string, h: Handler) => routes.set(p, h) };
-  const router = withAccess
-    ? {
-        ...plain,
-        access: (level: string) => ({
-          get: (p: string, h: Handler) => {
-            levels.set(p, level);
-            return routes.set(p, h);
-          }
-        })
-      }
-    : plain;
+  const add = (method: string) => (p: string, h: Handler) => routes.set(`${method} ${p}`, h);
+  const plain = { get: add("GET"), post: add("POST") };
+  const scoped = (level: string) => {
+    const reg = (method: string) => (p: string, h: Handler) => {
+      levels.set(`${method} ${p}`, level);
+      return add(method)(p, h);
+    };
+    return { get: reg("GET"), post: reg("POST") };
+  };
+  const router = withAccess ? { ...plain, access: scoped } : plain;
   const call = (p: string, query: Record<string, string> = {}) => {
     let body: unknown;
     let code = 200;
-    routes.get(p)?.(
-      { query },
-      {
-        json: (b) => (body = b),
-        status: (c) => {
-          code = c;
-          return { end: () => undefined };
-        }
+    const res: FakeRes = {
+      json: (b) => (body = b),
+      status: (c) => {
+        code = c;
+        return { ...res, end: () => undefined };
       }
-    );
+    };
+    routes.get(`GET ${p}`)?.({ query }, res);
     return { code, body };
   };
-  return { router, call, levels };
+  const post = (p: string, reqBody: unknown) =>
+    new Promise<{ code: number; body: unknown }>((resolve) => {
+      let code = 200;
+      const res: FakeRes = {
+        json: (b) => resolve({ code, body: b }),
+        status: (c) => {
+          code = c;
+          return { ...res, end: () => resolve({ code, body: undefined }) };
+        }
+      };
+      routes.get(`POST ${p}`)?.({ body: reqBody }, res);
+    });
+  return { router, call, post, levels };
 }
 
 function values(deltas: Partial<Delta>[]) {
@@ -161,8 +168,9 @@ describe("plugin lifecycle", () => {
     const { router, levels } = fakeRouter();
     plugin.registerWithRouter?.(router as never);
     expect(Object.fromEntries(levels)).toEqual({
-      "/v1/status": "readonly",
-      "/v1/envelope": "readonly"
+      "GET /v1/status": "readonly",
+      "GET /v1/envelope": "readonly",
+      "POST /v1/route-check": "readonly"
     });
   });
 
@@ -245,6 +253,28 @@ describe("plugin lifecycle", () => {
     expect(call("/v1/status").body).toMatchObject({
       engine: { state: "off", reason: "plugin stopped" }
     });
+  });
+
+  test("POST /v1/route-check answers with per-leg results", async () => {
+    const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 3.6 } } });
+    const plugin = underkeel(f.app, fakeClock(T0));
+    const { router, post } = fakeRouter();
+    plugin.registerWithRouter?.(router as never);
+    const before = await post("/v1/route-check", { route: { type: "LineString" } });
+    expect(before.code).toBe(400);
+    plugin.start({ cellsDir: FIXTURES, leafZoom: 18 }, () => undefined);
+    const r = await post("/v1/route-check", {
+      route: {
+        type: "LineString",
+        coordinates: [
+          [22.004, 60.01],
+          [22.03, 60.01]
+        ]
+      }
+    });
+    expect(r.code).toBe(200);
+    expect(r.body).toMatchObject({ legs: [{ index: 0, status: "fail" }] });
+    plugin.stop();
   });
 
   test("registers the plotterExtensions manifest", async () => {
@@ -366,7 +396,7 @@ describe("manifest and step", () => {
     expect(m?.services.navigationSafety).toEqual({
       apiVersion: "1",
       base: "/plugins/signalk-underkeel/v1",
-      provides: ["lookahead"],
+      provides: ["lookahead", "routeCheck"],
       statePath: "navigation.underKeel",
       notificationPath: "notifications.navigation.underKeel"
     });

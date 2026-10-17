@@ -18,7 +18,15 @@ export interface PluginConfig {
   leafZoom: number;
   vessel: Partial<VesselModel>;
   lookahead: LookaheadOptions;
+  routeCheck: {
+    /** Planning speed when a request gives none, m/s. */
+    speed: number;
+    /** Cross-track limit when a request gives none, metres. */
+    xteLimit: number;
+  };
 }
+
+export const DEFAULT_ROUTE_CHECK = { speed: 2.5, xteLimit: 30 } as const;
 
 export const SCHEMA = {
   type: "object",
@@ -63,6 +71,14 @@ export const SCHEMA = {
         warnWithin: { type: "number", title: "Warn when shoal within (s)", default: 120 },
         alarmWithin: { type: "number", title: "Alarm when shoal within (s)", default: 30 }
       }
+    },
+    routeCheck: {
+      type: "object",
+      title: "Route check",
+      properties: {
+        speed: { type: "number", title: "Planning speed (m/s)", default: 2.5 },
+        xteLimit: { type: "number", title: "Cross-track limit (m)", default: 30 }
+      }
     }
   }
 } as const;
@@ -87,6 +103,7 @@ export function parseConfig(raw: unknown): PluginConfig {
   const r = record(raw);
   const v = record(r.vessel);
   const l = record(r.lookahead);
+  const rc = record(r.routeCheck);
   const d = DEFAULT_LOOKAHEAD;
   const lookahead: LookaheadOptions = {
     ...d,
@@ -109,6 +126,10 @@ export function parseConfig(raw: unknown): PluginConfig {
       length: optionalPositive(v.length),
       beam: optionalPositive(v.beam)
     },
-    lookahead
+    lookahead,
+    routeCheck: {
+      speed: num(rc.speed, DEFAULT_ROUTE_CHECK.speed, 0.1, 30),
+      xteLimit: num(rc.xteLimit, DEFAULT_ROUTE_CHECK.xteLimit, 0, 2000)
+    }
   };
 }
