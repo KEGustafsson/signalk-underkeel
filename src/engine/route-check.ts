@@ -10,7 +10,7 @@ import { FLAGS, flagNames } from "../spatial/node-store";
 import type { DepthResult, RiskTile } from "../spatial/pyramid";
 import { footprintGeom, mercatorBuffer, minDepthOver } from "../spatial/pyramid";
 import type { Explanation } from "./explain";
-import { explain } from "./explain";
+import { explainTile } from "./explain";
 
 /**
  * Corridor route check (plan §4.11): each leg is checked over
@@ -164,49 +164,6 @@ function finiteOrNull(v: number): number | null {
   return Number.isFinite(v) ? Math.round(v * 100) / 100 : null;
 }
 
-type Hazard = { class: string; lnam?: string; valsou: number | null };
-
-/** The named hazard whose depth is the deciding tile's depth: the one that set it. */
-function hazardIn(index: ChartIndex, ring: LonLat[], depth: number): Hazard | undefined {
-  const geom = footprintGeom(ring);
-  const hit = index.hazards
-    .near(geom, mercatorBuffer(geomBounds(geom), 0))
-    .find((h) => h.feature.depth === depth);
-  return (
-    hit && {
-      class: hit.feature.objectClass,
-      lnam: hit.feature.lnam,
-      valsou: finiteOrNull(hit.feature.depth)
-    }
-  );
-}
-
-function legExplanation(
-  index: ChartIndex,
-  tile: RiskTile,
-  ring: LonLat[],
-  terms: VesselTerms,
-  wl: WaterLevel
-): { hazard?: Hazard; explanation: Explanation } {
-  const hazard = hazardIn(index, ring, tile.dMin);
-  const cell = index.catalogue.cells[tile.cellRef];
-  const explanation = explain(
-    tile,
-    {
-      flags: flagNames(tile.flags),
-      cell: cell && { name: cell.name, edition: cell.edition, update: cell.update },
-      hazard: hazard && {
-        class: hazard.class,
-        lnam: hazard.lnam,
-        depth: hazard.valsou ?? -Infinity
-      }
-    },
-    terms,
-    wl
-  );
-  return { hazard, explanation };
-}
-
 function checkLeg(
   index: ChartIndex,
   input: RouteCheckInput,
@@ -230,7 +187,7 @@ function checkLeg(
     flags.push("LAND");
   }
   const tile = result.riskTile;
-  const why = tile ? legExplanation(index, tile, ring, terms, wl) : undefined;
+  const why = tile ? explainTile(index, tile, ring, terms, wl) : undefined;
   let status: LegStatus = land
     ? "fail"
     : statusOf(result.maxRisk, charted, result.flags, input.probability);

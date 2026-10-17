@@ -1,5 +1,5 @@
 import type { Path, Plugin, PluginRouter, ServerAPI } from "@signalk/server-api";
-import { manifestProvider, PLUGIN_ID } from "./api/manifest";
+import { manifestProvider, PLUGIN_ID, ukcStyle } from "./api/manifest";
 import { registerRoutes } from "./api/routes";
 import type { PluginConfig } from "./config";
 import { parseConfig, SCHEMA } from "./config";
@@ -12,6 +12,8 @@ import type { Clock } from "./monitor";
 import { Monitor, SYSTEM_CLOCK } from "./monitor";
 import type { FetchLike } from "./model/fmi";
 import { CHART_DATUM } from "./model/water-level";
+import { query, ukcTileReply } from "./query-service";
+import type { QueryServiceDeps } from "./query-service";
 import { routeCheck } from "./route-service";
 import fs from "fs";
 import path from "path";
@@ -76,7 +78,18 @@ export = function underkeel(
     },
 
     registerWithRouter(router: PluginRouter): void {
+      const queryDeps = (): QueryServiceDeps => ({
+        index: load?.index,
+        indexReason: load?.reason ?? "plugin not started",
+        config: config ?? parseConfig({}),
+        vessel: () => monitor?.vessel(),
+        waterLevel: () => monitor?.waterLevel() ?? CHART_DATUM,
+        waveHeight: () => monitor?.nav.waveHeight?.value
+      });
       registerRoutes(router, {
+        query: (body) => query(body, queryDeps()),
+        ukcTile: (z, x, y) => ukcTileReply(z, x, y, queryDeps()),
+        ukcStyle,
         status: () => statusReport({ load, monitor, stopped, now: clock.now() }),
         envelope: () =>
           monitor

@@ -8,10 +8,19 @@ export interface ApiReply {
   body: unknown;
 }
 
+export interface TileReply {
+  status: number;
+  contentType: string;
+  body: Uint8Array | { errors: string[] };
+}
+
 export interface ApiProvider {
   status(): unknown;
   envelope(): { rev: number; envelope: Envelope };
   routeCheck(body: unknown): Promise<ApiReply>;
+  query(body: unknown): ApiReply;
+  ukcTile(z: number, x: number, y: number): TileReply;
+  ukcStyle(): unknown;
 }
 
 type Registrar = {
@@ -92,4 +101,30 @@ export function registerRoutes(router: RouterLike, api: ApiProvider): void {
       .then((reply) => res.status(reply.status).json(reply.body))
       .catch((err: Error) => res.status(400).json({ errors: [err.message] }));
   });
+  r.post(`${API_BASE}/query`, (req: Request, res: Response) => {
+    readJsonBody(req)
+      .then((body) => {
+        const reply = api.query(body);
+        res.status(reply.status).json(reply.body);
+      })
+      .catch((err: Error) => res.status(400).json({ errors: [err.message] }));
+  });
+  r.get(`${API_BASE}/tiles/ukc/:z/:x/:file`, (req: Request, res: Response) => {
+    const p = (req.params ?? {}) as Record<string, string | undefined>;
+    const y = /^(\d{1,8})\.pbf$/.exec(p.file ?? "")?.[1];
+    const reply = api.ukcTile(int(p.z), int(p.x), int(y));
+    if (reply.body instanceof Uint8Array) {
+      res.status(reply.status).type(reply.contentType).send(Buffer.from(reply.body));
+    } else {
+      res.status(reply.status).json(reply.body);
+    }
+  });
+  r.get(`${API_BASE}/ukc-style.json`, (_req: Request, res: Response) => {
+    res.json(api.ukcStyle());
+  });
+}
+
+/** A path segment as a non-negative integer, else NaN. */
+function int(s: string | undefined): number {
+  return s !== undefined && /^\d{1,8}$/.test(s) ? Number(s) : NaN;
 }

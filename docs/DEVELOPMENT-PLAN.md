@@ -719,6 +719,13 @@ The plugin also declares the **new `services` section** described in §5.1.
 }
 ```
 
+**As built (M3).** The overlay's `style` points at `/plugins/signalk-underkeel/v1/ukc-style.json`,
+which the plugin serves; the `/plotterext/...` paths above are placeholders until the settings
+panel exists. Tiles below zoom 11 are empty. Each tile is drawn from at most 64 × 64 pyramid
+cells; a cell coarser than that is classed by its bound (shallowest depth, widest σ), so the
+overlay never shows water safer than any point in it. A fallback water level draws no cell as
+`clear`.
+
 ---
 
 ## 5. Freeboard-SK core

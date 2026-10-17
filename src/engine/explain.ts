@@ -1,6 +1,12 @@
+import type { LonLat } from "../foundation/geo";
+import { geomBounds } from "../foundation/geometry";
 import type { CellInfo } from "../ingest/cells";
 import type { Ukc, VesselTerms, WaterLevel } from "../model/uncertainty";
 import { ukcAt } from "../model/uncertainty";
+import type { ChartIndex } from "../spatial/chart-index";
+import { flagNames } from "../spatial/node-store";
+import type { RiskTile } from "../spatial/pyramid";
+import { footprintGeom, mercatorBuffer } from "../spatial/pyramid";
 
 /**
  * Explanation object (plan §4.7): every term behind a UKC estimate, so a
@@ -61,6 +67,60 @@ export function explain(
     sigma: r2(u.sigma),
     risk: Math.round(u.risk * 10000) / 10000
   };
+}
+
+export interface NamedHazard {
+  class: string;
+  lnam?: string;
+  valsou: number | null;
+}
+
+/** The named hazard whose depth is the deciding tile's depth: the one that set it. */
+function hazardIn(
+  index: ChartIndex,
+  ring: LonLat[],
+  depth: number,
+  bufferMetres: number
+): NamedHazard | undefined {
+  const geom = footprintGeom(ring);
+  const hit = index.hazards
+    .near(geom, mercatorBuffer(geomBounds(geom), bufferMetres))
+    .find((h) => h.feature.depth === depth);
+  return (
+    hit && {
+      class: hit.feature.objectClass,
+      lnam: hit.feature.lnam,
+      valsou: finite(hit.feature.depth)
+    }
+  );
+}
+
+/** The explanation of the deciding tile under `ring`, with its cell and hazard. */
+export function explainTile(
+  index: ChartIndex,
+  tile: RiskTile,
+  ring: LonLat[],
+  terms: VesselTerms,
+  wl: WaterLevel,
+  bufferMetres = 0
+): { hazard?: NamedHazard; explanation: Explanation } {
+  const hazard = hazardIn(index, ring, tile.dMin, bufferMetres);
+  const cell = index.catalogue.cells[tile.cellRef];
+  const explanation = explain(
+    tile,
+    {
+      flags: flagNames(tile.flags),
+      cell: cell && { name: cell.name, edition: cell.edition, update: cell.update },
+      hazard: hazard && {
+        class: hazard.class,
+        lnam: hazard.lnam,
+        depth: hazard.valsou ?? -Infinity
+      }
+    },
+    terms,
+    wl
+  );
+  return { hazard, explanation };
 }
 
 const m = (v: number): string => `${v.toFixed(2).replace(/\.?0+$/, "") || "0"} m`;

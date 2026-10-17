@@ -11,6 +11,8 @@ All notable changes to signalk-underkeel are documented here.
   object on every notification and route-check leg; `clearanceSigma` and `risk` deltas.
 - Water-level sources (M3): manual, Signal K tide and FMI forecast with tide-gauge blending;
   per-cell vertical datum mapping; chart-datum fallback with a reason after 30 minutes stale.
+- `POST /query` for point and polygon UKC, and UKC vector tiles with a MapLibre style,
+  declared as a `plotterExtensions` data overlay (M3).
 - Deterministic look-ahead (M1): straight cone along COG, chart-datum UKC with a fixed margin,
   `navigation.underKeel.*` deltas, `notifications.navigation.underKeel`, `GET /status`,
   `GET /envelope`, and a `plotterExtensions` manifest resource.

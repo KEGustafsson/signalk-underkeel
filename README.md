@@ -44,9 +44,14 @@ REST, base `/plugins/signalk-underkeel/v1`, open to readonly users:
   level expected while on it, and returned as `ok`, `marginal`, `fail` or `unverified` (no
   coverage, unassessed survey or a fallback water level; never folded into `ok`), with P(UKC < 0),
   its explanation and the cell editions used.
+- `POST /query`: a GeoJSON Point or Polygon, with an optional buffer, draft and speed; returns
+  the class, P(UKC < 0), the deciding hazard and the explanation, for cursor readouts.
+- `GET /tiles/ukc/{z}/{x}/{y}.pbf`: Mapbox vector tiles from zoom 11, one `ukc` layer of cells
+  classed `clear`, `caution`, `danger`, `unverified` or `land` for the current draft and water
+  level. `GET /ukc-style.json` is a MapLibre style for them.
 
-The plugin also registers a `plotterExtensions` resource declaring the experimental
-`navigationSafety` service.
+The plugin also registers a `plotterExtensions` resource declaring the UKC data overlay and the
+experimental `navigationSafety` service.
 
 ## Documentation map
 
