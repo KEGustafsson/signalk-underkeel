@@ -28,11 +28,11 @@ against the chart.
 
 ### Design principle (from the earlier discussion)
 
-| Concern | Lives in | Why |
-|---|---|---|
-| What is dangerous (index, risk model, look-ahead, route check) | **Signal K plugin** | Runs with every screen asleep; one source of truth across stations; reaches KIP, phones, N2K/MFD |
-| How danger looks (envelope layer, leg colouring, alarm popover, editor UX) | **Freeboard core** | Core plotter UX; must feel native in the route editor, not an iframe |
-| The seam between them | **Provider-neutral service contract** | Freeboard must not hard-depend on one plugin |
+| Concern                                                                    | Lives in                              | Why                                                                                              |
+| -------------------------------------------------------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| What is dangerous (index, risk model, look-ahead, route check)             | **Signal K plugin**                   | Runs with every screen asleep; one source of truth across stations; reaches KIP, phones, N2K/MFD |
+| How danger looks (envelope layer, leg colouring, alarm popover, editor UX) | **Freeboard core**                    | Core plotter UX; must feel native in the route editor, not an iframe                             |
+| The seam between them                                                      | **Provider-neutral service contract** | Freeboard must not hard-depend on one plugin                                                     |
 
 ### Correction to the earlier chat answer
 
@@ -53,9 +53,9 @@ Most plotters, TimeZero included, use a **fixed cone** checked against a **fixed
 depth**. This design differs in eight ways.
 
 1. **Probabilistic UKC with an explanation for every alarm.** Each warning breaks down its
-   terms, for example: *charted 2.4 m (CATZOC C, ±1.1 m) + water level −0.31 m (FMI forecast)
+   terms, for example: _charted 2.4 m (CATZOC C, ±1.1 m) + water level −0.31 m (FMI forecast)
    − draft 1.9 m − squat 0.08 m − heel 0.0 m − wave allowance 0.15 m → μ = −0.04 m,
-   σ = 0.58 m, P = 53 %*. The crew can see why it is shouting, which is the cure for alarm
+   σ = 0.58 m, P = 53 %_. The crew can see why it is shouting, which is the cure for alarm
    fatigue.
 2. **Time-to-shoal (TTS), the seabed's equivalent of TCPA.** The look-ahead is a predicted
    trajectory fan from a constant-turn-rate model (SOG, COG, ROT). It bends with the turn and
@@ -70,7 +70,7 @@ depth**. This design differs in eight ways.
    horizontal uncertainty widens and so does the hazard buffer. The system becomes more
    cautious exactly when position becomes untrustworthy. No consumer plotter links these.
 5. **Swept-area awareness, a Finland-specific win.** Finnish fairways are swept to a
-   guaranteed depth (`SWPARE`, *haraussyvyys*). Inside a swept area depth uncertainty is
+   guaranteed depth (`SWPARE`, _haraussyvyys_). Inside a swept area depth uncertainty is
    close to zero; outside, many areas rest on old surveys. The model trusts swept fairways
    and becomes conservative off them, matching how local skippers actually think.
 6. **Conservative min-depth pyramid.** The data structure is a hierarchical min-pyramid in
@@ -149,7 +149,7 @@ signalk-underkeel/
 │   │   ├── open-data-reader.ts   # Traficom/SYKE open vector depth (GeoPackage/WFS)
 │   │   ├── coverage.ts           # best-scale mosaic: usage band selection, overlaps
 │   │   └── datum.ts              # vertical datum per cell (M_VDAT / M_SDAT, VERDAT)
-│   ├── index/
+│   ├── spatial/
 │   │   ├── pyramid.ts            # min-depth pyramid build + query
 │   │   ├── hazards.ts            # flatbush R-tree of point/line hazards
 │   │   ├── quality.ts            # CATZOC / M_QUAL / SWPARE → σ_depth, σ_pos
@@ -179,12 +179,13 @@ signalk-underkeel/
 │   │   └── manifest.ts           # plotterExtensions resource contribution
 │   └── workers/
 │       └── build-index.worker.ts
-├── test/                         # vitest; fixtures; replay logs
+├── __tests__/                    # jest (ts-jest) + fast-check; replay logs
 ├── fixtures/enc/                 # synthetic cells + one real Finnish cell (licence permitting)
 └── docs/
 ```
 
 **Stack:**
+
 - TypeScript on Node 20+.
 - `flatbush` for the static R-tree.
 - `@turf/*`, only for buffers and planning-time geometry. The hot path uses its own
@@ -204,25 +205,25 @@ signalk-underkeel/
    `signalk-charts-provider-simple` (read-only access to its data directory, configured
    path), or point to a folder. Traficom distributes quality-assured S-57 ENCs for Finnish
    waters through its download service.
-2. **National open vector depth data.** For example, Traficom's *Merikartan syvyystiedot*
+2. **National open vector depth data.** For example, Traficom's _Merikartan syvyystiedot_
    (depth contours and soundings, CC BY 4.0).
 3. **Unsurveyed-waterway depth data.** For example, SYKE lake and coastal data, explicitly
-   *not for navigation*. Ingest it as **CATZOC U** with large σ, so it can only add caution,
+   _not for navigation_. Ingest it as **CATZOC U** with large σ, so it can only add caution,
    never confidence.
 
 **S-57 object classes used:**
 
-| Class | Attributes | Role |
-|---|---|---|
-| `DEPARE` | `DRVAL1`, `DRVAL2` | depth areas; rasterise with **`DRVAL1`** (shallow bound), which is conservative |
-| `DRGARE` | `DRVAL1` | dredged areas |
-| `SWPARE` | `DRVAL1` | swept depth; **guaranteed minimum**, σ_depth ≈ 0.1 m |
-| `SOUNDG` | 3D multipoint | spot depths; burn in with position-uncertainty disc |
-| `UWTROC`, `WRECKS`, `OBSTRN` | `VALSOU`, `WATLEV`, `EXPSOU`, `QUASOU` | point hazards → R-tree, buffered |
-| `LNDARE`, `COALNE`, `SLCONS` | — | depth −∞ (hard obstacles) |
-| `M_QUAL` | `CATZOC`, `POSACC`, `SOUACC` | survey quality zones |
-| `M_COVR` | `CATCOV` | coverage; no coverage means *unverified*, not *safe* |
-| DSID / `M_SDAT`, `M_VDAT` | sounding / vertical datum | water-level reduction (§4.5) |
+| Class                        | Attributes                             | Role                                                                            |
+| ---------------------------- | -------------------------------------- | ------------------------------------------------------------------------------- |
+| `DEPARE`                     | `DRVAL1`, `DRVAL2`                     | depth areas; rasterise with **`DRVAL1`** (shallow bound), which is conservative |
+| `DRGARE`                     | `DRVAL1`                               | dredged areas                                                                   |
+| `SWPARE`                     | `DRVAL1`                               | swept depth; **guaranteed minimum**, σ_depth ≈ 0.1 m                            |
+| `SOUNDG`                     | 3D multipoint                          | spot depths; burn in with position-uncertainty disc                             |
+| `UWTROC`, `WRECKS`, `OBSTRN` | `VALSOU`, `WATLEV`, `EXPSOU`, `QUASOU` | point hazards → R-tree, buffered                                                |
+| `LNDARE`, `COALNE`, `SLCONS` | —                                      | depth −∞ (hard obstacles)                                                       |
+| `M_QUAL`                     | `CATZOC`, `POSACC`, `SOUACC`           | survey quality zones                                                            |
+| `M_COVR`                     | `CATCOV`                               | coverage; no coverage means _unverified_, not _safe_                            |
+| DSID / `M_SDAT`, `M_VDAT`    | sounding / vertical datum              | water-level reduction (§4.5)                                                    |
 
 **Coverage mosaic.** For every location, use the cell from the **largest-scale usage band**
 that covers it. Where bands overlap, the larger scale wins, and the smaller scale is used only
@@ -239,11 +240,11 @@ which is plenty). Each leaf cell stores the following.
 
 ```ts
 interface Cell {
-  dMin: number;      // conservative charted depth (m below chart datum), -Inf = land
-  sigmaD: number;    // 1σ depth uncertainty from CATZOC/SOUACC (m)
-  sigmaP: number;    // 1σ horizontal uncertainty of the source (m) from CATZOC/POSACC
-  flags: number;     // SWEPT | NO_COVERAGE | UNASSESSED | DREDGED | LIVECHART_ADJUSTED
-  cellRef: number;   // index into cells.json (edition provenance)
+  dMin: number; // conservative charted depth (m below chart datum), -Inf = land
+  sigmaD: number; // 1σ depth uncertainty from CATZOC/SOUACC (m)
+  sigmaP: number; // 1σ horizontal uncertainty of the source (m) from CATZOC/POSACC
+  flags: number; // SWEPT | NO_COVERAGE | UNASSESSED | DREDGED | LIVECHART_ADJUSTED
+  cellRef: number; // index into cells.json (edition provenance)
 }
 ```
 
@@ -259,6 +260,7 @@ lower bound from one lookup.
 geometry for explanations and for refinement near the threshold.
 
 **Query: `minDepthOver(polygon, zoomCap)`.**
+
 1. Start at the coarsest tiles that cover the polygon's bounding box.
 2. If the tile's bound already clears by a margin, stop. That part is safe.
 3. If the tile's bound is already hopeless, stop. That part fails, with the worst cell as
@@ -269,6 +271,7 @@ geometry for explanations and for refinement near the threshold.
 Expected cost is about 50 to 300 cell visits per look-ahead footprint.
 
 **Storage.**
+
 - One binary file per zoom level, with a varint-packed sparse quadkey index, memory-mapped.
   Memory stays flat on a Pi.
 - The same data is also exported as UKC tiles (§4.10).
@@ -282,14 +285,14 @@ The pyramid may be pessimistic but must never be optimistic.
 CATZOC accuracy table, from the S-57 specification (values to verify against the S-57
 Appendix A text during implementation):
 
-| CATZOC | Position (±) | Depth (±) |
-|---|---|---|
-| A1 | 5 m | 0.50 m + 1 % d |
-| A2 | 20 m | 1.00 m + 2 % d |
-| B | 50 m | 1.00 m + 2 % d |
-| C | 500 m | 2.00 m + 5 % d |
-| D | worse than C | worse than C → use 2× C |
-| U / none | unassessed | configurable, default 2× C |
+| CATZOC   | Position (±) | Depth (±)                  |
+| -------- | ------------ | -------------------------- |
+| A1       | 5 m          | 0.50 m + 1 % d             |
+| A2       | 20 m         | 1.00 m + 2 % d             |
+| B        | 50 m         | 1.00 m + 2 % d             |
+| C        | 500 m        | 2.00 m + 5 % d             |
+| D        | worse than C | worse than C → use 2× C    |
+| U / none | unassessed   | configurable, default 2× C |
 
 These are treated as ~95 % bounds, so σ ≈ value / 2.
 
@@ -305,12 +308,18 @@ Two overrides apply on top of the table:
 interface WaterLevelProvider {
   id: string;
   /** Height of water surface above the CHART DATUM of `cellRef` at `t`, with 1σ. */
-  levelAt(lon: number, lat: number, t: Date, cellRef: number): Promise<{ h: number; sigma: number; source: string }>;
+  levelAt(
+    lon: number,
+    lat: number,
+    t: Date,
+    cellRef: number
+  ): Promise<{ h: number; sigma: number; source: string }>;
   health(): { ok: boolean; lastUpdate?: Date; message?: string };
 }
 ```
 
 **Providers:**
+
 - **`manual`.** A constant offset, with σ set by the user.
 - **`signalk-tide`.** Reads `environment.tide.heightNow` and the forecast from whatever tide
   provider is installed. This is the right choice in tidal waters.
@@ -334,13 +343,13 @@ FMI series. **An unknown datum sets σ_wl = 0.5 m and flags the cell.**
 Read from Signal K where available (`design.draft.maximum`, `design.beam`, `design.length`),
 with plugin configuration overriding.
 
-| Term | Model | Notes |
-|---|---|---|
-| Static draft `T` | config / `design.draft.maximum` | plus load allowance |
-| Heel `Δh(φ)` | user curve: table of heel° → draft change | fin keel ≈ `T·(cos φ − 1)` (reduces draft); bilge/wing keels can *increase* it; use `navigation.attitude.roll` |
-| Squat `S` | Barrass, open water: `S = Cb·V²/100` (V in kn, S in m) | ×2 when the check is inside a narrow-channel geofence or `FAIRWAY` width < k·beam; σ = 30 % of S |
-| Wave allowance `W` | `c·Hs` | Hs from `environment.water.waves.significantHeight` or weather provider; c ≈ 0.3–0.5 (config), σ = 50 % of W |
-| Transducer offset | `environment.depth.transducerToKeel` | for the living chart |
+| Term               | Model                                                  | Notes                                                                                                          |
+| ------------------ | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| Static draft `T`   | config / `design.draft.maximum`                        | plus load allowance                                                                                            |
+| Heel `Δh(φ)`       | user curve: table of heel° → draft change              | fin keel ≈ `T·(cos φ − 1)` (reduces draft); bilge/wing keels can _increase_ it; use `navigation.attitude.roll` |
+| Squat `S`          | Barrass, open water: `S = Cb·V²/100` (V in kn, S in m) | ×2 when the check is inside a narrow-channel geofence or `FAIRWAY` width < k·beam; σ = 30 % of S               |
+| Wave allowance `W` | `c·Hs`                                                 | Hs from `environment.water.waves.significantHeight` or weather provider; c ≈ 0.3–0.5 (config), σ = 50 % of W   |
+| Transducer offset  | `environment.depth.transducerToKeel`                   | for the living chart                                                                                           |
 
 ### 4.7 Risk model (core math)
 
@@ -366,12 +375,12 @@ P   = Φ(−UKC / σ)                                            // P(UKC < 0)
 
 **Thresholds** (configurable, defaults chosen to be quiet in swept fairways):
 
-| State | Condition (within horizon) |
-|---|---|
-| `normal` | P < 1 % everywhere in the fan |
-| `alert` | P ≥ 1 % and TTS > 120 s |
-| `warn` | P ≥ 5 % and TTS ≤ 120 s, or `NO_COVERAGE` ahead |
-| `alarm` | P ≥ 20 % and TTS ≤ 60 s, or deterministic UKC < 0 at P50 within 30 s |
+| State    | Condition (within horizon)                                           |
+| -------- | -------------------------------------------------------------------- |
+| `normal` | P < 1 % everywhere in the fan                                        |
+| `alert`  | P ≥ 1 % and TTS > 120 s                                              |
+| `warn`   | P ≥ 5 % and TTS ≤ 120 s, or `NO_COVERAGE` ahead                      |
+| `alarm`  | P ≥ 20 % and TTS ≤ 60 s, or deterministic UKC < 0 at P50 within 30 s |
 
 **Hysteresis.** Raising a state needs 2 consecutive ticks. Lowering it needs 5 consecutive
 ticks below the threshold minus 20 %.
@@ -379,6 +388,7 @@ ticks below the threshold minus 20 %.
 ### 4.8 Look-ahead engine (1 Hz)
 
 **Inputs:**
+
 - `navigation.position` and `navigation.courseOverGroundTrue`
 - `navigation.speedOverGround` and `navigation.rateOfTurn`
 - `navigation.headingTrue` and `navigation.attitude`
@@ -420,11 +430,11 @@ TimeZero 5.4's "Ghost Ship" now fills.
 **Suppression rules.** None of these is ever silent; each publishes the reason it is
 suppressing.
 
-| Rule | Behaviour |
-|---|---|
-| SOG < 0.5 kn | Suppressed, unless already at P ≥ 20 % (drifting onto a rock). |
-| Mooring zones | User-drawn regions, for example the home berth. |
-| Acknowledged passages | §4.12. |
+| Rule                  | Behaviour                                                      |
+| --------------------- | -------------------------------------------------------------- |
+| SOG < 0.5 kn          | Suppressed, unless already at P ≥ 20 % (drifting onto a rock). |
+| Mooring zones         | User-drawn regions, for example the home berth.                |
+| Acknowledged passages | §4.12.                                                         |
 
 **Stale data.** If position is older than 10 s, the state becomes `UNKNOWN` and the plugin
 raises a `notifications.navigation.underKeel` alert with the message "UKC monitoring
@@ -447,18 +457,18 @@ Off by default. This is the only code path that touches the standard emergency a
 **Deltas.** These are published by the plugin, use plugin-scoped units in SI, and are
 proposed for the Signal K spec later.
 
-| Path | Unit | Meaning |
-|---|---|---|
-| `navigation.underKeel.state` | enum | `normal \| alert \| warn \| alarm \| unknown \| off` |
-| `navigation.underKeel.clearance` | m | predicted min UKC (μ) over horizon |
-| `navigation.underKeel.clearanceSigma` | m | σ of the above |
-| `navigation.underKeel.risk` | ratio | max P(UKC < 0) over horizon |
-| `navigation.underKeel.timeToShoal` | s | null if none in horizon |
-| `navigation.underKeel.escapeHeading` | rad | true heading, null when normal |
-| `navigation.underKeel.envelopeRev` | int | bump → client fetches `/envelope` |
-| `navigation.underKeel.waterLevel` | m | applied level above chart datum |
-| `notifications.navigation.underKeel` | notification | state + message + `data.explanation` |
-| `notifications.navigation.positionIntegrity` | notification | GNSS/DR divergence |
+| Path                                         | Unit         | Meaning                                              |
+| -------------------------------------------- | ------------ | ---------------------------------------------------- |
+| `navigation.underKeel.state`                 | enum         | `normal \| alert \| warn \| alarm \| unknown \| off` |
+| `navigation.underKeel.clearance`             | m            | predicted min UKC (μ) over horizon                   |
+| `navigation.underKeel.clearanceSigma`        | m            | σ of the above                                       |
+| `navigation.underKeel.risk`                  | ratio        | max P(UKC < 0) over horizon                          |
+| `navigation.underKeel.timeToShoal`           | s            | null if none in horizon                              |
+| `navigation.underKeel.escapeHeading`         | rad          | true heading, null when normal                       |
+| `navigation.underKeel.envelopeRev`           | int          | bump → client fetches `/envelope`                    |
+| `navigation.underKeel.waterLevel`            | m            | applied level above chart datum                      |
+| `notifications.navigation.underKeel`         | notification | state + message + `data.explanation`                 |
+| `notifications.navigation.positionIntegrity` | notification | GNSS/DR divergence                                   |
 
 This follows the "lightweight signal, then fetch the snapshot" pattern from the Plotter
 Extensions route API (`route.dirty` → `route.get`). Deltas stay small, and the GeoJSON is
@@ -466,19 +476,19 @@ pulled only on change.
 
 **REST, base `/plugins/signalk-underkeel/v1`:**
 
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/status` | index coverage, cell editions, water-level health, engine state |
-| GET | `/envelope?rev=` | look-ahead FeatureCollection (fan, footprints coloured by P, hazards, escape arrow) |
-| POST | `/route-check` | per-leg result (§4.11) |
-| POST | `/route-repair` | suggested geometry for failing legs |
-| POST | `/departure-window` | safe departure intervals over a horizon |
-| POST | `/query` | point or polygon UKC with explanation (cursor readout, popovers) |
-| GET | `/tiles/ukc/{z}/{x}/{y}.pbf` | vector tiles: cells classed by P at current water level and draft |
-| GET/PUT | `/vessel` | vessel model |
-| GET/POST/DELETE | `/acks` | acknowledged passages |
-| GET | `/livechart/discrepancies` | suspected shoals |
-| GET | `/livechart/csb.geojson` | IHO CSB export |
+| Method          | Path                         | Purpose                                                                             |
+| --------------- | ---------------------------- | ----------------------------------------------------------------------------------- |
+| GET             | `/status`                    | index coverage, cell editions, water-level health, engine state                     |
+| GET             | `/envelope?rev=`             | look-ahead FeatureCollection (fan, footprints coloured by P, hazards, escape arrow) |
+| POST            | `/route-check`               | per-leg result (§4.11)                                                              |
+| POST            | `/route-repair`              | suggested geometry for failing legs                                                 |
+| POST            | `/departure-window`          | safe departure intervals over a horizon                                             |
+| POST            | `/query`                     | point or polygon UKC with explanation (cursor readout, popovers)                    |
+| GET             | `/tiles/ukc/{z}/{x}/{y}.pbf` | vector tiles: cells classed by P at current water level and draft                   |
+| GET/PUT         | `/vessel`                    | vessel model                                                                        |
+| GET/POST/DELETE | `/acks`                      | acknowledged passages                                                               |
+| GET             | `/livechart/discrepancies`   | suspected shoals                                                                    |
+| GET             | `/livechart/csb.geojson`     | IHO CSB export                                                                      |
 
 All writes go through Signal K's normal authentication: the security strategy and an
 admin or readwrite token.
@@ -489,13 +499,19 @@ admin or readwrite token.
 
 ```jsonc
 {
-  "route": { "type": "LineString", "coordinates": [[22.1, 60.2], [22.2, 60.25]] },
-  "routeRef": "/resources/routes/<id>",   // optional alternative to geometry
-  "departure": "2026-10-18T07:00:00Z",    // optional; default now
-  "speed": { "default": 3.1 },            // m/s, or per-leg array
-  "xteLimit": 30,                          // m; default from course settings
-  "probability": 0.01,                     // accept threshold
-  "vessel": { "draft": 1.9 }               // optional override (e.g. lifting keel up)
+  "route": {
+    "type": "LineString",
+    "coordinates": [
+      [22.1, 60.2],
+      [22.2, 60.25]
+    ]
+  },
+  "routeRef": "/resources/routes/<id>", // optional alternative to geometry
+  "departure": "2026-10-18T07:00:00Z", // optional; default now
+  "speed": { "default": 3.1 }, // m/s, or per-leg array
+  "xteLimit": 30, // m; default from course settings
+  "probability": 0.01, // accept threshold
+  "vessel": { "draft": 1.9 } // optional override (e.g. lifting keel up)
 }
 ```
 
@@ -518,13 +534,30 @@ admin or readwrite token.
 
 ```jsonc
 {
-  "checkedAt": "…", "charts": [{ "cell": "FI5ABCDE", "edition": 12, "update": 3 }],
+  "checkedAt": "…",
+  "charts": [{ "cell": "FI5ABCDE", "edition": 12, "update": 3 }],
   "waterLevelSource": "fmi:composite",
   "legs": [
     { "index": 0, "status": "ok", "minUkc": 1.42, "sigma": 0.21, "risk": 0.0001 },
-    { "index": 1, "status": "fail", "minUkc": -0.3, "sigma": 0.55, "risk": 0.71,
-      "worst": { "position": [22.15, 60.22], "hazard": { "class": "UWTROC", "lnam": "…", "valsou": 1.6 } },
-      "explanation": { "charted": 1.6, "catzoc": "C", "waterLevel": -0.21, "draft": 1.9, "squat": 0.06, "wave": 0.12 } }
+    {
+      "index": 1,
+      "status": "fail",
+      "minUkc": -0.3,
+      "sigma": 0.55,
+      "risk": 0.71,
+      "worst": {
+        "position": [22.15, 60.22],
+        "hazard": { "class": "UWTROC", "lnam": "…", "valsou": 1.6 }
+      },
+      "explanation": {
+        "charted": 1.6,
+        "catzoc": "C",
+        "waterLevel": -0.21,
+        "draft": 1.9,
+        "squat": 0.06,
+        "wave": 0.12
+      }
+    }
   ]
 }
 ```
@@ -549,6 +582,7 @@ with high pressure and easterly winds; in tidal waters it becomes a full tide-ga
 ### 4.12 Acknowledged passages
 
 On acknowledge, Freeboard POSTs to `/acks` with:
+
 - the notification id;
 - the current footprint polygon;
 - the heading sector (±20°);
@@ -556,6 +590,7 @@ On acknowledge, Freeboard POSTs to `/acks` with:
 - an optional expiry.
 
 **Later warnings are suppressed when all of these hold:**
+
 - the footprint lies inside the acknowledged polygon;
 - the heading is inside the sector;
 - the current water level is at least `h_ack − 0.05`;
@@ -570,6 +605,7 @@ the chart and can be deleted there.
 ### 4.13 Living chart
 
 **Inputs.** Any of these, configured per source:
+
 - `environment.depth.belowTransducer`;
 - `environment.depth.belowSurface`;
 - the Wi-Fish sonar depth output.
@@ -595,7 +631,7 @@ the chart and can be deleted there.
 6. **Export.** Optional IHO CSB GeoJSON, with a vessel identifier and sensor metadata. The
    user decides whether to submit it; nothing is uploaded automatically.
 
-**Rule:** own soundings may make the chart *shallower*. They make it *deeper* only after the
+**Rule:** own soundings may make the chart _shallower_. They make it _deeper_ only after the
 user confirms, per cell group, in the UI. A faulty transducer must never be able to switch
 off a hazard.
 
@@ -617,12 +653,28 @@ The plugin also declares the **new `services` section** described in §5.1.
     "apiVersion": "1",
     "requires": [],
     "optional": ["overlays.data", "panels.iframe", "x-freeboard.services.navigationSafety"],
-    "panels": [{ "id": "settings", "title": "Under-Keel Settings", "type": "iframe",
-                 "url": "/plotterext/signalk-underkeel/settings.html", "lifecycle": "onOpen" }],
-    "overlays": [{ "id": "ukc", "title": "Under-keel risk", "type": "data", "band": "aboveCharts",
-                   "visible": false, "opacity": 0.6, "minZoom": 11,
-                   "configPanel": "settings",
-                   "style": "/plotterext/signalk-underkeel/ukc-style.json" }],
+    "panels": [
+      {
+        "id": "settings",
+        "title": "Under-Keel Settings",
+        "type": "iframe",
+        "url": "/plotterext/signalk-underkeel/settings.html",
+        "lifecycle": "onOpen"
+      }
+    ],
+    "overlays": [
+      {
+        "id": "ukc",
+        "title": "Under-keel risk",
+        "type": "data",
+        "band": "aboveCharts",
+        "visible": false,
+        "opacity": 0.6,
+        "minZoom": 11,
+        "configPanel": "settings",
+        "style": "/plotterext/signalk-underkeel/ukc-style.json"
+      }
+    ],
     "services": {
       "navigationSafety": {
         "apiVersion": "1",
@@ -651,7 +703,7 @@ native UX on top of it.
   allows.
 - **Then upstream.** It is proposed for extension API v2 once a second provider exists, for
   example an OpenCPN-derived checker or a commercial provider.
-- **What the host needs.** Freeboard depends on the *contract* only. Any plugin that
+- **What the host needs.** Freeboard depends on the _contract_ only. Any plugin that
   implements `/route-check` with the response schema in §4.11 lights up the same UI.
 - **Selecting a provider.** If several providers are present, the user picks one in
   Settings, with the first provider found as the default.
@@ -682,23 +734,24 @@ src/app/modules/map/ol/lib/navsafety/
 
 ### 5.3 Integration points in existing code
 
-| Existing file / area | Change |
-|---|---|
-| `alarms/notification-manager.ts` | add `notifications.navigation.underKeel` and `…positionIntegrity` beside `closestApproach`; route to new popover; ack → `POST /acks` |
-| `skstream/stream-api.ts` | subscribe `navigation.underKeel.*` when provider present |
-| `map/fb-map.component.*` | add envelope layer; layer order: envelope `aboveCharts` under resources; alarm hazard highlight above AIS, same band as collision alarm display; extend `fb-map.layer-order.spec.ts` |
-| `map/route-modify-leg.ts`, `route-extend.ts`, Modify flow | on geometry change → `route-check.service` (debounced 250 ms, abort previous); colour legs via `leg-style.ts` while editing |
-| `plotterext/route-methods.ts` | apply repair suggestion via the same path as `route.replace` (draft becomes dirty, user saves) |
-| `modules/course` (route following) | on route activation → full check at ETA; re-check when `waterLevel` forecast changes by > 5 cm |
-| `modules/autopilot` | in warn/alarm with escape heading → show one-tap "Dodge to 075°"; never auto-engage |
-| `settings/settings.facade.ts` | `safetyDepth` / `shallowDepth` / `deepDepth`: when a provider is present, offer "Use server vessel model", deriving S-57 colouring from draft + margin so colouring and alarms agree |
-| `modules/experiments` | gate the whole feature behind an experiment flag for 3.5.x |
-| `features/under-keel-awareness.md`, `features/changelog.json` | Feature Browser entry with screenshots, following repo conventions |
-| `package.json` `signalk.recommends` | add `signalk-underkeel` |
+| Existing file / area                                          | Change                                                                                                                                                                               |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `alarms/notification-manager.ts`                              | add `notifications.navigation.underKeel` and `…positionIntegrity` beside `closestApproach`; route to new popover; ack → `POST /acks`                                                 |
+| `skstream/stream-api.ts`                                      | subscribe `navigation.underKeel.*` when provider present                                                                                                                             |
+| `map/fb-map.component.*`                                      | add envelope layer; layer order: envelope `aboveCharts` under resources; alarm hazard highlight above AIS, same band as collision alarm display; extend `fb-map.layer-order.spec.ts` |
+| `map/route-modify-leg.ts`, `route-extend.ts`, Modify flow     | on geometry change → `route-check.service` (debounced 250 ms, abort previous); colour legs via `leg-style.ts` while editing                                                          |
+| `plotterext/route-methods.ts`                                 | apply repair suggestion via the same path as `route.replace` (draft becomes dirty, user saves)                                                                                       |
+| `modules/course` (route following)                            | on route activation → full check at ETA; re-check when `waterLevel` forecast changes by > 5 cm                                                                                       |
+| `modules/autopilot`                                           | in warn/alarm with escape heading → show one-tap "Dodge to 075°"; never auto-engage                                                                                                  |
+| `settings/settings.facade.ts`                                 | `safetyDepth` / `shallowDepth` / `deepDepth`: when a provider is present, offer "Use server vessel model", deriving S-57 colouring from draft + margin so colouring and alarms agree |
+| `modules/experiments`                                         | gate the whole feature behind an experiment flag for 3.5.x                                                                                                                           |
+| `features/under-keel-awareness.md`, `features/changelog.json` | Feature Browser entry with screenshots, following repo conventions                                                                                                                   |
+| `package.json` `signalk.recommends`                           | add `signalk-underkeel`                                                                                                                                                              |
 
 ### 5.4 UX specification
 
 **Envelope layer.**
+
 - The predicted fan is shown as thin translucent lines.
 - Footprints are coloured green, amber or red by P.
 - The worst hazard pulses.
@@ -710,14 +763,16 @@ src/app/modules/map/ol/lib/navsafety/
 `TTS 84 s`.
 
 **Alarm popover.**
+
 1. A headline, for example "Shoal ahead in 84 s".
 2. The breakdown sentence (§2.1), with a horizontal stacked bar showing which term dominates.
 3. Buttons: **Acknowledge passage**, **Dodge to 075°** (only if an autopilot is present),
    **Show on chart**.
 
 **Route editor.**
+
 - Legs are coloured live while dragging: green, amber, red, and a grey-hatched style for
-  *unverified*.
+  _unverified_.
 - Tapping a red leg opens the hazard with its explanation.
 - The **Suggest fix** button shows the repair as a dashed ghost route, with Accept and
   Dismiss.
@@ -736,32 +791,33 @@ palette.
 
 ### 5.5 Failure presentation, so it is never silently off
 
-| Condition | Freeboard shows |
-|---|---|
-| No provider installed | one-time hint in Settings → Navigation with install link |
+| Condition                                   | Freeboard shows                                                                                    |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| No provider installed                       | one-time hint in Settings → Navigation with install link                                           |
 | Provider present, `state: off` or `unknown` | grey "UKC monitoring off: <reason>" chip in status bar, always visible while underway (SOG > 1 kn) |
-| Envelope fetch fails 3× | chip turns amber "UKC data stale" |
-| Route check unavailable | legs uncoloured + banner "Not checked", never green |
+| Envelope fetch fails 3×                     | chip turns amber "UKC data stale"                                                                  |
+| Route check unavailable                     | legs uncoloured + banner "Not checked", never green                                                |
 
 ---
 
 ## 6. Performance budgets
 
-| Operation | Budget (Pi 4) | Notes |
-|---|---|---|
-| Look-ahead tick | < 20 ms | 5 members × ~40 footprints; pyramid culling |
-| Envelope payload | < 15 kB | quantised coordinates, only on `rev` change |
-| Route check, 30 legs | < 300 ms | parallel legs in worker |
-| Interactive leg re-check | < 80 ms p95 | only the edited legs; abort on new input |
-| Repair, one leg | < 1.5 s | bounded window |
-| Index build, full Finnish coast | < 15 min, one-time | worker thread; incremental on ENC updates |
-| Index RAM | < 150 MB | mmap'd pyramid levels |
+| Operation                       | Budget (Pi 4)      | Notes                                       |
+| ------------------------------- | ------------------ | ------------------------------------------- |
+| Look-ahead tick                 | < 20 ms            | 5 members × ~40 footprints; pyramid culling |
+| Envelope payload                | < 15 kB            | quantised coordinates, only on `rev` change |
+| Route check, 30 legs            | < 300 ms           | parallel legs in worker                     |
+| Interactive leg re-check        | < 80 ms p95        | only the edited legs; abort on new input    |
+| Repair, one leg                 | < 1.5 s            | bounded window                              |
+| Index build, full Finnish coast | < 15 min, one-time | worker thread; incremental on ENC updates   |
+| Index RAM                       | < 150 MB           | mmap'd pyramid levels                       |
 
 ---
 
 ## 7. Testing and validation
 
-**Unit and property tests (vitest + fast-check).**
+**Unit and property tests (plugin: Jest + fast-check; Freeboard: vitest, per its repo).**
+
 - Pyramid conservativeness invariant (§4.3).
 - Monotonicity checks: deeper draft never lowers P; a lower water level never lowers P;
   a larger σ_pos never lowers P.
@@ -769,12 +825,14 @@ palette.
 - Datum reduction tables.
 
 **Synthetic ENC fixtures.** Generated cells covering these cases:
+
 - a rock inside a swept fairway (must alarm);
 - a CATZOC C bank;
 - a coverage gap;
 - overlapping usage bands.
 
 **Replay.**
+
 - Recorded Signal K delta logs from Arabella's passages are replayed through the plugin at
   10× speed, and the alarms are compared against annotated known shoals.
 - Golden files of alarm timelines.
@@ -799,21 +857,22 @@ alarms but raises no notifications. Promote to active alerts after the false-pos
 
 ## 8. Milestones
 
-| M | Scope | Exit criteria |
-|---|---|---|
-| **M0 Spike** (1–2 wk) | ingest one Finnish ENC cell via GDAL container; build pyramid; benchmark queries; confirm FMI stored queries + datum mapping | query < 1 ms per footprint on Pi 4; datum table documented |
-| **M1 Deterministic MVP** | plugin: straight-line cone, deterministic UKC (draft + fixed margin), `notifications.navigation.underKeel`, `/status`, `/envelope`; Freeboard: notification path, envelope layer, status chip, behind Experiments | replay passes zero-miss on fixtures |
-| **M2 Route check** | corridor check, `/route-check`, Freeboard leg colouring live in editor, route-activation check | interactive p95 < 80 ms |
-| **M3 Probabilistic** | CATZOC/SWPARE σ, water level (manual/tide/FMI), squat/heel/wave, explanation object + popover breakdown, UKC heat data overlay | explanation renders for every alarm; monotonicity tests green |
-| **M4 Dynamics** | CTRV fan, TTS, escape fan + dodge action, integrity monitor, hysteresis, acknowledged passages | false positives < 1/h in swept fairways on replay |
-| **M5 Living chart + planning** | soundings ingest (incl. Wi-Fish), posterior, suspected-shoal notes, CSB export, `/route-repair`, `/departure-window` | discrepancy detected on synthetic shoal after 2 passes |
-| **M6 Upstream** | propose `navigation.underKeel.*` + notification to Signal K spec; propose `services` section for Plotter Extensions API v2; publish schema package | RFCs opened; second provider prototype (even a stub) passes contract tests |
+| M                              | Scope                                                                                                                                                                                                             | Exit criteria                                                              |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| **M0 Spike** (1–2 wk)          | ingest one Finnish ENC cell via GDAL container; build pyramid; benchmark queries; confirm FMI stored queries + datum mapping                                                                                      | query < 1 ms per footprint on Pi 4; datum table documented                 |
+| **M1 Deterministic MVP**       | plugin: straight-line cone, deterministic UKC (draft + fixed margin), `notifications.navigation.underKeel`, `/status`, `/envelope`; Freeboard: notification path, envelope layer, status chip, behind Experiments | replay passes zero-miss on fixtures                                        |
+| **M2 Route check**             | corridor check, `/route-check`, Freeboard leg colouring live in editor, route-activation check                                                                                                                    | interactive p95 < 80 ms                                                    |
+| **M3 Probabilistic**           | CATZOC/SWPARE σ, water level (manual/tide/FMI), squat/heel/wave, explanation object + popover breakdown, UKC heat data overlay                                                                                    | explanation renders for every alarm; monotonicity tests green              |
+| **M4 Dynamics**                | CTRV fan, TTS, escape fan + dodge action, integrity monitor, hysteresis, acknowledged passages                                                                                                                    | false positives < 1/h in swept fairways on replay                          |
+| **M5 Living chart + planning** | soundings ingest (incl. Wi-Fish), posterior, suspected-shoal notes, CSB export, `/route-repair`, `/departure-window`                                                                                              | discrepancy detected on synthetic shoal after 2 passes                     |
+| **M6 Upstream**                | propose `navigation.underKeel.*` + notification to Signal K spec; propose `services` section for Plotter Extensions API v2; publish schema package                                                                | RFCs opened; second provider prototype (even a stub) passes contract tests |
 
 ---
 
 ## 9. Safety, liability and data licensing
 
 **Advisory only.** Show "Not for navigation; does not replace official charts" in:
+
 - the plugin's About text;
 - the Settings section;
 - the first-run hint.
@@ -835,6 +894,7 @@ when a check was made against out-of-date cells.
 
 **CRA angle.** Under the EU Cyber Resilience Act this is a product with digital elements once
 it is distributed. Needed from the start:
+
 - an SBOM;
 - a vulnerability disclosure contact;
 - signed releases;
@@ -866,11 +926,11 @@ it is distributed. Needed from the start:
 **Plugin**
 
 - [ ] `signalk-underkeel`: scaffold the plugin and JSON-schema config. `/status` returns the
-  engine state `off`.
+      engine state `off`.
 - [ ] GDAL container job: `.000` → FlatGeobuf, with `cells.json` provenance.
 - [ ] `pyramid.ts`: build and query, with the fast-check conservativeness property test.
 - [ ] `lookahead.ts`: a straight cone with a deterministic margin; publish the
-  `navigation.underKeel.*` deltas and the notification.
+      `navigation.underKeel.*` deltas and the notification.
 - [ ] `/envelope` GeoJSON, plus the `envelopeRev` delta.
 - [ ] `plotterExtensions` manifest with the `services.navigationSafety` stub.
 

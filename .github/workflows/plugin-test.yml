@@ -1,0 +1,123 @@
+# ─────────────────────────────────────────────────────────────
+# SignalK Plugin CI
+#
+# Drop this file into your plugin repo at:
+#   .github/workflows/signalk-ci.yml
+#
+# It calls the shared SignalK workflow which tests your plugin
+# across Linux, macOS, and Windows (Node 22 + 24). The Signal K
+# integration test is enabled on the auto-run job too, so every push
+# and PR exercises that matrix.
+#
+# armv7/Cerbo GX is NOT part of the automatic run. It executes under
+# QEMU emulation and took ~13 minutes, which set the floor for how long
+# every push took to go green — long after the rest of the matrix had
+# finished. Run it on demand instead: Actions → SignalK Plugin CI → Run
+# workflow → tick "Run armv7 (Cerbo GX) tests via QEMU". Worth doing
+# before a release, or when touching anything architecture-sensitive
+# (native deps, Buffer/endianness, timing).
+#
+# node-versions must be a JSON array — '["22","24"]', not '22, 24'.
+# A bare list collapses to a single matrix leg named "Node 22, 24"
+# that fails in the Node setup step.
+#
+# On push/PR it runs with sensible defaults.
+# You can also trigger it manually from the GitHub Actions UI
+# with custom settings (Node versions, armv7, integration tests).
+#
+# This file has a second reader: the Signal K Plugin Registry, whose
+# harness parses the `build-command` / `test-command` declared below and
+# runs them against a shallow clone of this repo to score the App Store
+# "Plugin test suite" indicator. That run is stricter than GitHub CI —
+# `firejail --net=none` (loopback only, no DNS, no registry), a 120 s cap
+# on the test command, 300 s on the build — and it exports
+# SIGNALK_REGISTRY_TEST=1 so tests can opt out of what the sandbox cannot
+# provide. Keep `npm run test` hermetic and under the cap, or the plugin
+# loses 30 points (no +25 "tested", −5 "tests-failing").
+# ─────────────────────────────────────────────────────────────
+
+name: SignalK Plugin CI
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+    branches:
+      - "**"
+  workflow_dispatch:
+    inputs:
+      test-command:
+        description: Command to run tests
+        required: false
+        default: npm run test
+        type: string
+      build-command:
+        description: Command to build the plugin
+        required: false
+        default: npm run build --if-present
+        type: string
+      format-check-command:
+        description: "Blocking format check"
+        required: false
+        default: npm run format:check
+        type: string
+      # Left empty on purpose: this input REPLACES the test run, and ci.yml
+      # already runs `npm run test:coverage` against the configured
+      # coverageThreshold. Setting it here would duplicate that enforcement
+      # while making every matrix leg slower.
+      coverage-command:
+        description: "Coverage command (replaces the test run); normally empty, ci.yml gates coverage"
+        required: false
+        default: ""
+        type: string
+      node-versions:
+        description: 'JSON array of Node versions, example: ["22","24"]'
+        required: false
+        default: '["22","24"]'
+        type: string
+      enable-armv7:
+        description: Run armv7 (Cerbo GX) tests via QEMU (slow, ~13 min)
+        required: false
+        default: false
+        type: boolean
+      enable-signalk-integration:
+        description: Start SignalK server and install plugin for integration testing
+        required: false
+        default: true
+        type: boolean
+      signalk-server-versions:
+        description: 'JSON array of signalk-server versions for integration testing, e.g. ["2.23.0","latest"]'
+        required: false
+        default: '["latest"]'
+        type: string
+
+jobs:
+  # ── Automatic runs (push / pull request) ──────────────────
+  test-plugin-auto:
+    if: ${{ github.event_name != 'workflow_dispatch' }}
+    uses: SignalK/signalk-server/.github/workflows/plugin-ci.yml@master
+    with:
+      test-command: npm run test
+      build-command: npm run build --if-present
+      format-check-command: npm run format:check
+      node-versions: '["22","24"]'
+      # Off by default — see the header note. Enable per-run via
+      # workflow_dispatch when architecture coverage actually matters.
+      enable-armv7: false
+      enable-signalk-integration: true
+      signalk-server-versions: '["latest"]'
+
+  # ── Manual runs (workflow_dispatch with custom inputs) ────
+  test-plugin-manual:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    uses: SignalK/signalk-server/.github/workflows/plugin-ci.yml@master
+    with:
+      test-command: ${{ inputs.test-command }}
+      build-command: ${{ inputs.build-command }}
+      format-check-command: ${{ inputs.format-check-command }}
+      coverage-command: ${{ inputs.coverage-command }}
+      node-versions: ${{ inputs.node-versions }}
+      enable-armv7: ${{ inputs.enable-armv7 }}
+      enable-signalk-integration: ${{ inputs.enable-signalk-integration }}
+      signalk-server-versions: ${{ inputs.signalk-server-versions }}

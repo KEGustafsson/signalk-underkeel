@@ -1,0 +1,10 @@
+{
+  "//": "ts-jest config for the test run. Transpile-only via isolatedModules; type-checking is the separate `check:ts` gate.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "isolatedModules": true
+  },
+  "include": ["src/**/*.ts", "__tests__/**/*.ts"],
+  "exclude": ["node_modules", "public", "lib"]
+}

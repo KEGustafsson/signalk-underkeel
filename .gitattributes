@@ -1,0 +1,15 @@
+# .prettierrc.js sets endOfLine: "lf", so LF is the canonical form for every
+# text file here. Without this file Git applies its per-platform default on
+# checkout: the Windows CI runner materialises CRLF, every file then disagrees
+# with the configured line ending, and `npm run format:check` fails with ~393
+# files needing formatting. That is exactly what the Windows leg hit when the
+# format check was first wired into plugin-test.yml.
+#
+# Normalising here rather than relaxing endOfLine to "auto" keeps one canonical
+# form in the repository, so a Windows contributor cannot commit CRLF that a
+# Linux reviewer then sees as a whole-file diff.
+* text=auto eol=lf
+
+# Binary assets — never translate line endings in these.
+*.png binary
+*.jpg binary

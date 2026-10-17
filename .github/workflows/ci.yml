@@ -1,0 +1,145 @@
+name: CI
+
+# Gates every push and PR on type-check, lint, tests, coverage, build and
+# release truth, so merges are blocked automatically rather than by hand.
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+  pull_request:
+    branches:
+      - main
+      - dev
+  # Weekly blocking dependency audit (see the audit-blocking job). A scheduled
+  # gate catches newly-published advisories in existing dependencies without
+  # letting registry/network flakiness block day-to-day PR merges.
+  schedule:
+    - cron: "0 6 * * 1"
+
+# Cancel superseded runs for the same ref so rapid pushes don't pile up
+# redundant CI. The scheduled audit uses a distinct group key so it is never
+# cancelled by branch activity.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'schedule' && 'schedule' || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Matrix starts at the supported floor (package.json engines: >=20.9).
+        # 24 (current) is included for forward coverage.
+        node-version: [20, 22, 24]
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          # CI only reads — don't leave the GITHUB_TOKEN in .git/config
+          # during the job.
+          persist-credentials: false
+
+      - name: Check for package-lock.json
+        id: lockfile
+        shell: bash
+        run: |
+          if [ -f package-lock.json ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: ${{ steps.lockfile.outputs.exists == 'true' && 'npm' || '' }}
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          if [ "${{ steps.lockfile.outputs.exists }}" = "true" ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      # Single required gate: type-check + lint + full test suite.
+      # Tests run against src/ via ts-jest (no stale lib/ artifact).
+      - name: Verify (check:ts + lint + test)
+        run: npm run verify
+
+      # Enforce the coverageThreshold configured in package.json. Gated on a
+      # single Node version so coverage runs once per workflow, not 3x.
+      - name: Coverage gate
+        if: matrix.node-version == 22
+        run: npm run test:coverage
+
+      - name: Build
+        run: npm run build
+
+      - name: Release documentation and package truth
+        run: npm run check:release-docs
+
+  # REPORTING ONLY — this job never gates a merge, hence continue-on-error at
+  # the job level. The real gates are the npm-audit test in the main suite
+  # (runtime deps, per PR) and the weekly `audit-blocking` job. This job adds
+  # visibility for the DEV tree, whose advisories must not block a merge.
+  audit:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci
+
+      # continue-on-error keeps the full-tree step below reachable — `npm
+      # audit` exits non-zero on ANY advisory.
+      - name: Audit runtime dependencies (informational)
+        continue-on-error: true
+        run: npm audit --omit=dev
+
+      - name: Audit full dependency tree (informational)
+        continue-on-error: true
+        run: npm audit
+
+  # Blocking dependency audit, runs ONLY on the weekly schedule. Fails the run
+  # on any high/critical advisory in the production dependency tree.
+  audit-blocking:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Audit production dependencies (high/critical, blocking)
+        run: npm audit --omit=dev --audit-level=high

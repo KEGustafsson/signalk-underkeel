@@ -1,0 +1,17 @@
+# Dependencies
+node_modules/
+
+# Build output
+lib/
+public/
+dist/
+coverage/
+
+# Config files
+package-lock.json
+
+# Chart and replay fixtures are binary or generated verbatim
+fixtures/
+
+# Logs
+*.log

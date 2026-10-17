@@ -1,0 +1,45 @@
+# package.json "files" whitelists what ships; this file is defense-in-depth.
+
+# Source files (compiled output in lib/ is published instead)
+src/
+scripts/
+.claude/
+
+# Git files
+.git/
+.gitignore
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Build artifacts
+dist/
+build/
+coverage/
+
+# Testing
+test/
+tests/
+__tests__/
+fixtures/
+*.test.js
+*.spec.js
+
+# Linting
+.eslintrc*
+.prettierrc*
+
+# Environment files
+.env
+.env.*
