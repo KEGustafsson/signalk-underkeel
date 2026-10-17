@@ -14,6 +14,10 @@ updates:
       # engines, matching signalk-server). Raise it together with engines.
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
+      # @typescript-eslint 8.x accepts typescript >=4.8.4 <6.1.0. Drop this
+      # once a typescript-eslint release widens that peer range.
+      - dependency-name: "typescript"
+        versions: [">=6.1.0"]
   # Keep SHA-pinned GitHub Actions (see .github/workflows/) up to date.
   - package-ecosystem: "github-actions"
     directory: "/"
