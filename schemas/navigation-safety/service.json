@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "service.json",
+  "title": "Plotter Extensions services.navigationSafety section",
+  "type": "object",
+  "required": ["apiVersion", "base", "provides", "statePath", "notificationPath"],
+  "properties": {
+    "apiVersion": { "const": "1" },
+    "base": { "type": "string", "pattern": "^/" },
+    "provides": {
+      "type": "array",
+      "items": {
+        "enum": ["lookahead", "routeCheck", "routeRepair", "departureWindow", "query", "acks"]
+      }
+    },
+    "statePath": { "type": "string" },
+    "notificationPath": { "type": "string" }
+  }
+}

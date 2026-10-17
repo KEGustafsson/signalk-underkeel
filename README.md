@@ -87,6 +87,10 @@ experimental `navigationSafety` service.
 - [Development plan](docs/DEVELOPMENT-PLAN.md): architecture, risk model, APIs, Freeboard
   integration and milestones.
 - [Release checklist](docs/release-checklist.md): commands to run before publishing.
+- [Navigation-safety schemas](schemas/navigation-safety/README.md): JSON Schemas of the
+  provider-neutral contract, checked by `__tests__/contract/`.
+- RFC drafts: [`navigation.underKeel.*` paths](docs/rfcs/signalk-navigation-underkeel.md) and
+  [Plotter Extensions `services`](docs/rfcs/plotter-extensions-services.md).
 
 ## Development
 

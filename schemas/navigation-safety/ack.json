@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ack.json",
+  "title": "An acknowledged passage (plan §4.12), as returned by POST and GET /acks",
+  "type": "object",
+  "required": ["id", "created", "polygon", "heading", "sector", "waterLevel", "draft"],
+  "properties": {
+    "id": { "type": "string" },
+    "created": { "$ref": "defs.json#/$defs/isoTime" },
+    "expires": { "$ref": "defs.json#/$defs/isoTime" },
+    "polygon": { "type": "array", "items": { "$ref": "defs.json#/$defs/lonLat" }, "minItems": 3 },
+    "heading": { "type": "number" },
+    "sector": { "type": "number", "exclusiveMinimum": 0 },
+    "notificationId": { "type": "string" },
+    "waterLevel": { "type": "number" },
+    "draft": { "type": "number", "exclusiveMinimum": 0 }
+  }
+}

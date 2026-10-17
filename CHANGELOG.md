@@ -6,6 +6,9 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Added
 
+- Contract (M6): JSON Schemas of the navigation-safety contract in `schemas/navigation-safety/`,
+  contract tests for this plugin and a stub second provider, and RFC drafts for the Signal K
+  paths and the Plotter Extensions `services` section.
 - Route repair and departure window (M5): `POST /route-repair` suggests waypoints around
   failing legs (Theta\* on a lazy cost grid, simplified only where legs still pass);
   `POST /departure-window` returns the departures over the horizon in which every leg is ok.

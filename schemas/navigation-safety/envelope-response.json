@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "envelope-response.json",
+  "title": "GET /envelope response: the look-ahead as GeoJSON, versioned by rev",
+  "type": "object",
+  "required": ["rev", "envelope"],
+  "properties": {
+    "rev": { "type": "integer", "minimum": 0 },
+    "envelope": {
+      "type": "object",
+      "required": ["type", "features"],
+      "properties": {
+        "type": { "const": "FeatureCollection" },
+        "features": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["type", "geometry", "properties"],
+            "properties": {
+              "type": { "const": "Feature" },
+              "geometry": {
+                "type": "object",
+                "required": ["type", "coordinates"],
+                "properties": { "type": { "enum": ["Point", "LineString", "Polygon"] } }
+              },
+              "properties": {
+                "type": "object",
+                "required": ["kind"],
+                "properties": {
+                  "kind": { "enum": ["track", "segment", "worst"] },
+                  "class": { "$ref": "defs.json#/$defs/class" },
+                  "explanation": { "$ref": "defs.json#/$defs/explanation" }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
