@@ -9,6 +9,9 @@ All notable changes to signalk-underkeel are documented here.
 - Dynamics (M4): CTRV fan of five members scored as one hull per step, GNSS-based position
   σ, along-track footprint growth, escape heading (`navigation.underKeel.escapeHeading`) and
   state hysteresis.
+- Position integrity (M4): dead reckoning from heading, speed through water and a learned
+  current against GNSS; divergence, a poor fix or HDOP above 4 inflate σ_pos and raise
+  `notifications.navigation.positionIntegrity`.
 - Probabilistic UKC (M3): P(UKC < 0) per footprint from CATZOC σ, draft, Barrass squat, heel,
   wave allowance and water level; risk thresholds for alert / warn / alarm; an explanation
   object on every notification and route-check leg; `clearanceSigma` and `risk` deltas.

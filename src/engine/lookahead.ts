@@ -47,6 +47,10 @@ export interface NavState {
   rot?: Sample<number>;
   /** GNSS horizontal dilution of precision. */
   hdop?: Sample<number>;
+  /** Speed through water, m/s, for the integrity check. */
+  stw?: Sample<number>;
+  /** `navigation.gnss.methodQuality`, for the integrity check. */
+  methodQuality?: Sample<string>;
   /** Roll, radians. */
   roll?: Sample<number>;
   /** Significant wave height, metres. */

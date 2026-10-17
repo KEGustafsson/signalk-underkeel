@@ -27,7 +27,8 @@ function monitorSection(m: Monitor): Record<string, unknown> {
       envelopeRev: m.envelope.rev
     },
     vessel: m.vesselNotes,
-    waterLevel: m.waterLevelStatus()
+    waterLevel: m.waterLevelStatus(),
+    integrity: m.integrityResult ?? null
   };
 }
 

@@ -17,7 +17,10 @@ publishes:
   `.risk` (highest P(UKC < 0) over the horizon), `.timeToShoal`, `.escapeHeading` (the
   heading with the longest time to shoal, when not `normal`), `.envelopeRev` and
   `.waterLevel` (the level applied above chart datum);
-- `notifications.navigation.underKeel`, with an explanation of every term behind the result.
+- `notifications.navigation.underKeel`, with an explanation of every term behind the result;
+- `notifications.navigation.positionIntegrity` (`warn`) when GNSS leaves dead reckoning from
+  heading and speed through water, the fix is not a satellite fix, or HDOP exceeds 4. The
+  position uncertainty then widens every footprint.
 
 Stale position, a missing draft or index, no chart coverage or a fallback water level never
 produce `normal`.

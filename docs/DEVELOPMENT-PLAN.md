@@ -482,6 +482,13 @@ suppressing.
 - The escape fan uses the maximum turn rate (default 3°/s) and stops at the first heading,
   smallest change first, that stays clear over the whole horizon. The monitor searches it at
   most every 3 s and holds the heading in between.
+- Integrity: dead reckoning runs on each fix's own timestamp, so a GNSS feed slower than the
+  1 Hz tick is not read as divergence. σ_DR = √(σ_anchor² + σ_GNSS² + (0.2 m/s · run)²);
+  a consistent run re-anchors every 60 s; a diverged one is not re-anchored, and clears
+  only when the growing σ_DR covers the offset. The current is learned with a 120 s low-pass
+  while |ROT| < 0.01 rad/s. A fix whose `methodQuality` is not a satellite fix sets
+  σ_pos ≥ 50 m. Without speed through water the check reports itself unavailable in the
+  notification and in `/status`.
 - Hysteresis applies between `normal`, `alert`, `warn` and `alarm`. `unknown` and `off` pass
   through at once, so stale input is never held as an earlier state.
 - Measured on the synthetic archipelago at leaf z20 (`npm run bench`, x86, plain Node):

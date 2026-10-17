@@ -347,6 +347,41 @@ describe("plugin lifecycle", () => {
     await flush();
   });
 
+  test("a GNSS jump raises notifications.navigation.positionIntegrity and widens the buffer", () => {
+    const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 1.5 } } });
+    const clock = fakeClock(T0);
+    const plugin = underkeel(f.app, clock);
+    plugin.start({ cellsDir: FIXTURES, leafZoom: 18 }, () => undefined);
+    const integrity = () =>
+      lastValue(f.deltas, "notifications.navigation.positionIntegrity") as {
+        state: string;
+        message: string;
+        data: { sigmaPos: number };
+      };
+    const step = (t: number, north: number) => {
+      const at = T0 + t * 1000;
+      const lon = 22.005 + (3 * t) / M_PER_DEG_LON;
+      const d = navDelta(lon, 60.015 + north / 111320, 3, at);
+      d.updates[0]?.values.push({ path: "navigation.speedThroughWater" as never, value: 3 });
+      f.send(d);
+      clock.advance(at - clock.now());
+    };
+    for (let t = 1; t <= 10; t++) {
+      step(t, 0);
+    }
+    expect(integrity()).toMatchObject({
+      state: "normal",
+      message: "Position integrity: GNSS agrees with dead reckoning"
+    });
+    step(11, 400);
+    expect(integrity().state).toBe("warn");
+    expect(integrity().message).toMatch(
+      /^Position integrity degraded: GNSS and dead reckoning differ by 4\d\d m$/
+    );
+    expect(integrity().data.sigmaPos).toBeGreaterThan(390);
+    plugin.stop();
+  });
+
   test("POST /v1/route-check answers with per-leg results", async () => {
     const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 3.6 } } });
     const plugin = underkeel(f.app, fakeClock(T0));

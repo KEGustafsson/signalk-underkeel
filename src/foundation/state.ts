@@ -11,7 +11,8 @@ export const PATHS = {
   escapeHeading: "navigation.underKeel.escapeHeading",
   envelopeRev: "navigation.underKeel.envelopeRev",
   waterLevel: "navigation.underKeel.waterLevel",
-  notification: "notifications.navigation.underKeel"
+  notification: "notifications.navigation.underKeel",
+  positionIntegrity: "notifications.navigation.positionIntegrity"
 } as const;
 
 export interface EngineStatus {
