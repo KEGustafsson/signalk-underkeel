@@ -11,6 +11,7 @@ import {
 import type { Geom } from "../foundation/geometry";
 import { geomBounds, geomRectDistance } from "../foundation/geometry";
 import type { NodeStore, NodeValues } from "./node-store";
+import { probabilityBelowZero } from "../foundation/stats";
 import { combine, EMPTY, FLAGS, NO_DATA } from "./node-store";
 
 /**
@@ -18,6 +19,12 @@ import { combine, EMPTY, FLAGS, NO_DATA } from "./node-store";
  * footprint, widened by a ground buffer, can reach. Uniform tiles answer
  * exactly; split tiles are descended until the footprint is resolved.
  */
+
+/** The tile with the highest P(UKC < 0) and the values that gave it. */
+export interface RiskTile extends NodeValues {
+  risk: number;
+  center: LonLat;
+}
 
 export interface DepthResult extends NodeValues {
   /**
@@ -33,6 +40,9 @@ export interface DepthResult extends NodeValues {
   worst?: { z: number; x: number; y: number; center: LonLat };
   /** Tiles examined, for the performance budget. */
   visits: number;
+  /** With `risk` set: the highest per-tile P(UKC < 0) over charted tiles, else 0. */
+  maxRisk: number;
+  riskTile?: RiskTile;
 }
 
 export interface QueryOptions {
@@ -44,6 +54,12 @@ export interface QueryOptions {
    * returned as is, so the answer stays conservative.
    */
   clearAbove?: number;
+  /**
+   * Also compute P(UKC < 0) per charted tile: UKC ~ N(dMin − threshold,
+   * sigmaD² + sigmaExtra²). The footprint's risk is the highest tile's,
+   * so a wider footprint or buffer can only add tiles and never lower it.
+   */
+  risk?: { threshold: number; sigmaExtra: number };
 }
 
 /** A footprint ring in WGS84, as a Mercator polygon. */
@@ -65,6 +81,9 @@ interface Walk {
   cells: Set<number>;
   worst?: { z: number; x: number; y: number };
   visits: number;
+  risk?: { threshold: number; sigmaExtra: number };
+  maxRisk: number;
+  riskTile?: { v: NodeValues; z: number; x: number; y: number; risk: number };
 }
 
 function take(w: Walk, v: NodeValues, z: number, x: number, y: number): void {
@@ -78,6 +97,14 @@ function take(w: Walk, v: NodeValues, z: number, x: number, y: number): void {
   if (v.cellRef >= 0) {
     w.cells.add(v.cellRef);
   }
+  if (w.risk && (v.flags & FLAGS.NO_DEPTH) === 0) {
+    const sigma = Math.hypot(v.sigmaD, w.risk.sigmaExtra);
+    const risk = probabilityBelowZero(v.dMin - w.risk.threshold, sigma);
+    if (w.riskTile === undefined || risk > w.riskTile.risk) {
+      w.riskTile = { v, z, x, y, risk };
+      w.maxRisk = risk;
+    }
+  }
 }
 
 /**
@@ -86,6 +113,27 @@ function take(w: Walk, v: NodeValues, z: number, x: number, y: number): void {
  * the footprint itself may not touch. Such tiles are always descended.
  */
 const PRECISE_FLAGS = FLAGS.NO_COVERAGE | FLAGS.UNASSESSED | FLAGS.NO_DEPTH;
+
+/** Below this, a split tile's risk bound is negligible and its children need not be visited. */
+export const RISK_STOP_BELOW = 1e-4;
+
+/**
+ * Whether a split tile may answer for its children. Its bound must clear
+ * `clearAbove` and carry no coverage or assessment flags; with risk on,
+ * the tile's own P bound (shallowest depth, widest σ) must also be below
+ * RISK_STOP_BELOW, so stopping can overstate a footprint's P by at most
+ * that much and never understate it.
+ */
+function canStop(w: Walk, v: NodeValues): boolean {
+  if (v.dMin < w.clearAbove || (v.flags & PRECISE_FLAGS) !== 0) {
+    return false;
+  }
+  if (!w.risk) {
+    return true;
+  }
+  const sigma = Math.hypot(v.sigmaD, w.risk.sigmaExtra);
+  return probabilityBelowZero(v.dMin - w.risk.threshold, sigma) < RISK_STOP_BELOW;
+}
 
 function visit(w: Walk, z: number, x: number, y: number): void {
   const rect = tileRect(z, x, y);
@@ -99,7 +147,7 @@ function visit(w: Walk, z: number, x: number, y: number): void {
     return;
   }
   const v = w.store.values(i);
-  if (!w.store.isSplit(i) || (v.dMin >= w.clearAbove && (v.flags & PRECISE_FLAGS) === 0)) {
+  if (!w.store.isSplit(i) || canStop(w, v)) {
     take(w, v, z, x, y);
     return;
   }
@@ -122,11 +170,20 @@ export function mercatorBuffer(bounds: Rect, metres: number): number {
 export function minDepthOver(store: NodeStore, geom: Geom, opts: QueryOptions = {}): DepthResult {
   const bounds = geomBounds(geom);
   const buffer = mercatorBuffer(bounds, opts.bufferMetres ?? 0);
+  // Stopping early is only conservative for risk where the bound is at or
+  // past the threshold: there P rises with σ, so the parent's widest σ
+  // bounds every child's P from above.
+  const clearAbove = Math.max(
+    opts.clearAbove ?? (opts.risk ? -Infinity : Infinity),
+    opts.risk?.threshold ?? -Infinity
+  );
   const w: Walk = {
     store,
     geom,
     buffer,
-    clearAbove: opts.clearAbove ?? Infinity,
+    clearAbove,
+    risk: opts.risk,
+    maxRisk: 0,
     result: EMPTY,
     coveredDMin: Infinity,
     cells: new Set(),
@@ -142,8 +199,18 @@ export function minDepthOver(store: NodeStore, geom: Geom, opts: QueryOptions = 
     ...w.result,
     coveredDMin: w.coveredDMin,
     cellRefs: [...w.cells].sort((a, b) => a - b),
-    visits: w.visits
+    visits: w.visits,
+    maxRisk: w.maxRisk
   };
+  if (w.riskTile) {
+    const t = w.riskTile;
+    const r = tileRect(t.z, t.x, t.y);
+    out.riskTile = {
+      ...t.v,
+      risk: t.risk,
+      center: fromMercator((r.minX + r.maxX) / 2, (r.minY + r.maxY) / 2)
+    };
+  }
   if (w.worst) {
     const r = tileRect(w.worst.z, w.worst.x, w.worst.y);
     out.worst = { ...w.worst, center: fromMercator((r.minX + r.maxX) / 2, (r.minY + r.maxY) / 2) };

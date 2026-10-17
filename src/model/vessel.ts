@@ -1,6 +1,10 @@
+import type { HeelModel, Term } from "./allowances";
+import { heel, squat, waveAllowance } from "./allowances";
+import type { VesselTerms } from "./uncertainty";
+
 /**
- * Vessel model (plan §4.6). M1 uses static draft and the hull rectangle
- * only; heel, squat and wave allowance arrive with the probabilistic model.
+ * Vessel model (plan §4.6): static draft and hull rectangle, plus the
+ * parameters of the dynamic terms (squat, heel, wave allowance).
  */
 
 export interface VesselModel {
@@ -10,6 +14,53 @@ export interface VesselModel {
   length: number;
   /** Beam in metres. */
   beam: number;
+}
+
+export interface DynamicsOptions {
+  blockCoefficient: number;
+  /** Doubles squat everywhere, for boats that mostly run narrow channels. */
+  confined: boolean;
+  heel: HeelModel;
+  /** c in W = c·Hs. */
+  waveFactor: number;
+  /** 1σ of the static draft, metres. */
+  draftSigma: number;
+  /** Fixed extra margin under the keel, metres. */
+  margin: number;
+}
+
+export const DEFAULT_DYNAMICS: DynamicsOptions = {
+  blockCoefficient: 0.4,
+  confined: false,
+  heel: { kind: "none" },
+  waveFactor: 0.4,
+  draftSigma: 0.05,
+  margin: 0
+};
+
+export interface MotionInputs {
+  /** Speed for squat, m/s. */
+  speed: number;
+  /** Roll angle, radians. */
+  roll?: number;
+  /** Significant wave height, metres. */
+  waveHeight?: number;
+}
+
+/** The draft-side UKC terms at a speed, roll and sea state. */
+export function vesselTerms(
+  vessel: VesselModel,
+  motion: MotionInputs,
+  dyn: DynamicsOptions
+): VesselTerms {
+  const draft: Term = { value: vessel.draft, sigma: dyn.draftSigma };
+  return {
+    draft,
+    heel: heel(motion.roll, vessel.draft, dyn.heel),
+    squat: squat(motion.speed, dyn),
+    wave: waveAllowance(motion.waveHeight, dyn.waveFactor),
+    margin: dyn.margin
+  };
 }
 
 export interface VesselInputs {

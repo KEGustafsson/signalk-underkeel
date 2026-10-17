@@ -323,6 +323,8 @@ describe("plugin lifecycle", () => {
     plugin.stop();
     expect(lastValue(f.deltas, "navigation.underKeel.clearance")).toBeNull();
     expect(lastValue(f.deltas, "navigation.underKeel.timeToShoal")).toBeNull();
+    expect(lastValue(f.deltas, "navigation.underKeel.clearanceSigma")).toBeNull();
+    expect(lastValue(f.deltas, "navigation.underKeel.risk")).toBeNull();
   });
 
   test("a non-finite or out-of-range position clears the sample", () => {

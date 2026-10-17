@@ -56,6 +56,8 @@ export = function underkeel(app: ServerAPI, clock: Clock = SYSTEM_CLOCK): Plugin
             values: [
               { path: PATHS.state as Path, value: "off" },
               { path: PATHS.clearance as Path, value: null },
+              { path: PATHS.clearanceSigma as Path, value: null },
+              { path: PATHS.risk as Path, value: null },
               { path: PATHS.timeToShoal as Path, value: null },
               {
                 path: PATHS.notification as Path,
@@ -80,6 +82,8 @@ export = function underkeel(app: ServerAPI, clock: Clock = SYSTEM_CLOCK): Plugin
             indexReason: load?.reason ?? "plugin not started",
             config: config ?? parseConfig({}),
             vessel: () => monitor?.vessel(),
+            waterLevel: () => monitor?.waterLevel() ?? (config ?? parseConfig({})).waterLevel,
+            waveHeight: () => monitor?.nav.waveHeight?.value,
             getRoute: (id) => app.resourcesApi.getResource("routes", id),
             now: () => clock.now()
           })

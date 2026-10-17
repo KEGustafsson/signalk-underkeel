@@ -8,6 +8,7 @@ import type { VesselModel } from "../../src/model/vessel";
 import type { ChartIndex } from "../../src/spatial/chart-index";
 import { HazardIndex } from "../../src/spatial/hazards";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
+import { CHART_DATUM, ctx } from "../helpers/engine";
 import { BANK, FAIRWAY_LAT, fixtureIndex, M_PER_DEG_LON, ROCK } from "../helpers/fixture-index";
 import { basin, point } from "../helpers/synthetic";
 
@@ -29,44 +30,81 @@ function nav(lon: number, lat: number, cog = EAST, sog = 3, age = 0): NavState {
 /** Longitude `seconds` of 3 m/s travel west of the rock. */
 const westOfRock = (seconds: number) => ROCK[0] - (3 * seconds) / M_PER_DEG_LON;
 
-describe("deterministic look-ahead on the synthetic chart", () => {
+describe("probabilistic look-ahead on the synthetic chart", () => {
   const index = fixtureIndex();
 
-  test("the swept fairway away from the rock is normal", () => {
-    const r = evaluateLookahead(nav(22.003, FAIRWAY_LAT, EAST, 1), DEEP_KEEL, index, NOW);
+  test("the swept fairway away from the rock is normal with a small σ", () => {
+    const r = evaluateLookahead(nav(22.003, FAIRWAY_LAT, EAST, 1), ctx(DEEP_KEEL), index, NOW);
     expect(r.state).toBe("normal");
     expect(r.reason).toBe("");
-    expect(r.clearance).toBeGreaterThan(0);
+    expect(r.clearance).toBeGreaterThan(4);
+    expect(r.risk).toBeLessThan(0.01);
+    // swept σD 0.1, chart-datum water level σ 0.3, draft σ 0.05, squat σ
+    expect(r.clearanceSigma).toBeLessThan(0.4);
     expect(r.timeToShoal).toBeNull();
   });
 
   test("the rock far ahead is an alert, nearer a warn, close an alarm", () => {
-    const far = evaluateLookahead(nav(westOfRock(170), FAIRWAY_LAT), DEEP_KEEL, index, NOW);
+    const far = evaluateLookahead(nav(westOfRock(170), FAIRWAY_LAT), ctx(DEEP_KEEL), index, NOW);
     expect(far.state).toBe("alert");
     expect(far.timeToShoal).toBeGreaterThan(120);
-    const mid = evaluateLookahead(nav(westOfRock(90), FAIRWAY_LAT), DEEP_KEEL, index, NOW);
+    const mid = evaluateLookahead(nav(westOfRock(100), FAIRWAY_LAT), ctx(DEEP_KEEL), index, NOW);
     expect(mid.state).toBe("warn");
-    const near = evaluateLookahead(nav(westOfRock(25), FAIRWAY_LAT), DEEP_KEEL, index, NOW);
+    expect(mid.timeToShoal).toBeLessThanOrEqual(120);
+    const near = evaluateLookahead(nav(westOfRock(40), FAIRWAY_LAT), ctx(DEEP_KEEL), index, NOW);
     expect(near.state).toBe("alarm");
-    expect(near.timeToShoal).toBeLessThanOrEqual(30);
-    expect(near.worst?.hazard).toMatchObject({ class: "UWTROC", lnam: "FI5-ROCK", depth: 3.5 });
-    expect(near.worst?.cell).toEqual({ name: "FI5SYNTH", edition: 3, update: 1 });
+    expect(near.risk).toBeGreaterThanOrEqual(0.2);
+    const e = near.worst?.explanation;
+    expect(e?.hazard).toMatchObject({ class: "UWTROC", lnam: "FI5-ROCK", depth: 3.5 });
+    expect(e?.cell).toEqual({ name: "FI5SYNTH", edition: 3, update: 1 });
+    expect(e?.flags).toContain("SWEPT");
+    expect(e?.sigmaCharted).toBeCloseTo(0.1, 6);
   });
 
   test("a shallower keel passes over the rock", () => {
-    const r = evaluateLookahead(nav(westOfRock(25), FAIRWAY_LAT), SHALLOW_KEEL, index, NOW);
+    const r = evaluateLookahead(nav(westOfRock(25), FAIRWAY_LAT), ctx(SHALLOW_KEEL), index, NOW);
     expect(r.state).toBe("normal");
   });
 
-  test("on the bank the shoal is under the vessel", () => {
-    const r = evaluateLookahead(nav(BANK[0], BANK[1], 0, 0), SHALLOW_KEEL, index, NOW);
+  test("on the CATZOC C bank the shoal is under the vessel", () => {
+    const r = evaluateLookahead(nav(BANK[0], BANK[1], 0, 0), ctx(SHALLOW_KEEL), index, NOW);
     expect(r.state).toBe("alarm");
-    expect(r.timeToShoal).toBe(0);
     expect(r.reason).toBe("shoal under the vessel");
+    expect(r.timeToShoal).toBe(0);
+    expect(r.worst?.explanation.sigmaCharted).toBeGreaterThan(1);
+  });
+
+  test("a higher water level lifts the bank clear, a lower one does not", () => {
+    const high = { h: 1.5, sigma: 0.05, source: "manual" };
+    const r = evaluateLookahead(nav(BANK[0], BANK[1], 0, 0), ctx(SHALLOW_KEEL, high), index, NOW);
+    expect(r.risk).toBeLessThan(0.5);
+    const low = { h: -0.5, sigma: 0.05, source: "manual" };
+    const s = evaluateLookahead(nav(BANK[0], BANK[1], 0, 0), ctx(SHALLOW_KEEL, low), index, NOW);
+    expect(s.risk).toBeGreaterThan(r.risk ?? 1);
+  });
+
+  test("squat and wave allowance add to the draft", () => {
+    const calm = evaluateLookahead(nav(22.003, FAIRWAY_LAT, EAST, 1), ctx(DEEP_KEEL), index, NOW);
+    const n = nav(22.003, FAIRWAY_LAT, EAST, 6);
+    n.waveHeight = { value: 1.0, at: NOW };
+    const rough = evaluateLookahead(n, ctx(DEEP_KEEL), index, NOW);
+    expect(rough.clearance).toBeLessThan((calm.clearance as number) - 0.5);
+  });
+
+  test("a degraded water level is never normal", () => {
+    const fallback = { ...CHART_DATUM, source: "fallback", degraded: "water level stale" };
+    const r = evaluateLookahead(
+      nav(22.003, FAIRWAY_LAT, EAST, 1),
+      ctx(DEEP_KEEL, fallback),
+      index,
+      NOW
+    );
+    expect(r.state).toBe("alert");
+    expect(r.reason).toBe("water level stale");
   });
 
   test("no coverage ahead is a warn, never normal", () => {
-    const r = evaluateLookahead(nav(22.0355, 60.005, EAST, 3), SHALLOW_KEEL, index, NOW);
+    const r = evaluateLookahead(nav(22.0355, 60.005, EAST, 3), ctx(SHALLOW_KEEL), index, NOW);
     expect(r.state).toBe("warn");
     expect(r.reason).toMatch(/no chart coverage ahead/);
   });
@@ -79,20 +117,21 @@ describe("deterministic look-ahead on the synthetic chart", () => {
       pyramid: store,
       hazards: new HazardIndex([])
     };
-    const r = evaluateLookahead(nav(22.0193, 60.005, EAST, 0.1), SHALLOW_KEEL, edge, NOW);
+    const r = evaluateLookahead(nav(22.0193, 60.005, EAST, 0.1), ctx(SHALLOW_KEEL), edge, NOW);
     expect(r.state).toBe("alarm");
     expect(r.footprints[0]?.uncovered).toBe(true);
   });
 
   test("outside every chart is a warn at the vessel", () => {
-    const r = evaluateLookahead(nav(23, 61, EAST, 3), SHALLOW_KEEL, index, NOW);
+    const r = evaluateLookahead(nav(23, 61, EAST, 3), ctx(SHALLOW_KEEL), index, NOW);
     expect(r.state).toBe("warn");
     expect(r.reason).toBe("no chart coverage at the vessel");
     expect(r.clearance).toBeNull();
+    expect(r.worst).toBeUndefined();
   });
 
   test("low speed checks only the current position", () => {
-    const r = evaluateLookahead(nav(22.003, FAIRWAY_LAT, EAST, 0.1), DEEP_KEEL, index, NOW);
+    const r = evaluateLookahead(nav(22.003, FAIRWAY_LAT, EAST, 0.1), ctx(DEEP_KEEL), index, NOW);
     expect(r.state).toBe("normal");
     expect(r.horizon).toBe(0);
     expect(r.footprints).toHaveLength(1);
@@ -102,7 +141,7 @@ describe("deterministic look-ahead on the synthetic chart", () => {
   test("stale course or speed is unknown even in deep water", () => {
     const n = nav(22.003, FAIRWAY_LAT);
     n.cog = { value: EAST, at: NOW - 60_000 };
-    const r = evaluateLookahead(n, DEEP_KEEL, index, NOW);
+    const r = evaluateLookahead(n, ctx(DEEP_KEEL), index, NOW);
     expect(r.state).toBe("unknown");
     expect(r.reason).toMatch(/course or speed stale/);
   });
@@ -110,42 +149,38 @@ describe("deterministic look-ahead on the synthetic chart", () => {
   test("stale course over a shoal still alarms", () => {
     const n = nav(BANK[0], BANK[1]);
     delete n.sog;
-    expect(evaluateLookahead(n, SHALLOW_KEEL, index, NOW).state).toBe("alarm");
+    expect(evaluateLookahead(n, ctx(SHALLOW_KEEL), index, NOW).state).toBe("alarm");
   });
 
   test("stale or missing inputs never produce normal", () => {
     expect(
-      evaluateLookahead(nav(22.003, FAIRWAY_LAT, EAST, 3, 11), DEEP_KEEL, index, NOW)
-    ).toMatchObject({
-      state: "unknown",
-      reason: "position stale"
-    });
-    expect(evaluateLookahead({}, DEEP_KEEL, index, NOW)).toMatchObject({
+      evaluateLookahead(nav(22.003, FAIRWAY_LAT, EAST, 3, 11), ctx(DEEP_KEEL), index, NOW)
+    ).toMatchObject({ state: "unknown", reason: "position stale" });
+    expect(evaluateLookahead({}, ctx(DEEP_KEEL), index, NOW)).toMatchObject({
       state: "unknown",
       reason: "no position"
     });
-    expect(evaluateLookahead(nav(22.003, FAIRWAY_LAT), undefined, index, NOW)).toMatchObject({
+    expect(evaluateLookahead(nav(22.003, FAIRWAY_LAT), ctx(undefined), index, NOW)).toMatchObject({
       state: "unknown",
       reason: "vessel draft not configured"
     });
-    expect(evaluateLookahead(nav(22.003, FAIRWAY_LAT), DEEP_KEEL, undefined, NOW)).toMatchObject({
-      state: "off",
-      reason: "no chart index loaded"
-    });
+    expect(
+      evaluateLookahead(nav(22.003, FAIRWAY_LAT), ctx(DEEP_KEEL), undefined, NOW)
+    ).toMatchObject({ state: "off", reason: "no chart index loaded" });
   });
 
   test("non-finite navigation input is unknown, never normal", () => {
-    expect(evaluateLookahead(nav(NaN, FAIRWAY_LAT), DEEP_KEEL, index, NOW)).toMatchObject({
+    expect(evaluateLookahead(nav(NaN, FAIRWAY_LAT), ctx(DEEP_KEEL), index, NOW)).toMatchObject({
       state: "unknown",
       reason: "non-finite navigation input"
     });
     const n = nav(22.003, FAIRWAY_LAT);
     n.sog = { value: Infinity, at: NOW };
-    expect(evaluateLookahead(n, DEEP_KEEL, index, NOW).state).toBe("unknown");
+    expect(evaluateLookahead(n, ctx(DEEP_KEEL), index, NOW).state).toBe("unknown");
   });
 
   test("a footprint that visits no tile is uncovered, never normal", () => {
-    const r = evaluateLookahead(nav(500, FAIRWAY_LAT, EAST, 0.1), DEEP_KEEL, index, NOW);
+    const r = evaluateLookahead(nav(500, FAIRWAY_LAT, EAST, 0.1), ctx(DEEP_KEEL), index, NOW);
     expect(r.footprints[0]?.uncovered).toBe(true);
     expect(r.state).not.toBe("normal");
   });
@@ -163,30 +198,31 @@ describe("deterministic look-ahead on the synthetic chart", () => {
       }),
       hazards: new HazardIndex([decoy, rock])
     };
-    const r = evaluateLookahead(nav(at[0], at[1], EAST, 0), DEEP_KEEL, named, NOW);
-    expect(r.worst?.charted).toBe(3);
-    expect(r.worst?.hazard?.lnam).toBe("SET-MIN");
+    const r = evaluateLookahead(nav(at[0], at[1], EAST, 0), ctx(DEEP_KEEL), named, NOW);
+    expect(r.worst?.explanation.charted).toBe(3);
+    expect(r.worst?.explanation.hazard?.lnam).toBe("SET-MIN");
   });
 
-  test("land ahead is a shoal", () => {
+  test("land ahead is certain", () => {
     // The island spans 22.025–22.03 E, 60.013–60.016 N; approach from the west at 60.0145.
-    const r = evaluateLookahead(nav(22.022, 60.0145, EAST, 3), SHALLOW_KEEL, index, NOW);
-    expect(["warn", "alarm"]).toContain(r.state);
-    expect(r.worst?.charted).toBe(-Infinity);
+    const r = evaluateLookahead(nav(22.022, 60.0145, EAST, 3), ctx(SHALLOW_KEEL), index, NOW);
+    expect(r.state).toBe("alarm");
+    expect(r.worst?.explanation.charted).toBeNull();
+    expect(r.worst?.explanation.risk).toBe(1);
   });
 
   test("the horizon follows max(minHorizon, distance / SOG)", () => {
-    const slow = evaluateLookahead(nav(22.003, FAIRWAY_LAT, EAST, 2), DEEP_KEEL, index, NOW);
+    const slow = evaluateLookahead(nav(22.003, FAIRWAY_LAT, EAST, 2), ctx(DEEP_KEEL), index, NOW);
     expect(slow.horizon).toBeCloseTo(DEFAULT_LOOKAHEAD.distance / 2, 6);
-    const fast = evaluateLookahead(nav(22.003, FAIRWAY_LAT, EAST, 20), DEEP_KEEL, index, NOW);
+    const fast = evaluateLookahead(nav(22.003, FAIRWAY_LAT, EAST, 20), ctx(DEEP_KEEL), index, NOW);
     expect(fast.horizon).toBe(60);
   });
 
   test("the explanation names every term", () => {
-    const r = evaluateLookahead(nav(westOfRock(25), FAIRWAY_LAT), DEEP_KEEL, index, NOW);
+    const r = evaluateLookahead(nav(westOfRock(40), FAIRWAY_LAT), ctx(DEEP_KEEL), index, NOW);
     expect(explain(r)).toMatch(
-      /^shoal ahead in \d+ s: charted 3\.5 m \(UWTROC FI5-ROCK\) − draft 3\.2 m − margin 0\.5 m → UKC -0\.2 m$/
+      /^shoal ahead in \d+ s: charted 3\.5 m UWTROC FI5-ROCK \(±0\.1 m, SWEPT\) \+ 0 m water level \(chart-datum\) − draft 3\.2 m − squat 0\.14 m \+ heel 0 m − wave 0 m → μ = 0\.16 m, σ = 0\.3\d m, P = \d+ %$/
     );
-    expect(explain(evaluateLookahead({}, DEEP_KEEL, index, NOW))).toBe("no position");
+    expect(explain(evaluateLookahead({}, ctx(DEEP_KEEL), index, NOW))).toBe("no position");
   });
 });

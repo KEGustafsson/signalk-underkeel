@@ -3,6 +3,7 @@ import { minDepthOver, footprintGeom } from "../../src/spatial/pyramid";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
 import type { Box } from "../helpers/synthetic";
 import { toMercator } from "../../src/foundation/geo";
+import { probabilityBelowZero } from "../../src/foundation/stats";
 import type { DepthFeature } from "../../src/ingest/features";
 import { area, basin, boxRing, coverage, land, point, quality, swept } from "../helpers/synthetic";
 
@@ -145,6 +146,40 @@ describe("min-depth pyramid", () => {
     expect(full.dMin).toBe(1.2);
     expect(early.dMin).toBeLessThanOrEqual(full.dMin);
     expect(early.visits).toBeLessThan(full.visits);
+  });
+
+  test("risk takes the riskiest tile, not the shallowest depth with the widest σ", () => {
+    // One CATZOC D zone: σD is 2.6 m at 12 m and 4 m at 40 m. A parent over
+    // both reads (12 m, σ 4), P = 6.7 % for a 6 m threshold; the 12 m tile alone is 1.1 %.
+    const wide: Box = [21.9, 59.95, 22.12, 60.06];
+    const store = buildPyramid(
+      [
+        coverage(wide),
+        quality(wide, 5),
+        area([21.9, 59.95, 22.01, 60.06], 12),
+        area([22.01, 59.95, 22.12, 60.06], 40)
+      ],
+      OPTS
+    );
+    const geom = footprintGeom(boxRing([21.95, 59.97, 22.07, 60.04]));
+    const r = minDepthOver(store, geom, {
+      clearAbove: 11,
+      risk: { threshold: 6, sigmaExtra: 0.3 }
+    });
+    expect(r.dMin).toBe(12);
+    expect(r.sigmaD).toBeCloseTo(4, 6);
+    expect(r.riskTile?.dMin).toBe(12);
+    expect(r.riskTile?.sigmaD).toBeCloseTo(2.6, 6);
+    expect(r.maxRisk).toBeCloseTo(probabilityBelowZero(6, Math.hypot(2.6, 0.3)), 6);
+  });
+
+  test("land under the footprint is certain", () => {
+    const store = buildPyramid([...basin(AREA, 7), land([22.01, 60.004, 22.012, 60.006])], OPTS);
+    const r = minDepthOver(store, footprintGeom(boxRing([22.0105, 60.0045, 22.011, 60.005])), {
+      risk: { threshold: 1, sigmaExtra: 0.3 }
+    });
+    expect(r.maxRisk).toBe(1);
+    expect(r.riskTile?.dMin).toBe(-Infinity);
   });
 
   test("reports the worst tile", () => {

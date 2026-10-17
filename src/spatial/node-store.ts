@@ -11,6 +11,19 @@ export const FLAGS = {
   NO_DEPTH: 32
 } as const;
 
+const FLAG_NAMES: [number, string][] = [
+  [FLAGS.SWEPT, "SWEPT"],
+  [FLAGS.NO_COVERAGE, "NO_COVERAGE"],
+  [FLAGS.UNASSESSED, "UNASSESSED"],
+  [FLAGS.DREDGED, "DREDGED"],
+  [FLAGS.LIVECHART_ADJUSTED, "LIVECHART_ADJUSTED"]
+];
+
+/** Names of the flags a client should see (NO_DEPTH is internal). */
+export function flagNames(flags: number): string[] {
+  return FLAG_NAMES.filter(([bit]) => (flags & bit) !== 0).map(([, name]) => name);
+}
+
 export interface NodeValues {
   /** Conservative depth below chart datum (m); -Infinity for land or no data. */
   dMin: number;

@@ -3,6 +3,7 @@ import type { LonLat } from "../../src/foundation/geo";
 import type { UnderKeelState } from "../../src/foundation/state";
 import { evaluateLookahead } from "../../src/engine/lookahead";
 import type { VesselModel } from "../../src/model/vessel";
+import { ctx } from "../helpers/engine";
 import { BANK, fixtureIndex, ROCK } from "../helpers/fixture-index";
 import { project } from "../../src/foundation/geo";
 
@@ -38,7 +39,7 @@ function replay(p: Passage): { t: number; state: UnderKeelState; distance: numbe
         sog: { value: p.sog, at },
         heading: { value: p.cog, at }
       },
-      p.vessel,
+      ctx(p.vessel),
       fixtureIndex(),
       at
     );

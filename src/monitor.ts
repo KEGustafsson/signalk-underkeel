@@ -7,6 +7,7 @@ import type { UnderKeelNotification } from "./engine/notify";
 import { notificationFor } from "./engine/notify";
 import type { LonLat } from "./foundation/geo";
 import { PATHS } from "./foundation/state";
+import type { WaterLevel } from "./model/uncertainty";
 import type { VesselModel } from "./model/vessel";
 import { resolveVessel } from "./model/vessel";
 import type { ChartIndex } from "./spatial/chart-index";
@@ -37,7 +38,9 @@ const INPUT_PATHS = [
   "navigation.position",
   "navigation.courseOverGroundTrue",
   "navigation.speedOverGround",
-  "navigation.headingTrue"
+  "navigation.headingTrue",
+  "navigation.attitude",
+  "environment.water.waves.significantHeight"
 ] as const;
 
 /** Signal K timestamps from the future are clock errors; trust receipt time then. */
@@ -149,6 +152,12 @@ export class Monitor {
       case "navigation.headingTrue":
         set("heading", asNumber(value));
         break;
+      case "navigation.attitude":
+        set("roll", asNumber((value as { roll?: unknown } | null)?.roll));
+        break;
+      case "environment.water.waves.significantHeight":
+        set("waveHeight", asNumber(value));
+        break;
     }
   }
 
@@ -168,12 +177,19 @@ export class Monitor {
     return resolved.vessel;
   }
 
+  /** The water level the engine applies now. */
+  waterLevel(): WaterLevel {
+    return this.config.waterLevel;
+  }
+
   private evaluate(): LookaheadResult {
     if (!this.index) {
       return {
         state: "off",
         reason: this.indexReason ?? "no chart index loaded",
         clearance: null,
+        clearanceSigma: null,
+        risk: null,
         timeToShoal: null,
         horizon: 0,
         footprints: []
@@ -181,7 +197,7 @@ export class Monitor {
     }
     return evaluateLookahead(
       this.nav,
-      this.vessel(),
+      { vessel: this.vessel(), dynamics: this.config.dynamics, waterLevel: this.waterLevel() },
       this.index,
       this.clock.now(),
       this.config.lookahead
@@ -194,7 +210,7 @@ export class Monitor {
       this.since = this.clock.now();
     }
     this.last = next;
-    this.envelope.update(buildEnvelope(this.last));
+    this.envelope.update(buildEnvelope(this.last, this.config.lookahead.thresholds));
     const r = this.last;
     this.app.handleMessage(this.pluginId, {
       updates: [
@@ -202,10 +218,11 @@ export class Monitor {
           values: [
             { path: PATHS.state as Path, value: r.state },
             { path: PATHS.clearance as Path, value: r.clearance },
+            { path: PATHS.clearanceSigma as Path, value: r.clearanceSigma },
+            { path: PATHS.risk as Path, value: r.risk },
             { path: PATHS.timeToShoal as Path, value: r.timeToShoal },
             { path: PATHS.envelopeRev as Path, value: this.envelope.rev },
-            // Milestone M1 has no water-level provider: depths are at chart datum.
-            { path: PATHS.waterLevel as Path, value: 0 }
+            { path: PATHS.waterLevel as Path, value: this.waterLevel().h }
           ]
         }
       ]
@@ -234,6 +251,8 @@ export class Monitor {
         {
           meta: [
             { path: PATHS.clearance as Path, value: { units: "m" } },
+            { path: PATHS.clearanceSigma as Path, value: { units: "m" } },
+            { path: PATHS.risk as Path, value: { units: "ratio" } },
             { path: PATHS.timeToShoal as Path, value: { units: "s" } },
             { path: PATHS.waterLevel as Path, value: { units: "m" } }
           ]

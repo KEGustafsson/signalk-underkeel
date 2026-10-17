@@ -1,10 +1,10 @@
 import type { LonLat } from "../foundation/geo";
-import type { FootprintResult, LookaheadResult, WorstPoint } from "./lookahead";
+import type { FootprintResult, LookaheadResult, Thresholds, WorstPoint } from "./lookahead";
 
 /**
  * Look-ahead envelope for `GET /envelope` (plan §4.10): the predicted
- * track, the swept cone split into segments of equal class (clear, shoal,
- * unverified), and the worst point. Consecutive footprints of one class
+ * track, the swept cone split into segments of equal class (clear,
+ * caution, danger, unverified), and the worst point with its explanation. Consecutive footprints of one class
  * are merged into one outline, and coordinates are rounded to 1e-5°
  * (about 1 m), so the payload stays within the 15 kB budget (plan §6)
  * however many footprints the horizon holds.
@@ -28,14 +28,24 @@ const q = (v: number): number => Math.round(v * 1e5) / 1e5;
 const qp = (p: LonLat): number[] => [q(p[0]), q(p[1])];
 const cm = (v: number | null): number | null => (v === null ? null : Math.round(v * 100) / 100);
 
-export type FootprintClass = "clear" | "shoal" | "unverified";
+export type FootprintClass = "clear" | "caution" | "danger" | "unverified";
 
-/** A charted shoal outranks missing coverage: the danger is known either way. */
-export function classOf(f: Pick<FootprintResult, "ukc" | "uncovered">): FootprintClass {
-  if (f.ukc !== null && f.ukc < 0) {
-    return "shoal";
+/**
+ * Colour class of a footprint (plan §5.4: green, amber, red by P). A
+ * charted danger outranks missing coverage, since the danger is known
+ * either way; otherwise any gap makes the footprint unverified.
+ */
+export function classOf(
+  f: Pick<FootprintResult, "risk" | "uncovered" | "charted">,
+  th: Thresholds
+): FootprintClass {
+  if (f.risk >= th.warn) {
+    return "danger";
   }
-  return f.uncovered || f.ukc === null ? "unverified" : "clear";
+  if (f.uncovered || f.charted === null) {
+    return "unverified";
+  }
+  return f.risk >= th.alert ? "caution" : "clear";
 }
 
 /** At most this many vertices on the drawn track line. */
@@ -57,7 +67,7 @@ function trackFeature(result: LookaheadResult): EnvelopeFeature {
  * port corners bow to stern. Rings are [bow-stbd, stern-stbd, stern-port,
  * bow-port] (see footprintRing).
  */
-function segmentFeature(run: FootprintResult[]): EnvelopeFeature {
+function segmentFeature(run: FootprintResult[], th: Thresholds): EnvelopeFeature {
   const first = run[0] as FootprintResult;
   const last = run[run.length - 1] as FootprintResult;
   const starboard = [first.ring[1] as LonLat, ...run.map((f) => f.ring[0] as LonLat)];
@@ -65,26 +75,27 @@ function segmentFeature(run: FootprintResult[]): EnvelopeFeature {
   port.push(first.ring[2] as LonLat);
   const ring = [...starboard, ...port].map(qp);
   ring.push(ring[0] as number[]);
-  const ukcs = run.map((f) => f.ukc).filter((u): u is number => u !== null);
-  const minUkc = ukcs.length > 0 ? Math.min(...ukcs) : null;
+  const means = run.map((f) => f.mean).filter((u): u is number => u !== null);
+  const minMean = means.length > 0 ? Math.min(...means) : null;
   return {
     type: "Feature",
     geometry: { type: "Polygon", coordinates: [ring] },
     properties: {
       kind: "segment",
-      class: classOf(first),
+      class: classOf(first, th),
       from: first.t,
       to: last.t,
-      minUkc: minUkc !== null && Number.isFinite(minUkc) ? cm(minUkc) : null
+      minUkc: minMean !== null && Number.isFinite(minMean) ? cm(minMean) : null,
+      maxRisk: Math.round(Math.max(...run.map((f) => f.risk)) * 10000) / 10000
     }
   };
 }
 
-function runs(fps: FootprintResult[]): FootprintResult[][] {
+function runs(fps: FootprintResult[], th: Thresholds): FootprintResult[][] {
   const out: FootprintResult[][] = [];
   for (const f of fps) {
     const current = out[out.length - 1];
-    if (current && classOf(current[0] as FootprintResult) === classOf(f)) {
+    if (current && classOf(current[0] as FootprintResult, th) === classOf(f, th)) {
       current.push(f);
     } else {
       out.push([f]);
@@ -97,26 +108,16 @@ function worstFeature(w: WorstPoint): EnvelopeFeature {
   return {
     type: "Feature",
     geometry: { type: "Point", coordinates: qp(w.position) },
-    properties: {
-      kind: "worst",
-      t: w.t,
-      charted: Number.isFinite(w.charted) ? cm(w.charted) : null,
-      ukc: Number.isFinite(w.ukc) ? cm(w.ukc) : null,
-      cell: w.cell,
-      hazard: w.hazard && {
-        ...w.hazard,
-        depth: Number.isFinite(w.hazard.depth) ? cm(w.hazard.depth) : null
-      }
-    }
+    properties: { kind: "worst", t: w.t, explanation: w.explanation }
   };
 }
 
-export function buildEnvelope(result: LookaheadResult): Envelope {
+export function buildEnvelope(result: LookaheadResult, th: Thresholds): Envelope {
   const features: EnvelopeFeature[] = [];
   if (result.footprints.length > 1) {
     features.push(trackFeature(result));
   }
-  features.push(...runs(result.footprints).map(segmentFeature));
+  features.push(...runs(result.footprints, th).map((r) => segmentFeature(r, th)));
   if (result.worst) {
     features.push(worstFeature(result.worst));
   }

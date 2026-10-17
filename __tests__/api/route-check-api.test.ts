@@ -85,7 +85,8 @@ describe("route-check request validation", () => {
     [{ route: LINE, departure: "tomorrow" }, /ISO 8601/],
     [{ route: LINE, xteLimit: -1 }, /xteLimit/],
     [{ route: LINE, vessel: { draft: 100 } }, /draft/],
-    [{ route: LINE, vessel: { draft: 0 } }, /vessel\.draft must be 0\.01\.\.30 m/]
+    [{ route: LINE, vessel: { draft: 0 } }, /vessel\.draft must be 0\.01\.\.30 m/],
+    [{ route: LINE, probability: 0.9 }, /probability/]
   ])("rejects %j", (body, message) => {
     const r = parseRouteRequest(body);
     expect(r.ok).toBe(false);
@@ -127,6 +128,8 @@ function deps(over: Partial<RouteServiceDeps> = {}): RouteServiceDeps {
     indexReason: undefined,
     config: parseConfig({}),
     vessel: () => ({ draft: 3.6, length: 12, beam: 4 }),
+    waterLevel: () => ({ h: 0, sigma: 0.3, source: "chart-datum" }),
+    waveHeight: () => undefined,
     getRoute: (id) =>
       id === "known"
         ? Promise.resolve({ feature: { geometry: LINE } })
