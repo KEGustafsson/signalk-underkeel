@@ -17,6 +17,13 @@ fi
 
 src=$1
 out=$2
+# The GeoJSON driver will not overwrite a file, and a layer dropped from a
+# new edition must not survive from an old export: start from an empty
+# directory every time.
+if [ -d "$out" ] && [ -n "$(ls -A "$out")" ]; then
+  echo "$out is not empty; export each edition into a new directory" >&2
+  exit 1
+fi
 mkdir -p "$out"
 
 export OGR_S57_OPTIONS="RETURN_PRIMITIVES=OFF,RETURN_LINKAGES=OFF,LNAM_REFS=ON,UPDATES=APPLY,SPLIT_MULTIPOINT=ON,ADD_SOUNDG_DEPTH=ON"

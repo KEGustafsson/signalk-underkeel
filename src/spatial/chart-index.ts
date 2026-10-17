@@ -24,7 +24,20 @@ function isNamedHazard(f: ChartFeature): f is DepthFeature {
   return f.role === "depth" && HAZARD_CLASSES.has(f.objectClass);
 }
 
+/**
+ * Builds the index from cells read in catalogue order. Every feature of
+ * `cells[i]` must carry cellRef i, or each result would name the wrong
+ * chart edition; a mismatch is refused.
+ */
 export function buildChartIndex(cells: ReadCell[], opts: Partial<BuildOptions> = {}): ChartIndex {
+  cells.forEach((c, i) => {
+    const bad = c.features.find((f) => f.cellRef !== i);
+    if (bad) {
+      throw new Error(
+        `cell ${c.info.name} at index ${i} has a feature with cellRef ${bad.cellRef}`
+      );
+    }
+  });
   const features = cells.flatMap((c) => c.features);
   return {
     catalogue: { version: 1, cells: cells.map((c) => c.info) },
@@ -40,15 +53,32 @@ interface StoredHazard extends Omit<DepthFeature, "depth"> {
   depth: number | null;
 }
 
+/**
+ * Writes the three index files into a staging directory beside `dir` and
+ * swaps it in only after all of them are written, so a crash or a full disk
+ * never leaves a catalogue from one build beside a pyramid from another.
+ */
 export function saveChartIndex(dir: string, index: ChartIndex): void {
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, FILES.cells), JSON.stringify(index.catalogue, null, 2));
-  fs.writeFileSync(path.join(dir, FILES.pyramid), serializePyramid(index.pyramid));
+  const staging = `${dir}.tmp-${process.pid}`;
+  const previous = `${dir}.old-${process.pid}`;
+  fs.rmSync(staging, { recursive: true, force: true });
+  fs.mkdirSync(staging, { recursive: true });
+  fs.writeFileSync(path.join(staging, FILES.cells), JSON.stringify(index.catalogue, null, 2));
+  fs.writeFileSync(path.join(staging, FILES.pyramid), serializePyramid(index.pyramid));
   const hazards: StoredHazard[] = index.hazards.features.map((f) => ({
     ...f,
     depth: Number.isFinite(f.depth) ? f.depth : null
   }));
-  fs.writeFileSync(path.join(dir, FILES.hazards), JSON.stringify(hazards));
+  fs.writeFileSync(path.join(staging, FILES.hazards), JSON.stringify(hazards));
+  const hadIndex = fs.existsSync(dir);
+  if (hadIndex) {
+    fs.rmSync(previous, { recursive: true, force: true });
+    fs.renameSync(dir, previous);
+  }
+  fs.renameSync(staging, dir);
+  if (hadIndex) {
+    fs.rmSync(previous, { recursive: true, force: true });
+  }
 }
 
 export function loadChartIndex(dir: string): ChartIndex {

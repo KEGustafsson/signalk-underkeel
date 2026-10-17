@@ -7,10 +7,9 @@ and own-sounding discrepancies for chartplotters such as Freeboard-SK.
 > Advisory navigation aid. Not ECDIS, and not a replacement for official charts or a proper
 > lookout.
 
-**Status:** the chart index exists; the risk engine does not. The plugin starts, publishes
-`navigation.underKeel.state` = `off` with a reason, and serves
-`GET /plugins/signalk-underkeel/v1/status`. The library can read S-57 cells exported to GeoJSON
-and answer conservative minimum-depth queries over a footprint.
+The plugin publishes `navigation.underKeel.state` with a reason and serves
+`GET /plugins/signalk-underkeel/v1/status`. The chart index reads S-57 cells exported to GeoJSON
+and answers conservative minimum-depth queries over a footprint.
 
 ## Documentation map
 
@@ -39,9 +38,9 @@ The index reads ENC cells that GDAL has exported to GeoJSON, one directory per c
 scripts/enc-to-geojson.sh FI5ABCDE.000 data/cells/FI5ABCDE
 ```
 
-Only unencrypted S-57 cells are supported. Chart data and built indexes stay out of git
-(`data/`, `*.000`, `*.fgb` are ignored); `fixtures/enc/` holds small synthetic cells written by
-`scripts/make-synthetic-enc.js`.
+Only unencrypted S-57 cells are supported. In this repository, keep chart data and built
+indexes under `data/`, which git ignores along with `*.000` and `*.fgb`. `fixtures/enc/` holds
+small synthetic cells written by `scripts/make-synthetic-enc.js`.
 
 Contributor and AI-agent guidance is in [AGENTS.md](AGENTS.md).
 

@@ -51,7 +51,14 @@ export function cellInfoFromDsid(
   };
 }
 
+/**
+ * A missing directory, or one without M_COVR coverage, is an error: such a
+ * cell would enter the catalogue while contributing no data.
+ */
 export function readCellDirectory(dir: string, cellRef: number, bandOverride?: number): ReadCell {
+  if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
+    throw new Error(`cell directory ${dir} does not exist`);
+  }
   const fallbackName = path.basename(dir);
   const dsid = readCollection(path.join(dir, "DSID.geojson"));
   const partial = cellInfoFromDsid(dsid?.features[0]?.properties ?? {}, fallbackName);
@@ -66,6 +73,9 @@ export function readCellDirectory(dir: string, cellRef: number, bandOverride?: n
     if (collection) {
       features.push(...parseLayer(layer, collection, { cellRef, band }));
     }
+  }
+  if (!features.some((f) => f.role === "coverage")) {
+    throw new Error(`cell ${info.name}: no M_COVR coverage in ${dir}`);
   }
   return { info, features };
 }

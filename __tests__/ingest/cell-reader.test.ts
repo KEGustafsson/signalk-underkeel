@@ -1,3 +1,5 @@
+import fs from "fs";
+import os from "os";
 import path from "path";
 import { cellInfoFromDsid, readCellDirectory } from "../../src/ingest/cell-reader";
 import { parseCatalogue, usageBandFromName } from "../../src/ingest/cells";
@@ -51,8 +53,29 @@ describe("S-57 GeoJSON ingest", () => {
   });
 
   test("band falls back to an override when the name has none", () => {
-    expect(() => readCellDirectory(path.join(FIXTURES, "missing-cell"), 0)).toThrow(/usage band/);
-    expect(readCellDirectory(path.join(FIXTURES, "missing-cell"), 0, 3).info.band).toBe(3);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "synthetic-cell-"));
+    try {
+      fs.copyFileSync(
+        path.join(FIXTURES, "FI5SYNTH", "M_COVR.geojson"),
+        path.join(dir, "M_COVR.geojson")
+      );
+      expect(() => readCellDirectory(dir, 0)).toThrow(/usage band/);
+      expect(readCellDirectory(dir, 0, 3).info.band).toBe(3);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a missing directory or a cell without coverage is refused", () => {
+    expect(() => readCellDirectory(path.join(FIXTURES, "missing-cell"), 0)).toThrow(
+      /does not exist/
+    );
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "FI5EMPTY-"));
+    try {
+      expect(() => readCellDirectory(dir, 0, 5)).toThrow(/no M_COVR coverage/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -134,6 +157,28 @@ describe("layer parsing edge cases", () => {
       ]
     };
     expect(parseLayer("M_QUAL", fc(poly), ctx)[0]).toMatchObject({ catzoc: 6 });
+  });
+
+  test("malformed coordinates are refused with the layer named, never turned into NaN", () => {
+    const bad = [
+      { type: "Point", coordinates: [] },
+      { type: "Point", coordinates: ["22", 60] },
+      { type: "Point", coordinates: [22, NaN] },
+      { type: "MultiPoint", coordinates: "x" },
+      {
+        type: "LineString",
+        coordinates: [
+          [22, 60],
+          [null, 60]
+        ]
+      },
+      { type: "Polygon", coordinates: [] }
+    ];
+    for (const geometry of bad) {
+      expect(() => parseLayer("UWTROC", fc(geometry, { VALSOU: 1 }), ctx)).toThrow(
+        /^UWTROC feature 0: /
+      );
+    }
   });
 
   test("unsupported geometries and null geometry yield nothing", () => {

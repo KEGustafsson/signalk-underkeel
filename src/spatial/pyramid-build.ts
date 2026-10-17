@@ -51,14 +51,24 @@ interface Hit {
   full: boolean;
 }
 
-function burnRadius(f: ChartFeature, bbox: Rect, quality: QualityFeature[], opts: BuildOptions) {
-  if (f.role !== "depth" || !f.hazard) {
+interface Zone {
+  q: QualityFeature;
+  bbox: Rect;
+}
+
+/**
+ * Burn radius of a point hazard or sounding: k·σP of the quality zones of
+ * its own cell that contain it. Lines and areas are not widened; the query
+ * buffer (plan §4.7) carries their position uncertainty.
+ */
+function burnRadius(f: ChartFeature, bbox: Rect, zones: Zone[], opts: BuildOptions): number {
+  if (f.role !== "depth" || !f.hazard || f.geom.type !== "point") {
     return 0;
   }
   let sigmaP = 0;
   let covered = false;
-  for (const q of quality) {
-    if (q.cellRef === f.cellRef && geomRectDistance(q.geom, bbox, 0) === 0) {
+  for (const { q, bbox: qb } of zones) {
+    if (rectsOverlap(qb, bbox) && geomRectDistance(q.geom, bbox, 0) === 0) {
       covered = true;
       sigmaP = Math.max(sigmaP, sigmaFor(q.catzoc, 0, q, opts.quality).sigmaP);
     }
@@ -70,10 +80,17 @@ function burnRadius(f: ChartFeature, bbox: Rect, quality: QualityFeature[], opts
 }
 
 function prepare(features: ChartFeature[], opts: BuildOptions): Item[] {
-  const quality = features.filter((f): f is QualityFeature => f.role === "quality");
+  const zonesByCell = new Map<number, Zone[]>();
+  for (const f of features) {
+    if (f.role === "quality") {
+      const zones = zonesByCell.get(f.cellRef) ?? [];
+      zones.push({ q: f, bbox: geomBounds(f.geom) });
+      zonesByCell.set(f.cellRef, zones);
+    }
+  }
   return features.map((f) => {
     const bbox = geomBounds(f.geom);
-    return { f, bbox, radius: burnRadius(f, bbox, quality, opts) };
+    return { f, bbox, radius: burnRadius(f, bbox, zonesByCell.get(f.cellRef) ?? [], opts) };
   });
 }
 

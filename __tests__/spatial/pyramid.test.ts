@@ -2,6 +2,8 @@ import { FLAGS } from "../../src/spatial/node-store";
 import { minDepthOver, footprintGeom } from "../../src/spatial/pyramid";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
 import type { Box } from "../helpers/synthetic";
+import { toMercator } from "../../src/foundation/geo";
+import type { DepthFeature } from "../../src/ingest/features";
 import { area, basin, boxRing, coverage, land, point, quality, swept } from "../helpers/synthetic";
 
 const AREA: Box = [22.0, 60.0, 22.02, 60.01];
@@ -50,6 +52,22 @@ describe("min-depth pyramid", () => {
     const footprint = footprintGeom([[22.01, 60.0055]]); // ~56 m north
     expect(minDepthOver(store, footprint, { bufferMetres: 10 }).dMin).toBe(7);
     expect(minDepthOver(store, footprint, { bufferMetres: 80 }).dMin).toBe(1.2);
+  });
+
+  test("a coastline marks the tiles it crosses, without a burn disc around it", () => {
+    const coast: DepthFeature = {
+      ...land([22.01, 60.004, 22.0101, 60.0041]),
+      objectClass: "COALNE",
+      hazard: true,
+      geom: {
+        type: "line",
+        coords: [toMercator(22.01, 60.0), toMercator(22.01, 60.01)]
+      }
+    };
+    // Unassessed quality would give a 1 km burn disc; a line gets none.
+    const store = buildPyramid([coverage(AREA), area(AREA, 7), coast], OPTS);
+    expect(query(store, [22.0099, 60.004, 22.0101, 60.005]).dMin).toBe(-Infinity);
+    expect(query(store, [22.002, 60.004, 22.004, 60.005]).dMin).toBe(7);
   });
 
   test("land is -Infinity", () => {

@@ -97,6 +97,27 @@ describe("index persistence", () => {
     expect(() => deserializePyramid(good.subarray(0, good.length - 1))).toThrow(/truncated/);
   });
 
+  test("refuses cells whose features name another catalogue entry", () => {
+    const a = readCellDirectory(path.join(FIXTURES, "FI5SYNTH"), 0);
+    const b = readCellDirectory(path.join(FIXTURES, "FI4SYNTH"), 0);
+    expect(() => buildChartIndex([a, b], OPTS)).toThrow(/FI4SYNTH at index 1 .* cellRef 0/);
+  });
+
+  test("saving over an existing index replaces it whole", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-swap-"));
+    try {
+      const target = path.join(dir, "index");
+      const two = fixtureIndex();
+      saveChartIndex(target, two);
+      const one = buildChartIndex([readCellDirectory(path.join(FIXTURES, "FI5SYNTH"), 0)], OPTS);
+      saveChartIndex(target, one);
+      expect(loadChartIndex(target).catalogue.cells.map((c) => c.name)).toEqual(["FI5SYNTH"]);
+      expect(fs.readdirSync(dir)).toEqual(["index"]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("save and load a chart index directory", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-index-"));
     try {

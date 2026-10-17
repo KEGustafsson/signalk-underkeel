@@ -91,7 +91,11 @@ export function serializePyramid(store: NodeStore): Buffer {
     count: n
   };
   const head = Buffer.from(`${JSON.stringify(header)}\n`, "utf8");
-  const parts = ORDER.map((k) => Buffer.from(cols[k].buffer, 0, cols[k].byteLength));
+  // Exactly `n` entries per column, the count the header records.
+  const parts = ORDER.map((k) => {
+    const col = cols[k].subarray(0, n);
+    return Buffer.from(col.buffer, col.byteOffset, col.byteLength);
+  });
   return Buffer.concat([head, ...parts]);
 }
 

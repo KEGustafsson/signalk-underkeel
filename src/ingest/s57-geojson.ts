@@ -51,17 +51,47 @@ export type S57Layer = (typeof S57_LAYERS)[number];
 
 type Position = readonly number[];
 
-function xy(pos: Position): XY {
-  return toMercator(pos[0] ?? NaN, pos[1] ?? NaN);
+/**
+ * GeoJSON files are external input. A position that is not two finite
+ * numbers is refused: a NaN coordinate would match no tile and silently
+ * drop a hazard from the index.
+ */
+function position(pos: unknown): Position {
+  const p = pos as unknown[];
+  if (
+    !Array.isArray(p) ||
+    typeof p[0] !== "number" ||
+    typeof p[1] !== "number" ||
+    !Number.isFinite(p[0]) ||
+    !Number.isFinite(p[1])
+  ) {
+    throw new Error(`invalid GeoJSON position ${JSON.stringify(pos)}`);
+  }
+  return p as Position;
+}
+
+function xy(pos: unknown): XY {
+  const p = position(pos);
+  return toMercator(p[0] as number, p[1] as number);
+}
+
+function list(coords: unknown): unknown[] {
+  if (!Array.isArray(coords)) {
+    throw new Error("GeoJSON coordinates must be an array");
+  }
+  return coords;
 }
 
 function ring(coords: unknown): XY[] {
-  return (coords as Position[]).map(xy);
+  return list(coords).map(xy);
 }
 
 function polygonFrom(coords: unknown): PolygonGeom {
-  const rings = coords as unknown[];
-  return { outer: ring(rings[0] ?? []), holes: rings.slice(1).map(ring) };
+  const rings = list(coords);
+  if (rings.length === 0) {
+    throw new Error("GeoJSON polygon has no rings");
+  }
+  return { outer: ring(rings[0]), holes: rings.slice(1).map(ring) };
 }
 
 interface Part {
@@ -76,19 +106,20 @@ export function toParts(geometry: GeoJsonGeometry | null): Part[] {
     return [];
   }
   const c = geometry.coordinates;
+  const point = (p: unknown): Part => ({ geom: { type: "point", p: xy(p) }, z: position(p)[2] });
   switch (geometry.type) {
     case "Point":
-      return [{ geom: { type: "point", p: xy(c as Position) }, z: (c as Position)[2] }];
+      return [point(c)];
     case "MultiPoint":
-      return (c as Position[]).map((p) => ({ geom: { type: "point", p: xy(p) }, z: p[2] }));
+      return list(c).map(point);
     case "LineString":
       return [{ geom: { type: "line", coords: ring(c) } }];
     case "MultiLineString":
-      return (c as unknown[]).map((l) => ({ geom: { type: "line", coords: ring(l) } }));
+      return list(c).map((l) => ({ geom: { type: "line", coords: ring(l) } }));
     case "Polygon":
       return [{ geom: { type: "polygon", polygons: [polygonFrom(c)] } }];
     case "MultiPolygon":
-      return [{ geom: { type: "polygon", polygons: (c as unknown[]).map(polygonFrom) } }];
+      return [{ geom: { type: "polygon", polygons: list(c).map(polygonFrom) } }];
     default:
       return [];
   }
@@ -190,14 +221,20 @@ export function parseLayer(
   ctx: LayerContext
 ): ChartFeature[] {
   const out: ChartFeature[] = [];
-  for (const f of collection.features) {
+  collection.features.forEach((f, i) => {
     const props = f.properties ?? {};
-    for (const part of toParts(f.geometry)) {
+    let parts: Part[];
+    try {
+      parts = toParts(f.geometry);
+    } catch (err) {
+      throw new Error(`${layer} feature ${i}: ${(err as Error).message}`, { cause: err });
+    }
+    for (const part of parts) {
       const feature = featureFor(layer, props, part, ctx);
       if (feature) {
         out.push(feature);
       }
     }
-  }
+  });
   return out;
 }
