@@ -87,13 +87,13 @@ function fakeRouter(withAccess = true) {
   const routes = new Map<string, Handler>();
   const levels = new Map<string, string>();
   const add = (method: string) => (p: string, h: Handler) => routes.set(`${method} ${p}`, h);
-  const plain = { get: add("GET"), post: add("POST") };
+  const plain = { get: add("GET"), post: add("POST"), delete: add("DELETE") };
   const scoped = (level: string) => {
     const reg = (method: string) => (p: string, h: Handler) => {
       levels.set(`${method} ${p}`, level);
       return add(method)(p, h);
     };
-    return { get: reg("GET"), post: reg("POST") };
+    return { get: reg("GET"), post: reg("POST"), delete: reg("DELETE") };
   };
   const router = withAccess ? { ...plain, access: scoped } : plain;
   const call = (
@@ -119,6 +119,20 @@ function fakeRouter(withAccess = true) {
     routes.get(`GET ${p}`)?.({ query, params }, res);
     return { code, body, type };
   };
+  const del = (p: string, params: Record<string, string>) =>
+    new Promise<{ code: number; body: unknown }>((resolve) => {
+      let code = 200;
+      const res: FakeRes = {
+        json: (b) => resolve({ code, body: b }),
+        send: (b) => resolve({ code, body: b }),
+        type: () => res,
+        status: (c) => {
+          code = c;
+          return { ...res, end: () => resolve({ code, body: undefined }) };
+        }
+      };
+      routes.get(`DELETE ${p}`)?.({ params }, res);
+    });
   const post = (p: string, reqBody: unknown) =>
     new Promise<{ code: number; body: unknown }>((resolve) => {
       let code = 200;
@@ -133,7 +147,7 @@ function fakeRouter(withAccess = true) {
       };
       routes.get(`POST ${p}`)?.({ body: reqBody }, res);
     });
-  return { router, call, post, levels };
+  return { router, call, post, del, levels };
 }
 
 function values(deltas: Partial<Delta>[]) {
@@ -192,7 +206,10 @@ describe("plugin lifecycle", () => {
       "POST /v1/route-check": "readonly",
       "POST /v1/query": "readonly",
       "GET /v1/tiles/ukc/:z/:x/:file": "readonly",
-      "GET /v1/ukc-style.json": "readonly"
+      "GET /v1/ukc-style.json": "readonly",
+      "GET /v1/acks": "readonly",
+      "POST /v1/acks": "readwrite",
+      "DELETE /v1/acks/:id": "readwrite"
     });
   });
 
@@ -380,6 +397,69 @@ describe("plugin lifecycle", () => {
     );
     expect(integrity().data.sigmaPos).toBeGreaterThan(390);
     plugin.stop();
+  });
+
+  test("an acknowledged passage turns warn into alert until it is deleted", async () => {
+    const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 3.2 } } });
+    const clock = fakeClock(T0);
+    const plugin = underkeel(f.app, clock);
+    const { router, call, post, del } = fakeRouter();
+    plugin.registerWithRouter?.(router as never);
+    expect((await post("/v1/acks", {})).code).toBe(503);
+    plugin.start({ cellsDir: FIXTURES, leafZoom: 18 }, () => undefined);
+    // Held 100 s of travel west of the rock in the fairway: warn.
+    const lon = ROCK[0] - 300 / M_PER_DEG_LON;
+    const tick = () => {
+      f.send(navDelta(lon, ROCK[1], 3, clock.now() + 1000));
+      clock.advance(1000);
+      return lastValue(f.deltas, "navigation.underKeel.state");
+    };
+    expect(tick()).toBe("warn");
+
+    expect((await post("/v1/acks", { sector: 200 })).code).toBe(400);
+    const made = await post("/v1/acks", { ttl: 3600, notificationId: "n1" });
+    expect(made.code).toBe(201);
+    const ack = made.body as { id: string; draft: number; heading: number; polygon: unknown[] };
+    expect(ack).toMatchObject({ draft: 3.2, heading: Math.PI / 2 });
+    expect(ack.polygon.length).toBeGreaterThanOrEqual(3);
+    expect(fs.existsSync(path.join(dataDir, "acks.json"))).toBe(true);
+    expect(tick()).toBe("alert");
+    const n = lastValue(f.deltas, "notifications.navigation.underKeel") as { message: string };
+    expect(n.message).toMatch(/acknowledged passage/);
+    expect((call("/v1/acks").body as unknown[]).length).toBe(1);
+
+    expect((await del("/v1/acks/:id", { id: ack.id })).code).toBe(204);
+    expect((await del("/v1/acks/:id", { id: ack.id })).code).toBe(404);
+    // Raising back to warn takes two ticks (hysteresis).
+    tick();
+    expect(tick()).toBe("warn");
+    plugin.stop();
+  });
+
+  test("the grounding detector is off by default and writes notifications.grounding when on", () => {
+    const run = (options: Record<string, unknown>) => {
+      const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 1.8 } } });
+      const clock = fakeClock(T0);
+      const plugin = underkeel(f.app, clock);
+      plugin.start({ cellsDir: FIXTURES, leafZoom: 18, ...options }, () => undefined);
+      const at = (t: number, sog: number) => {
+        const d = navDelta(22.005, 60.015, sog, T0 + t);
+        d.updates[0]?.values.push({ path: "environment.depth.belowSurface" as never, value: 1.9 });
+        f.send(d);
+        clock.advance(T0 + t - clock.now());
+      };
+      at(1000, 3);
+      at(2000, 3);
+      at(3000, 0.4);
+      plugin.stop();
+      return lastValue(f.deltas, "notifications.grounding") as
+        { state: string; message: string } | undefined;
+    };
+    expect(run({})).toBeUndefined();
+    expect(run({ groundingDetector: { enabled: true } })).toMatchObject({
+      state: "emergency",
+      message: "Grounding detected: SOG fell from 3.0 to 0.4 m/s; depth 1.9 m against draft 1.8 m"
+    });
   });
 
   test("POST /v1/route-check answers with per-leg results", async () => {

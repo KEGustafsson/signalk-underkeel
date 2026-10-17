@@ -1,3 +1,5 @@
+import type { GroundingOptions } from "./engine/grounding-detect";
+import { DEFAULT_GROUNDING } from "./engine/grounding-detect";
 import type { LookaheadOptions } from "./engine/lookahead";
 import { DEFAULT_LOOKAHEAD } from "./engine/lookahead";
 import type { HeelModel } from "./model/allowances";
@@ -28,6 +30,10 @@ export interface PluginConfig {
   dynamics: DynamicsOptions;
   waterLevel: WaterLevelConfig;
   lookahead: LookaheadOptions;
+  /** Signal K region ids treated as mooring zones. */
+  mooringZones: string[];
+  /** Undefined when the detector is off. */
+  groundingDetector?: GroundingOptions;
   routeCheck: {
     /** Planning speed when a request gives none, m/s. */
     speed: number;
@@ -156,6 +162,16 @@ function parseLookahead(l: Record<string, unknown>): LookaheadOptions {
   };
 }
 
+function parseGrounding(g: Record<string, unknown>): GroundingOptions | undefined {
+  if (g.enabled !== true) {
+    return undefined;
+  }
+  return {
+    imuPath: str(g.imuPath),
+    decelThreshold: num(g.decelThreshold, DEFAULT_GROUNDING.decelThreshold, 0.1, 50)
+  };
+}
+
 export function parseConfig(raw: unknown): PluginConfig {
   const r = record(raw);
   const v = record(r.vessel);
@@ -173,6 +189,10 @@ export function parseConfig(raw: unknown): PluginConfig {
     dynamics: parseDynamics(v),
     waterLevel: parseWaterLevel(record(r.waterLevel)),
     lookahead: parseLookahead(record(r.lookahead)),
+    mooringZones: (Array.isArray(r.mooringZones) ? r.mooringZones : [])
+      .map(str)
+      .filter((id): id is string => id !== undefined),
+    groundingDetector: parseGrounding(record(r.groundingDetector)),
     routeCheck: {
       speed: num(rc.speed, DEFAULT_ROUTE_CHECK.speed, LIMITS.minSpeed, LIMITS.maxSpeed),
       xteLimit: num(rc.xteLimit, DEFAULT_ROUTE_CHECK.xteLimit, 0, LIMITS.maxXte),

@@ -12,7 +12,9 @@ export const PATHS = {
   envelopeRev: "navigation.underKeel.envelopeRev",
   waterLevel: "navigation.underKeel.waterLevel",
   notification: "notifications.navigation.underKeel",
-  positionIntegrity: "notifications.navigation.positionIntegrity"
+  positionIntegrity: "notifications.navigation.positionIntegrity",
+  /** Written only by the optional grounding detector (safety invariant 7). */
+  grounding: "notifications.grounding"
 } as const;
 
 export interface EngineStatus {

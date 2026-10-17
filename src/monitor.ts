@@ -2,6 +2,10 @@ import type { Delta, Path, ServerAPI, Unsubscribes } from "@signalk/server-api";
 import type { PluginConfig } from "./config";
 import { buildEnvelope, EnvelopeTracker } from "./engine/envelope";
 import type { LookaheadResult, NavState, Sample } from "./engine/lookahead";
+import type { AckStore } from "./ack-store";
+import type { Zone } from "./engine/acks";
+import { suppress } from "./engine/acks";
+import { GroundingDetector } from "./engine/grounding-detect";
 import { Hysteresis } from "./engine/hysteresis";
 import { evaluateLookahead } from "./engine/lookahead";
 import type { UnderKeelNotification } from "./engine/notify";
@@ -17,6 +21,7 @@ import { resolveVessel } from "./model/vessel";
 import type { ChartIndex } from "./spatial/chart-index";
 import type { WaterLevelStatus } from "./water-level-service";
 import { WaterLevelService } from "./water-level-service";
+import { ChangeNotifier, groundingNotification, integrityNotification } from "./notifications";
 
 /**
  * Signal K wiring for the look-ahead: keeps the latest navigation inputs,
@@ -92,11 +97,15 @@ export class Monitor {
   vesselNotes: string[] = [];
   private timer: unknown;
   private readonly unsubscribes: Unsubscribes = [];
-  private lastNotification = "";
   private readonly levels: WaterLevelService;
   private readonly integrity = new IntegrityMonitor();
   integrityResult?: IntegrityResult;
-  private lastIntegrity = "";
+  private readonly notifier: ChangeNotifier;
+  /** notifications.grounding is first written when the detector fires, never before. */
+  private everGrounded = false;
+  private acks?: AckStore;
+  private readonly grounding?: GroundingDetector;
+  zones: Zone[] = [];
   private readonly hysteresis: Hysteresis;
   /** The escape fan is searched at most this often; the heading is held between. */
   private escape: number | null = null;
@@ -112,6 +121,10 @@ export class Monitor {
     fetch: FetchLike = globalThis.fetch
   ) {
     this.levels = new WaterLevelService(config, index, fetch);
+    this.notifier = new ChangeNotifier(app, pluginId);
+    if (config.groundingDetector) {
+      this.grounding = new GroundingDetector(config.groundingDetector);
+    }
     this.hysteresis = new Hysteresis(config.lookahead.thresholds);
     this.last = this.evaluate();
     this.since = clock.now();
@@ -121,10 +134,12 @@ export class Monitor {
     this.app.subscriptionmanager.subscribe(
       {
         context: "vessels.self" as never,
-        subscribe: [...INPUT_PATHS, ...this.levels.paths()].map((path) => ({
-          path: path as Path,
-          policy: "instant"
-        }))
+        subscribe: [...INPUT_PATHS, ...this.levels.paths(), ...(this.grounding?.paths() ?? [])].map(
+          (path) => ({
+            path: path as Path,
+            policy: "instant"
+          })
+        )
       },
       this.unsubscribes,
       (err) => this.app.error(`subscription failed: ${String(err)}`),
@@ -160,6 +175,7 @@ export class Monitor {
   }
 
   private record(path: string, value: unknown, at: number): void {
+    this.grounding?.record(path, value, at);
     if (this.levels.record(path, value, at)) {
       return;
     }
@@ -218,6 +234,48 @@ export class Monitor {
     });
     this.vesselNotes = resolved.notes;
     return resolved.vessel;
+  }
+
+  /**
+   * Acknowledged passages and mooring zones act on the published state,
+   * after hysteresis: they change the state, not P, so hysteresis would
+   * otherwise never let an acknowledged warn go.
+   */
+  private suppressed(r: LookaheadResult): LookaheadResult {
+    const vessel = this.vessel();
+    const heading = this.heading();
+    if (!vessel || heading === undefined) {
+      return r;
+    }
+    return suppress(r, {
+      acks: this.acks?.list(this.clock.now()) ?? [],
+      zones: this.zones,
+      heading,
+      waterLevel: this.waterLevel().h,
+      draft: vessel.draft,
+      now: this.clock.now(),
+      thresholds: this.config.lookahead.thresholds,
+      certainWithin: this.config.lookahead.certainWithin
+    });
+  }
+
+  /** Fresh true heading, else COG; undefined when neither is fresh. */
+  heading(): number | undefined {
+    const now = this.clock.now();
+    const limit = this.config.lookahead.staleAfter * 1000;
+    const fresh = (x: Sample<number> | undefined) =>
+      x && now - x.at <= limit ? x.value : undefined;
+    return fresh(this.nav.heading) ?? fresh(this.nav.cog);
+  }
+
+  /** Acknowledged passages to honour from now on. */
+  useAcks(store: AckStore): void {
+    this.acks = store;
+  }
+
+  /** Mooring zones to suppress warnings in. */
+  setZones(zones: Zone[]): void {
+    this.zones = zones;
   }
 
   /** The water level the engine applies now. */
@@ -297,7 +355,7 @@ export class Monitor {
 
   tick(): void {
     this.levels.refresh(this.nav.position?.value, this.clock.now());
-    const next = this.hysteresis.next(this.evaluate());
+    const next = this.suppressed(this.hysteresis.next(this.evaluate()));
     if (next.state !== this.last.state) {
       this.since = this.clock.now();
     }
@@ -321,47 +379,30 @@ export class Monitor {
       ]
     });
     this.notify(notificationFor(r));
-    this.notifyIntegrity();
+    if (this.integrityResult) {
+      this.notifier.send(PATHS.positionIntegrity, integrityNotification(this.integrityResult));
+    }
+    this.checkGrounding(r);
     this.app.setPluginStatus(
       r.state === "normal" ? "Monitoring: normal" : `Monitoring: ${r.state} — ${r.reason}`
     );
   }
 
-  /** Publishes the notification only when its state or message changes. */
+  /** Publishes the look-ahead notification only when its state or message changes. */
   notify(n: UnderKeelNotification): void {
-    const key = `${n.state}|${n.message}`;
-    if (key === this.lastNotification) {
-      return;
-    }
-    this.lastNotification = key;
-    this.app.handleMessage(this.pluginId, {
-      updates: [{ values: [{ path: PATHS.notification as Path, value: n as never }] }]
-    });
+    this.notifier.send(PATHS.notification, n);
   }
 
-  /** `notifications.navigation.positionIntegrity`, published when it changes. */
-  private notifyIntegrity(): void {
-    const r = this.integrityResult;
-    if (!r) {
-      return;
+  /** `notifications.grounding` from the optional detector (safety invariant 7). */
+  private checkGrounding(r: LookaheadResult): void {
+    if (this.grounding) {
+      const draft = this.vessel()?.draft;
+      const g = this.grounding.check(this.clock.now(), draft, r.footprints[0]?.risk ?? 0);
+      if (g.grounded || this.everGrounded) {
+        this.everGrounded = true;
+        this.notifier.send(PATHS.grounding, groundingNotification(g));
+      }
     }
-    const message = r.ok
-      ? `Position integrity: ${r.unchecked ?? "GNSS agrees with dead reckoning"}`
-      : `Position integrity degraded: ${r.reasons.join("; ")}`;
-    const key = `${r.ok}|${message}`;
-    if (key === this.lastIntegrity) {
-      return;
-    }
-    this.lastIntegrity = key;
-    const value = {
-      state: r.ok ? "normal" : "warn",
-      method: r.ok ? [] : ["visual", "sound"],
-      message,
-      data: { sigmaPos: r.sigmaPos, divergence: r.divergence }
-    };
-    this.app.handleMessage(this.pluginId, {
-      updates: [{ values: [{ path: PATHS.positionIntegrity as Path, value: value as never }] }]
-    });
   }
 
   private publishMeta(): void {

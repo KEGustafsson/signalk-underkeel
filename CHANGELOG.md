@@ -12,6 +12,10 @@ All notable changes to signalk-underkeel are documented here.
 - Position integrity (M4): dead reckoning from heading, speed through water and a learned
   current against GNSS; divergence, a poor fix or HDOP above 4 inflate σ_pos and raise
   `notifications.navigation.positionIntegrity`.
+- Acknowledged passages (`GET/POST/DELETE /acks`) and mooring zones from Signal K regions,
+  which publish warn and alarm as alert with the reason (M4).
+- Optional grounding detector, off by default, the only writer of `notifications.grounding`
+  (M4).
 - Probabilistic UKC (M3): P(UKC < 0) per footprint from CATZOC σ, draft, Barrass squat, heel,
   wave allowance and water level; risk thresholds for alert / warn / alarm; an explanation
   object on every notification and route-check leg; `clearanceSigma` and `risk` deltas.

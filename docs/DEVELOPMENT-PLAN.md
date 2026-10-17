@@ -511,6 +511,11 @@ The plugin raises `notifications.grounding` as an emergency when all of the foll
 
 Off by default. This is the only code path that touches the standard emergency alarm.
 
+**As built (M4).** SOG must fall by more than 70 % within 5 s from at least 0.5 m/s; a
+`propulsion.*.transmission.gear` change in the last 10 s vetoes it. Signal K has no standard
+IMU path, so the deceleration condition is tested only when `imuPath` is configured. Once
+fired, the notification holds until SOG stays above 0.5 m/s for 10 s.
+
 ### 4.10 Signal K data model and REST API
 
 **Deltas.** These are published by the plugin, use plugin-scoped units in SI, and are
@@ -660,6 +665,17 @@ never `normal`.
 
 Acknowledgements are kept per vessel and exported as Signal K **notes**, so they appear on
 the chart and can be deleted there.
+
+**As built (M4).** `POST /acks` takes an optional GeoJSON Polygon (default: the hull of the
+current look-ahead footprints), `sector` in degrees (default 20), `ttl` in seconds and
+`notificationId`; heading, water level and draft are taken from the plugin's current state.
+`GET /acks` is readonly; `POST` and `DELETE /acks/:id` need readwrite. They are stored in
+`acks.json` in the plugin data directory, so no database dependency is added; export as
+Signal K notes is a follow-up. Suppression applies to the published state after hysteresis,
+because it changes the state, not P. It never suppresses a negative mean UKC within
+`certainWithin`: an acknowledgement covers an uncertain chart, not a charted depth shallower
+than the keel. Mooring zones are Signal K `regions` resources named in the configuration and
+suppress the same way, with the zone's name in the reason.
 
 ### 4.13 Living chart
 

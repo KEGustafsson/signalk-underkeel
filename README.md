@@ -38,6 +38,11 @@ Water-level sources, set under **Water level** in the plugin configuration:
 A source that stops updating falls back to chart datum with a wider σ, and the state carries
 the reason.
 
+**Mooring zones**: Signal K region ids listed in the configuration suppress warn and alarm
+to alert inside them, with the zone named. **Grounding detector** (off by default): a sudden
+stop in water as shallow as the keel raises `notifications.grounding`; it is the only part of
+the plugin that writes that path.
+
 REST, base `/plugins/signalk-underkeel/v1`, open to readonly users:
 
 - `GET /status`: engine state, chart index and cell editions, look-ahead summary, water-level
@@ -50,6 +55,10 @@ REST, base `/plugins/signalk-underkeel/v1`, open to readonly users:
   its explanation and the cell editions used.
 - `POST /query`: a GeoJSON Point or Polygon, with an optional buffer, draft and speed; returns
   the class, P(UKC < 0), the deciding hazard and the explanation, for cursor readouts.
+- `GET /acks`, `POST /acks`, `DELETE /acks/:id`: acknowledged passages. Inside one, with the
+  heading within ±20° and no less water or more draft than when acknowledged, warn and alarm
+  are published as alert with the reason "acknowledged passage". Adding and deleting need a
+  readwrite user.
 - `GET /tiles/ukc/{z}/{x}/{y}.pbf`: Mapbox vector tiles from zoom 11, one `ukc` layer of cells
   classed `clear`, `caution`, `danger`, `unverified` or `land` for the current draft and water
   level. `GET /ukc-style.json` is a MapLibre style for them.

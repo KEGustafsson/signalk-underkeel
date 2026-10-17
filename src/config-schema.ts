@@ -124,6 +124,29 @@ export const SCHEMA = {
         }
       }
     },
+    mooringZones: {
+      type: "array",
+      title: "Mooring zones",
+      description:
+        "Signal K region ids. Inside one, warn and alarm are published as alert with the reason.",
+      items: { type: "string" }
+    },
+    groundingDetector: {
+      type: "object",
+      title: "Grounding detector (raises notifications.grounding)",
+      properties: {
+        enabled: { type: "boolean", title: "Enabled", default: false },
+        imuPath: {
+          type: "string",
+          title: "Longitudinal acceleration path (m/s²), optional"
+        },
+        decelThreshold: {
+          type: "number",
+          title: "Deceleration spike at or above (m/s²)",
+          default: 2
+        }
+      }
+    },
     routeCheck: {
       type: "object",
       title: "Route check",
