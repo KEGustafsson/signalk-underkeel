@@ -1,0 +1,75 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              22,
+              60
+            ],
+            [
+              22.035,
+              60
+            ],
+            [
+              22.035,
+              60.02
+            ],
+            [
+              22,
+              60.02
+            ],
+            [
+              22,
+              60
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "DRVAL1": 10,
+        "DRVAL2": 20,
+        "LNAM": "FI5-DEP-10"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              22.01,
+              60.003
+            ],
+            [
+              22.015,
+              60.003
+            ],
+            [
+              22.015,
+              60.006
+            ],
+            [
+              22.01,
+              60.006
+            ],
+            [
+              22.01,
+              60.003
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "DRVAL1": 2,
+        "DRVAL2": 5,
+        "LNAM": "FI5-BANK"
+      }
+    }
+  ]
+}

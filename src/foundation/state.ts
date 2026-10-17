@@ -13,6 +13,7 @@ export interface EngineStatus {
   since: string;
 }
 
+/** Engine status stamped with the time it was entered. */
 export function createStatus(state: UnderKeelState, reason: string, now: Date): EngineStatus {
   return { state, reason, since: now.toISOString() };
 }

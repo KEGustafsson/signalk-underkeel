@@ -31,7 +31,8 @@
     "format": "prettier --write \"**/*.{js,ts,json,md,yml}\"",
     "format:check": "prettier --check \"**/*.{js,ts,json,md,yml}\"",
     "prepack": "npm run build",
-    "prepare": "husky"
+    "prepare": "husky",
+    "bench": "jest --runInBand --testPathIgnorePatterns /node_modules/ --testMatch \"**/__tests__/benchmarks/**/*.bench.ts\""
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

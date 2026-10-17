@@ -235,8 +235,10 @@ the user can see what data a result was based on.
 
 ### 4.3 Index: min-depth pyramid and hazard tree
 
-**Grid.** Web Mercator tile pyramid from z10 to z18 (z18 is about 0.6 m per pixel at 60°N,
-which is plenty). Each leaf cell stores the following.
+**Grid.** Web Mercator tile pyramid; each node is one tile. The default range is z10 to z20
+(a z20 tile is about 19 m on a side at 60°N). The pyramid is a sparse quadtree: a tile is
+subdivided only where a boundary inside it could change a child's value, so open water and
+large uniform areas stay at coarse zooms. Each node stores the following.
 
 ```ts
 interface Cell {
@@ -255,9 +257,12 @@ lower bound from one lookup.
 - `sigmaD` and `sigmaP` are the maximum of its children's.
 - `flags` is the bitwise OR of its children's.
 
-**Burning hazards.** Each point hazard is rasterised into every cell within
+**Burning hazards.** Each point hazard and sounding is rasterised into every cell within
 `k·σP_source` of it (k = 2), so the pyramid alone is conservative. The R-tree keeps the exact
-geometry for explanations and for refinement near the threshold.
+geometry for explanations and for refinement near the threshold. A burn disc more than 8 tiles
+wide does not by itself subdivide a tile: the tile takes the disc's depth over its whole area,
+which is pessimistic by at most one tile width and keeps CATZOC C soundings (σP 250 m) from
+splitting every tile down to the leaf zoom.
 
 **Query: `minDepthOver(polygon, zoomCap)`.**
 
@@ -272,8 +277,10 @@ Expected cost is about 50 to 300 cell visits per look-ahead footprint.
 
 **Storage.**
 
-- One binary file per zoom level, with a varint-packed sparse quadkey index, memory-mapped.
-  Memory stays flat on a Pi.
+- `pyramid.bin`: a JSON header line, then one typed column per node field (depth, σ, flags,
+  cell reference, tile address, split bit). It is loaded into typed arrays at start; memory
+  mapping per zoom level is the follow-up if the full Finnish coast exceeds the RAM budget.
+- `cells.json` (provenance) and `hazards.json` (exact hazard geometry) sit beside it.
 - The same data is also exported as UKC tiles (§4.10).
 
 **Invariant, tested by property-based tests:** for any polygon,

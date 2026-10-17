@@ -3,6 +3,7 @@ import type { EngineStatus } from "../foundation/state";
 
 export const API_BASE = "/v1";
 
+/** `GET /v1/status`: the engine state and the reason for it. */
 export function registerStatusRoute(
   router: Pick<IRouter, "get">,
   getStatus: () => EngineStatus

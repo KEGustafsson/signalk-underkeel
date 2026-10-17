@@ -1,0 +1,15 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": null,
+      "properties": {
+        "DSID_DSNM": "FI4SYNTH.000",
+        "DSID_EDTN": "7",
+        "DSID_UPDN": "0",
+        "DSID_ISDT": "20250601"
+      }
+    }
+  ]
+}

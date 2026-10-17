@@ -1,0 +1,73 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              22,
+              60.008
+            ],
+            [
+              22.035,
+              60.008
+            ],
+            [
+              22.035,
+              60.02
+            ],
+            [
+              22,
+              60.02
+            ],
+            [
+              22,
+              60.008
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "CATZOC": 2,
+        "LNAM": "FI5-QUAL-A2"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              22,
+              60
+            ],
+            [
+              22.035,
+              60
+            ],
+            [
+              22.035,
+              60.008
+            ],
+            [
+              22,
+              60.008
+            ],
+            [
+              22,
+              60
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "CATZOC": 4,
+        "LNAM": "FI5-QUAL-C"
+      }
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "MultiPoint",
+        "coordinates": [
+          [
+            22.005,
+            60.015,
+            12.3
+          ],
+          [
+            22.012,
+            60.0045,
+            1.8
+          ]
+        ]
+      },
+      "properties": {
+        "LNAM": "FI5-SNDG"
+      }
+    }
+  ]
+}
