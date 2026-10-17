@@ -172,7 +172,34 @@ describe("layer parsing edge cases", () => {
           [null, 60]
         ]
       },
-      { type: "Polygon", coordinates: [] }
+      { type: "Polygon", coordinates: [] },
+      { type: "Polygon", coordinates: [[]] },
+      {
+        type: "Polygon",
+        coordinates: [
+          [
+            [22, 60],
+            [22.1, 60],
+            [22, 60]
+          ]
+        ]
+      },
+      {
+        type: "Polygon",
+        coordinates: [
+          [
+            [22, 60],
+            [22.1, 60],
+            [22.1, 60.1],
+            [22, 60]
+          ],
+          [[22.05, 60.05]]
+        ]
+      },
+      { type: "MultiPolygon", coordinates: [] },
+      { type: "MultiPoint", coordinates: [] },
+      { type: "LineString", coordinates: [[22, 60]] },
+      { type: "MultiLineString", coordinates: [] }
     ];
     for (const geometry of bad) {
       expect(() => parseLayer("UWTROC", fc(geometry, { VALSOU: 1 }), ctx)).toThrow(

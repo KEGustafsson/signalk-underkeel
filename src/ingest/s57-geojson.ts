@@ -82,9 +82,16 @@ function list(coords: unknown): unknown[] {
   return coords;
 }
 
-function ring(coords: unknown): XY[] {
-  return list(coords).map(xy);
+/** A line string needs two positions; a linear ring four, the last repeating the first. */
+function line(coords: unknown, min = 2): XY[] {
+  const positions = list(coords);
+  if (positions.length < min) {
+    throw new Error(`GeoJSON ${min === 2 ? "line" : "ring"} has ${positions.length} positions`);
+  }
+  return positions.map(xy);
 }
+
+const ring = (coords: unknown): XY[] => line(coords, 4);
 
 function polygonFrom(coords: unknown): PolygonGeom {
   const rings = list(coords);
@@ -92,6 +99,13 @@ function polygonFrom(coords: unknown): PolygonGeom {
     throw new Error("GeoJSON polygon has no rings");
   }
   return { outer: ring(rings[0]), holes: rings.slice(1).map(ring) };
+}
+
+function nonEmpty<T>(items: T[], what: string): T[] {
+  if (items.length === 0) {
+    throw new Error(`GeoJSON ${what} is empty`);
+  }
+  return items;
 }
 
 interface Part {
@@ -111,15 +125,21 @@ export function toParts(geometry: GeoJsonGeometry | null): Part[] {
     case "Point":
       return [point(c)];
     case "MultiPoint":
-      return list(c).map(point);
+      return nonEmpty(list(c), "MultiPoint").map(point);
     case "LineString":
-      return [{ geom: { type: "line", coords: ring(c) } }];
+      return [{ geom: { type: "line", coords: line(c) } }];
     case "MultiLineString":
-      return list(c).map((l) => ({ geom: { type: "line", coords: ring(l) } }));
+      return nonEmpty(list(c), "MultiLineString").map((l) => ({
+        geom: { type: "line", coords: line(l) }
+      }));
     case "Polygon":
       return [{ geom: { type: "polygon", polygons: [polygonFrom(c)] } }];
     case "MultiPolygon":
-      return [{ geom: { type: "polygon", polygons: list(c).map(polygonFrom) } }];
+      return [
+        {
+          geom: { type: "polygon", polygons: nonEmpty(list(c), "MultiPolygon").map(polygonFrom) }
+        }
+      ];
     default:
       return [];
   }
