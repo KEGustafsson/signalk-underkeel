@@ -282,6 +282,37 @@ describe("plugin lifecycle", () => {
     plugin.stop();
   });
 
+  test("stopping during an alarm clears clearance and time to shoal", () => {
+    const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 3.6 } } });
+    const clock = fakeClock(T0);
+    const plugin = underkeel(f.app, clock);
+    plugin.start({ cellsDir: FIXTURES, leafZoom: 18 }, () => undefined);
+    f.send(navDelta(ROCK[0] - 75 / M_PER_DEG_LON, ROCK[1], 3, T0));
+    clock.advance(1000);
+    expect(lastValue(f.deltas, "navigation.underKeel.timeToShoal")).toEqual(expect.any(Number));
+    plugin.stop();
+    expect(lastValue(f.deltas, "navigation.underKeel.clearance")).toBeNull();
+    expect(lastValue(f.deltas, "navigation.underKeel.timeToShoal")).toBeNull();
+  });
+
+  test("a non-finite or out-of-range position clears the sample", () => {
+    const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 1.5 } } });
+    const clock = fakeClock(T0);
+    const plugin = underkeel(f.app, clock);
+    const { router, call } = fakeRouter();
+    plugin.registerWithRouter?.(router as never);
+    plugin.start({ cellsDir: FIXTURES, leafZoom: 18 }, () => undefined);
+    for (const bad of [navDelta(NaN, 60.01, 3, T0), navDelta(22.003, 91, 3, T0)]) {
+      f.send(navDelta(22.003, 60.01, 3, T0));
+      f.send(bad);
+      clock.advance(1000);
+      expect(call("/v1/status").body).toMatchObject({
+        engine: { state: "unknown", reason: "no position" }
+      });
+    }
+    plugin.stop();
+  });
+
   test("a null position (source timed out) clears the sample", () => {
     const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 1.5 } } });
     const clock = fakeClock(T0);

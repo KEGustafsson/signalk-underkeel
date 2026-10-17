@@ -134,6 +134,40 @@ describe("deterministic look-ahead on the synthetic chart", () => {
     });
   });
 
+  test("non-finite navigation input is unknown, never normal", () => {
+    expect(evaluateLookahead(nav(NaN, FAIRWAY_LAT), DEEP_KEEL, index, NOW)).toMatchObject({
+      state: "unknown",
+      reason: "non-finite navigation input"
+    });
+    const n = nav(22.003, FAIRWAY_LAT);
+    n.sog = { value: Infinity, at: NOW };
+    expect(evaluateLookahead(n, DEEP_KEEL, index, NOW).state).toBe("unknown");
+  });
+
+  test("a footprint that visits no tile is uncovered, never normal", () => {
+    const r = evaluateLookahead(nav(500, FAIRWAY_LAT, EAST, 0.1), DEEP_KEEL, index, NOW);
+    expect(r.footprints[0]?.uncovered).toBe(true);
+    expect(r.state).not.toBe("normal");
+  });
+
+  test("only a hazard at the charted minimum is named", () => {
+    const at: [number, number] = [22.01, 60.005];
+    const rock = point(at[0], at[1], 3, { lnam: "SET-MIN" });
+    const decoy = point(at[0], at[1], 1, { lnam: "DECOY" });
+    const named: ChartIndex = {
+      catalogue: { version: 1, cells: [] },
+      // The decoy is not in the pyramid, so it cannot have set the minimum.
+      pyramid: buildPyramid([...basin([22.0, 60.0, 22.02, 60.01], 10), rock], {
+        minZoom: 12,
+        leafZoom: 18
+      }),
+      hazards: new HazardIndex([decoy, rock])
+    };
+    const r = evaluateLookahead(nav(at[0], at[1], EAST, 0), DEEP_KEEL, named, NOW);
+    expect(r.worst?.charted).toBe(3);
+    expect(r.worst?.hazard?.lnam).toBe("SET-MIN");
+  });
+
   test("land ahead is a shoal", () => {
     // The island spans 22.025–22.03 E, 60.013–60.016 N; approach from the west at 60.0145.
     const r = evaluateLookahead(nav(22.022, 60.0145, EAST, 3), SHALLOW_KEEL, index, NOW);

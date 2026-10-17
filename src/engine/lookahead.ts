@@ -161,14 +161,16 @@ function footprints(
       bufferMetres: opts.positionBuffer,
       clearAbove
     });
-    const charted = r.coveredDMin !== Infinity;
+    // A query that visited no tile (a degenerate footprint) proved nothing.
+    const examined = r.visits > 0;
+    const charted = examined && r.coveredDMin !== Infinity;
     out.push({
       t,
       center,
       ring,
       dMin: r.coveredDMin,
       ukc: charted ? r.coveredDMin - vessel.draft - opts.margin : null,
-      uncovered: (r.flags & FLAGS.NO_COVERAGE) !== 0,
+      uncovered: !examined || (r.flags & FLAGS.NO_COVERAGE) !== 0,
       flags: r.flags,
       cellRef: r.cellRef,
       sigmaP: r.sigmaP
@@ -193,14 +195,16 @@ function worstOf(
   }
   // A hazard reaches k·σP from its position and then fills its whole leaf
   // tile, so the naming search looks that far out. It only picks the name;
-  // the depth already came from the pyramid.
+  // the depth already came from the pyramid. A shallower hazard in that
+  // reach did not set the minimum (it would have lowered it), so only one
+  // at exactly the charted minimum is named.
   const geom = footprintGeom(worst.ring);
   const leafDiagonal =
     tileSize(index.pyramid.leafZoom) * Math.cos((worst.center[1] * Math.PI) / 180) * Math.SQRT2;
   const reach = opts.positionBuffer + DEFAULT_BUILD.k * worst.sigmaP + leafDiagonal;
   const hit = index.hazards
     .near(geom, mercatorBuffer(geomBounds(geom), reach))
-    .find((h) => h.feature.depth <= worst.dMin);
+    .find((h) => h.feature.depth === worst.dMin);
   const cell = index.catalogue.cells[worst.cellRef];
   return {
     t: worst.t,
@@ -289,6 +293,16 @@ function degradeForMotion(
   return c;
 }
 
+function finiteNav(nav: NavState): boolean {
+  const p = nav.position?.value;
+  return (
+    p !== undefined &&
+    Number.isFinite(p[0]) &&
+    Number.isFinite(p[1]) &&
+    [nav.cog, nav.sog, nav.heading].every((s) => s === undefined || Number.isFinite(s.value))
+  );
+}
+
 export function evaluateLookahead(
   nav: NavState,
   vessel: VesselModel | undefined,
@@ -307,6 +321,9 @@ export function evaluateLookahead(
   }
   if (stale(nav.position, now, opts)) {
     return degraded("unknown", "position stale");
+  }
+  if (!finiteNav(nav)) {
+    return degraded("unknown", "non-finite navigation input");
   }
   const m = motionOf(nav, now, opts);
   const fps = footprints({ origin: nav.position.value, ...m }, vessel, index, opts);

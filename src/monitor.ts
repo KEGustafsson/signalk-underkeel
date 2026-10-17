@@ -50,8 +50,10 @@ function sampleTime(timestamp: string | undefined, now: number): number {
 
 function asPosition(v: unknown): LonLat | undefined {
   const p = v as { latitude?: unknown; longitude?: unknown } | null;
-  return p && typeof p.latitude === "number" && typeof p.longitude === "number"
-    ? [p.longitude, p.latitude]
+  const lat = asNumber(p?.latitude);
+  const lon = asNumber(p?.longitude);
+  return lat !== undefined && lon !== undefined && Math.abs(lat) <= 90 && Math.abs(lon) <= 180
+    ? [lon, lat]
     : undefined;
 }
 

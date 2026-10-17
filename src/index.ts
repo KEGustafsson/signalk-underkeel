@@ -53,6 +53,8 @@ export = function underkeel(app: ServerAPI, clock: Clock = SYSTEM_CLOCK): Plugin
           {
             values: [
               { path: PATHS.state as Path, value: "off" },
+              { path: PATHS.clearance as Path, value: null },
+              { path: PATHS.timeToShoal as Path, value: null },
               {
                 path: PATHS.notification as Path,
                 value: { state: "normal", method: [], message: "UKC monitoring stopped" } as never
