@@ -6,8 +6,20 @@ import { evaluateLookahead } from "./engine/lookahead";
 import type { UnderKeelNotification } from "./engine/notify";
 import { notificationFor } from "./engine/notify";
 import type { LonLat } from "./foundation/geo";
+import { haversine } from "./foundation/geo";
 import { PATHS } from "./foundation/state";
+import type { DatumUse } from "./ingest/datum";
+import { datumUses } from "./ingest/datum";
+import type { FetchLike } from "./model/fmi";
+import { FmiProvider } from "./model/fmi";
 import type { WaterLevel } from "./model/uncertainty";
+import type { ProviderHealth, WaterLevelProvider } from "./model/water-level";
+import {
+  lowestWaterLevel,
+  manualProvider,
+  resolveWaterLevel,
+  SignalKTideProvider
+} from "./model/water-level";
 import type { VesselModel } from "./model/vessel";
 import { resolveVessel } from "./model/vessel";
 import type { ChartIndex } from "./spatial/chart-index";
@@ -42,6 +54,35 @@ const INPUT_PATHS = [
   "navigation.attitude",
   "environment.water.waves.significantHeight"
 ] as const;
+
+const TIDE_PATHS = ["environment.tide.heightNow", "environment.tide.heightLow"] as const;
+
+/** FMI is re-fetched when the vessel is this far from the forecast point. */
+const FMI_REFETCH_METRES = 10000;
+/** A failed or moved-triggered FMI fetch is retried no sooner than this. */
+const FMI_RETRY_MS = 60000;
+
+function createProvider(config: PluginConfig, fetch: FetchLike): WaterLevelProvider | undefined {
+  const w = config.waterLevel;
+  switch (w.source) {
+    case "manual":
+      return manualProvider(w.height, w.sigma);
+    case "signalk-tide":
+      return new SignalKTideProvider(w.sigma);
+    case "fmi":
+      return new FmiProvider(fetch);
+    case "none":
+      return undefined;
+  }
+}
+
+/** What `GET /status` reports about the water level. */
+export interface WaterLevelStatus {
+  source: PluginConfig["waterLevel"]["source"];
+  applied: WaterLevel;
+  health?: ProviderHealth;
+  datums: DatumUse[];
+}
 
 /** Signal K timestamps from the future are clock errors; trust receipt time then. */
 const FUTURE_TOLERANCE_MS = 5000;
@@ -80,6 +121,9 @@ export class Monitor {
   private timer: unknown;
   private readonly unsubscribes: Unsubscribes = [];
   private lastNotification = "";
+  private readonly provider: WaterLevelProvider | undefined;
+  private readonly datums: DatumUse[];
+  private lastFetch = -Infinity;
 
   constructor(
     private readonly app: App,
@@ -87,8 +131,11 @@ export class Monitor {
     private readonly config: PluginConfig,
     private readonly index: ChartIndex | undefined,
     private readonly indexReason: string | undefined,
-    private readonly clock: Clock = SYSTEM_CLOCK
+    private readonly clock: Clock = SYSTEM_CLOCK,
+    fetch: FetchLike = globalThis.fetch
   ) {
+    this.provider = createProvider(config, fetch);
+    this.datums = index ? datumUses(index.catalogue.cells, config.waterLevel.datums) : [];
     this.last = this.evaluate();
     this.since = clock.now();
   }
@@ -97,7 +144,10 @@ export class Monitor {
     this.app.subscriptionmanager.subscribe(
       {
         context: "vessels.self" as never,
-        subscribe: INPUT_PATHS.map((path) => ({ path: path as Path, policy: "instant" }))
+        subscribe: [
+          ...INPUT_PATHS,
+          ...(this.provider instanceof SignalKTideProvider ? TIDE_PATHS : [])
+        ].map((path) => ({ path: path as Path, policy: "instant" }))
       },
       this.unsubscribes,
       (err) => this.app.error(`subscription failed: ${String(err)}`),
@@ -116,6 +166,9 @@ export class Monitor {
     for (const u of this.unsubscribes.splice(0)) {
       u();
     }
+    if (this.provider instanceof FmiProvider) {
+      this.provider.abort();
+    }
   }
 
   onDelta(delta: Delta): void {
@@ -132,6 +185,9 @@ export class Monitor {
   }
 
   private record(path: string, value: unknown, at: number): void {
+    if (this.provider instanceof SignalKTideProvider && this.provider.record(path, value, at)) {
+      return;
+    }
     const set = <T>(key: keyof NavState, v: T | undefined) => {
       if (v === undefined) {
         delete this.nav[key];
@@ -179,7 +235,43 @@ export class Monitor {
 
   /** The water level the engine applies now. */
   waterLevel(): WaterLevel {
-    return this.config.waterLevel;
+    const now = this.clock.now();
+    return resolveWaterLevel(this.provider, this.datums, this.nav.position?.value, now, now);
+  }
+
+  /**
+   * The lowest water level over [start, end] (epoch ms), for route checks.
+   * A route has no single position, so FMI answers with the forecast held
+   * for the vessel's position.
+   */
+  waterLevelOver(start: number, end: number): WaterLevel {
+    return lowestWaterLevel(this.provider, this.datums, undefined, start, end, this.clock.now());
+  }
+
+  waterLevelStatus(): WaterLevelStatus {
+    return {
+      source: this.config.waterLevel.source,
+      applied: this.waterLevel(),
+      health: this.provider?.health(this.clock.now()),
+      datums: this.datums
+    };
+  }
+
+  /** Starts an FMI fetch when one is due or the vessel left the forecast area. */
+  private refreshFmi(): void {
+    const p = this.provider;
+    const pos = this.nav.position?.value;
+    if (!(p instanceof FmiProvider) || !pos) {
+      return;
+    }
+    const now = this.clock.now();
+    const at = p.forecastPosition();
+    const moved = at === undefined || haversine(at, pos) > FMI_REFETCH_METRES;
+    const since = now - this.lastFetch;
+    if (since >= this.config.waterLevel.updateInterval * 1000 || (moved && since >= FMI_RETRY_MS)) {
+      this.lastFetch = now;
+      void p.update(pos, now);
+    }
   }
 
   private evaluate(): LookaheadResult {
@@ -205,6 +297,7 @@ export class Monitor {
   }
 
   tick(): void {
+    this.refreshFmi();
     const next = this.evaluate();
     if (next.state !== this.last.state) {
       this.since = this.clock.now();

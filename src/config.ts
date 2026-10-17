@@ -1,7 +1,8 @@
 import type { LookaheadOptions } from "./engine/lookahead";
 import { DEFAULT_LOOKAHEAD } from "./engine/lookahead";
 import type { HeelModel } from "./model/allowances";
-import type { WaterLevel } from "./model/uncertainty";
+import type { DatumMapping } from "./ingest/datum";
+import { DEFAULT_DATUMS } from "./ingest/datum";
 import type { DynamicsOptions, VesselModel } from "./model/vessel";
 import { DEFAULT_DYNAMICS } from "./model/vessel";
 import { LIMITS } from "./api/route-request";
@@ -25,7 +26,7 @@ export interface PluginConfig {
   leafZoom: number;
   vessel: Partial<VesselModel>;
   dynamics: DynamicsOptions;
-  waterLevel: WaterLevel;
+  waterLevel: WaterLevelConfig;
   lookahead: LookaheadOptions;
   routeCheck: {
     /** Planning speed when a request gives none, m/s. */
@@ -37,10 +38,19 @@ export interface PluginConfig {
   };
 }
 
-export const DEFAULT_ROUTE_CHECK = { speed: 2.5, xteLimit: 30, probability: 0.01 } as const;
+export interface WaterLevelConfig {
+  source: "none" | "manual" | "signalk-tide" | "fmi";
+  /** Manual height above chart datum, metres. */
+  height: number;
+  /** σ of the manual or Signal K tide height, metres. */
+  sigma: number;
+  /** FMI refresh interval, seconds. */
+  updateInterval: number;
+  /** Defaults followed by the configured entries; a configured code replaces its default. */
+  datums: DatumMapping[];
+}
 
-/** With no water-level source the engine works at chart datum with this σ (plan §4.5). */
-export const CHART_DATUM_SIGMA = 0.3;
+export const DEFAULT_ROUTE_CHECK = { speed: 2.5, xteLimit: 30, probability: 0.01 } as const;
 
 function num(v: unknown, fallback: number, min = -Infinity, max = Infinity): number {
   return typeof v === "number" && Number.isFinite(v) && v >= min && v <= max ? v : fallback;
@@ -86,11 +96,35 @@ function parseDynamics(v: Record<string, unknown>): DynamicsOptions {
   };
 }
 
-function parseWaterLevel(w: Record<string, unknown>): WaterLevel {
-  if (w.source === "manual") {
-    return { h: num(w.height, 0, -10, 10), sigma: num(w.sigma, 0.1, 0, 5), source: "manual" };
-  }
-  return { h: 0, sigma: CHART_DATUM_SIGMA, source: "chart-datum" };
+const SOURCES = ["none", "manual", "signalk-tide", "fmi"] as const;
+
+function parseDatums(v: unknown): DatumMapping[] {
+  const configured = (Array.isArray(v) ? v : [])
+    .map(record)
+    .filter(
+      (d) =>
+        typeof d.verdat === "number" &&
+        Number.isInteger(d.verdat) &&
+        (d.series === "mw" || d.series === "n2000")
+    )
+    .map((d) => ({
+      verdat: d.verdat as number,
+      series: d.series as DatumMapping["series"],
+      sigma: num(d.sigma, 0.05, 0, 2)
+    }));
+  const codes = new Set(configured.map((d) => d.verdat));
+  return [...DEFAULT_DATUMS.filter((d) => !codes.has(d.verdat)), ...configured];
+}
+
+function parseWaterLevel(w: Record<string, unknown>): WaterLevelConfig {
+  const source = SOURCES.find((s) => s === w.source) ?? "none";
+  return {
+    source,
+    height: num(w.height, 0, -10, 10),
+    sigma: num(w.sigma, 0.1, 0, 5),
+    updateInterval: num(w.updateInterval, 600, 60, 1800),
+    datums: parseDatums(w.datums)
+  };
 }
 
 function parseLookahead(l: Record<string, unknown>): LookaheadOptions {

@@ -18,6 +18,8 @@ export interface WaterLevel {
   source: string;
   /** Set when the value is a fallback; the engine publishes it. */
   degraded?: string;
+  /** A caveat that is already priced into σ, such as an unknown chart datum. */
+  note?: string;
 }
 
 export interface VesselTerms {

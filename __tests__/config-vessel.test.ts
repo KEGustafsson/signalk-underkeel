@@ -1,5 +1,6 @@
 import { parseConfig, SCHEMA } from "../src/config";
 import { DEFAULT_LOOKAHEAD } from "../src/engine/lookahead";
+import { DEFAULT_DATUMS } from "../src/ingest/datum";
 import { DEFAULT_DYNAMICS, FALLBACK_HULL, resolveVessel } from "../src/model/vessel";
 
 describe("plugin configuration", () => {
@@ -36,7 +37,7 @@ describe("plugin configuration", () => {
       blockCoefficient: DEFAULT_DYNAMICS.blockCoefficient,
       heel: { kind: "fin" }
     });
-    expect(c.waterLevel).toEqual({ h: -0.4, sigma: 0.05, source: "manual" });
+    expect(c.waterLevel).toMatchObject({ source: "manual", height: -0.4, sigma: 0.05 });
     expect(c.lookahead.distance).toBe(DEFAULT_LOOKAHEAD.distance);
     // windows nest: warn is never narrower than alarm, certain never wider
     expect(c.lookahead.alarmWithin).toBe(45);
@@ -47,8 +48,34 @@ describe("plugin configuration", () => {
     expect(c.routeCheck.probability).toBe(0.01);
   });
 
-  test("water level defaults to chart datum with σ 0.3 m", () => {
-    expect(parseConfig({}).waterLevel).toEqual({ h: 0, sigma: 0.3, source: "chart-datum" });
+  test("water level defaults to no source and the default datum table", () => {
+    expect(parseConfig({}).waterLevel).toEqual({
+      source: "none",
+      height: 0,
+      sigma: 0.1,
+      updateInterval: 600,
+      datums: [...DEFAULT_DATUMS]
+    });
+    expect(parseConfig({ waterLevel: { source: "tide-tables" } }).waterLevel.source).toBe("none");
+  });
+
+  test("configured datum mappings replace the default for their code", () => {
+    const { datums } = parseConfig({
+      waterLevel: {
+        datums: [
+          { verdat: 26, series: "n2000", sigma: 0.02 },
+          { verdat: 24, series: "n2000" },
+          { verdat: 1.5, series: "mw" },
+          { verdat: 7, series: "lat" }
+        ]
+      }
+    }).waterLevel;
+    expect(datums).toEqual([
+      { verdat: 3, series: "mw", sigma: 0.1 },
+      { verdat: 19, series: "mw", sigma: 0.1 },
+      { verdat: 26, series: "n2000", sigma: 0.02 },
+      { verdat: 24, series: "n2000", sigma: 0.05 }
+    ]);
   });
 
   test("a heel table is read in degrees", () => {

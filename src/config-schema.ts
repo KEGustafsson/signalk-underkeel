@@ -60,12 +60,36 @@ export const SCHEMA = {
       properties: {
         source: {
           type: "string",
-          enum: ["none", "manual"],
+          enum: ["none", "manual", "signalk-tide", "fmi"],
           default: "none",
-          description: "none: chart datum with σ 0.3 m; manual: the height below"
+          description:
+            "none: chart datum with σ 0.3 m; manual: the height below; signalk-tide: environment.tide.heightNow; fmi: Finnish Meteorological Institute forecast and tide gauges (needs internet)"
         },
         height: { type: "number", title: "Manual height above chart datum (m)", default: 0 },
-        sigma: { type: "number", title: "Manual height uncertainty 1σ (m)", default: 0.1 }
+        sigma: {
+          type: "number",
+          title: "Manual or Signal K tide height uncertainty 1σ (m)",
+          default: 0.1
+        },
+        updateInterval: {
+          type: "number",
+          title: "FMI refresh interval (s)",
+          default: 600
+        },
+        datums: {
+          type: "array",
+          title: "Chart datum mappings (FMI)",
+          description:
+            "Which FMI series each S-57 VERDAT code is measured from. Codes 3, 19 and 26 map to theoretical mean water by default; cells on N2000 need an entry here. Unmapped datums use σ 0.5 m.",
+          items: {
+            type: "object",
+            properties: {
+              verdat: { type: "number", title: "VERDAT code" },
+              series: { type: "string", enum: ["mw", "n2000"], title: "FMI series" },
+              sigma: { type: "number", title: "Datum match 1σ (m)", default: 0.05 }
+            }
+          }
+        }
       }
     },
     lookahead: {

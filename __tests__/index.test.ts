@@ -255,6 +255,68 @@ describe("plugin lifecycle", () => {
     });
   });
 
+  test("applies the FMI level, and falls back with a reason when the feed goes stale", async () => {
+    const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 1.5 } } });
+    const clock = fakeClock(T0);
+    let up = true;
+    const urls: string[] = [];
+    const fetch = (url: string) => {
+      urls.push(url);
+      const forecast = url.includes("forecast");
+      const body = `<wfs:FeatureCollection>${[-1, 0, 1, 2]
+        .map(
+          (
+            k
+          ) => `<BsWfs:BsWfsElement><BsWfs:Time>${new Date(T0 + k * 3600000).toISOString()}</BsWfs:Time>
+          <BsWfs:ParameterName>SeaLevel</BsWfs:ParameterName><BsWfs:ParameterValue>30</BsWfs:ParameterValue></BsWfs:BsWfsElement>`
+        )
+        .join("")}</wfs:FeatureCollection>`;
+      return Promise.resolve({
+        ok: up && forecast,
+        status: up && forecast ? 200 : 503,
+        text: () => Promise.resolve(body)
+      });
+    };
+    const plugin = underkeel(f.app, clock, fetch);
+    const { router, call } = fakeRouter();
+    plugin.registerWithRouter?.(router as never);
+    plugin.start(
+      {
+        cellsDir: FIXTURES,
+        leafZoom: 18,
+        waterLevel: { source: "fmi", datums: [{ verdat: 13, series: "mw", sigma: 0.05 }] }
+      },
+      () => undefined
+    );
+    const flush = () => new Promise((r) => setImmediate(r));
+    const at = (t: number) => {
+      f.send(navDelta(22.005, 60.015, 1, t));
+      clock.advance(t - clock.now());
+    };
+
+    at(T0 + 1000);
+    expect(urls.length).toBe(2);
+    expect(lastValue(f.deltas, "navigation.underKeel.state")).toBe("alert");
+    await flush();
+    at(T0 + 2000);
+    expect(lastValue(f.deltas, "navigation.underKeel.state")).toBe("normal");
+    expect(lastValue(f.deltas, "navigation.underKeel.waterLevel")).toBeCloseTo(0.3, 9);
+    const status = call("/v1/status").body as {
+      waterLevel: { source: string; health: { ok: boolean }; applied: { h: number; note: string } };
+    };
+    expect(status.waterLevel).toMatchObject({ source: "fmi", health: { ok: true } });
+    expect(status.waterLevel.applied.note).toBe("vertical datum unknown for FI4SYNTH");
+
+    up = false;
+    clock.advance(31 * 60000);
+    at(clock.now() + 1000);
+    expect(lastValue(f.deltas, "navigation.underKeel.state")).toBe("alert");
+    const n = lastValue(f.deltas, "notifications.navigation.underKeel") as { message: string };
+    expect(n.message).toMatch(/water level from fmi is 31 min old/);
+    plugin.stop();
+    await flush();
+  });
+
   test("POST /v1/route-check answers with per-leg results", async () => {
     const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 3.6 } } });
     const plugin = underkeel(f.app, fakeClock(T0));

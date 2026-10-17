@@ -63,6 +63,23 @@ describe("corridor route check on the synthetic chart", () => {
     expect(r.waterLevelSource).toBe("chart-datum");
   });
 
+  test("a fallback water level leaves no leg ok", () => {
+    const fallback = {
+      ...CHART_DATUM,
+      source: "fallback",
+      degraded: "water level from fmi is 40 min old"
+    };
+    const ok = checkRoute(index, input(fairway, 1.5), NOW);
+    expect(ok.legs[0]?.status).toBe("ok");
+    const r = checkRoute(index, input(fairway, 1.5, { waterLevel: () => fallback }), NOW);
+    expect(r.legs[0]?.status).toBe("unverified");
+    expect(r.legs[0]?.flags).toContain("WATER_LEVEL_FALLBACK");
+    expect(r.waterLevelDegraded).toBe("water level from fmi is 40 min old");
+    expect(
+      checkRoute(index, input(fairway, 3.6, { waterLevel: () => fallback }), NOW).legs[0]?.status
+    ).toBe("fail");
+  });
+
   test("P between the threshold and 5× it is marginal, below it ok", () => {
     const marginal = checkRoute(index, input(fairway, 2.8), NOW).legs[0];
     expect(marginal?.status).toBe("marginal");

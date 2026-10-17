@@ -71,6 +71,8 @@ export interface RouteCheckResult {
   checkedAt: string;
   charts: { cell: string; edition: number; update: number }[];
   waterLevelSource: string;
+  /** Set when the water level over the route is a fallback, with the reason. */
+  waterLevelDegraded?: string;
   legs: LegResult[];
 }
 
@@ -229,9 +231,19 @@ function checkLeg(
   }
   const tile = result.riskTile;
   const why = tile ? legExplanation(index, tile, ring, terms, wl) : undefined;
+  let status: LegStatus = land
+    ? "fail"
+    : statusOf(result.maxRisk, charted, result.flags, input.probability);
+  // A fallback water level is a guess, so a leg it clears is not verified (invariant 3).
+  if (wl.degraded) {
+    flags.push("WATER_LEVEL_FALLBACK");
+    if (status === "ok") {
+      status = "unverified";
+    }
+  }
   const leg: LegResult = {
     index: i,
-    status: land ? "fail" : statusOf(result.maxRisk, charted, result.flags, input.probability),
+    status,
     from,
     to,
     length: Math.round(length),
@@ -261,6 +273,7 @@ export function checkRoute(
     legs.push(leg);
     cellRefs.forEach((c) => cells.add(c));
   }
+  const wl = input.waterLevel(input.departure, t);
   return {
     checkedAt: new Date(now).toISOString(),
     charts: [...cells]
@@ -269,7 +282,8 @@ export function checkRoute(
         const c = index.catalogue.cells[ref];
         return c ? [{ cell: c.name, edition: c.edition, update: c.update }] : [];
       }),
-    waterLevelSource: input.waterLevel(input.departure, t).source,
+    waterLevelSource: wl.source,
+    waterLevelDegraded: wl.degraded,
     legs
   };
 }

@@ -10,6 +10,8 @@ import type { IndexLoad } from "./index-loader";
 import { loadOrBuildIndex } from "./index-loader";
 import type { Clock } from "./monitor";
 import { Monitor, SYSTEM_CLOCK } from "./monitor";
+import type { FetchLike } from "./model/fmi";
+import { CHART_DATUM } from "./model/water-level";
 import { routeCheck } from "./route-service";
 import fs from "fs";
 import path from "path";
@@ -21,7 +23,11 @@ const VERSION = (
   }
 ).version;
 
-export = function underkeel(app: ServerAPI, clock: Clock = SYSTEM_CLOCK): Plugin {
+export = function underkeel(
+  app: ServerAPI,
+  clock: Clock = SYSTEM_CLOCK,
+  fetch: FetchLike = globalThis.fetch
+): Plugin {
   let monitor: Monitor | undefined;
   let load: IndexLoad | undefined;
   let config: PluginConfig | undefined;
@@ -41,7 +47,7 @@ export = function underkeel(app: ServerAPI, clock: Clock = SYSTEM_CLOCK): Plugin
       if (load.reason) {
         app.setPluginError(load.reason);
       }
-      monitor = new Monitor(app, PLUGIN_ID, config, load.index, load.reason, clock);
+      monitor = new Monitor(app, PLUGIN_ID, config, load.index, load.reason, clock, fetch);
       monitor.start();
       app.registerResourceProvider(manifestProvider(VERSION));
     },
@@ -82,7 +88,7 @@ export = function underkeel(app: ServerAPI, clock: Clock = SYSTEM_CLOCK): Plugin
             indexReason: load?.reason ?? "plugin not started",
             config: config ?? parseConfig({}),
             vessel: () => monitor?.vessel(),
-            waterLevel: () => monitor?.waterLevel() ?? (config ?? parseConfig({})).waterLevel,
+            waterLevel: (start, end) => monitor?.waterLevelOver(start, end) ?? CHART_DATUM,
             waveHeight: () => monitor?.nav.waveHeight?.value,
             getRoute: (id) => app.resourcesApi.getResource("routes", id),
             now: () => clock.now()

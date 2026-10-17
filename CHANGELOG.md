@@ -6,6 +6,11 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Added
 
+- Probabilistic UKC (M3): P(UKC < 0) per footprint from CATZOC σ, draft, Barrass squat, heel,
+  wave allowance and water level; risk thresholds for alert / warn / alarm; an explanation
+  object on every notification and route-check leg; `clearanceSigma` and `risk` deltas.
+- Water-level sources (M3): manual, Signal K tide and FMI forecast with tide-gauge blending;
+  per-cell vertical datum mapping; chart-datum fallback with a reason after 30 minutes stale.
 - Deterministic look-ahead (M1): straight cone along COG, chart-datum UKC with a fixed margin,
   `navigation.underKeel.*` deltas, `notifications.navigation.underKeel`, `GET /status`,
   `GET /envelope`, and a `plotterExtensions` manifest resource.

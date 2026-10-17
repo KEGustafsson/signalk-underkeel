@@ -8,23 +8,42 @@ and own-sounding discrepancies for chartplotters such as Freeboard-SK.
 > lookout.
 
 With a chart index and a configured draft, the plugin checks a straight cone along COG every
-second against the chart with a fixed safety margin, and publishes:
+second. For each footprint it computes P(UKC < 0) from the charted depth and its survey
+uncertainty (CATZOC), the draft, squat, heel, a wave allowance and the water level, and
+publishes:
 
 - `navigation.underKeel.state`: `normal`, `alert`, `warn`, `alarm`, `unknown` or `off`;
-- `navigation.underKeel.clearance`, `.timeToShoal`, `.envelopeRev` and `.waterLevel` (the
-  water level applied above chart datum; 0 with no water-level source);
-- `notifications.navigation.underKeel`, with the charted depth, draft and margin behind it.
+- `navigation.underKeel.clearance` and `.clearanceSigma` (predicted minimum UKC and its σ),
+  `.risk` (highest P(UKC < 0) over the horizon), `.timeToShoal`, `.envelopeRev` and
+  `.waterLevel` (the level applied above chart datum);
+- `notifications.navigation.underKeel`, with an explanation of every term behind the result.
 
-Stale position, a missing draft or index, or no chart coverage never produce `normal`.
+Stale position, a missing draft or index, no chart coverage or a fallback water level never
+produce `normal`.
+
+Water-level sources, set under **Water level** in the plugin configuration:
+
+- `none`: chart datum with σ 0.3 m;
+- `manual`: a fixed height above chart datum with its σ;
+- `signalk-tide`: `environment.tide.heightNow`, bounded ahead by `heightLow`;
+- `fmi`: the Finnish Meteorological Institute sea-level forecast at the vessel, anchored to the
+  nearest tide gauge. FMI reports above theoretical mean water and above N2000; each cell's
+  S-57 vertical datum is mapped to one of them. VERDAT 3, 19 and 26 map to mean water by
+  default; add entries for cells on N2000. An unmapped datum adds σ 0.5 m.
+
+A source that has not updated for 30 minutes falls back to chart datum with σ 0.3 m, and the
+state carries the reason.
 
 REST, base `/plugins/signalk-underkeel/v1`, open to readonly users:
 
-- `GET /status`: engine state, chart index and cell editions, look-ahead summary.
+- `GET /status`: engine state, chart index and cell editions, look-ahead summary, water-level
+  source health and datum mapping.
 - `GET /envelope?rev=`: the look-ahead as GeoJSON; 304 when the client already has that rev.
 - `POST /route-check`: a route as a GeoJSON LineString or `/resources/routes/<id>`; each leg is
-  checked over a corridor of the cross-track limit plus a planning buffer and returned as `ok`,
-  `marginal` (inside the safety margin), `fail` or `unverified` (no coverage or unassessed
-  survey, never folded into `ok`), with the cell editions used.
+  checked over a corridor of the cross-track limit plus a planning buffer at the lowest water
+  level expected while on it, and returned as `ok`, `marginal`, `fail` or `unverified` (no
+  coverage, unassessed survey or a fallback water level; never folded into `ok`), with P(UKC < 0),
+  its explanation and the cell editions used.
 
 The plugin also registers a `plotterExtensions` resource declaring the experimental
 `navigationSafety` service.
