@@ -26,7 +26,7 @@ performance.
 ## Source layout and layering
 
 Layers, lowest first. A module may import only its own layer or a lower one. ESLint enforces
-this with `no-restricted-imports` in `.eslintrc.js`.
+this with `no-restricted-imports` in `eslint.config.js`.
 
 | Layer        | Directory         | Responsibility                                               |
 | ------------ | ----------------- | ------------------------------------------------------------ |
