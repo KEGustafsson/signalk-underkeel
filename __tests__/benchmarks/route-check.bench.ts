@@ -1,5 +1,8 @@
 import { performance } from "perf_hooks";
+import type { RouteCheckInput } from "../../src/engine/route-check";
 import { checkRoute } from "../../src/engine/route-check";
+import { DEFAULT_DYNAMICS } from "../../src/model/vessel";
+import { CHART_DATUM } from "../../src/model/water-level";
 import type { LonLat } from "../../src/foundation/geo";
 import { HazardIndex } from "../../src/spatial/hazards";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
@@ -42,14 +45,16 @@ describe("route check benchmark", () => {
       22.01 + (i % 2 === 0 ? 0 : 0.16),
       60.005 + i * 0.0026
     ]);
-    const input = {
+    const input: RouteCheckInput = {
       coordinates: coords,
       departure: 0,
       speeds: Array.from({ length: 30 }, () => 2.5),
       xteLimit: 30,
       planningBuffer: 10,
       vessel: { draft: 1.9, length: 12, beam: 4 },
-      margin: 0.5
+      dynamics: DEFAULT_DYNAMICS,
+      waterLevel: () => CHART_DATUM,
+      probability: 0.01
     };
     checkRoute(index, input, 0);
     const t0 = performance.now();
