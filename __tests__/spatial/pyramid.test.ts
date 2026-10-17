@@ -105,6 +105,15 @@ describe("min-depth pyramid", () => {
     expect(r.dMin).toBe(4.5);
   });
 
+  test("a footprint across the coverage edge keeps the charted part's depth", () => {
+    const store = buildPyramid([...basin(AREA, 7), point(22.0195, 60.005, 1.2)], OPTS);
+    const r = query(store, [22.019, 60.0045, 22.021, 60.0055]);
+    expect(r.dMin).toBe(-Infinity);
+    expect(r.flags & FLAGS.NO_COVERAGE).toBeTruthy();
+    expect(r.coveredDMin).toBe(1.2);
+    expect(query(store, [23, 61, 23.001, 61.001]).coveredDMin).toBe(Infinity);
+  });
+
   test("a coverage gap inside the extent is NO_COVERAGE", () => {
     const features = [
       ...basin([22.0, 60.0, 22.008, 60.01], 7),

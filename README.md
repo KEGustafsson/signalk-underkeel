@@ -7,9 +7,19 @@ and own-sounding discrepancies for chartplotters such as Freeboard-SK.
 > Advisory navigation aid. Not ECDIS, and not a replacement for official charts or a proper
 > lookout.
 
-The plugin publishes `navigation.underKeel.state` with a reason and serves
-`GET /plugins/signalk-underkeel/v1/status`. The chart index reads S-57 cells exported to GeoJSON
-and answers conservative minimum-depth queries over a footprint.
+With a chart index and a configured draft, the plugin checks a straight cone along COG every
+second against the chart with a fixed safety margin, and publishes:
+
+- `navigation.underKeel.state`: `normal`, `alert`, `warn`, `alarm`, `unknown` or `off`;
+- `navigation.underKeel.clearance`, `.timeToShoal`, `.envelopeRev` and `.waterLevel` (the
+  water level applied above chart datum; 0 with no water-level source);
+- `notifications.navigation.underKeel`, with the charted depth, draft and margin behind it.
+
+Stale position, a missing draft or index, or no chart coverage never produce `normal`.
+
+REST, base `/plugins/signalk-underkeel/v1`: `GET /status` and `GET /envelope?rev=` (the
+look-ahead as GeoJSON; 304 when the client already has that rev). The plugin also registers a
+`plotterExtensions` resource declaring the experimental `navigationSafety` service.
 
 ## Documentation map
 
@@ -32,7 +42,9 @@ npm run verify:ci-local # everything CI gates, including coverage, format and bu
 
 ## Chart data
 
-The index reads ENC cells that GDAL has exported to GeoJSON, one directory per cell:
+Set **Exported ENC cells directory** in the plugin configuration; the index is built from it at
+the first start and saved under the plugin data directory. The index reads ENC cells that GDAL
+has exported to GeoJSON, one directory per cell:
 
 ```sh
 scripts/enc-to-geojson.sh FI5ABCDE.000 data/cells/FI5ABCDE

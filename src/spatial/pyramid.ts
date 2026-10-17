@@ -11,7 +11,7 @@ import {
 import type { Geom } from "../foundation/geometry";
 import { geomBounds, geomRectDistance } from "../foundation/geometry";
 import type { NodeStore, NodeValues } from "./node-store";
-import { combine, EMPTY, NO_DATA } from "./node-store";
+import { combine, EMPTY, FLAGS, NO_DATA } from "./node-store";
 
 /**
  * `minDepthOver` (plan §4.3): the shallowest charted depth any part of a
@@ -20,6 +20,13 @@ import { combine, EMPTY, NO_DATA } from "./node-store";
  */
 
 export interface DepthResult extends NodeValues {
+  /**
+   * Shallowest charted depth, leaving out tiles with no depth data at all;
+   * Infinity when nothing is charted. A footprint straddling a coverage
+   * edge reports dMin = -Infinity with NO_COVERAGE, and this keeps the
+   * charted part's answer visible.
+   */
+  coveredDMin: number;
   /** The tile that set dMin, for explanations. */
   worst?: { z: number; x: number; y: number; center: LonLat };
   /** Tiles examined, for the performance budget. */
@@ -51,6 +58,7 @@ interface Walk {
   buffer: number;
   clearAbove: number;
   result: NodeValues;
+  coveredDMin: number;
   worst?: { z: number; x: number; y: number };
   visits: number;
 }
@@ -60,6 +68,9 @@ function take(w: Walk, v: NodeValues, z: number, x: number, y: number): void {
     w.worst = { z, x, y };
   }
   w.result = combine(w.result, v);
+  if ((v.flags & FLAGS.NO_DEPTH) === 0) {
+    w.coveredDMin = Math.min(w.coveredDMin, v.dMin);
+  }
 }
 
 function visit(w: Walk, z: number, x: number, y: number): void {
@@ -103,6 +114,7 @@ export function minDepthOver(store: NodeStore, geom: Geom, opts: QueryOptions = 
     buffer,
     clearAbove: opts.clearAbove ?? Infinity,
     result: EMPTY,
+    coveredDMin: Infinity,
     visits: 0
   };
   const range = tileRange(store.minZoom, expandRect(bounds, buffer));
@@ -111,7 +123,7 @@ export function minDepthOver(store: NodeStore, geom: Geom, opts: QueryOptions = 
       visit(w, store.minZoom, x, y);
     }
   }
-  const out: DepthResult = { ...w.result, visits: w.visits };
+  const out: DepthResult = { ...w.result, coveredDMin: w.coveredDMin, visits: w.visits };
   if (w.worst) {
     const r = tileRect(w.worst.z, w.worst.x, w.worst.y);
     out.worst = { ...w.worst, center: fromMercator((r.minX + r.maxX) / 2, (r.minY + r.maxY) / 2) };
