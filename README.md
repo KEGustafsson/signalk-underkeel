@@ -18,7 +18,8 @@ reason, and serves `GET /plugins/signalk-underkeel/v1/status`. No risk engine ex
 
 ## Development
 
-Requires Node.js 20.9 or newer.
+Requires Node.js 22 or newer, the same floor as Signal K server (`signalk-server` 2.33 declares
+`engines.node: ">=22"`).
 
 ```sh
 npm install

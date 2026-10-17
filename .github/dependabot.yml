@@ -9,6 +9,11 @@ updates:
     directory: "/" # Location of package manifests
     schedule:
       interval: "weekly"
+    ignore:
+      # @types/node tracks the lowest supported Node major (package.json
+      # engines, matching signalk-server). Raise it together with engines.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
   # Keep SHA-pinned GitHub Actions (see .github/workflows/) up to date.
   - package-ecosystem: "github-actions"
     directory: "/"
