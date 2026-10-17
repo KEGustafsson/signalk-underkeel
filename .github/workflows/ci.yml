@@ -31,9 +31,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Matrix starts at the supported floor (package.json engines: >=20.9).
+        # Matrix starts at the supported floor (package.json engines: >=22,
+        # matching signalk-server).
         # 24 (current) is included for forward coverage.
-        node-version: [20, 22, 24]
+        node-version: [22, 24]
     permissions:
       contents: read
 

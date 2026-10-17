@@ -186,7 +186,7 @@ signalk-underkeel/
 
 **Stack:**
 
-- TypeScript on Node 20+.
+- TypeScript on Node 22+, matching the `signalk-server` engines floor.
 - `flatbush` for the static R-tree.
 - `@turf/*`, only for buffers and planning-time geometry. The hot path uses its own
   local-tangent-plane math.
