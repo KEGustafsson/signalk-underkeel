@@ -61,9 +61,11 @@ export function groundToMercator(metres: number, latDeg: number): number {
   return metres / Math.cos(Math.min(Math.abs(latDeg), MAX_MERCATOR_LAT) * DEG);
 }
 
+const TILE_SIZES = Array.from({ length: 31 }, (_, z) => (2 * MERCATOR_HALF_WORLD) / 2 ** z);
+
 /** Side of a zoom-z tile in Mercator metres (ground size is this times cos(lat)). */
 export function tileSize(z: number): number {
-  return (2 * MERCATOR_HALF_WORLD) / 2 ** z;
+  return TILE_SIZES[z] ?? (2 * MERCATOR_HALF_WORLD) / 2 ** z;
 }
 
 /** Mercator bounds of tile (z, x, y); y counts down from the north edge, as in XYZ tiles. */

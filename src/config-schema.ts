@@ -98,7 +98,20 @@ export const SCHEMA = {
       properties: {
         distance: { type: "number", title: "Look-ahead distance (m)", default: 555.6 },
         minHorizon: { type: "number", title: "Minimum horizon (s)", default: 60 },
-        positionBuffer: { type: "number", title: "Position buffer (m)", default: 10 },
+        positionBuffer: { type: "number", title: "Least position buffer (m)", default: 10 },
+        kp: {
+          type: "number",
+          title: "Position buffer in σ",
+          description: "Footprints grow by this many σ of position uncertainty",
+          default: 2
+        },
+        sigmaCog: { type: "number", title: "Fan spread: COG 1σ (°)", default: 5 },
+        sigmaRot: { type: "number", title: "Fan spread: rate of turn 1σ (°/s)", default: 0.1 },
+        maxTurnRate: {
+          type: "number",
+          title: "Maximum rate of turn for escape headings (°/s)",
+          default: 3
+        },
         alertRisk: { type: "number", title: "Alert at P(UKC<0) ≥", default: 0.01 },
         warnRisk: { type: "number", title: "Warn at P(UKC<0) ≥", default: 0.05 },
         alarmRisk: { type: "number", title: "Alarm at P(UKC<0) ≥", default: 0.2 },

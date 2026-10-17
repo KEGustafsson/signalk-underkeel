@@ -39,8 +39,10 @@ describe("probabilistic look-ahead on the synthetic chart", () => {
     expect(r.reason).toBe("");
     expect(r.clearance).toBeGreaterThan(4);
     expect(r.risk).toBeLessThan(0.01);
-    // swept σD 0.1, chart-datum water level σ 0.3, draft σ 0.05, squat σ
-    expect(r.clearanceSigma).toBeLessThan(0.4);
+    // The fan's COG ± 5° members reach the edge tile of the swept area, which
+    // carries the A2 σD 0.58 m beside the swept 8 m; its P is still negligible.
+    expect(r.clearanceSigma).toBeLessThan(0.7);
+    expect(r.risk).toBeLessThan(1e-6);
     expect(r.timeToShoal).toBeNull();
   });
 
@@ -235,5 +237,74 @@ describe("probabilistic look-ahead on the synthetic chart", () => {
       /^shoal ahead in \d+ s: charted 3\.5 m UWTROC FI5-ROCK \(±0\.1 m, SWEPT\) \+ 0 m water level \(chart-datum\) − draft 3\.2 m − squat 0\.14 m \+ heel 0 m − wave 0 m → μ = 0\.16 m, σ = 0\.3\d m, P = \d+ %$/
     );
     expect(explain(evaluateLookahead({}, ctx(DEEP_KEEL), index, NOW))).toBe("no position");
+  });
+
+  test("a turn toward the rock is caught by the fan; the same track held straight passes", () => {
+    // 150 m west of the rock and 120 m north of it, heading east: straight
+    // runs clear to the north; a 1.2°/s turn to starboard curves onto it.
+    const start = nav(ROCK[0] - 150 / M_PER_DEG_LON, ROCK[1] + 120 / 111320, EAST, 3);
+    const straight = evaluateLookahead(start, ctx(DEEP_KEEL), index, NOW);
+    const turning = evaluateLookahead(
+      { ...start, rot: { value: (1.2 * Math.PI) / 180, at: NOW } },
+      ctx(DEEP_KEEL),
+      index,
+      NOW
+    );
+    expect(straight.state).not.toBe("alarm");
+    expect(turning.state).toBe("alarm");
+    // The first footprint at alarm level is the rock; past it the turn runs on to a sounding.
+    expect(turning.footprints.find((f) => f.risk >= 0.2)?.riskTile?.dMin).toBe(3.5);
+  });
+
+  test("a stale rate of turn is ignored", () => {
+    const start = nav(ROCK[0] - 150 / M_PER_DEG_LON, ROCK[1] + 120 / 111320, EAST, 3);
+    const old = { value: (1.2 * Math.PI) / 180, at: NOW - 60_000 };
+    const r = evaluateLookahead({ ...start, rot: old }, ctx(DEEP_KEEL), index, NOW);
+    expect(r.state).toBe(evaluateLookahead(start, ctx(DEEP_KEEL), index, NOW).state);
+  });
+
+  test("a wide GNSS fix grows the buffer until it reaches the rock", () => {
+    // 100 m north of the rock heading east: k_p · σ_pos reaches it only with a poor fix.
+    const beside = nav(westOfRock(30), ROCK[1] + 100 / 111320);
+    const good = evaluateLookahead(
+      { ...beside, hdop: { value: 0.8, at: NOW } },
+      ctx(DEEP_KEEL),
+      index,
+      NOW
+    );
+    const poor = evaluateLookahead(
+      { ...beside, hdop: { value: 15, at: NOW } },
+      ctx(DEEP_KEEL),
+      index,
+      NOW
+    );
+    expect(good.risk as number).toBeLessThan(poor.risk as number);
+    expect(poor.footprints[0]?.buffer).toBeCloseTo(2 * 15 * 3, 6);
+    expect(good.footprints[0]?.buffer).toBe(DEFAULT_LOOKAHEAD.positionBuffer);
+  });
+
+  test("the escape heading turns away from the rock and clears it", () => {
+    const head = nav(westOfRock(40), FAIRWAY_LAT);
+    const r = evaluateLookahead(head, { ...ctx(DEEP_KEEL), escape: true }, index, NOW);
+    expect(r.state).toBe("alarm");
+    const escape = r.escapeHeading as number;
+    expect(Math.abs(escape - EAST)).toBeGreaterThanOrEqual((5 * Math.PI) / 180 - 1e-9);
+    expect(Math.abs(escape - EAST)).toBeLessThanOrEqual(Math.PI / 2 + 1e-9);
+    const after = evaluateLookahead(
+      nav(westOfRock(40), FAIRWAY_LAT, escape),
+      ctx(DEEP_KEEL),
+      index,
+      NOW
+    );
+    expect(after.timeToShoal ?? Infinity).toBeGreaterThan(r.timeToShoal as number);
+    // Without the flag, or in normal, no escape is searched.
+    expect(evaluateLookahead(head, ctx(DEEP_KEEL), index, NOW).escapeHeading).toBeNull();
+    const calm = evaluateLookahead(
+      nav(22.003, FAIRWAY_LAT, EAST, 1),
+      { ...ctx(DEEP_KEEL), escape: true },
+      index,
+      NOW
+    );
+    expect(calm.escapeHeading).toBeNull();
   });
 });

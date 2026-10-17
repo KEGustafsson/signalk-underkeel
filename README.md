@@ -7,14 +7,15 @@ and own-sounding discrepancies for chartplotters such as Freeboard-SK.
 > Advisory navigation aid, non-commercial. Not ECDIS, and not a replacement for official charts
 > or a proper lookout: always carry and use an official nautical chart, paper or ENC.
 
-With a chart index and a configured draft, the plugin checks a straight cone along COG every
-second. For each footprint it computes P(UKC < 0) from the charted depth and its survey
+With a chart index and a configured draft, the plugin predicts a fan of five tracks from COG,
+SOG and rate of turn every second. For each footprint it computes P(UKC < 0) from the charted depth and its survey
 uncertainty (CATZOC), the draft, squat, heel, a wave allowance and the water level, and
 publishes:
 
 - `navigation.underKeel.state`: `normal`, `alert`, `warn`, `alarm`, `unknown` or `off`;
 - `navigation.underKeel.clearance` and `.clearanceSigma` (predicted minimum UKC and its σ),
-  `.risk` (highest P(UKC < 0) over the horizon), `.timeToShoal`, `.envelopeRev` and
+  `.risk` (highest P(UKC < 0) over the horizon), `.timeToShoal`, `.escapeHeading` (the
+  heading with the longest time to shoal, when not `normal`), `.envelopeRev` and
   `.waterLevel` (the level applied above chart datum);
 - `notifications.navigation.underKeel`, with an explanation of every term behind the result.
 

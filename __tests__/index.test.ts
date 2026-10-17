@@ -235,6 +235,9 @@ describe("plugin lifecycle", () => {
     clock.advance(1000);
     expect(lastValue(f.deltas, "navigation.underKeel.state")).toBe("alarm");
     expect(lastValue(f.deltas, "navigation.underKeel.waterLevel")).toBe(0);
+    const escape = lastValue(f.deltas, "navigation.underKeel.escapeHeading") as number;
+    expect(escape).toBeGreaterThanOrEqual(0);
+    expect(escape).toBeLessThan(2 * Math.PI);
     const n = lastValue(f.deltas, "notifications.navigation.underKeel") as {
       state: string;
       message: string;
@@ -320,7 +323,12 @@ describe("plugin lifecycle", () => {
     expect(urls.length).toBe(2);
     expect(lastValue(f.deltas, "navigation.underKeel.state")).toBe("alert");
     await flush();
-    at(T0 + 2000);
+    // The fallback alert clears only after five ticks below its threshold (hysteresis).
+    for (let k = 2; k <= 5; k++) {
+      at(T0 + k * 1000);
+      expect(lastValue(f.deltas, "navigation.underKeel.state")).toBe("alert");
+    }
+    at(T0 + 6000);
     expect(lastValue(f.deltas, "navigation.underKeel.state")).toBe("normal");
     expect(lastValue(f.deltas, "navigation.underKeel.waterLevel")).toBeCloseTo(0.3, 9);
     const status = call("/v1/status").body as {
@@ -449,6 +457,7 @@ describe("plugin lifecycle", () => {
     expect(lastValue(f.deltas, "navigation.underKeel.timeToShoal")).toBeNull();
     expect(lastValue(f.deltas, "navigation.underKeel.clearanceSigma")).toBeNull();
     expect(lastValue(f.deltas, "navigation.underKeel.risk")).toBeNull();
+    expect(lastValue(f.deltas, "navigation.underKeel.escapeHeading")).toBeNull();
   });
 
   test("a non-finite or out-of-range position clears the sample", () => {

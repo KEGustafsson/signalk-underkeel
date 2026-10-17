@@ -67,6 +67,7 @@ export = function underkeel(
               { path: PATHS.clearanceSigma as Path, value: null },
               { path: PATHS.risk as Path, value: null },
               { path: PATHS.timeToShoal as Path, value: null },
+              { path: PATHS.escapeHeading as Path, value: null },
               {
                 path: PATHS.notification as Path,
                 value: { state: "normal", method: [], message: "UKC monitoring stopped" } as never

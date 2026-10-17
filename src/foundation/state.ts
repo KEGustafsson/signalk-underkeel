@@ -8,6 +8,7 @@ export const PATHS = {
   clearanceSigma: "navigation.underKeel.clearanceSigma",
   risk: "navigation.underKeel.risk",
   timeToShoal: "navigation.underKeel.timeToShoal",
+  escapeHeading: "navigation.underKeel.escapeHeading",
   envelopeRev: "navigation.underKeel.envelopeRev",
   waterLevel: "navigation.underKeel.waterLevel",
   notification: "notifications.navigation.underKeel"

@@ -2,6 +2,7 @@ import type { Delta, Path, ServerAPI, Unsubscribes } from "@signalk/server-api";
 import type { PluginConfig } from "./config";
 import { buildEnvelope, EnvelopeTracker } from "./engine/envelope";
 import type { LookaheadResult, NavState, Sample } from "./engine/lookahead";
+import { Hysteresis } from "./engine/hysteresis";
 import { evaluateLookahead } from "./engine/lookahead";
 import type { UnderKeelNotification } from "./engine/notify";
 import { notificationFor } from "./engine/notify";
@@ -51,11 +52,16 @@ const INPUT_PATHS = [
   "navigation.courseOverGroundTrue",
   "navigation.speedOverGround",
   "navigation.headingTrue",
+  "navigation.rateOfTurn",
+  "navigation.gnss.horizontalDilution",
   "navigation.attitude",
   "environment.water.waves.significantHeight"
 ] as const;
 
 const TIDE_PATHS = ["environment.tide.heightNow", "environment.tide.heightLow"] as const;
+
+/** The escape fan is searched at most once in this many ms. */
+const ESCAPE_EVERY_MS = 3000;
 
 /** FMI is re-fetched when the vessel is this far from the forecast point. */
 const FMI_REFETCH_METRES = 10000;
@@ -124,6 +130,10 @@ export class Monitor {
   private readonly provider: WaterLevelProvider | undefined;
   private readonly datums: DatumUse[];
   private lastFetch = -Infinity;
+  private readonly hysteresis: Hysteresis;
+  /** The escape fan is searched at most this often; the heading is held between. */
+  private escape: number | null = null;
+  private escapeAt = -Infinity;
 
   constructor(
     private readonly app: App,
@@ -135,6 +145,7 @@ export class Monitor {
     fetch: FetchLike = globalThis.fetch
   ) {
     this.provider = createProvider(config, fetch);
+    this.hysteresis = new Hysteresis(config.lookahead.thresholds);
     this.datums = index ? datumUses(index.catalogue.cells, config.waterLevel.datums) : [];
     this.last = this.evaluate();
     this.since = clock.now();
@@ -207,6 +218,12 @@ export class Monitor {
         break;
       case "navigation.headingTrue":
         set("heading", asNumber(value));
+        break;
+      case "navigation.rateOfTurn":
+        set("rot", asNumber(value));
+        break;
+      case "navigation.gnss.horizontalDilution":
+        set("hdop", asNumber(value));
         break;
       case "navigation.attitude":
         set("roll", asNumber((value as { roll?: unknown } | null)?.roll));
@@ -283,22 +300,38 @@ export class Monitor {
         clearanceSigma: null,
         risk: null,
         timeToShoal: null,
+        escapeHeading: null,
         horizon: 0,
         footprints: []
       };
     }
-    return evaluateLookahead(
+    const now = this.clock.now();
+    const escape = now - this.escapeAt >= ESCAPE_EVERY_MS;
+    const r = evaluateLookahead(
       this.nav,
-      { vessel: this.vessel(), dynamics: this.config.dynamics, waterLevel: this.waterLevel() },
+      {
+        vessel: this.vessel(),
+        dynamics: this.config.dynamics,
+        waterLevel: this.waterLevel(),
+        escape
+      },
       this.index,
-      this.clock.now(),
+      now,
       this.config.lookahead
     );
+    if (r.state === "normal" || r.state === "unknown") {
+      this.escape = null;
+      this.escapeAt = -Infinity;
+    } else if (escape) {
+      this.escapeAt = now;
+      this.escape = r.escapeHeading;
+    }
+    return { ...r, escapeHeading: this.escape };
   }
 
   tick(): void {
     this.refreshFmi();
-    const next = this.evaluate();
+    const next = this.hysteresis.next(this.evaluate());
     if (next.state !== this.last.state) {
       this.since = this.clock.now();
     }
@@ -314,6 +347,7 @@ export class Monitor {
             { path: PATHS.clearanceSigma as Path, value: r.clearanceSigma },
             { path: PATHS.risk as Path, value: r.risk },
             { path: PATHS.timeToShoal as Path, value: r.timeToShoal },
+            { path: PATHS.escapeHeading as Path, value: r.escapeHeading },
             { path: PATHS.envelopeRev as Path, value: this.envelope.rev },
             { path: PATHS.waterLevel as Path, value: this.waterLevel().h }
           ]
@@ -347,6 +381,7 @@ export class Monitor {
             { path: PATHS.clearanceSigma as Path, value: { units: "m" } },
             { path: PATHS.risk as Path, value: { units: "ratio" } },
             { path: PATHS.timeToShoal as Path, value: { units: "s" } },
+            { path: PATHS.escapeHeading as Path, value: { units: "rad" } },
             { path: PATHS.waterLevel as Path, value: { units: "m" } }
           ]
         }

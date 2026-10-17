@@ -94,7 +94,7 @@ describe("risk monotonicity (property)", () => {
     );
   });
 
-  test("the look-ahead's P never falls with deeper draft, lower water or larger buffer", () => {
+  test("the look-ahead's P never falls with deeper draft, lower water, a larger buffer or σ_pos", () => {
     const index = fixtureIndex();
     const NOW = 1_800_000_000_000;
     fc.assert(
@@ -110,7 +110,8 @@ describe("risk monotonicity (property)", () => {
           const nav = {
             position: { value: [lon, lat] as const, at: NOW },
             cog: { value: cog, at: NOW },
-            sog: { value: sog, at: NOW }
+            sog: { value: sog, at: NOW },
+            rot: { value: ((more - 0.5) * Math.PI) / 180, at: NOW }
           };
           const vessel = { draft, length: 10, beam: 3 };
           const wl = { h: 0, sigma: 0.2, source: "manual" };
@@ -130,6 +131,11 @@ describe("risk monotonicity (property)", () => {
           expect(deeper.risk ?? 0).toBeGreaterThanOrEqual(base - RISK_STOP_BELOW);
           expect(lower.risk ?? 0).toBeGreaterThanOrEqual(base - RISK_STOP_BELOW);
           expect(wide).toBeGreaterThanOrEqual(narrow - RISK_STOP_BELOW);
+          const sigmaPos = (sp: number) => ({ ...ctx(vessel, wl), positionSigma: sp });
+          const sure = evaluateLookahead(nav, sigmaPos(buffer / 2), index, NOW).risk ?? 0;
+          const unsure =
+            evaluateLookahead(nav, sigmaPos(buffer / 2 + 10 * more), index, NOW).risk ?? 0;
+          expect(unsure).toBeGreaterThanOrEqual(sure - RISK_STOP_BELOW);
         }
       ),
       { numRuns: 60 }

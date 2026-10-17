@@ -70,6 +70,12 @@ function record(v: unknown): Record<string, unknown> {
 
 const DEG = Math.PI / 180;
 
+/** A configured angle in degrees (or °/s) as radians; the radian fallback is kept exact. */
+function degrees(v: unknown, fallback: number, min: number, max: number): number {
+  const d = num(v, NaN, min, max);
+  return Number.isNaN(d) ? fallback : d * DEG;
+}
+
 function heelModel(v: Record<string, unknown>): HeelModel {
   if (v.keel === "fin") {
     return { kind: "fin" };
@@ -138,6 +144,10 @@ function parseLookahead(l: Record<string, unknown>): LookaheadOptions {
     distance: num(l.distance, d.distance, 0),
     minHorizon: num(l.minHorizon, d.minHorizon, 0),
     positionBuffer: num(l.positionBuffer, d.positionBuffer, 0),
+    kp: num(l.kp, d.kp, 0, 5),
+    sigmaCog: degrees(l.sigmaCog, d.sigmaCog, 0, 45),
+    sigmaRot: degrees(l.sigmaRot, d.sigmaRot, 0, 10),
+    maxTurnRate: degrees(l.maxTurnRate, d.maxTurnRate, 0.1, 30),
     thresholds: { alert, warn, alarm },
     // A window for a more severe state wider than a milder one's would skip the milder state.
     warnWithin: Math.max(num(l.warnWithin, d.warnWithin, 0), alarmWithin),

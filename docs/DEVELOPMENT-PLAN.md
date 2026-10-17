@@ -467,6 +467,27 @@ suppressing.
 | Mooring zones         | User-drawn regions, for example the home berth.                |
 | Acknowledged passages | §4.12.                                                         |
 
+**As built (M4).**
+
+- Each step is scored over the convex hull of the five members' hull footprints, one query per
+  step. Scoring members one by one would leave the water between them unchecked; the hull is
+  never less conservative than the members.
+- A rate of turn, measured or ± σ_ROT (default 0.1°/s), is held for at most 60 s and the
+  member then runs straight. At low speed the horizon reaches minutes, and a turn held that
+  long sweeps the fan across water the boat is not steering for.
+- σ_pos combines GNSS (HDOP × 3 m, 5 m without HDOP) and, from the integrity monitor, its
+  inflation. The buffer is max(10 m, k_p · σ_pos). Speed error (σ_SOG 0.1 m/s) lengthens each
+  footprint by k_p · σ_SOG · t fore and aft instead of widening it, since it moves the boat
+  along its track. The chart's σP is already burned into the pyramid around point hazards.
+- The escape fan uses the maximum turn rate (default 3°/s) and stops at the first heading,
+  smallest change first, that stays clear over the whole horizon. The monitor searches it at
+  most every 3 s and holds the heading in between.
+- Hysteresis applies between `normal`, `alert`, `warn` and `alarm`. `unknown` and `off` pass
+  through at once, so stale input is never held as an earlier state.
+- Measured on the synthetic archipelago at leaf z20 (`npm run bench`, x86, plain Node):
+  median 1.2 ms and p95 4 ms per tick, escape fan included. Under Jest the same run is about
+  15× slower.
+
 **Stale data.** If position is older than 10 s, the state becomes `UNKNOWN` and the plugin
 raises a `notifications.navigation.underKeel` alert with the message "UKC monitoring
 degraded: position stale". It never reports `normal` on stale input.
