@@ -2,7 +2,12 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { readCellDirectory } from "../../src/ingest/cell-reader";
-import { buildChartIndex, loadChartIndex, saveChartIndex } from "../../src/spatial/chart-index";
+import {
+  buildChartIndex,
+  loadChartIndex,
+  recoverChartIndex,
+  saveChartIndex
+} from "../../src/spatial/chart-index";
 import { HazardIndex } from "../../src/spatial/hazards";
 import { FLAGS } from "../../src/spatial/node-store";
 import { footprintGeom, mercatorBuffer, minDepthOver } from "../../src/spatial/pyramid";
@@ -113,6 +118,22 @@ describe("index persistence", () => {
       saveChartIndex(target, one);
       expect(loadChartIndex(target).catalogue.cells.map((c) => c.name)).toEqual(["FI5SYNTH"]);
       expect(fs.readdirSync(dir)).toEqual(["index"]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a crash between the renames is recovered from the moved-aside index", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-crash-"));
+    try {
+      const target = path.join(dir, "index");
+      saveChartIndex(target, fixtureIndex());
+      fs.renameSync(target, `${target}.old-12345`);
+      expect(recoverChartIndex(path.join(dir, "elsewhere"))).toBe(false);
+      expect(loadChartIndex(target).catalogue.cells).toHaveLength(2);
+      expect(fs.readdirSync(dir)).toEqual(["index"]);
+      expect(recoverChartIndex(target)).toBe(false);
+      expect(recoverChartIndex(path.join(dir, "missing-parent", "index"))).toBe(false);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

@@ -27,6 +27,7 @@ export interface Rect {
 
 const DEG = Math.PI / 180;
 
+/** WGS84 degrees to Web Mercator metres; latitude is clamped to ±85.05°. */
 export function toMercator(lon: number, lat: number): XY {
   const clamped = Math.max(-MAX_MERCATOR_LAT, Math.min(MAX_MERCATOR_LAT, lat));
   const x = MERCATOR_RADIUS * lon * DEG;
@@ -34,6 +35,7 @@ export function toMercator(lon: number, lat: number): XY {
   return [x, y];
 }
 
+/** Web Mercator metres back to WGS84 degrees. */
 export function fromMercator(x: number, y: number): LonLat {
   const lon = x / MERCATOR_RADIUS / DEG;
   const lat = (2 * Math.atan(Math.exp(y / MERCATOR_RADIUS)) - Math.PI / 2) / DEG;
@@ -59,10 +61,12 @@ export function groundToMercator(metres: number, latDeg: number): number {
   return metres / Math.cos(Math.min(Math.abs(latDeg), MAX_MERCATOR_LAT) * DEG);
 }
 
+/** Side of a zoom-z tile in Mercator metres (ground size is this times cos(lat)). */
 export function tileSize(z: number): number {
   return (2 * MERCATOR_HALF_WORLD) / 2 ** z;
 }
 
+/** Mercator bounds of tile (z, x, y); y counts down from the north edge, as in XYZ tiles. */
 export function tileRect(z: number, x: number, y: number): Rect {
   const size = tileSize(z);
   const minX = -MERCATOR_HALF_WORLD + x * size;
@@ -94,10 +98,12 @@ export function tileKey(z: number, x: number, y: number): number {
   return x * 2 ** z + y;
 }
 
+/** A rectangle that `extendRect` grows from nothing (inverted infinite bounds). */
 export function emptyRect(): Rect {
   return { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
 }
 
+/** Grows `rect` in place to include (x, y). */
 export function extendRect(rect: Rect, x: number, y: number): void {
   if (x < rect.minX) {
     rect.minX = x;
@@ -113,6 +119,7 @@ export function extendRect(rect: Rect, x: number, y: number): void {
   }
 }
 
+/** A copy of `rect` widened by `by` on every side. */
 export function expandRect(rect: Rect, by: number): Rect {
   return {
     minX: rect.minX - by,
@@ -122,10 +129,12 @@ export function expandRect(rect: Rect, by: number): Rect {
   };
 }
 
+/** Closed-interval overlap: touching edges count. */
 export function rectsOverlap(a: Rect, b: Rect): boolean {
   return a.minX <= b.maxX && b.minX <= a.maxX && a.minY <= b.maxY && b.minY <= a.maxY;
 }
 
+/** `inner` lies within `outer`, edges included. */
 export function rectContainsRect(outer: Rect, inner: Rect): boolean {
   return (
     inner.minX >= outer.minX &&

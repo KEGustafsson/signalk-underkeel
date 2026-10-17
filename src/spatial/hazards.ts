@@ -50,6 +50,7 @@ export interface HazardHit {
   distance: number;
 }
 
+/** Hazards in an STR-packed tree with `nodeSize` entries per node. */
 export class HazardIndex {
   readonly features: readonly DepthFeature[];
   private readonly rects: Rect[];

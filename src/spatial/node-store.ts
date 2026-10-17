@@ -100,6 +100,7 @@ export class NodeStore {
     return level;
   }
 
+  /** Stores tile (z, x, y); `split` marks a node whose children are stored too. */
   add(z: number, x: number, y: number, v: NodeValues, split: boolean): number {
     if (this.count === this.dMin.length) {
       this.grow();
@@ -123,6 +124,7 @@ export class NodeStore {
     return this.level(z).get(tileKey(z, x, y)) ?? -1;
   }
 
+  /** Values of node i; an out-of-range index reads as NO_DATA, never as a depth. */
   values(i: number): NodeValues {
     return {
       dMin: this.dMin[i] ?? -Infinity,
@@ -133,6 +135,7 @@ export class NodeStore {
     };
   }
 
+  /** Whether node i's children are stored (its values are then bounds, not exact). */
   isSplit(i: number): boolean {
     return this.split[i] === 1;
   }

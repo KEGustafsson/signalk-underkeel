@@ -61,6 +61,7 @@ function parseCell(raw: unknown, index: number): CellInfo {
   };
 }
 
+/** Validates a parsed `cells.json`; throws naming the first malformed entry. */
 export function parseCatalogue(json: unknown): CellCatalogue {
   if (typeof json !== "object" || json === null) {
     throw new Error("cells.json must be an object");

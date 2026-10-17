@@ -64,6 +64,7 @@ function requireLittleEndian(): void {
   }
 }
 
+/** Every stored node, zoom by zoom, in the version-1 format. */
 export function serializePyramid(store: NodeStore): Buffer {
   requireLittleEndian();
   const cols = columnsOf(store.count);
@@ -99,6 +100,7 @@ export function serializePyramid(store: NodeStore): Buffer {
   return Buffer.concat([head, ...parts]);
 }
 
+/** Reads a version-1 file; refuses a foreign header or a truncated body. */
 export function deserializePyramid(buf: Buffer): NodeStore {
   requireLittleEndian();
   const nl = buf.indexOf(0x0a);

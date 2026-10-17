@@ -215,6 +215,11 @@ function featureFor(
   };
 }
 
+/**
+ * Normalised features of one S-57 layer. Geometry the role cannot use (a
+ * line in DEPARE, say) is skipped; malformed geometry throws with the layer
+ * and feature index.
+ */
 export function parseLayer(
   layer: S57Layer,
   collection: GeoJsonFeatureCollection,

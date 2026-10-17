@@ -90,6 +90,10 @@ export function mercatorBuffer(bounds: Rect, metres: number): number {
   return groundToMercator(metres, maxAbsLat(expandRect(bounds, first)));
 }
 
+/**
+ * Conservative minimum depth over `geom` widened by the ground buffer.
+ * Tiles never built (outside the chart) count as NO_DATA.
+ */
 export function minDepthOver(store: NodeStore, geom: Geom, opts: QueryOptions = {}): DepthResult {
   const bounds = geomBounds(geom);
   const buffer = mercatorBuffer(bounds, opts.bufferMetres ?? 0);

@@ -44,6 +44,7 @@ export interface Sigma {
   sigmaD: number;
 }
 
+/** The accuracy bounds for a CATZOC; missing and U use the unassessed setting. */
 export function accuracyFor(catzoc: Catzoc | undefined, opts = DEFAULT_QUALITY): Accuracy {
   return catzoc === undefined || catzoc === 6 ? opts.unassessed : TABLE[catzoc];
 }

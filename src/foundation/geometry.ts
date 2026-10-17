@@ -18,6 +18,7 @@ export type Geom =
   | { type: "line"; coords: readonly XY[] }
   | { type: "polygon"; polygons: readonly PolygonGeom[] };
 
+/** Bounding box; for polygons the outer rings suffice, holes lie inside them. */
 export function geomBounds(geom: Geom): Rect {
   const rect = emptyRect();
   if (geom.type === "point") {
@@ -36,6 +37,7 @@ export function geomBounds(geom: Geom): Rect {
   return rect;
 }
 
+/** Even-odd ray cast; a point exactly on an edge may fall either side. */
 export function pointInRing(p: XY, ring: Ring): boolean {
   let inside = false;
   const n = ring.length;
@@ -52,6 +54,7 @@ export function pointInRing(p: XY, ring: Ring): boolean {
   return inside;
 }
 
+/** Inside the outer ring and outside every hole. */
 export function pointInPolygon(p: XY, poly: PolygonGeom): boolean {
   if (!pointInRing(p, poly.outer)) {
     return false;
@@ -59,6 +62,7 @@ export function pointInPolygon(p: XY, poly: PolygonGeom): boolean {
   return !poly.holes.some((hole) => pointInRing(p, hole));
 }
 
+/** Distance from p to the closest point of segment a→b (a point segment when a = b). */
 export function pointSegmentDistance(p: XY, a: XY, b: XY): number {
   const dx = b[0] - a[0];
   const dy = b[1] - a[1];
@@ -68,6 +72,7 @@ export function pointSegmentDistance(p: XY, a: XY, b: XY): number {
   return Math.hypot(p[0] - (a[0] + c * dx), p[1] - (a[1] + c * dy));
 }
 
+/** 0 inside or on the rectangle, else the distance to its nearest edge or corner. */
 export function pointRectDistance(p: XY, r: Rect): number {
   const dx = Math.max(r.minX - p[0], 0, p[0] - r.maxX);
   const dy = Math.max(r.minY - p[1], 0, p[1] - r.maxY);

@@ -295,6 +295,11 @@ function evaluate(
   return v;
 }
 
+/**
+ * Builds the pyramid over the extent of all coverage features, one root per
+ * minZoom tile. Without coverage the store is empty and every query is
+ * NO_COVERAGE.
+ */
 export function buildPyramid(
   features: ChartFeature[],
   options: Partial<BuildOptions> = {}
