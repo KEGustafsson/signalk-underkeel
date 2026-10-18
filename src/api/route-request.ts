@@ -64,7 +64,15 @@ function parseCoordinates(route: unknown, errors: string[]): LonLat[] | undefine
   }
   let total = 0;
   for (let i = 1; i < out.length; i++) {
-    total += haversine(out[i - 1] as LonLat, out[i] as LonLat);
+    const a = out[i - 1] as LonLat;
+    const b = out[i] as LonLat;
+    // The chart index has no longitude wrap: a leg across ±180° would be
+    // checked over a corridor spanning the globe.
+    if (Math.abs(b[0] - a[0]) > 180) {
+      errors.push("route legs must not cross the ±180° meridian");
+      return undefined;
+    }
+    total += haversine(a, b);
   }
   if (total > LIMITS.maxRouteMetres) {
     errors.push(`route must be at most ${LIMITS.maxRouteMetres / 1000} km long`);
