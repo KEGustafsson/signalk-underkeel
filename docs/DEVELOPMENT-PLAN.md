@@ -654,7 +654,8 @@ the `/route-check` body; the window adds `horizon` (default 48 h, at most 7 days
 (default 15 min, at least 5 min, at most 1000 departures). Leg results are reused across
 departures for the same water level rounded down to the centimetre (σ rounded up). One request
 repairs at most 10 legs, and the rest are listed with a reason; a window is refused when its
-departures times the route length exceed 20 000 km. Both yield to the event loop after each leg
+departures times the route length exceed 20 000 km or its departures times legs exceed 20 000,
+since a leg check costs a corridor query however short the leg is. Both yield to the event loop after each leg
 or departure, so look-ahead ticks keep running during a long request. Measured under Jest on the
 synthetic archipelago: 52 ms per repaired leg.
 

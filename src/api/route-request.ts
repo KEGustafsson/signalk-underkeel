@@ -181,7 +181,12 @@ export const WINDOW_LIMITS = {
    * route, so this bounds what one request costs: the default 48 h every
    * 15 min fits a route of about 100 km.
    */
-  maxDepartureKm: 20_000
+  maxDepartureKm: 20_000,
+  /**
+   * Departures times legs. A leg check costs a corridor query however short
+   * the leg is, so a route of many short legs is bounded here instead.
+   */
+  maxLegChecks: 20_000
 } as const;
 
 /** `horizon` and `step` of a departure-window request, seconds. */
@@ -214,8 +219,12 @@ export function windowBudgetError(
     metres += haversine(coordinates[i - 1] as LonLat, coordinates[i] as LonLat);
   }
   const departures = Math.floor(window.horizon / window.step) + 1;
-  return departures * (metres / 1000) > WINDOW_LIMITS.maxDepartureKm
-    ? `departures × route length must be at most ${WINDOW_LIMITS.maxDepartureKm} km: ` +
-        "use a longer step or a shorter horizon"
-    : undefined;
+  const advice = "use a longer step or a shorter horizon";
+  if (departures * (metres / 1000) > WINDOW_LIMITS.maxDepartureKm) {
+    return `departures × route length must be at most ${WINDOW_LIMITS.maxDepartureKm} km: ${advice}`;
+  }
+  if (departures * (coordinates.length - 1) > WINDOW_LIMITS.maxLegChecks) {
+    return `departures × legs must be at most ${WINDOW_LIMITS.maxLegChecks}: ${advice}`;
+  }
+  return undefined;
 }

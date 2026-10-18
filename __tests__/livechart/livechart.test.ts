@@ -254,6 +254,8 @@ describe("cell posterior and discrepancy", () => {
         samples: [
           null,
           { at: 1 },
+          // Finite but past the Date range: it would make the CSB export throw.
+          { at: 1e16, belowSurface: 5, depth: 4.8, sigma: 0.2, position: [22, 60] },
           { at: T0, belowSurface: 5, depth: 4.8, sigma: 0.2, position: [22, 60] }
         ]
       })

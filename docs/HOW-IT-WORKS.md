@@ -550,19 +550,19 @@ and hazard, the explanation, and the response lists the cell editions used.
 
 The answer lists the waypoints to insert into each failing leg and the legs they make, checked
 like any route. It never moves an existing point. When no path is found, the leg says why and
-gets no waypoints. One request repairs at most 10 legs; any further ones are listed as not
-searched. A plotter shows the answer as a suggestion; the skipper decides whether to
-use it.
+gets no waypoints. One request repairs a bounded number of legs, and any further ones are
+listed as not searched; the limits are in [plan §4.11](DEVELOPMENT-PLAN.md). A plotter shows
+the answer as a suggestion; the skipper decides whether to use it.
 
 ### Choosing when to leave
 
 `POST /departure-window` also takes the route-check body, plus a horizon and a step: by default
 every 15 minutes over the next 48 hours. It checks the route for each departure with the water
 level the forecast gives for the time each leg is sailed, and returns the intervals in which
-every leg is `ok`, with the worst status of each departure. The horizon can be up to 7 days and
-the step no shorter than 5 minutes, and the departures times the route length may be at most
-20 000 km: the default 48 hours fits a route of about 100 km. A leg is checked again only when its water level changes.
-In Finnish waters this matters during low-water spells; in tidal waters it works as a tide-gate
+every leg is `ok`, with the worst status of each departure. A leg is checked again only when
+its water level changes. A window over a long route or one of many legs is refused when it
+would cost one request too much work; a longer step or a shorter horizon fits it. The limits
+are in [plan §4.11](DEVELOPMENT-PLAN.md). In Finnish waters this matters during low-water spells; in tidal waters it works as a tide-gate
 planner.
 
 ## 11. Asking about one spot

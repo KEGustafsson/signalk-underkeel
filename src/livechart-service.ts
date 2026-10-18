@@ -228,10 +228,14 @@ function isNodeValues(v: unknown): v is NodeValues {
   );
 }
 
+/** The ECMAScript Date range, ms: a sample outside it cannot be exported. */
+const MAX_TIME = 8.64e15;
+
 function isSounding(v: unknown): v is Sounding {
   return (
     isRecord(v) &&
     allFinite(v, ["at", "belowSurface", "depth", "sigma"]) &&
+    Math.abs(v.at as number) <= MAX_TIME &&
     Array.isArray(v.position) &&
     v.position.length === 2 &&
     v.position.every((n) => Number.isFinite(n))

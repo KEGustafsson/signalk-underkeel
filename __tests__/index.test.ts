@@ -565,6 +565,14 @@ describe("plugin lifecycle", () => {
     });
     expect(tooMuch.code).toBe(400);
     expect((tooMuch.body as { errors: string[] }).errors[0]).toMatch(/departures × route length/);
+    // 200 legs of 5 m are short, but 193 departures still make 38 600 leg checks.
+    const zigzag = {
+      type: "LineString",
+      coordinates: Array.from({ length: 201 }, (_, i) => [22.004 + (i % 2) * 0.0001, 60.01])
+    };
+    const manyLegs = await post("/v1/departure-window", { route: zigzag });
+    expect(manyLegs.code).toBe(400);
+    expect((manyLegs.body as { errors: string[] }).errors[0]).toMatch(/departures × legs/);
     plugin.stop();
   });
 
