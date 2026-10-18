@@ -1,8 +1,13 @@
 /** Engine states published on `navigation.underKeel.state`. */
 export type UnderKeelState = "normal" | "alert" | "warn" | "alarm" | "unknown" | "off";
 
+/** Signal K paths the plugin publishes (plan §4.10). */
 export const PATHS = {
   state: "navigation.underKeel.state",
+  clearance: "navigation.underKeel.clearance",
+  timeToShoal: "navigation.underKeel.timeToShoal",
+  envelopeRev: "navigation.underKeel.envelopeRev",
+  waterLevel: "navigation.underKeel.waterLevel",
   notification: "notifications.navigation.underKeel"
 } as const;
 

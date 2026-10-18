@@ -409,6 +409,8 @@ ticks below the threshold minus 20 %.
 - **The other four:** ROT ± σ_ROT and COG ± σ_COG.
 
 Footprint at each step (Δt = 3 s) is a rectangle of hull length × beam, inflated by `σ_pos(t)`.
+Δt shrinks at speed so that consecutive footprints, hull length plus the position buffer at
+both ends, still touch: a fast boat must not skip a rock between two samples.
 
 **Output per tick.**
 

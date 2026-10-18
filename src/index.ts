@@ -1,42 +1,78 @@
 import type { Path, Plugin, PluginRouter, ServerAPI } from "@signalk/server-api";
-import { registerStatusRoute } from "./api/status";
-import { createStatus, EngineStatus, PATHS } from "./foundation/state";
+import { manifestProvider, PLUGIN_ID } from "./api/manifest";
+import { registerRoutes } from "./api/routes";
+import type { PluginConfig } from "./config";
+import { parseConfig, SCHEMA } from "./config";
+import type { EngineStatus } from "./foundation/state";
+import { createStatus, PATHS } from "./foundation/state";
+import { statusReport } from "./status-report";
+import type { IndexLoad } from "./index-loader";
+import { loadOrBuildIndex } from "./index-loader";
+import type { Clock } from "./monitor";
+import { Monitor, SYSTEM_CLOCK } from "./monitor";
+import fs from "fs";
+import path from "path";
 
-const PLUGIN_ID = "signalk-underkeel";
-
-export = function underkeel(app: ServerAPI): Plugin {
-  let status: EngineStatus = createStatus("off", "plugin not started", new Date());
-
-  function publishState(next: EngineStatus): void {
-    status = next;
-    app.handleMessage(PLUGIN_ID, {
-      updates: [{ values: [{ path: PATHS.state as Path, value: next.state }] }]
-    });
+// lib/index.js and src/index.ts both sit one level below package.json.
+const VERSION = (
+  JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8")) as {
+    version: string;
   }
+).version;
+
+export = function underkeel(app: ServerAPI, clock: Clock = SYSTEM_CLOCK): Plugin {
+  let monitor: Monitor | undefined;
+  let load: IndexLoad | undefined;
+  let stopped: EngineStatus = createStatus("off", "plugin not started", new Date(clock.now()));
 
   return {
     id: PLUGIN_ID,
     name: "Under-Keel Awareness",
-    description: "Look-ahead grounding risk, route checks and a living chart (advisory only).",
+    description:
+      "Look-ahead grounding risk, route checks and a living chart. Advisory only: not for navigation.",
 
-    schema: {
-      type: "object",
-      properties: {}
-    },
+    schema: SCHEMA,
 
-    start(): void {
-      // The risk engine does not exist yet (docs/DEVELOPMENT-PLAN.md, M1).
-      // Publishing "off" with a reason keeps the never-silent rule from day one.
-      publishState(createStatus("off", "risk engine not implemented", new Date()));
-      app.setPluginStatus("Started — risk engine not implemented, monitoring OFF");
+    start(options: unknown): void {
+      const config: PluginConfig = parseConfig(options);
+      load = loadOrBuildIndex(config, app.getDataDirPath());
+      if (load.reason) {
+        app.setPluginError(load.reason);
+      }
+      monitor = new Monitor(app, PLUGIN_ID, config, load.index, load.reason, clock);
+      monitor.start();
+      app.registerResourceProvider(manifestProvider(VERSION));
     },
 
     stop(): void {
-      status = createStatus("off", "plugin stopped", new Date());
+      monitor?.stop();
+      monitor = undefined;
+      stopped = createStatus("off", "plugin stopped", new Date(clock.now()));
+      app.handleMessage(PLUGIN_ID, {
+        updates: [
+          {
+            values: [
+              { path: PATHS.state as Path, value: "off" },
+              { path: PATHS.clearance as Path, value: null },
+              { path: PATHS.timeToShoal as Path, value: null },
+              {
+                path: PATHS.notification as Path,
+                value: { state: "normal", method: [], message: "UKC monitoring stopped" } as never
+              }
+            ]
+          }
+        ]
+      });
     },
 
     registerWithRouter(router: PluginRouter): void {
-      registerStatusRoute(router, () => status);
+      registerRoutes(router, {
+        status: () => statusReport({ load, monitor, stopped, now: clock.now() }),
+        envelope: () =>
+          monitor
+            ? { rev: monitor.envelope.rev, envelope: monitor.envelope.envelope }
+            : { rev: 0, envelope: { type: "FeatureCollection", features: [] } }
+      });
     }
   };
 };

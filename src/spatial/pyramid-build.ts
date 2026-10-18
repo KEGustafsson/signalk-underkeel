@@ -217,8 +217,8 @@ function sigmas(hits: Hit[], dMin: number, opts: BuildOptions): { sigmaP: number
   return { sigmaP, sigmaD };
 }
 
-function flagsOf(hits: Hit[], bandFull: number | undefined, hasDepth: boolean): number {
-  let flags = bandFull === undefined || !hasDepth ? FLAGS.NO_COVERAGE : 0;
+function flagsOf(hits: Hit[], bandFull: number | undefined): number {
+  let flags = bandFull === undefined ? FLAGS.NO_COVERAGE : 0;
   let assessed = false;
   for (const h of hits) {
     const f = h.item.f;
@@ -233,7 +233,12 @@ function flagsOf(hits: Hit[], bandFull: number | undefined, hasDepth: boolean): 
   return assessed ? flags : flags | FLAGS.UNASSESSED;
 }
 
-/** Conservative values for a tile from every feature that reaches it. */
+/**
+ * Conservative values for a tile from every feature that reaches it. A
+ * leaf only partly inside coverage keeps the charted depth of its covered
+ * part and carries NO_COVERAGE, so a rock there is not hidden by the gap
+ * beside it; a tile with no depth feature at all is NO_DATA.
+ */
 function uniformValues(a: Analysis, opts: BuildOptions): NodeValues {
   let dMin = Infinity;
   let cellRef = -1;
@@ -244,16 +249,14 @@ function uniformValues(a: Analysis, opts: BuildOptions): NodeValues {
       cellRef = h.item.f.cellRef;
     }
   }
-  const hasDepth = dMin !== Infinity;
-  const flags = flagsOf(a.hits, a.bandFull, hasDepth);
-  if (!hasDepth) {
-    return { ...NO_DATA, flags };
+  const flags = flagsOf(a.hits, a.bandFull);
+  if (dMin === Infinity) {
+    return { ...NO_DATA, flags: flags | NO_DATA.flags };
   }
   const s = sigmas(a.hits, dMin, opts);
-  const sigmaD = flags & FLAGS.SWEPT ? SWEPT_SIGMA_D : s.sigmaD;
   return {
-    dMin: flags & FLAGS.NO_COVERAGE ? -Infinity : dMin,
-    sigmaD,
+    dMin,
+    sigmaD: flags & FLAGS.SWEPT ? SWEPT_SIGMA_D : s.sigmaD,
     sigmaP: s.sigmaP,
     flags,
     cellRef

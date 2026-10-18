@@ -6,7 +6,9 @@ export const FLAGS = {
   NO_COVERAGE: 2,
   UNASSESSED: 4,
   DREDGED: 8,
-  LIVECHART_ADJUSTED: 16
+  LIVECHART_ADJUSTED: 16,
+  /** No charted depth at all in (part of) the tile; dMin is -Infinity there. */
+  NO_DEPTH: 32
 } as const;
 
 export interface NodeValues {
@@ -23,7 +25,7 @@ export const NO_DATA: NodeValues = {
   dMin: -Infinity,
   sigmaD: 0,
   sigmaP: 0,
-  flags: FLAGS.NO_COVERAGE,
+  flags: FLAGS.NO_COVERAGE | FLAGS.NO_DEPTH,
   cellRef: -1
 };
 
@@ -130,7 +132,7 @@ export class NodeStore {
       dMin: this.dMin[i] ?? -Infinity,
       sigmaD: this.sigmaD[i] ?? 0,
       sigmaP: this.sigmaP[i] ?? 0,
-      flags: this.flags[i] ?? FLAGS.NO_COVERAGE,
+      flags: this.flags[i] ?? NO_DATA.flags,
       cellRef: this.cellRef[i] ?? -1
     };
   }

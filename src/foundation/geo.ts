@@ -144,12 +144,31 @@ export function rectContainsRect(outer: Rect, inner: Rect): boolean {
   );
 }
 
+/** Mean Earth radius (IUGG), metres. */
+export const EARTH_RADIUS = 6371008.8;
+
 /** Ground distance in metres between two WGS84 points (haversine). */
 export function haversine(a: LonLat, b: LonLat): number {
-  const R = 6371008.8;
+  const R = EARTH_RADIUS;
   const dLat = (b[1] - a[1]) * DEG;
   const dLon = (b[0] - a[0]) * DEG;
   const s =
     Math.sin(dLat / 2) ** 2 + Math.cos(a[1] * DEG) * Math.cos(b[1] * DEG) * Math.sin(dLon / 2) ** 2;
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
+}
+
+/**
+ * A point `east`/`north` metres from `origin` in the local tangent plane.
+ * Accurate to well under a metre over the few kilometres a look-ahead or a
+ * route leg spans.
+ */
+export function offset(origin: LonLat, east: number, north: number): LonLat {
+  const lat = origin[1] + north / EARTH_RADIUS / DEG;
+  const lon = origin[0] + east / (EARTH_RADIUS * Math.cos(origin[1] * DEG)) / DEG;
+  return [lon, lat];
+}
+
+/** The point `distance` metres from `origin` along true bearing `bearing` (radians). */
+export function project(origin: LonLat, bearing: number, distance: number): LonLat {
+  return offset(origin, distance * Math.sin(bearing), distance * Math.cos(bearing));
 }
