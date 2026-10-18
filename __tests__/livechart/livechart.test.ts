@@ -5,7 +5,7 @@ import path from "path";
 import { LivechartService } from "../../src/livechart-service";
 import type { LivechartConfig } from "../../src/livechart-service";
 import { quadkey } from "../../src/livechart/discrepancy";
-import { isDiscrepancy, PASS_GAP_MS, Posteriors } from "../../src/livechart/posterior";
+import { chartPrior, isDiscrepancy, PASS_GAP_MS, Posteriors } from "../../src/livechart/posterior";
 import type { RawSounding, SoundingSource } from "../../src/livechart/soundings";
 import { reduce } from "../../src/livechart/soundings";
 import { haversine, project } from "../../src/foundation/geo";
@@ -176,6 +176,34 @@ describe("cell posterior and discrepancy", () => {
     };
     expect(csb.features).toHaveLength(26);
     expect(csb.properties.platform.uniqueID).toBe("anon");
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("a cell reference saved with another index is replaced by the current chart's", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-livechart-"));
+    const file = path.join(dir, "livechart.json");
+    const svc = new LivechartService(store(), CONFIG, file, failOnError);
+    for (const start of [T0, T0 + 15 * 60_000]) {
+      for (let k = 0; k < 3; k++) {
+        svc.onSounding(raw(5.2, start + k * 1000));
+      }
+    }
+    svc.save();
+    // As if saved against a catalogue that numbered its cells differently.
+    const saved = JSON.parse(fs.readFileSync(file, "utf8")) as {
+      cells: { cellRef: number }[];
+      adjustments: [number, { cellRef: number }][];
+    };
+    saved.cells.forEach((c) => (c.cellRef = 99));
+    saved.adjustments.forEach(([, v]) => (v.cellRef = 99));
+    fs.writeFileSync(file, JSON.stringify(saved));
+    const fresh = store();
+    new LivechartService(fresh, CONFIG, file, failOnError);
+    const [[key, v]] = [...fresh.adjustments] as [number, { cellRef: number }][];
+    const n = 2 ** fresh.adjustZoom;
+    const current = chartPrior(fresh, fresh.adjustZoom, Math.floor(key / n), key % n).cellRef;
+    expect(v.cellRef).not.toBe(99);
+    expect(v.cellRef).toBe(current);
     fs.rmSync(dir, { recursive: true, force: true });
   });
 

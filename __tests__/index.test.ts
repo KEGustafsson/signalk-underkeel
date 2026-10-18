@@ -573,6 +573,11 @@ describe("plugin lifecycle", () => {
     const manyLegs = await post("/v1/departure-window", { route: zigzag });
     expect(manyLegs.code).toBe(400);
     expect((manyLegs.body as { errors: string[] }).errors[0]).toMatch(/departures × legs/);
+    // The first departure is at the start of the horizon: 1000 steps are 1001 departures.
+    const count = (horizon: number) =>
+      post("/v1/departure-window", { route, horizon, step: 300 }).then((r) => r.code);
+    expect(await count(999 * 300)).toBe(200);
+    expect(await count(1000 * 300)).toBe(400);
     plugin.stop();
   });
 

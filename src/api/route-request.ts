@@ -189,6 +189,9 @@ export const WINDOW_LIMITS = {
   maxLegChecks: 20_000
 } as const;
 
+/** Departures in a window, counting the first at the start of the horizon. */
+const departuresOf = (horizon: number, step: number): number => Math.floor(horizon / step) + 1;
+
 /** `horizon` and `step` of a departure-window request, seconds. */
 export function parseWindowOptions(body: unknown): Parsed<{ horizon: number; step: number }> {
   const b = (typeof body === "object" && body !== null ? body : {}) as Record<string, unknown>;
@@ -201,8 +204,11 @@ export function parseWindowOptions(body: unknown): Parsed<{ horizon: number; ste
   if (!inRange(step, WINDOW_LIMITS.minStep, WINDOW_LIMITS.maxHorizon)) {
     errors.push(`step must be at least ${WINDOW_LIMITS.minStep} s`);
   }
-  if (errors.length === 0 && (horizon as number) / (step as number) > WINDOW_LIMITS.maxSteps) {
-    errors.push(`horizon / step must be at most ${WINDOW_LIMITS.maxSteps} departures`);
+  if (
+    errors.length === 0 &&
+    departuresOf(horizon as number, step as number) > WINDOW_LIMITS.maxSteps
+  ) {
+    errors.push(`horizon / step must give at most ${WINDOW_LIMITS.maxSteps} departures`);
   }
   return errors.length > 0
     ? { ok: false, errors }
@@ -218,7 +224,7 @@ export function windowBudgetError(
   for (let i = 1; i < coordinates.length; i++) {
     metres += haversine(coordinates[i - 1] as LonLat, coordinates[i] as LonLat);
   }
-  const departures = Math.floor(window.horizon / window.step) + 1;
+  const departures = departuresOf(window.horizon, window.step);
   const advice = "use a longer step or a shorter horizon";
   if (departures * (metres / 1000) > WINDOW_LIMITS.maxDepartureKm) {
     return `departures × route length must be at most ${WINDOW_LIMITS.maxDepartureKm} km: ${advice}`;
