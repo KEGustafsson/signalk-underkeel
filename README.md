@@ -55,6 +55,8 @@ experimental `navigationSafety` service.
 
 ## Documentation map
 
+- [How it works](docs/HOW-IT-WORKS.md): the plugin step by step for users, with flowcharts and
+  screenshots.
 - [Development plan](docs/DEVELOPMENT-PLAN.md): architecture, risk model, APIs, Freeboard
   integration and milestones.
 - [Release checklist](docs/release-checklist.md): commands to run before publishing.
