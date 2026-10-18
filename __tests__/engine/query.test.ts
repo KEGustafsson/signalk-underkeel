@@ -133,5 +133,8 @@ describe("query request validation", () => {
       [22.1, 60.1]
     ]);
     expect(bad(holed)).toEqual(["polygon holes are not supported"]);
+    const open = box(22, 60, 22.3, 60.2);
+    open.geometry.coordinates[0]?.pop();
+    expect(bad(open)).toEqual(["polygon outer ring must be closed"]);
   });
 });

@@ -45,7 +45,7 @@ function withinSpan(ring: LonLat[]): boolean {
   return ne[0] - sw[0] <= 180 && haversine(sw, ne) <= QUERY_LIMITS.maxPolygonMetres;
 }
 
-/** The outer ring of a GeoJSON Polygon, without the repeated closing position. */
+/** The closed outer ring of a GeoJSON Polygon, without the repeated closing position. */
 function parsePolygon(rings: unknown[], errors: string[]): LonLat[] | undefined {
   if (rings.length > 1) {
     // A hole would be queried as part of the polygon.
@@ -62,14 +62,18 @@ function parsePolygon(rings: unknown[], errors: string[]): LonLat[] | undefined 
     errors.push("polygon positions must be [lon, lat] within ±180 / ±85");
     return undefined;
   }
-  // GeoJSON repeats the first position at the end; the footprint ring does not.
   const r = ring as LonLat[];
   if (!withinSpan(r)) {
     errors.push(`polygon must fit in a box ${QUERY_LIMITS.maxPolygonMetres / 1000} km across`);
     return undefined;
   }
+  // GeoJSON (RFC 7946) repeats the first position at the end; the footprint ring does not.
   const [first, last] = [r[0] as LonLat, r[r.length - 1] as LonLat];
-  return first[0] === last[0] && first[1] === last[1] ? r.slice(0, -1) : r;
+  if (first[0] !== last[0] || first[1] !== last[1]) {
+    errors.push("polygon outer ring must be closed");
+    return undefined;
+  }
+  return r.slice(0, -1);
 }
 
 function parseGeometry(g: unknown, errors: string[]): LonLat[] | undefined {

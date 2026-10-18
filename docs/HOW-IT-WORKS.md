@@ -1,9 +1,8 @@
 # How signalk-underkeel works
 
 This guide follows the plugin from chart files to an alarm on the plotter, with the numbers
-it uses at each step. It covers milestones M0–M3 of the
-[development plan](DEVELOPMENT-PLAN.md#8-milestones); the last section lists what later
-milestones add.
+it uses at each step. The [development plan](DEVELOPMENT-PLAN.md) holds the design and its
+rationale; the [README](../README.md) lists the REST endpoints and the chart export command.
 
 > Advisory navigation aid. Not ECDIS, and not a replacement for official charts or a proper
 > lookout.
@@ -23,7 +22,6 @@ milestones add.
 11. [Asking about one spot](#11-asking-about-one-spot)
 12. [What the plugin never does](#12-what-the-plugin-never-does)
 13. [Known limits](#13-known-limits)
-14. [Coming in later milestones](#14-coming-in-later-milestones)
 
 ## 1. About the screenshots
 
@@ -79,19 +77,16 @@ look-ahead, a corridor around each leg for a route check, or a map tile for the 
 
 ![Plugin configuration in the Signal K admin UI](images/how-it-works/config.png)
 
-1. Export each ENC cell to GeoJSON with GDAL:
-   `scripts/enc-to-geojson.sh FI5ABCDE.000 data/cells/FI5ABCDE`. Only unencrypted S-57 cells
-   are supported.
-2. In the admin UI under **Server**, open the plugin configuration for **Under-Keel
-   Awareness** and set **Exported ENC cells directory** to the directory that holds one
-   sub-directory per cell.
-3. Set the draft under **Vessel**, or leave it empty to use Signal K `design.draft.maximum`.
-   Length and beam fall back to `design.length.overall` and `design.beam`. Without a draft the
-   engine stays `unknown`.
-4. Pick a **Water level** source (section 8).
-5. Enable the plugin. The first start builds the index and saves it under the plugin data
-   directory. Later starts load the saved index; tick **Rebuild index at start** once after
-   the cells change.
+The plugin reads unencrypted S-57 cells that GDAL has exported to GeoJSON, one directory per
+cell (the [README](../README.md#chart-data) has the export command), and points
+**Exported ENC cells directory** at their parent. The draft comes from **Vessel**, or else from
+Signal K `design.draft.maximum`; length and beam fall back to `design.length.overall` and
+`design.beam`. Without a draft the engine stays `unknown`. The water level comes from the
+source picked under **Water level** (section 8).
+
+The index is built once, at the first start, and saved under the plugin data directory. Later
+starts load the saved index until **Rebuild index at start** is ticked, so it is ticked once
+after the cells change.
 
 The status line at the top of the plugin's page shows the engine state and its reason, for
 example `Monitoring: unknown — position stale`.
@@ -398,9 +393,9 @@ part of it.
 
 ![Route check result](images/how-it-works/route-check.jpg)
 
-`POST /plugins/signalk-underkeel/v1/route-check` takes a GeoJSON LineString or a Signal K route
-id (`/resources/routes/<id>`), with optional departure time, speed per leg, cross-track limit,
-draft and accepted probability.
+A route check takes a route, either as geometry or as a Signal K route resource, and checks
+each leg at the time the boat would be on it. The request fields are listed in the
+[README](../README.md).
 
 ```mermaid
 flowchart TD
@@ -434,10 +429,9 @@ and hazard, the explanation, and the response lists the cell editions used.
 
 ## 11. Asking about one spot
 
-`POST /plugins/signalk-underkeel/v1/query` takes a GeoJSON Point or Polygon (up to 50 km across,
-no holes) with optional buffer, draft and speed. It returns the class, P(UKC < 0), the deciding
-hazard, the explanation and the same sentence as the notification. A plotter can use it for a
-cursor readout.
+The query endpoint answers the same question for one point or area at the current draft and
+water level: the class, P(UKC < 0), the deciding hazard, the explanation and the same sentence
+as the notification. A plotter can use it for a cursor readout.
 
 ## 12. What the plugin never does
 
@@ -461,15 +455,3 @@ cursor readout.
 - Only unencrypted S-57 cells exported with `scripts/enc-to-geojson.sh` are read.
 - No released chart plotter is assumed to draw the envelope or the leg colours; the plugin
   serves them as GeoJSON and vector tiles.
-
-## 14. Coming in later milestones
-
-See [plan §8](DEVELOPMENT-PLAN.md#8-milestones) for scope and exit criteria.
-
-- **M4 Dynamics:** a fan of five predicted tracks from rate of turn, an escape heading, a
-  position-integrity check against dead reckoning, state hysteresis, acknowledged passages,
-  mooring zones and an optional grounding detector.
-- **M5 Living chart and planning:** own depth soundings that can only make a cell shallower,
-  suspected-shoal notes, IHO CSB export, `/route-repair` and `/departure-window`.
-- **M6 Upstream:** JSON Schemas of the navigation-safety contract and RFC drafts for the
-  Signal K paths and the Plotter Extensions `services` section.
