@@ -72,30 +72,82 @@ function orient(p: LonLat, q: LonLat, r: LonLat): number {
   return (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
 }
 
-/** Whether ab and cd cross at a point inside both; touching and collinear overlap do not count. */
-function crosses(a: LonLat, b: LonLat, c: LonLat, d: LonLat): boolean {
-  return orient(c, d, a) * orient(c, d, b) < 0 && orient(a, b, c) * orient(a, b, d) < 0;
+/** Below this, in degrees, a point is on a line: about 0.01 mm. */
+const ON_LINE = 1e-10;
+
+/** Distance from p to the line through c and d, in degrees. */
+function lineDistance(p: LonLat, c: LonLat, d: LonLat): number {
+  return Math.abs(orient(c, d, p)) / (Math.hypot(d[0] - c[0], d[1] - c[1]) || 1);
 }
 
-/** Points tested along each footprint edge besides its ends. */
-const EDGE_SAMPLES = 8;
+/**
+ * Where along ab, as fractions 0..1, it meets segment cd: the crossing or
+ * touching point, or both ends of a collinear overlap.
+ */
+function contacts(a: LonLat, b: LonLat, c: LonLat, d: LonLat): number[] {
+  const rx = b[0] - a[0];
+  const ry = b[1] - a[1];
+  const sx = d[0] - c[0];
+  const sy = d[1] - c[1];
+  const len2 = rx * rx + ry * ry;
+  const den = rx * sy - ry * sx;
+  const along = (p: LonLat): number => ((p[0] - a[0]) * rx + (p[1] - a[1]) * ry) / len2;
+  const inRange = (t: number): boolean => t >= 0 && t <= 1;
+  if (Math.abs(den) <= 1e-12 * Math.sqrt(len2) * Math.hypot(sx, sy)) {
+    // Parallel: only a collinear overlap meets ab.
+    return lineDistance(c, a, b) <= ON_LINE ? [along(c), along(d)].filter(inRange) : [];
+  }
+  const qx = c[0] - a[0];
+  const qy = c[1] - a[1];
+  const t = (qx * sy - qy * sx) / den;
+  const u = (qx * ry - qy * rx) / den;
+  const slack = 1e-9;
+  return t >= -slack && t <= 1 + slack && u >= -slack && u <= 1 + slack
+    ? [Math.min(1, Math.max(0, t))]
+    : [];
+}
+
+function onBoundary(p: LonLat, polygon: readonly LonLat[]): boolean {
+  for (let j = 0, l = polygon.length - 1; j < polygon.length; l = j++) {
+    const c = polygon[l] as LonLat;
+    const d = polygon[j] as LonLat;
+    const inBox =
+      p[0] >= Math.min(c[0], d[0]) - ON_LINE &&
+      p[0] <= Math.max(c[0], d[0]) + ON_LINE &&
+      p[1] >= Math.min(c[1], d[1]) - ON_LINE &&
+      p[1] <= Math.max(c[1], d[1]) + ON_LINE;
+    if (inBox && lineDistance(p, c, d) <= ON_LINE) {
+      return true;
+    }
+  }
+  return false;
+}
 
 /**
- * Whether the whole ring, edges included, lies in the polygon. Vertices alone
- * are not enough: a footprint edge can leave a concave passage between them.
+ * Whether the whole ring, edges included, lies in the polygon. Each edge is
+ * split wherever it meets the polygon's boundary; between two such points
+ * the edge is either all inside or all outside, so the middle of each piece
+ * decides. A piece lying on the boundary counts as inside. Vertices alone
+ * are not enough: an edge can leave a concave passage between them.
  */
 function ringWithin(ring: readonly LonLat[], polygon: readonly LonLat[]): boolean {
   for (let i = 0; i < ring.length; i++) {
     const a = ring[i] as LonLat;
     const b = ring[(i + 1) % ring.length] as LonLat;
-    for (let k = 0; k < EDGE_SAMPLES; k++) {
-      const t = k / EDGE_SAMPLES;
-      if (!inside([a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])], polygon)) {
-        return false;
-      }
-    }
+    const cuts = [0, 1];
     for (let j = 0, l = polygon.length - 1; j < polygon.length; l = j++) {
-      if (crosses(a, b, polygon[l] as LonLat, polygon[j] as LonLat)) {
+      cuts.push(...contacts(a, b, polygon[l] as LonLat, polygon[j] as LonLat));
+    }
+    cuts.sort((x, y) => x - y);
+    for (let k = 1; k < cuts.length; k++) {
+      const t0 = cuts[k - 1] as number;
+      const t1 = cuts[k] as number;
+      if (t1 - t0 <= 1e-12) {
+        continue;
+      }
+      const t = (t0 + t1) / 2;
+      const m: LonLat = [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])];
+      if (!onBoundary(m, polygon) && !inside(m, polygon)) {
         return false;
       }
     }

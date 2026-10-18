@@ -138,6 +138,30 @@ describe("acknowledged passages", () => {
     expect(suppress(inArm, ctx({ acks: [{ ...ACK, polygon: u }] })).state).toBe("alert");
   });
 
+  test("a pocket reached only through vertices on a footprint edge is not covered", () => {
+    // In thousandths of a degree from 22 E, 60 N: a passage whose notch walls end at
+    // vertices lying exactly on the footprint's north edge, so no edge crosses a wall.
+    const at = (x: number, y: number): LonLat => [22 + x / 1000, 60 + y / 1000];
+    const notched = [
+      at(0, -2),
+      at(8, -2),
+      at(8, 2),
+      at(4.11, 2),
+      at(4.11, 0),
+      at(4.6, -1),
+      at(3.5, -1),
+      at(4.01, 0),
+      at(4.01, 2),
+      at(0, 2)
+    ];
+    const ring = [at(0.5, 0), at(7.5, 0), at(7.5, -1.5), at(0.5, -1.5)];
+    const r = result("warn", [fp(30, ring, 0.08)]);
+    expect(suppress(r, ctx({ acks: [{ ...ACK, polygon: notched }] })).state).toBe("warn");
+    // The same footprint in a passage without the notch is covered, its edge on the boundary.
+    const plain = [at(0, -2), at(8, -2), at(8, 0), at(0, 0)];
+    expect(suppress(r, ctx({ acks: [{ ...ACK, polygon: plain }] })).state).toBe("alert");
+  });
+
   test("a mooring zone suppresses the same way and names the zone", () => {
     const r = suppress(WARN, ctx({ acks: [], zones: [{ name: "home berth", polygon: PASSAGE }] }));
     expect(r).toMatchObject({
