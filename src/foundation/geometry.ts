@@ -240,3 +240,73 @@ export function geomContainsRect(geom: Geom, r: Rect): boolean {
       corners.every((c) => pointInPolygon(c, poly)) && polygonBoundaryRectDistance(poly, r, 0) > 0
   );
 }
+
+/** Below this length (metres) an edge is not matched against its neighbours. */
+const MIN_SHARED_EDGE = 1e-3;
+/** Offset (metres) of the side probes from an edge's midpoint. */
+const SIDE_PROBE = 1e-5;
+const LEFT = 1;
+const RIGHT = 2;
+
+/** Which sides of edge a→b, a before b, lie inside the polygon: LEFT | RIGHT bits. */
+function interiorSides(a: XY, b: XY, len: number, poly: PolygonGeom): number {
+  const mx = (a[0] + b[0]) / 2;
+  const my = (a[1] + b[1]) / 2;
+  const nx = (-(b[1] - a[1]) / len) * SIDE_PROBE;
+  const ny = ((b[0] - a[0]) / len) * SIDE_PROBE;
+  return (
+    (inPolygon(mx + nx, my + ny, poly) ? LEFT : 0) | (inPolygon(mx - nx, my - ny, poly) ? RIGHT : 0)
+  );
+}
+
+/**
+ * Adds the sides of every ring edge that touches `r` to `sides`, keyed by
+ * the edge with its endpoints in lexicographic order. False when an edge
+ * is too short to probe.
+ */
+function collectEdges(poly: PolygonGeom, r: Rect, sides: Map<string, number>): boolean {
+  for (const ring of [poly.outer, ...poly.holes]) {
+    const n = ring.length;
+    for (let i = 0, j = n - 1; i < n; j = i++) {
+      const p = ring[j] as XY;
+      const q = ring[i] as XY;
+      const len = Math.hypot(q[0] - p[0], q[1] - p[1]);
+      if (len === 0 || !segmentIntersectsRect(p, q, r)) {
+        continue;
+      }
+      if (len < MIN_SHARED_EDGE) {
+        return false;
+      }
+      const [a, b] = p[0] < q[0] || (p[0] === q[0] && p[1] < q[1]) ? [p, q] : [q, p];
+      const key = `${a[0]},${a[1]},${b[0]},${b[1]}`;
+      sides.set(key, (sides.get(key) ?? 0) | interiorSides(a, b, len, poly));
+    }
+  }
+  return true;
+}
+
+/**
+ * True only when the areas together cover the closed rectangle. Every edge
+ * that touches it must have area on both sides, which holds where two
+ * polygons share the edge vertex for vertex; with no boundary of the union
+ * crossing the rectangle, its centre decides. An edge split differently on
+ * each side, or two areas that overlap rather than meet, returns false:
+ * callers read false as "not covered", so it costs precision, never safety.
+ */
+export function areasCoverRect(geoms: readonly Geom[], r: Rect): boolean {
+  const sides = new Map<string, number>();
+  const polys = geoms.flatMap((g) => (g.type === "polygon" ? g.polygons : []));
+  for (const poly of polys) {
+    if (!collectEdges(poly, r, sides)) {
+      return false;
+    }
+  }
+  for (const s of sides.values()) {
+    if (s !== (LEFT | RIGHT)) {
+      return false;
+    }
+  }
+  const cx = (r.minX + r.maxX) / 2;
+  const cy = (r.minY + r.maxY) / 2;
+  return polys.some((poly) => inPolygon(cx, cy, poly));
+}

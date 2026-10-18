@@ -309,6 +309,11 @@ Two overrides apply on top of the table:
 - **Own soundings.** Where the living-chart posterior has enough samples, it replaces the
   table values (§4.11).
 
+**Zone boundaries.** A leaf that no single `M_QUAL` zone contains is still assessed when the
+assessed zones reaching it cover it together, which holds where they share the boundary vertex
+for vertex. It takes the worst σ of those zones. A boundary split differently on each side, an
+overlap or a gap leaves the leaf `UNASSESSED`.
+
 ### 4.5 Water level
 
 ```ts
