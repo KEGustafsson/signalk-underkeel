@@ -62,18 +62,97 @@ function trackFeature(result: LookaheadResult): EnvelopeFeature {
   };
 }
 
+type XY = [number, number];
+
+/** Local plane around `origin` with longitude scaled by cos(latitude), so directions keep their angles. */
+function planar(origin: LonLat): (p: LonLat) => XY {
+  const k = Math.cos((origin[1] * Math.PI) / 180);
+  return (p) => [(p[0] - origin[0]) * k, p[1] - origin[1]];
+}
+
+/** The ring counter-clockwise; footprint rectangles run clockwise, hulls counter-clockwise. */
+function ccw(ring: LonLat[], xy: (p: LonLat) => XY): LonLat[] {
+  let area = 0;
+  for (let i = 0; i < ring.length; i++) {
+    const [ax, ay] = xy(ring[i] as LonLat);
+    const [bx, by] = xy(ring[(i + 1) % ring.length] as LonLat);
+    area += ax * by - bx * ay;
+  }
+  return area < 0 ? [...ring].reverse() : ring;
+}
+
+/** Index of the vertex furthest along `dir`. */
+function extreme(ring: LonLat[], dir: XY, xy: (p: LonLat) => XY): number {
+  let best = 0;
+  let max = -Infinity;
+  ring.forEach((p, i) => {
+    const [x, y] = xy(p);
+    const d = x * dir[0] + y * dir[1];
+    if (d > max) {
+      max = d;
+      best = i;
+    }
+  });
+  return best;
+}
+
+/** Vertices from index `from` to `to`, counter-clockwise, both included. */
+function arc(ring: LonLat[], from: number, to: number): LonLat[] {
+  const out: LonLat[] = [];
+  for (let i = from; ; i = (i + 1) % ring.length) {
+    out.push(ring[i] as LonLat);
+    if (i === to) {
+      return out;
+    }
+  }
+}
+
 /**
- * Outline of a run of footprints: starboard corners stern to bow, then
- * port corners bow to stern. Rings are [bow-stbd, stern-stbd, stern-port,
- * bow-port] (see footprintRing).
+ * Outline of a run of footprints. Each footprint is a convex polygon (one
+ * hull rectangle, or the hull of the fan's five), so its sides are found by
+ * direction, not by vertex position: the port and starboard extremes across
+ * the local track, the stern of the first footprint and the bow of the last.
  */
-function segmentFeature(run: FootprintResult[], th: Thresholds): EnvelopeFeature {
+function outline(run: FootprintResult[], all: FootprintResult[], start: number): LonLat[] {
+  const first = run[0] as FootprintResult;
+  const xy = planar(first.center);
+  if (run.length === 1) {
+    return ccw(first.ring, xy);
+  }
+  const sides = run.map((f, k) => {
+    const i = start + k;
+    const a = xy((all[Math.max(0, i - 1)] as FootprintResult).center);
+    const b = xy((all[Math.min(all.length - 1, i + 1)] as FootprintResult).center);
+    const n = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    const dir: XY = [(b[0] - a[0]) / n, (b[1] - a[1]) / n];
+    const ring = ccw(f.ring, xy);
+    return {
+      ring,
+      starboard: extreme(ring, [dir[1], -dir[0]], xy),
+      port: extreme(ring, [-dir[1], dir[0]], xy)
+    };
+  });
+  const head = sides[0] as (typeof sides)[number];
+  const tail = sides[sides.length - 1] as (typeof sides)[number];
+  const middle = sides.slice(1, -1);
+  return [
+    // Counter-clockwise: round the stern, up the starboard side, round the bow, down the port side.
+    ...arc(head.ring, head.port, head.starboard),
+    ...middle.map((s) => s.ring[s.starboard] as LonLat),
+    ...arc(tail.ring, tail.starboard, tail.port),
+    ...[...middle].reverse().map((s) => s.ring[s.port] as LonLat)
+  ];
+}
+
+function segmentFeature(
+  run: FootprintResult[],
+  all: FootprintResult[],
+  start: number,
+  th: Thresholds
+): EnvelopeFeature {
   const first = run[0] as FootprintResult;
   const last = run[run.length - 1] as FootprintResult;
-  const starboard = [first.ring[1] as LonLat, ...run.map((f) => f.ring[0] as LonLat)];
-  const port = [...run].reverse().map((f) => f.ring[3] as LonLat);
-  port.push(first.ring[2] as LonLat);
-  const ring = [...starboard, ...port].map(qp);
+  const ring = outline(run, all, start).map(qp);
   ring.push(ring[0] as number[]);
   const means = run.map((f) => f.mean).filter((u): u is number => u !== null);
   const minMean = means.length > 0 ? Math.min(...means) : null;
@@ -117,7 +196,11 @@ export function buildEnvelope(result: LookaheadResult, th: Thresholds): Envelope
   if (result.footprints.length > 1) {
     features.push(trackFeature(result));
   }
-  features.push(...runs(result.footprints, th).map((r) => segmentFeature(r, th)));
+  let start = 0;
+  for (const run of runs(result.footprints, th)) {
+    features.push(segmentFeature(run, result.footprints, start, th));
+    start += run.length;
+  }
   if (result.worst) {
     features.push(worstFeature(result.worst));
   }

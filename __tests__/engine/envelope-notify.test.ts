@@ -45,6 +45,28 @@ describe("envelope", () => {
     });
   });
 
+  test("the cone is drawn on both sides of a straight track and covers every footprint", () => {
+    // Open water, heading east at 3 m/s with no turn: the fan is symmetric about the track.
+    const r = at(22.003, 60.0125, 3);
+    const lat0 = r.footprints[0]?.center[1] as number;
+    const env = buildEnvelope(r, TH);
+    const outline = env.features
+      .filter((f) => f.properties.kind === "segment")
+      .flatMap((f) => (f.geometry.coordinates as number[][][])[0] as number[][]);
+    const north = Math.max(...outline.map((p) => (p[1] as number) - lat0));
+    const south = Math.max(...outline.map((p) => lat0 - (p[1] as number)));
+    expect(north).toBeGreaterThan(0);
+    expect(Math.abs(north - south) / north).toBeLessThan(0.05);
+    // Every footprint's widest point across the track lies on the drawn outline (1 m rounding).
+    const tol = 2e-5;
+    for (const f of r.footprints) {
+      const top = Math.max(...f.ring.map((p) => p[1]));
+      const bottom = Math.min(...f.ring.map((p) => p[1]));
+      expect(north + lat0).toBeGreaterThanOrEqual(top - tol);
+      expect(lat0 - south).toBeLessThanOrEqual(bottom + tol);
+    }
+  });
+
   test("footprint classes", () => {
     expect(classOf({ risk: 0, uncovered: true, charted: null }, TH)).toBe("unverified");
     expect(classOf({ risk: 0, uncovered: true, charted: 5 }, TH)).toBe("unverified");
