@@ -632,7 +632,7 @@ the chart._
 
 ![Freeboard: the details panel with the route-check legs](images/how-it-works/freeboard-panel.jpg)
 
-_The details panel lists every leg of each route on the chart. Legs 4 and 5 fail on a 1 m
+_The details panel lists every leg of each route on the chart. Legs 5 and 6 fail on a 1 m
 sounding about 60 m off the track: its 50 m survey-category-B position uncertainty reaches the
 10 m cross-track corridor. The legs west of the fairway fail because the open data has a
 0–3 m depth area in the channel, which counts as 0 m._
