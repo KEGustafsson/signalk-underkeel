@@ -45,18 +45,26 @@ export const SYSTEM_CLOCK: Clock = {
   clearInterval: (h) => clearInterval(h as NodeJS.Timeout)
 };
 
-const INPUT_PATHS = [
-  "navigation.position",
-  "navigation.courseOverGroundTrue",
-  "navigation.speedOverGround",
-  "navigation.headingTrue",
-  "navigation.rateOfTurn",
-  "navigation.speedThroughWater",
-  "navigation.gnss.horizontalDilution",
-  "navigation.gnss.methodQuality",
-  "navigation.attitude",
-  "environment.water.waves.significantHeight"
-] as const;
+const asString = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
+
+/** Where each subscribed path lands in NavState and how its value is read. */
+const INPUTS: Record<string, { key: keyof NavState; read: (v: unknown) => unknown } | undefined> = {
+  "navigation.position": { key: "position", read: (v) => asPosition(v) },
+  "navigation.courseOverGroundTrue": { key: "cog", read: (v) => asNumber(v) },
+  "navigation.speedOverGround": { key: "sog", read: (v) => asNumber(v) },
+  "navigation.headingTrue": { key: "heading", read: (v) => asNumber(v) },
+  "navigation.rateOfTurn": { key: "rot", read: (v) => asNumber(v) },
+  "navigation.speedThroughWater": { key: "stw", read: (v) => asNumber(v) },
+  "navigation.gnss.horizontalDilution": { key: "hdop", read: (v) => asNumber(v) },
+  "navigation.gnss.methodQuality": { key: "methodQuality", read: asString },
+  "navigation.attitude": {
+    key: "roll",
+    read: (v) => asNumber((v as { roll?: unknown } | null)?.roll)
+  },
+  "environment.water.waves.significantHeight": { key: "waveHeight", read: (v) => asNumber(v) }
+};
+
+const INPUT_PATHS = Object.keys(INPUTS);
 
 /** The escape fan is searched at most once in this many ms. */
 const ESCAPE_EVERY_MS = 3000;
@@ -106,6 +114,10 @@ export class Monitor {
   private acks?: AckStore;
   private readonly grounding?: GroundingDetector;
   zones: Zone[] = [];
+  private readonly watchers: {
+    paths: Set<string>;
+    fn: (path: string, value: unknown, at: number) => void;
+  }[] = [];
   private readonly hysteresis: Hysteresis;
   /** The escape fan is searched at most this often; the heading is held between. */
   private escape: number | null = null;
@@ -134,12 +146,15 @@ export class Monitor {
     this.app.subscriptionmanager.subscribe(
       {
         context: "vessels.self" as never,
-        subscribe: [...INPUT_PATHS, ...this.levels.paths(), ...(this.grounding?.paths() ?? [])].map(
-          (path) => ({
-            path: path as Path,
-            policy: "instant"
-          })
-        )
+        subscribe: [
+          ...INPUT_PATHS,
+          ...this.levels.paths(),
+          ...(this.grounding?.paths() ?? []),
+          ...this.watchers.flatMap((w) => [...w.paths])
+        ].map((path) => ({
+          path: path as Path,
+          policy: "instant"
+        }))
       },
       this.unsubscribes,
       (err) => this.app.error(`subscription failed: ${String(err)}`),
@@ -179,47 +194,23 @@ export class Monitor {
 
   private record(path: string, value: unknown, at: number): void {
     this.grounding?.record(path, value, at);
+    for (const w of this.watchers) {
+      if (w.paths.has(path)) {
+        w.fn(path, value, at);
+      }
+    }
     if (this.levels.record(path, value, at)) {
       return;
     }
-    const set = <T>(key: keyof NavState, v: T | undefined) => {
-      if (v === undefined) {
-        delete this.nav[key];
-      } else {
-        (this.nav as Record<string, Sample<T>>)[key] = { value: v, at };
-      }
-    };
-    switch (path) {
-      case "navigation.position":
-        set("position", asPosition(value));
-        break;
-      case "navigation.courseOverGroundTrue":
-        set("cog", asNumber(value));
-        break;
-      case "navigation.speedOverGround":
-        set("sog", asNumber(value));
-        break;
-      case "navigation.headingTrue":
-        set("heading", asNumber(value));
-        break;
-      case "navigation.rateOfTurn":
-        set("rot", asNumber(value));
-        break;
-      case "navigation.gnss.horizontalDilution":
-        set("hdop", asNumber(value));
-        break;
-      case "navigation.speedThroughWater":
-        set("stw", asNumber(value));
-        break;
-      case "navigation.gnss.methodQuality":
-        set("methodQuality", typeof value === "string" ? value : undefined);
-        break;
-      case "navigation.attitude":
-        set("roll", asNumber((value as { roll?: unknown } | null)?.roll));
-        break;
-      case "environment.water.waves.significantHeight":
-        set("waveHeight", asNumber(value));
-        break;
+    const input = INPUTS[path];
+    if (!input) {
+      return;
+    }
+    const v = input.read(value);
+    if (v === undefined) {
+      delete this.nav[input.key];
+    } else {
+      (this.nav as Record<string, Sample<unknown>>)[input.key] = { value: v, at };
     }
   }
 
@@ -269,6 +260,33 @@ export class Monitor {
     const fresh = (x: Sample<number> | undefined) =>
       x && now - x.at <= limit ? x.value : undefined;
     return fresh(this.nav.heading) ?? fresh(this.nav.cog);
+  }
+
+  /** Also subscribes `paths` and hands their values to `fn`; call before start(). */
+  watch(paths: readonly string[], fn: (path: string, value: unknown, at: number) => void): void {
+    this.watchers.push({ paths: new Set(paths), fn });
+  }
+
+  /** The navigation inputs that are still fresh, for living-chart samples. */
+  fresh(): {
+    position?: LonLat;
+    heading?: number;
+    hdop?: number;
+    methodQuality?: string;
+    roll?: number;
+  } {
+    const now = this.clock.now();
+    const limit = this.config.lookahead.staleAfter * 1000;
+    const f = <T>(x: Sample<T> | undefined): T | undefined =>
+      x && now - x.at <= limit ? x.value : undefined;
+    const n = this.nav;
+    return {
+      position: f(n.position),
+      heading: f(n.heading),
+      hdop: f(n.hdop),
+      methodQuality: f(n.methodQuality),
+      roll: f(n.roll)
+    };
   }
 
   /** Acknowledged passages to honour from now on. */

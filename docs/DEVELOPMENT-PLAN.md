@@ -643,6 +643,22 @@ the full forecast horizon), re-checking only the legs whose water level changed.
 intervals in which every leg passes. In Finnish waters this matters during low-water episodes
 with high pressure and easterly winds; in tidal waters it becomes a full tide-gate planner.
 
+**As built (M5).** The repair grid has at most 120 cells on its longer side, at least 10 m
+each, and reaches half the leg's length (at least 300 m) beyond it. A cell is blocked when the
+corridor around it has P at or above the accept threshold, or touches `NO_COVERAGE`,
+`UNASSESSED` or `NO_DEPTH`: a repair must not route through water it cannot check. Costs are
+evaluated lazily as Theta* expands. Simplification replaces a span with its chord whenever the
+chord passes the corridor check, so no simplification makes a leg fail; a path that still fails
+is reported with a reason and no waypoints. Both `/route-repair` and `/departure-window` take
+the `/route-check` body; the window adds `horizon` (default 48 h, at most 7 days) and `step`
+(default 15 min, at least 5 min, at most 1000 departures). Leg results are reused across
+departures for the same water level rounded down to the centimetre (σ rounded up). One request
+repairs at most 10 legs, and the rest are listed with a reason; a window is refused when its
+departures times the route length exceed 20 000 km or its departures times legs exceed 20 000,
+since a leg check costs a corridor query however short the leg is. Both yield to the event loop after each leg
+or departure, so look-ahead ticks keep running during a long request. Measured under Jest on the
+synthetic archipelago: 52 ms per repaired leg.
+
 ### 4.12 Acknowledged passages
 
 On acknowledge, Freeboard POSTs to `/acks` with:
@@ -705,6 +721,22 @@ suppress the same way, with the zone's name in the reason.
      `dMin` is lowered (never raised).
 6. **Export.** Optional IHO CSB GeoJSON, with a vessel identifier and sensor metadata. The
    user decides whether to submit it; nothing is uploaded automatically.
+
+**As built (M5).** The living chart is off by default and reads one depth path
+(`belowSurface`, or `belowTransducer` plus the configured transducer depth). The gate needs a
+known HDOP below 2, a satellite `methodQuality`, |roll| < 15°, a depth of 0.3–200 m and a
+water level that is not a fallback. Cells are the pyramid's z18 tiles (z = leaf zoom when the
+leaf is coarser); the prior is the cell's charted depth and σD without adjustments, and a pass
+starts after a 10-minute gap. A confirmed discrepancy sets a z18 adjustment that every query
+takes beside the chart, through `minDepthOver` and the UKC tiles, so look-ahead, route check,
+`/query` and the overlay all see it. Adjustments only ever lower a cell; later deeper
+readings leave it as it is. Notes are written with `resourcesApi.setResource("notes", …)` and
+rewritten as evidence grows. Posteriors, adjustments and the last 20 000 accepted soundings are
+kept in `livechart.json` beside the index (no database dependency) and saved at most once a
+minute and on stop. A failed save is reported and retried at the next one, and a malformed file
+is skipped entry by entry rather than stopping the plugin. The CSB export
+(`GET /livechart/csb.geojson`) is B-12 GeoJSON of depths below the transducer, with the
+transducer depth as the sounder's `draft`; it is never uploaded.
 
 **Rule:** own soundings may make the chart _shallower_. They make it _deeper_ only after the
 user confirms, per cell group, in the UI. A faulty transducer must never be able to switch

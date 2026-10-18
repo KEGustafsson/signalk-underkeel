@@ -1,5 +1,6 @@
+import { tileKey } from "../foundation/geo";
 import type { NodeStore, NodeValues } from "./node-store";
-import { NO_DATA } from "./node-store";
+import { combine, NO_DATA } from "./node-store";
 
 export interface TileCell {
   z: number;
@@ -19,8 +20,94 @@ export interface TileCell {
  * the shallowest depth, the widest σ and every flag. Cells the index never
  * stored come back as NO_DATA. A tile finer than the stored leaf it lies in
  * is one cell with that leaf's values.
+ *
+ * Living-chart adjustments are folded into the cells they fall in, so no two
+ * cells overlap and each area has one value. A cell coarser than the
+ * living-chart zoom is split down to it; at `maxZoom` it takes the bound of
+ * its chart value and every adjustment inside it.
  */
 export function cellsInTile(
+  store: NodeStore,
+  z: number,
+  x: number,
+  y: number,
+  maxZoom: number
+): TileCell[] {
+  const chart = chartCells(store, z, x, y, maxZoom);
+  const adjusted = adjustmentsIn(store, z, x, y);
+  if (adjusted.length === 0) {
+    return chart;
+  }
+  return chart.flatMap((c) => withAdjustments(c, adjusted, store.adjustZoom, maxZoom));
+}
+
+/** A living-chart cell at the store's `adjustZoom`. */
+interface Adjusted {
+  x: number;
+  y: number;
+  values: NodeValues;
+}
+
+function adjustmentsIn(store: NodeStore, z: number, x: number, y: number): Adjusted[] {
+  const az = store.adjustZoom;
+  if (store.adjustments.size === 0) {
+    return [];
+  }
+  if (z >= az) {
+    const shift = 2 ** (z - az);
+    const ax = Math.floor(x / shift);
+    const ay = Math.floor(y / shift);
+    const values = store.adjustments.get(tileKey(az, ax, ay));
+    return values ? [{ x: ax, y: ay, values }] : [];
+  }
+  const scale = 2 ** (az - z);
+  const n = 2 ** az;
+  const out: Adjusted[] = [];
+  for (const [key, values] of store.adjustments) {
+    const ax = Math.floor(key / n);
+    const ay = key % n;
+    if (Math.floor(ax / scale) === x && Math.floor(ay / scale) === y) {
+      out.push({ x: ax, y: ay, values });
+    }
+  }
+  return out;
+}
+
+/** The adjustments that cover cell `c` or lie inside it. */
+function touching(c: TileCell, list: readonly Adjusted[], az: number): Adjusted[] {
+  if (c.z >= az) {
+    const s = 2 ** (c.z - az);
+    return list.filter((a) => a.x === Math.floor(c.x / s) && a.y === Math.floor(c.y / s));
+  }
+  const s = 2 ** (az - c.z);
+  return list.filter((a) => Math.floor(a.x / s) === c.x && Math.floor(a.y / s) === c.y);
+}
+
+function withAdjustments(
+  c: TileCell,
+  list: readonly Adjusted[],
+  az: number,
+  maxZoom: number
+): TileCell[] {
+  const here = touching(c, list, az);
+  if (here.length === 0) {
+    return [c];
+  }
+  if (c.z >= az) {
+    // At or below the living-chart zoom one adjustment covers the whole cell.
+    return [{ ...c, values: combine(c.values, (here[0] as Adjusted).values) }];
+  }
+  if (c.z >= maxZoom) {
+    const values = here.reduce((v, a) => combine(v, a.values), c.values);
+    return [{ ...c, values, bound: true }];
+  }
+  // The chart value holds over each child, or bounds it when `c` is a bound.
+  return CHILDREN.flatMap(([dx, dy]) =>
+    withAdjustments({ ...c, z: c.z + 1, x: 2 * c.x + dx, y: 2 * c.y + dy }, here, az, maxZoom)
+  );
+}
+
+function chartCells(
   store: NodeStore,
   z: number,
   x: number,

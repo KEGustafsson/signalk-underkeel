@@ -12,8 +12,10 @@ import type { Clock, Monitor } from "./monitor";
 import { CHART_DATUM } from "./model/water-level";
 import type { QueryServiceDeps } from "./query-service";
 import { query, ukcTileReply } from "./query-service";
-import { routeCheck } from "./route-service";
+import type { RouteServiceDeps } from "./route-service";
+import { departureWindowReply, routeCheck, routeRepair } from "./route-service";
 import { statusReport } from "./status-report";
+import type { LivechartService } from "./livechart-service";
 
 /** The REST handlers bound to the plugin's current state (plan §4.10). */
 
@@ -23,6 +25,7 @@ export interface PluginState {
   config?: PluginConfig;
   acks?: AckStore;
   zoneErrors: string[];
+  livechart?: LivechartService;
   stopped: EngineStatus;
 }
 
@@ -40,6 +43,16 @@ export function apiFor(
     vessel: () => s.monitor?.vessel(),
     waterLevel: () => s.monitor?.waterLevel() ?? CHART_DATUM,
     waveHeight: () => s.monitor?.nav.waveHeight?.value
+  });
+  const routeDeps = (): RouteServiceDeps => ({
+    index: s.load?.index,
+    indexReason: s.load?.reason ?? "plugin not started",
+    config: s.config ?? parseConfig({}),
+    vessel: () => s.monitor?.vessel(),
+    waterLevel: (start, end) => s.monitor?.waterLevelOver(start, end) ?? CHART_DATUM,
+    waveHeight: () => s.monitor?.nav.waveHeight?.value,
+    getRoute: (id) => app.resourcesApi.getResource("routes", id),
+    now: () => clock.now()
   });
   const withAcks = (fn: (deps: AckServiceDeps) => ApiReply): ApiReply => {
     const m = s.monitor;
@@ -62,28 +75,29 @@ export function apiFor(
         monitor: s.monitor,
         stopped: s.stopped,
         now: clock.now(),
-        zoneErrors: s.zoneErrors
+        zoneErrors: s.zoneErrors,
+        livechart: s.livechart
       }),
     envelope: () =>
       s.monitor
         ? { rev: s.monitor.envelope.rev, envelope: s.monitor.envelope.envelope }
         : { rev: 0, envelope: { type: "FeatureCollection", features: [] } },
-    routeCheck: (body) =>
-      routeCheck(body, {
-        index: s.load?.index,
-        indexReason: s.load?.reason ?? "plugin not started",
-        config: s.config ?? parseConfig({}),
-        vessel: () => s.monitor?.vessel(),
-        waterLevel: (start, end) => s.monitor?.waterLevelOver(start, end) ?? CHART_DATUM,
-        waveHeight: () => s.monitor?.nav.waveHeight?.value,
-        getRoute: (id) => app.resourcesApi.getResource("routes", id),
-        now: () => clock.now()
-      }),
+    routeCheck: (body) => routeCheck(body, routeDeps()),
+    routeRepair: (body) => routeRepair(body, routeDeps()),
+    departureWindow: (body) => departureWindowReply(body, routeDeps()),
     query: (body) => query(body, queryDeps()),
     ukcTile: (z, x, y) => ukcTileReply(z, x, y, queryDeps()),
     ukcStyle,
     acks: () => withAcks(listAcks),
     addAck: (body) => withAcks((deps) => addAck(body, deps)),
-    deleteAck: (id) => withAcks((deps) => deleteAck(id, deps))
+    deleteAck: (id) => withAcks((deps) => deleteAck(id, deps)),
+    discrepancies: () =>
+      s.livechart
+        ? { status: 200, body: s.livechart.discrepancies() }
+        : { status: 404, body: { errors: ["living chart is off"] } },
+    csb: () =>
+      s.livechart
+        ? { status: 200, body: s.livechart.csb() }
+        : { status: 404, body: { errors: ["living chart is off"] } }
   };
 }

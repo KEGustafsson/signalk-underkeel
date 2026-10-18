@@ -169,3 +169,68 @@ export function routeResourceCoordinates(resource: unknown): LonLat[] | undefine
   const coords = parseCoordinates(r?.feature?.geometry, errors);
   return errors.length === 0 ? coords : undefined;
 }
+
+export const WINDOW_LIMITS = {
+  defaultHorizon: 48 * 3600,
+  maxHorizon: 7 * 86400,
+  defaultStep: 15 * 60,
+  minStep: 5 * 60,
+  maxSteps: 1000,
+  /**
+   * Departures times route length, km. Each departure can re-check the whole
+   * route, so this bounds what one request costs: the default 48 h every
+   * 15 min fits a route of about 100 km.
+   */
+  maxDepartureKm: 20_000,
+  /**
+   * Departures times legs. A leg check costs a corridor query however short
+   * the leg is, so a route of many short legs is bounded here instead.
+   */
+  maxLegChecks: 20_000
+} as const;
+
+/** Departures in a window, counting the first at the start of the horizon. */
+const departuresOf = (horizon: number, step: number): number => Math.floor(horizon / step) + 1;
+
+/** `horizon` and `step` of a departure-window request, seconds. */
+export function parseWindowOptions(body: unknown): Parsed<{ horizon: number; step: number }> {
+  const b = (typeof body === "object" && body !== null ? body : {}) as Record<string, unknown>;
+  const horizon = b.horizon ?? WINDOW_LIMITS.defaultHorizon;
+  const step = b.step ?? WINDOW_LIMITS.defaultStep;
+  const errors: string[] = [];
+  if (!inRange(horizon, 0, WINDOW_LIMITS.maxHorizon)) {
+    errors.push(`horizon must be 0..${WINDOW_LIMITS.maxHorizon} s`);
+  }
+  if (!inRange(step, WINDOW_LIMITS.minStep, WINDOW_LIMITS.maxHorizon)) {
+    errors.push(`step must be at least ${WINDOW_LIMITS.minStep} s`);
+  }
+  if (
+    errors.length === 0 &&
+    departuresOf(horizon as number, step as number) > WINDOW_LIMITS.maxSteps
+  ) {
+    errors.push(`horizon / step must give at most ${WINDOW_LIMITS.maxSteps} departures`);
+  }
+  return errors.length > 0
+    ? { ok: false, errors }
+    : { ok: true, value: { horizon: horizon as number, step: step as number } };
+}
+
+/** Why a departure window over this route is too much work for one request, if it is. */
+export function windowBudgetError(
+  coordinates: readonly LonLat[],
+  window: { horizon: number; step: number }
+): string | undefined {
+  let metres = 0;
+  for (let i = 1; i < coordinates.length; i++) {
+    metres += haversine(coordinates[i - 1] as LonLat, coordinates[i] as LonLat);
+  }
+  const departures = departuresOf(window.horizon, window.step);
+  const advice = "use a longer step or a shorter horizon";
+  if (departures * (metres / 1000) > WINDOW_LIMITS.maxDepartureKm) {
+    return `departures × route length must be at most ${WINDOW_LIMITS.maxDepartureKm} km: ${advice}`;
+  }
+  if (departures * (coordinates.length - 1) > WINDOW_LIMITS.maxLegChecks) {
+    return `departures × legs must be at most ${WINDOW_LIMITS.maxLegChecks}: ${advice}`;
+  }
+  return undefined;
+}

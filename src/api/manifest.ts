@@ -108,7 +108,7 @@ export function buildManifest(version: string): Record<string, Manifest> {
         navigationSafety: {
           apiVersion: "1",
           base: BASE,
-          provides: ["lookahead", "routeCheck", "query"],
+          provides: ["lookahead", "routeCheck", "routeRepair", "departureWindow", "query", "acks"],
           statePath: "navigation.underKeel",
           notificationPath: "notifications.navigation.underKeel"
         }

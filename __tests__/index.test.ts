@@ -204,10 +204,14 @@ describe("plugin lifecycle", () => {
       "GET /v1/status": "readonly",
       "GET /v1/envelope": "readonly",
       "POST /v1/route-check": "readonly",
+      "POST /v1/route-repair": "readonly",
+      "POST /v1/departure-window": "readonly",
       "POST /v1/query": "readonly",
       "GET /v1/tiles/ukc/:z/:x/:file": "readonly",
       "GET /v1/ukc-style.json": "readonly",
       "GET /v1/acks": "readonly",
+      "GET /v1/livechart/discrepancies": "readonly",
+      "GET /v1/livechart/csb.geojson": "readonly",
       "POST /v1/acks": "readwrite",
       "DELETE /v1/acks/:id": "readwrite"
     });
@@ -470,6 +474,113 @@ describe("plugin lifecycle", () => {
     });
   });
 
+  test("with the living chart on, two passes over a shoal list a discrepancy and write a note", () => {
+    const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 1.5 } } });
+    const notes: string[] = [];
+    (f.app as unknown as { resourcesApi: unknown }).resourcesApi = {
+      setResource: (type: string, id: string) => {
+        notes.push(`${type}/${id}`);
+        return Promise.resolve();
+      }
+    };
+    const clock = fakeClock(T0);
+    const plugin = underkeel(f.app, clock);
+    const { router, call } = fakeRouter();
+    plugin.registerWithRouter?.(router as never);
+    expect(call("/v1/livechart/discrepancies").code).toBe(404);
+    plugin.start(
+      { cellsDir: FIXTURES, leafZoom: 18, livechart: { enabled: true, writeNotes: true } },
+      () => undefined
+    );
+    // The fairway is charted 10 m west of the swept area; the sounder reads 6 m there.
+    const sounding = (t: number) => {
+      const at = T0 + t;
+      const d = navDelta(22.003, 60.0105, 0.3, at);
+      d.updates[0]?.values.push(
+        { path: "navigation.gnss.methodQuality" as never, value: "GNSS Fix" },
+        { path: "navigation.gnss.horizontalDilution" as never, value: 0.8 }
+      );
+      f.send(d);
+      f.send({
+        updates: [
+          {
+            timestamp: new Date(at).toISOString() as never,
+            values: [{ path: "environment.depth.belowSurface" as never, value: 6 }]
+          }
+        ]
+      });
+      clock.advance(at - clock.now());
+    };
+    for (const pass of [0, 20 * 60_000]) {
+      for (let k = 1; k <= 3; k++) {
+        sounding(pass + k * 1000);
+      }
+    }
+    const list = call("/v1/livechart/discrepancies").body as {
+      measured: number;
+      charted: number;
+    }[];
+    expect(list).toHaveLength(1);
+    expect(list[0]?.measured).toBeLessThan(list[0]?.charted as number);
+    expect(notes[0]).toMatch(/^notes\/underkeel-shoal-/);
+    const csb = call("/v1/livechart/csb.geojson").body as { features: unknown[] };
+    expect(csb.features).toHaveLength(6);
+    plugin.stop();
+    expect(fs.existsSync(path.join(dataDir, "livechart.json"))).toBe(true);
+  });
+
+  test("POST /v1/route-repair and /v1/departure-window answer for the same route body", async () => {
+    const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 3.6 } } });
+    const plugin = underkeel(f.app, fakeClock(T0));
+    const { router, post } = fakeRouter();
+    plugin.registerWithRouter?.(router as never);
+    plugin.start({ cellsDir: FIXTURES, leafZoom: 18 }, () => undefined);
+    const route = {
+      type: "LineString",
+      coordinates: [
+        [22.004, 60.01],
+        [22.03, 60.01]
+      ]
+    };
+    const repair = await post("/v1/route-repair", { route });
+    expect(repair.code).toBe(200);
+    const repairs = (
+      repair.body as { repairs: { index: number; reason?: string; legs: { status: string }[] }[] }
+    ).repairs;
+    expect(repairs.map((r) => r.index)).toEqual([0]);
+    for (const r of repairs) {
+      expect(r.reason !== undefined || r.legs.every((l) => l.status === "ok")).toBe(true);
+    }
+    const window = await post("/v1/departure-window", { route, horizon: 3600, step: 900 });
+    expect(window.code).toBe(200);
+    expect((window.body as { steps: unknown[] }).steps).toHaveLength(5);
+    expect((window.body as { windows: unknown[] }).windows).toEqual([]);
+    expect((await post("/v1/departure-window", { route, horizon: 1e9 })).code).toBe(400);
+    // 865 departures over a 32 km route is more work than one request may take.
+    const long = { type: "LineString", coordinates: [route.coordinates[0], [22.004, 60.3]] };
+    const tooMuch = await post("/v1/departure-window", {
+      route: long,
+      horizon: 3 * 86_400,
+      step: 300
+    });
+    expect(tooMuch.code).toBe(400);
+    expect((tooMuch.body as { errors: string[] }).errors[0]).toMatch(/departures × route length/);
+    // 200 legs of 5 m are short, but 193 departures still make 38 600 leg checks.
+    const zigzag = {
+      type: "LineString",
+      coordinates: Array.from({ length: 201 }, (_, i) => [22.004 + (i % 2) * 0.0001, 60.01])
+    };
+    const manyLegs = await post("/v1/departure-window", { route: zigzag });
+    expect(manyLegs.code).toBe(400);
+    expect((manyLegs.body as { errors: string[] }).errors[0]).toMatch(/departures × legs/);
+    // The first departure is at the start of the horizon: 1000 steps are 1001 departures.
+    const count = (horizon: number) =>
+      post("/v1/departure-window", { route, horizon, step: 300 }).then((r) => r.code);
+    expect(await count(999 * 300)).toBe(200);
+    expect(await count(1000 * 300)).toBe(400);
+    plugin.stop();
+  });
+
   test("POST /v1/route-check answers with per-leg results", async () => {
     const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 3.6 } } });
     const plugin = underkeel(f.app, fakeClock(T0));
@@ -654,7 +765,7 @@ describe("manifest and step", () => {
     expect(m?.services.navigationSafety).toEqual({
       apiVersion: "1",
       base: "/plugins/signalk-underkeel/v1",
-      provides: ["lookahead", "routeCheck", "query"],
+      provides: ["lookahead", "routeCheck", "routeRepair", "departureWindow", "query", "acks"],
       statePath: "navigation.underKeel",
       notificationPath: "notifications.navigation.underKeel"
     });

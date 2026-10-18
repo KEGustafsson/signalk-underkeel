@@ -4,6 +4,7 @@ import {
   fromMercator,
   groundToMercator,
   maxAbsLat,
+  tileKey,
   tileRange,
   tileRect,
   toMercator
@@ -60,6 +61,8 @@ export interface QueryOptions {
    * so a wider footprint or buffer can only add tiles and never lower it.
    */
   risk?: { threshold: number; sigmaExtra: number };
+  /** Leave living-chart adjustments out, to read the chart alone. */
+  chartOnly?: boolean;
 }
 
 /** A footprint ring in WGS84, as a Mercator polygon. */
@@ -157,6 +160,41 @@ function visit(w: Walk, z: number, x: number, y: number): void {
   visit(w, z + 1, 2 * x + 1, 2 * y + 1);
 }
 
+/** Living-chart cells near the footprint are taken beside the charted tiles. */
+function takeAdjustments(w: Walk, reach: Rect): void {
+  const adj = w.store.adjustments;
+  if (adj.size === 0) {
+    return;
+  }
+  const z = w.store.adjustZoom;
+  const range = tileRange(z, reach);
+  const consider = (x: number, y: number, v: NodeValues): void => {
+    if (geomRectDistance(w.geom, tileRect(z, x, y), w.buffer) <= w.buffer) {
+      take(w, v, z, x, y);
+    }
+  };
+  const tiles = (range.maxX - range.minX + 1) * (range.maxY - range.minY + 1);
+  if (tiles <= adj.size) {
+    for (let x = range.minX; x <= range.maxX; x++) {
+      for (let y = range.minY; y <= range.maxY; y++) {
+        const v = adj.get(tileKey(z, x, y));
+        if (v) {
+          consider(x, y, v);
+        }
+      }
+    }
+    return;
+  }
+  const n = 2 ** z;
+  for (const [key, v] of adj) {
+    const x = Math.floor(key / n);
+    const y = key % n;
+    if (x >= range.minX && x <= range.maxX && y >= range.minY && y <= range.maxY) {
+      consider(x, y, v);
+    }
+  }
+}
+
 /** Mercator buffer for a ground buffer around `bounds`, sized at its poleward edge. */
 export function mercatorBuffer(bounds: Rect, metres: number): number {
   const first = groundToMercator(metres, maxAbsLat(bounds));
@@ -194,6 +232,9 @@ export function minDepthOver(store: NodeStore, geom: Geom, opts: QueryOptions = 
     for (let y = range.minY; y <= range.maxY; y++) {
       visit(w, store.minZoom, x, y);
     }
+  }
+  if (!opts.chartOnly) {
+    takeAdjustments(w, expandRect(bounds, buffer));
   }
   const out: DepthResult = {
     ...w.result,

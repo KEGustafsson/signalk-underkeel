@@ -1,6 +1,7 @@
 import { performance } from "perf_hooks";
 import type { RouteCheckInput } from "../../src/engine/route-check";
 import { checkRoute } from "../../src/engine/route-check";
+import { repairRoute } from "../../src/engine/route-repair";
 import { DEFAULT_DYNAMICS } from "../../src/model/vessel";
 import { CHART_DATUM } from "../../src/model/water-level";
 import type { LonLat } from "../../src/foundation/geo";
@@ -23,7 +24,7 @@ function rng(seed: number): () => number {
 }
 
 describe("route check benchmark", () => {
-  test("30 legs and single-leg re-checks", () => {
+  test("30 legs and single-leg re-checks", async () => {
     const r = rng(3);
     const features: ChartFeature[] = [...basin([22.0, 60.0, 22.18, 60.09], 25)];
     for (let i = 0; i < 80; i++) {
@@ -75,6 +76,16 @@ describe("route check benchmark", () => {
         `30 legs (~9 km each): ${fullMs.toFixed(1)} ms (budget 300 ms on Pi 4)`,
         `one leg p95:          ${p95.toFixed(1)} ms (budget 80 ms on Pi 4)`
       ].join("\n") + "\n"
+    );
+
+    // Repair: the worst leg of the 30, if any fails or is marginal.
+    const checked = checkRoute(index, input, 0);
+    const failing = checked.legs.filter((l) => l.status === "fail" || l.status === "marginal");
+    const r0 = performance.now();
+    const repairs = await repairRoute(index, input, failing.slice(0, 3));
+    const repairMs = (performance.now() - r0) / Math.max(1, repairs.length);
+    process.stdout.write(
+      `repair, per leg:      ${repairMs.toFixed(0)} ms over ${repairs.length} legs (budget 1.5 s on Pi 4)\n`
     );
     expect(fullMs).toBeGreaterThan(0);
   });

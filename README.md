@@ -38,6 +38,12 @@ Water-level sources, set under **Water level** in the plugin configuration:
 A source that stops updating falls back to chart datum with a wider σ, and the state carries
 the reason.
 
+**Living chart** (off by default): depth readings that pass a quality gate (good fix, HDOP
+under 2, small roll, a real water level) are reduced to chart datum and kept per ~76 m cell.
+After five readings on two passes 10 minutes apart that put a cell more than 2σ shallower than
+charted, the cell is lowered for every check and a Signal K note marks it. Own soundings never
+make a cell deeper. The IHO CSB export is for you to submit; the plugin uploads nothing.
+
 **Mooring zones**: Signal K region ids listed in the configuration suppress warn and alarm
 to alert inside them, with the zone named. **Grounding detector** (off by default): a sudden
 stop in water as shallow as the keel raises `notifications.grounding`; it is the only part of
@@ -53,12 +59,20 @@ REST, base `/plugins/signalk-underkeel/v1`, open to readonly users:
   level expected while on it, and returned as `ok`, `marginal`, `fail` or `unverified` (no
   coverage, unassessed survey or a fallback water level; never folded into `ok`), with P(UKC < 0),
   its explanation and the cell editions used.
+- `POST /route-repair`: the same body; for each failing or marginal leg, waypoints to insert
+  that route around the shoal and pass the same check. Existing points are never moved.
+- `POST /departure-window`: the same body plus `horizon` and `step` (seconds); the departure
+  intervals in which every leg is `ok` at the forecast water level.
+- Both bound the work one request may cost; the limits are in
+  [plan §4.11](docs/DEVELOPMENT-PLAN.md).
 - `POST /query`: a GeoJSON Point or Polygon, with an optional buffer, draft and speed; returns
   the class, P(UKC < 0), the deciding hazard and the explanation, for cursor readouts.
 - `GET /acks`, `POST /acks`, `DELETE /acks/:id`: acknowledged passages. Inside one, with the
   heading within ±20° and no less water or more draft than when acknowledged, warn and alarm
   are published as alert with the reason "acknowledged passage". Adding and deleting need a
   readwrite user.
+- `GET /livechart/discrepancies` and `GET /livechart/csb.geojson`, with the living chart on
+  (see above).
 - `GET /tiles/ukc/{z}/{x}/{y}.pbf`: Mapbox vector tiles from zoom 11, one `ukc` layer of cells
   classed `clear`, `caution`, `danger`, `unverified` or `land` for the current draft and water
   level. `GET /ukc-style.json` is a MapLibre style for them.
