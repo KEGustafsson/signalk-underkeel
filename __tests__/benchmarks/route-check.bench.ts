@@ -24,7 +24,7 @@ function rng(seed: number): () => number {
 }
 
 describe("route check benchmark", () => {
-  test("30 legs and single-leg re-checks", () => {
+  test("30 legs and single-leg re-checks", async () => {
     const r = rng(3);
     const features: ChartFeature[] = [...basin([22.0, 60.0, 22.18, 60.09], 25)];
     for (let i = 0; i < 80; i++) {
@@ -82,7 +82,7 @@ describe("route check benchmark", () => {
     const checked = checkRoute(index, input, 0);
     const failing = checked.legs.filter((l) => l.status === "fail" || l.status === "marginal");
     const r0 = performance.now();
-    const repairs = repairRoute(index, input, failing.slice(0, 3));
+    const repairs = await repairRoute(index, input, failing.slice(0, 3));
     const repairMs = (performance.now() - r0) / Math.max(1, repairs.length);
     process.stdout.write(
       `repair, per leg:      ${repairMs.toFixed(0)} ms over ${repairs.length} legs (budget 1.5 s on Pi 4)\n`

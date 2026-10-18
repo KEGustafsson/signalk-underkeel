@@ -652,8 +652,11 @@ chord passes the corridor check, so no simplification makes a leg fail; a path t
 is reported with a reason and no waypoints. Both `/route-repair` and `/departure-window` take
 the `/route-check` body; the window adds `horizon` (default 48 h, at most 7 days) and `step`
 (default 15 min, at least 5 min, at most 1000 departures). Leg results are reused across
-departures for the same water level rounded down to the centimetre (σ rounded up). Measured
-under Jest on the synthetic archipelago: 52 ms per repaired leg.
+departures for the same water level rounded down to the centimetre (σ rounded up). One request
+repairs at most 10 legs, and the rest are listed with a reason; a window is refused when its
+departures times the route length exceed 20 000 km. Both yield to the event loop after each leg
+or departure, so look-ahead ticks keep running during a long request. Measured under Jest on the
+synthetic archipelago: 52 ms per repaired leg.
 
 ### 4.12 Acknowledged passages
 
@@ -729,8 +732,10 @@ takes beside the chart, through `minDepthOver` and the UKC tiles, so look-ahead,
 readings leave it as it is. Notes are written with `resourcesApi.setResource("notes", …)` and
 rewritten as evidence grows. Posteriors, adjustments and the last 20 000 accepted soundings are
 kept in `livechart.json` beside the index (no database dependency) and saved at most once a
-minute and on stop. The CSB export (`GET /livechart/csb.geojson`) is B-12 GeoJSON of depths as
-measured below the surface; it is never uploaded.
+minute and on stop. A failed save is reported and retried at the next one, and a malformed file
+is skipped entry by entry rather than stopping the plugin. The CSB export
+(`GET /livechart/csb.geojson`) is B-12 GeoJSON of depths below the transducer, with the
+transducer depth as the sounder's `draft`; it is never uploaded.
 
 **Rule:** own soundings may make the chart _shallower_. They make it _deeper_ only after the
 user confirms, per cell group, in the UI. A faulty transducer must never be able to switch

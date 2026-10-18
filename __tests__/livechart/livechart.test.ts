@@ -209,6 +209,81 @@ describe("cell posterior and discrepancy", () => {
     expect(svc.status()).toMatchObject({ accepted: 0, rejected: { "HDOP #": 2 } });
   });
 
+  test("a failed save is reported, not thrown, and is tried again", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-livechart-"));
+    const file = path.join(dir, "livechart.json");
+    const errors: string[] = [];
+    const svc = new LivechartService(store(), CONFIG, file, {
+      setNote: () => Promise.resolve(),
+      error: (m) => errors.push(m)
+    });
+    svc.onSounding(raw(6, T0));
+    // A directory where the temporary file goes makes the write throw.
+    fs.mkdirSync(`${file}.tmp-${process.pid}`);
+    expect(() => svc.save()).not.toThrow();
+    expect(errors).toEqual([expect.stringMatching(/not saved/)]);
+    expect(fs.existsSync(file)).toBe(false);
+    expect(fs.existsSync(`${file}.tmp-${process.pid}`)).toBe(false);
+    svc.save();
+    expect(fs.existsSync(file)).toBe(true);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("a malformed state file is skipped entry by entry and never stops the start", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-livechart-"));
+    const file = path.join(dir, "livechart.json");
+    const open = (content: string) => {
+      fs.writeFileSync(file, content);
+      const errors: string[] = [];
+      const svc = new LivechartService(store(), CONFIG, file, {
+        setNote: () => Promise.resolve(),
+        error: (m) => errors.push(m)
+      });
+      return { svc, errors };
+    };
+    for (const bad of ["null", "[]", "5", '"x"']) {
+      const { svc, errors } = open(bad);
+      expect(errors).toEqual([expect.stringMatching(/not a living-chart state/)]);
+      expect(svc.discrepancies()).toEqual([]);
+    }
+    const { svc, errors } = open(
+      JSON.stringify({
+        version: 1,
+        cells: { not: "a list" },
+        adjustments: [null, [1], ["k", {}], [5, { dMin: "deep" }]],
+        samples: [
+          null,
+          { at: 1 },
+          { at: T0, belowSurface: 5, depth: 4.8, sigma: 0.2, position: [22, 60] }
+        ]
+      })
+    );
+    expect(errors).toEqual([]);
+    expect(svc.discrepancies()).toEqual([]);
+    expect((svc.csb() as { features: unknown[] }).features).toHaveLength(1);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("the CSB export gives depths below the transducer, with its depth as the draft", () => {
+    const svc = new LivechartService(
+      store(),
+      {
+        ...CONFIG,
+        writeNotes: false,
+        source: { ...SURFACE, path: "environment.depth.belowTransducer", transducerDepth: 0.5 }
+      },
+      path.join(os.tmpdir(), "never-written.json"),
+      failOnError
+    );
+    svc.onSounding(raw(4.2, T0));
+    const csb = svc.csb() as {
+      features: { properties: { depth: number } }[];
+      properties: { platform: { sensors: { draft: number }[] } };
+    };
+    expect(csb.features[0]?.properties.depth).toBe(4.2);
+    expect(csb.properties.platform.sensors[0]?.draft).toBe(0.5);
+  });
+
   test("quadkeys follow the Bing tile scheme", () => {
     expect(quadkey(3, 3, 5)).toBe("213");
     expect(quadkey(1, 0, 0)).toBe("0");

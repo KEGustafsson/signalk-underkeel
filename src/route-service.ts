@@ -3,13 +3,14 @@ import {
   parseRouteRequest,
   parseWindowOptions,
   routeResourceCoordinates,
-  speedsFor
+  speedsFor,
+  windowBudgetError
 } from "./api/route-request";
 import type { PluginConfig } from "./config";
 import { departureWindow } from "./engine/departure-window";
 import type { RouteCheckInput } from "./engine/route-check";
 import { checkRoute } from "./engine/route-check";
-import { repairRoute } from "./engine/route-repair";
+import { DEFAULT_REPAIR, repairRoute } from "./engine/route-repair";
 import type { LonLat } from "./foundation/geo";
 import type { WaterLevel } from "./model/uncertainty";
 import type { VesselModel } from "./model/vessel";
@@ -96,6 +97,9 @@ async function prepare(
 
 const isReply = (v: unknown): v is ApiReply => typeof (v as ApiReply).status === "number";
 
+/** Lets look-ahead ticks and other requests run between the steps of a long request. */
+const yieldToEventLoop = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+
 export async function routeCheck(body: unknown, deps: RouteServiceDeps): Promise<ApiReply> {
   const p = await prepare(body, deps);
   return isReply(p) ? p : { status: 200, body: checkRoute(p.index, p.input, deps.now()) };
@@ -108,10 +112,14 @@ export async function routeRepair(body: unknown, deps: RouteServiceDeps): Promis
     return p;
   }
   const checked = checkRoute(p.index, p.input, deps.now());
-  return {
-    status: 200,
-    body: { checkedAt: checked.checkedAt, repairs: repairRoute(p.index, p.input, checked.legs) }
-  };
+  const repairs = await repairRoute(
+    p.index,
+    p.input,
+    checked.legs,
+    DEFAULT_REPAIR,
+    yieldToEventLoop
+  );
+  return { status: 200, body: { checkedAt: checked.checkedAt, repairs } };
 }
 
 /** `POST /departure-window`: departures over the horizon in which every leg is ok. */
@@ -127,13 +135,18 @@ export async function departureWindowReply(
   if (isReply(p)) {
     return p;
   }
+  const budget = windowBudgetError(p.input.coordinates, opts.value);
+  if (budget) {
+    return { status: 400, body: { errors: [budget] } };
+  }
   const from = p.input.departure;
-  const result = departureWindow(
+  const result = await departureWindow(
     p.index,
     p.input,
     from,
     from + opts.value.horizon * 1000,
-    opts.value.step * 1000
+    opts.value.step * 1000,
+    yieldToEventLoop
   );
   return { status: 200, body: result };
 }

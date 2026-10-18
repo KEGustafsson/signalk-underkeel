@@ -16,6 +16,8 @@ import { checkRoute } from "./route-check";
  */
 
 export interface RepairOptions {
+  /** Legs searched per request at most; bounds the work per request. */
+  maxLegs: number;
   /** Cells on the grid's longer side at most; bounds the work per leg. */
   maxCells: number;
   /** Cells are never smaller than this, metres. */
@@ -29,6 +31,7 @@ export interface RepairOptions {
 }
 
 export const DEFAULT_REPAIR: RepairOptions = {
+  maxLegs: 10,
   maxCells: 120,
   minCell: 10,
   margin: 0.5,
@@ -381,14 +384,31 @@ export function simplify(points: LonLat[], passes: (pts: LonLat[]) => boolean): 
   return keep(0, points.length - 1);
 }
 
-/** Repairs every failing or marginal leg of a checked route. */
-export function repairRoute(
+/**
+ * Repairs the failing or marginal legs of a checked route, the first
+ * `maxLegs` of them; the rest get a reason. `pause` runs after each leg so
+ * a caller on the event loop can let other work in between.
+ */
+export async function repairRoute(
   index: ChartIndex,
   input: RouteCheckInput,
   legs: LegResult[],
-  opts: RepairOptions = DEFAULT_REPAIR
-): LegRepair[] {
-  return legs
-    .filter((l) => l.status === "fail" || l.status === "marginal")
-    .map((l) => repairLeg(index, input, l, opts));
+  opts: RepairOptions = DEFAULT_REPAIR,
+  pause: () => Promise<void> = () => Promise.resolve()
+): Promise<LegRepair[]> {
+  const out: LegRepair[] = [];
+  for (const l of legs.filter((l) => l.status === "fail" || l.status === "marginal")) {
+    if (out.length >= opts.maxLegs) {
+      out.push({
+        index: l.index,
+        waypoints: [],
+        legs: [],
+        reason: `not searched: at most ${opts.maxLegs} legs are repaired per request`
+      });
+      continue;
+    }
+    out.push(repairLeg(index, input, l, opts));
+    await pause();
+  }
+  return out;
 }

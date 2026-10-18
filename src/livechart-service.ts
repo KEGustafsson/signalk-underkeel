@@ -123,7 +123,11 @@ export class LivechartService {
     };
   }
 
-  /** Writes `livechart.json` when anything changed, atomically. */
+  /**
+   * Writes `livechart.json` when anything changed, atomically. A failed write
+   * is reported, not thrown: it runs from plugin stop and from the delta
+   * handler. The state stays dirty, so the next save tries again.
+   */
   save(): void {
     if (!this.dirty) {
       return;
@@ -134,24 +138,34 @@ export class LivechartService {
       adjustments: [...this.store.adjustments],
       samples: this.samples
     };
-    fs.mkdirSync(path.dirname(this.file), { recursive: true });
     const tmp = `${this.file}.tmp-${process.pid}`;
-    fs.writeFileSync(tmp, JSON.stringify(saved));
-    fs.renameSync(tmp, this.file);
-    this.dirty = false;
+    try {
+      fs.mkdirSync(path.dirname(this.file), { recursive: true });
+      fs.writeFileSync(tmp, JSON.stringify(saved));
+      fs.renameSync(tmp, this.file);
+      this.dirty = false;
+    } catch (err) {
+      fs.rmSync(tmp, { force: true, recursive: true });
+      this.deps.error(`${this.file} not saved: ${(err as Error).message}`);
+    }
   }
 
+  /** Restores saved state; anything malformed is skipped, so a bad file never stops the plugin. */
   private load(): void {
     if (!fs.existsSync(this.file)) {
       return;
     }
-    let saved: Partial<Saved>;
+    let saved: unknown;
     try {
-      saved = JSON.parse(fs.readFileSync(this.file, "utf8")) as Partial<Saved>;
+      saved = JSON.parse(fs.readFileSync(this.file, "utf8"));
     } catch (err) {
       this.deps.error(
         `${this.file} is not readable JSON, starting empty: ${(err as Error).message}`
       );
+      return;
+    }
+    if (!isRecord(saved)) {
+      this.deps.error(`${this.file} is not a living-chart state, starting empty`);
       return;
     }
     if (saved.version !== 1) {
@@ -160,18 +174,68 @@ export class LivechartService {
     }
     // Cells from an index with another leaf zoom are keyed at another zoom: drop them.
     const z = this.store.adjustZoom;
-    for (const c of saved.cells ?? []) {
-      if (c.z === z) {
-        this.posteriors.cells.set(tileKey(c.z, c.x, c.y), c);
+    for (const c of listOf(saved.cells)) {
+      if (isCell(c) && c.z === z) {
+        // An uncharted cell's NaN prior is saved as null.
+        const chartDepth = typeof c.chartDepth === "number" ? c.chartDepth : NaN;
+        this.posteriors.cells.set(tileKey(c.z, c.x, c.y), { ...c, chartDepth });
       }
     }
-    for (const [key, v] of saved.adjustments ?? []) {
-      if (this.posteriors.cells.has(key) && Number.isFinite(v.dMin)) {
-        this.store.adjustments.set(key, v);
+    for (const entry of listOf(saved.adjustments)) {
+      if (Array.isArray(entry) && entry.length === 2) {
+        const [key, v] = entry as [unknown, unknown];
+        if (typeof key === "number" && this.posteriors.cells.has(key) && isNodeValues(v)) {
+          this.store.adjustments.set(key, v);
+        }
       }
     }
-    this.samples = (saved.samples ?? []).slice(-MAX_SAMPLES);
+    this.samples = listOf(saved.samples).filter(isSounding).slice(-MAX_SAMPLES);
   }
+}
+
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+const listOf = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
+
+const allFinite = (o: Record<string, unknown>, keys: readonly string[]): boolean =>
+  keys.every((k) => Number.isFinite(o[k]));
+
+const CELL_NUMBERS = [
+  "z",
+  "x",
+  "y",
+  "chartSigma",
+  "cellRef",
+  "mean",
+  "sigma",
+  "samples",
+  "passes",
+  "lastAt"
+] as const;
+
+function isCell(v: unknown): v is CellPosterior {
+  return (
+    isRecord(v) && allFinite(v, CELL_NUMBERS) && Number.isInteger(v.x) && Number.isInteger(v.y)
+  );
+}
+
+function isNodeValues(v: unknown): v is NodeValues {
+  return (
+    isRecord(v) &&
+    allFinite(v, ["dMin", "sigmaD", "sigmaP", "cellRef"]) &&
+    Number.isInteger(v.flags)
+  );
+}
+
+function isSounding(v: unknown): v is Sounding {
+  return (
+    isRecord(v) &&
+    allFinite(v, ["at", "belowSurface", "depth", "sigma"]) &&
+    Array.isArray(v.position) &&
+    v.position.length === 2 &&
+    v.position.every((n) => Number.isFinite(n))
+  );
 }
 
 /** The living chart is written to disk at most this often while soundings arrive. */

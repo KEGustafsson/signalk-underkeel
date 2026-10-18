@@ -556,6 +556,15 @@ describe("plugin lifecycle", () => {
     expect((window.body as { steps: unknown[] }).steps).toHaveLength(5);
     expect((window.body as { windows: unknown[] }).windows).toEqual([]);
     expect((await post("/v1/departure-window", { route, horizon: 1e9 })).code).toBe(400);
+    // 865 departures over a 32 km route is more work than one request may take.
+    const long = { type: "LineString", coordinates: [route.coordinates[0], [22.004, 60.3]] };
+    const tooMuch = await post("/v1/departure-window", {
+      route: long,
+      horizon: 3 * 86_400,
+      step: 300
+    });
+    expect(tooMuch.code).toBe(400);
+    expect((tooMuch.body as { errors: string[] }).errors[0]).toMatch(/departures × route length/);
     plugin.stop();
   });
 

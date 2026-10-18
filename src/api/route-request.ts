@@ -175,7 +175,13 @@ export const WINDOW_LIMITS = {
   maxHorizon: 7 * 86400,
   defaultStep: 15 * 60,
   minStep: 5 * 60,
-  maxSteps: 1000
+  maxSteps: 1000,
+  /**
+   * Departures times route length, km. Each departure can re-check the whole
+   * route, so this bounds what one request costs: the default 48 h every
+   * 15 min fits a route of about 100 km.
+   */
+  maxDepartureKm: 20_000
 } as const;
 
 /** `horizon` and `step` of a departure-window request, seconds. */
@@ -196,4 +202,20 @@ export function parseWindowOptions(body: unknown): Parsed<{ horizon: number; ste
   return errors.length > 0
     ? { ok: false, errors }
     : { ok: true, value: { horizon: horizon as number, step: step as number } };
+}
+
+/** Why a departure window over this route is too much work for one request, if it is. */
+export function windowBudgetError(
+  coordinates: readonly LonLat[],
+  window: { horizon: number; step: number }
+): string | undefined {
+  let metres = 0;
+  for (let i = 1; i < coordinates.length; i++) {
+    metres += haversine(coordinates[i - 1] as LonLat, coordinates[i] as LonLat);
+  }
+  const departures = Math.floor(window.horizon / window.step) + 1;
+  return departures * (metres / 1000) > WINDOW_LIMITS.maxDepartureKm
+    ? `departures × route length must be at most ${WINDOW_LIMITS.maxDepartureKm} km: ` +
+        "use a longer step or a shorter horizon"
+    : undefined;
 }

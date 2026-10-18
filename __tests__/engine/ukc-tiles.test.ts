@@ -1,12 +1,13 @@
 import fc from "fast-check";
-import { tileAt, tileRect, toMercator, fromMercator } from "../../src/foundation/geo";
+import { tileAt, tileKey, tileRect, toMercator, fromMercator } from "../../src/foundation/geo";
 import type { Thresholds } from "../../src/engine/lookahead";
 import { DEFAULT_LOOKAHEAD } from "../../src/engine/lookahead";
 import type { UkcTileInput } from "../../src/engine/ukc-tiles";
 import { classify, ukcTile } from "../../src/engine/ukc-tiles";
-import { NO_DATA } from "../../src/spatial/node-store";
+import { FLAGS, NO_DATA } from "../../src/spatial/node-store";
 import { footprintGeom, minDepthOver } from "../../src/spatial/pyramid";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
+import type { TileCell } from "../../src/spatial/tile-walk";
 import { cellsInTile } from "../../src/spatial/tile-walk";
 import { fixtureIndex, ROCK } from "../helpers/fixture-index";
 import { basin } from "../helpers/synthetic";
@@ -50,6 +51,46 @@ describe("cells in a map tile", () => {
   test("outside the index is no data", () => {
     const t = tileOf(14, [25, 61]);
     expect(cellsInTile(store, t.z, t.x, t.y, 20).map((c) => c.values)).toEqual([NO_DATA]);
+  });
+
+  test("a living-chart adjustment is folded into the cells it falls in, never drawn over them", () => {
+    const uniform = buildPyramid(basin([22.0, 60.0, 22.4, 60.2], 7), {
+      minZoom: 12,
+      leafZoom: 18
+    });
+    const spot: [number, number] = [22.2, 60.1];
+    const a = tileOf(uniform.adjustZoom, spot);
+    // Shallower than the chart but with a narrower σ: alone it could class clearer.
+    uniform.adjustments.set(tileKey(a.z, a.x, a.y), {
+      dMin: 3,
+      sigmaD: 0.01,
+      sigmaP: 0,
+      flags: FLAGS.LIVECHART_ADJUSTED,
+      cellRef: -1
+    });
+    const contains = (o: TileCell, i: TileCell) =>
+      o.z <= i.z && i.x >> (i.z - o.z) === o.x && i.y >> (i.z - o.z) === o.y;
+    for (const [z, maxZoom] of [
+      [11, 17],
+      [14, 20],
+      [18, 24],
+      [19, 25]
+    ] as const) {
+      const t = tileOf(z, spot);
+      const cells = cellsInTile(uniform, t.z, t.x, t.y, maxZoom);
+      expect(cells.reduce((sum, c) => sum + 4 ** -(c.z - z), 0)).toBeCloseTo(1, 12);
+      cells.forEach((c, i) =>
+        cells.forEach((d, j) => expect(i === j || !contains(c, d)).toBe(true))
+      );
+      const hit = cells.filter((c) =>
+        contains(c, { ...tileOf(maxZoom, spot), values: NO_DATA, bound: false })
+      );
+      expect(hit).toHaveLength(1);
+      expect(hit[0]?.values).toMatchObject({ dMin: 3, flags: FLAGS.LIVECHART_ADJUSTED });
+      expect(hit[0]?.values.sigmaD).toBeGreaterThan(0.01);
+      expect(hit[0]?.bound).toBe(maxZoom < uniform.adjustZoom);
+      expect(cells.filter((c) => c.values.dMin === 7).length).toBe(cells.length - 1);
+    }
   });
 });
 

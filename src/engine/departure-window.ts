@@ -38,13 +38,15 @@ function rounded(wl: WaterLevel): WaterLevel {
   };
 }
 
-export function departureWindow(
+/** `pause` runs after each departure so a caller on the event loop can let other work in. */
+export async function departureWindow(
   index: ChartIndex,
   input: Omit<RouteCheckInput, "departure">,
   from: number,
   to: number,
-  stepMs: number
-): DepartureWindow {
+  stepMs: number,
+  pause: () => Promise<void> = () => Promise.resolve()
+): Promise<DepartureWindow> {
   const memo = new Map<string, LegStatus>();
   const steps: WindowStep[] = [];
   let checks = 0;
@@ -71,6 +73,7 @@ export function departureWindow(
       start = end;
     }
     steps.push({ departure: new Date(t).toISOString(), status: worst });
+    await pause();
   }
   return { windows: windowsOf(steps), steps, checks };
 }

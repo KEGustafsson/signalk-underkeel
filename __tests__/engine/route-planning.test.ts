@@ -1,7 +1,7 @@
 import { departureWindow } from "../../src/engine/departure-window";
 import type { RouteCheckInput } from "../../src/engine/route-check";
 import { checkRoute } from "../../src/engine/route-check";
-import { repairLeg, repairRoute, simplify } from "../../src/engine/route-repair";
+import { DEFAULT_REPAIR, repairLeg, repairRoute, simplify } from "../../src/engine/route-repair";
 import type { LonLat } from "../../src/foundation/geo";
 import { DEFAULT_DYNAMICS } from "../../src/model/vessel";
 import type { WaterLevel } from "../../src/model/uncertainty";
@@ -50,10 +50,10 @@ function input(coordinates: LonLat[], extra: Partial<RouteCheckInput> = {}): Rou
 describe("route repair", () => {
   const index = shoalIndex();
 
-  test("a leg through the shoal gets waypoints around it, and the new legs pass", () => {
+  test("a leg through the shoal gets waypoints around it, and the new legs pass", async () => {
     const checked = checkRoute(index, input(LEG), NOW);
     expect(checked.legs[0]?.status).toBe("fail");
-    const [repair, ...rest] = repairRoute(index, input(LEG), checked.legs);
+    const [repair, ...rest] = await repairRoute(index, input(LEG), checked.legs);
     expect(rest).toEqual([]);
     expect(repair?.reason).toBeUndefined();
     expect(repair?.waypoints.length).toBeGreaterThanOrEqual(1);
@@ -67,13 +67,37 @@ describe("route repair", () => {
     expect(repair?.legs.at(-1)?.to).toEqual(LEG[1]);
   });
 
-  test("legs that pass are left alone", () => {
+  test("legs that pass are left alone", async () => {
     const clear: LonLat[] = [
       [22.01, 60.005],
       [22.05, 60.005]
     ];
     const checked = checkRoute(index, input(clear), NOW);
-    expect(repairRoute(index, input(clear), checked.legs)).toEqual([]);
+    expect(await repairRoute(index, input(clear), checked.legs)).toEqual([]);
+  });
+
+  test("legs past the per-request limit are listed with a reason, not searched", async () => {
+    // The same failing leg there and back three times: six failing legs.
+    const zigzag: LonLat[] = [LEG[0], LEG[1], LEG[0], LEG[1], LEG[0], LEG[1], LEG[0]] as LonLat[];
+    const checked = checkRoute(index, input(zigzag), NOW);
+    let pauses = 0;
+    const repairs = await repairRoute(
+      index,
+      input(zigzag),
+      checked.legs,
+      { ...DEFAULT_REPAIR, maxLegs: 2 },
+      () => {
+        pauses += 1;
+        return Promise.resolve();
+      }
+    );
+    expect(repairs.map((r) => r.index)).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(repairs.slice(0, 2).every((r) => r.waypoints.length > 0)).toBe(true);
+    for (const r of repairs.slice(2)) {
+      expect(r).toMatchObject({ waypoints: [], legs: [] });
+      expect(r.reason).toBe("not searched: at most 2 legs are repaired per request");
+    }
+    expect(pauses).toBe(2);
   });
 
   test("a shoal that closes the whole search window is reported, not routed through", () => {
@@ -115,9 +139,9 @@ describe("departure window", () => {
     source: "manual"
   });
 
-  test("windows are the departures in which every leg passes", () => {
+  test("windows are the departures in which every leg passes", async () => {
     const route = input(LEG, { vessel: shallow, waterLevel: (s) => tide(s) });
-    const w = departureWindow(index, route, NOW, NOW + 12 * HOUR, 15 * 60_000);
+    const w = await departureWindow(index, route, NOW, NOW + 12 * HOUR, 15 * 60_000);
     expect(w.steps).toHaveLength(49);
     expect(w.windows).toHaveLength(1);
     expect(Date.parse(w.windows[0]?.from as string)).toBe(NOW);
@@ -126,13 +150,13 @@ describe("departure window", () => {
     expect(w.steps.at(-1)?.status).not.toBe("ok");
   });
 
-  test("legs are re-checked only when their water level changes", () => {
+  test("legs are re-checked only when their water level changes", async () => {
     const route = input(LEG, { vessel: shallow, waterLevel: (s) => tide(s) });
-    const w = departureWindow(index, route, NOW, NOW + 12 * HOUR, 15 * 60_000);
+    const w = await departureWindow(index, route, NOW, NOW + 12 * HOUR, 15 * 60_000);
     expect(w.checks).toBeLessThanOrEqual(3);
   });
 
-  test("a fallback water level is never a window", () => {
+  test("a fallback water level is never a window", async () => {
     const fallback = {
       h: 0,
       sigma: 0.3,
@@ -140,6 +164,6 @@ describe("departure window", () => {
       degraded: "water level from fmi is 40 min old"
     };
     const route = input(LEG, { vessel: shallow, waterLevel: () => fallback });
-    expect(departureWindow(index, route, NOW, NOW + HOUR, 15 * 60_000).windows).toEqual([]);
+    expect((await departureWindow(index, route, NOW, NOW + HOUR, 15 * 60_000)).windows).toEqual([]);
   });
 });

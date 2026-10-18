@@ -59,10 +59,12 @@ REST, base `/plugins/signalk-underkeel/v1`, open to readonly users:
   level expected while on it, and returned as `ok`, `marginal`, `fail` or `unverified` (no
   coverage, unassessed survey or a fallback water level; never folded into `ok`), with P(UKC < 0),
   its explanation and the cell editions used.
-- `POST /route-repair`: the same body; for each failing or marginal leg, waypoints to insert
-  that route around the shoal and pass the same check. Existing points are never moved.
+- `POST /route-repair`: the same body; for each failing or marginal leg, up to 10 per request,
+  waypoints to insert that route around the shoal and pass the same check. Existing points are
+  never moved.
 - `POST /departure-window`: the same body plus `horizon` and `step` (seconds); the departure
-  intervals in which every leg is `ok` at the forecast water level.
+  intervals in which every leg is `ok` at the forecast water level. Departures times route
+  length may be at most 20 000 km.
 - `POST /query`: a GeoJSON Point or Polygon, with an optional buffer, draft and speed; returns
   the class, P(UKC < 0), the deciding hazard and the explanation, for cursor readouts.
 - `GET /acks`, `POST /acks`, `DELETE /acks/:id`: acknowledged passages. Inside one, with the
@@ -70,7 +72,7 @@ REST, base `/plugins/signalk-underkeel/v1`, open to readonly users:
   are published as alert with the reason "acknowledged passage". Adding and deleting need a
   readwrite user.
 - `GET /livechart/discrepancies` and `GET /livechart/csb.geojson`, with the living chart on
-  (see below).
+  (see above).
 - `GET /tiles/ukc/{z}/{x}/{y}.pbf`: Mapbox vector tiles from zoom 11, one `ukc` layer of cells
   classed `clear`, `caution`, `danger`, `unverified` or `land` for the current draft and water
   level. `GET /ukc-style.json` is a MapLibre style for them.

@@ -1,9 +1,11 @@
 import type { Sounding } from "./soundings";
 
 /**
- * IHO crowdsourced bathymetry export (B-12, GeoJSON). Depths are as
- * measured below the surface; the water level and datum stay with the
- * recipient. Nothing is uploaded: the user downloads the file and decides.
+ * IHO crowdsourced bathymetry export (B-12, GeoJSON). Depths are below the
+ * transducer, as a sounder reports them, and the sounder's `draft` carries
+ * the transducer depth, so the recipient adds it once. The water level and
+ * datum stay with the recipient. Nothing is uploaded: the user downloads the
+ * file and decides.
  */
 
 export interface CsbPlatform {
@@ -48,7 +50,7 @@ export function csbGeoJson(samples: readonly Sounding[], platform: CsbPlatform):
       type: "Feature",
       geometry: { type: "Point", coordinates: [s.position[0], s.position[1]] },
       properties: {
-        depth: Math.round(s.belowSurface * 100) / 100,
+        depth: Math.round((s.belowSurface - platform.transducerDepth) * 100) / 100,
         time: new Date(s.at).toISOString()
       }
     }))
