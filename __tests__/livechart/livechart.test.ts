@@ -5,7 +5,14 @@ import path from "path";
 import { LivechartService } from "../../src/livechart-service";
 import type { LivechartConfig } from "../../src/livechart-service";
 import { quadkey } from "../../src/livechart/discrepancy";
-import { chartPrior, isDiscrepancy, PASS_GAP_MS, Posteriors } from "../../src/livechart/posterior";
+import type { CellPosterior } from "../../src/livechart/posterior";
+import {
+  chartPrior,
+  isDiscrepancy,
+  PASS_GAP_MS,
+  Posteriors,
+  rebasePrior
+} from "../../src/livechart/posterior";
 import type { RawSounding, SoundingSource } from "../../src/livechart/soundings";
 import { reduce } from "../../src/livechart/soundings";
 import { haversine, project } from "../../src/foundation/geo";
@@ -176,6 +183,60 @@ describe("cell posterior and discrepancy", () => {
     };
     expect(csb.features).toHaveLength(26);
     expect(csb.properties.platform.uniqueID).toBe("anon");
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("a posterior rebased onto another chart equals one built on that chart", () => {
+    const shallow = store();
+    const deep = buildPyramid(basin([22.0, 60.0, 22.1, 60.1], 10), { minZoom: 12, leafZoom: 18 });
+    const onShallow = new Posteriors(shallow);
+    const onDeep = new Posteriors(deep);
+    let a: CellPosterior | undefined;
+    let b: CellPosterior | undefined;
+    for (const [d, at] of [
+      [5.2, T0],
+      [5.4, T0 + 1000],
+      [5.1, T0 + 20 * 60_000]
+    ] as const) {
+      const r = reduce(raw(d, at), SURFACE);
+      if (!r.ok) {
+        throw new Error(r.reason);
+      }
+      a = onShallow.add(r.sounding);
+      b = onDeep.add(r.sounding);
+    }
+    if (!a || !b) {
+      throw new Error("no cell");
+    }
+    const moved = rebasePrior(a, chartPrior(deep, a.z, a.x, a.y));
+    expect(moved.chartDepth).toBe(10);
+    expect(moved.mean).toBeCloseTo(b.mean, 9);
+    expect(moved.sigma).toBeCloseTo(b.sigma, 9);
+    expect(moved).toMatchObject({ samples: 3, passes: 2 });
+    // Onto no chart at all, the soundings decide alone.
+    const alone = rebasePrior(a, { depth: NaN, sigma: 1000, cellRef: -1 });
+    const w = [5.2, 5.4, 5.1]
+      .map((d) => reduce(raw(d, T0), SURFACE))
+      .flatMap((r) => (r.ok ? [r.sounding] : []));
+    const p = w.reduce((s, x) => s + 1 / x.sigma ** 2, 0);
+    expect(alone.mean).toBeCloseTo(w.reduce((s, x) => s + x.depth / x.sigma ** 2, 0) / p, 9);
+  });
+
+  test("a saved state loaded onto a rebuilt chart is judged against that chart", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-livechart-"));
+    const file = path.join(dir, "livechart.json");
+    const svc = new LivechartService(store(), CONFIG, file, failOnError);
+    for (const start of [T0, T0 + 15 * 60_000]) {
+      for (let k = 0; k < 3; k++) {
+        svc.onSounding(raw(5.2, start + k * 1000));
+      }
+    }
+    svc.save();
+    const deeper = buildPyramid(basin([22.0, 60.0, 22.1, 60.1], 10), { minZoom: 12, leafZoom: 18 });
+    const reloaded = new LivechartService(deeper, CONFIG, file, failOnError);
+    expect(reloaded.discrepancies()[0]).toMatchObject({ charted: 10 });
+    // The saved adjustment keeps its depth: nothing gets deeper on a reload.
+    expect(minDepthOver(deeper, footprintGeom([SHOAL])).dMin).toBeLessThan(5.3);
     fs.rmSync(dir, { recursive: true, force: true });
   });
 

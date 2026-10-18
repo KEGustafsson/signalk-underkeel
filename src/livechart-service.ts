@@ -6,7 +6,13 @@ import { csbGeoJson } from "./livechart/csb-export";
 import type { Discrepancy } from "./livechart/discrepancy";
 import { discrepancyOf, noteFor, noteId } from "./livechart/discrepancy";
 import type { CellPosterior } from "./livechart/posterior";
-import { adjustmentFor, chartPrior, isDiscrepancy, Posteriors } from "./livechart/posterior";
+import {
+  adjustmentFor,
+  chartPrior,
+  isDiscrepancy,
+  Posteriors,
+  rebasePrior
+} from "./livechart/posterior";
 import type { RawSounding, Sounding, SoundingSource } from "./livechart/soundings";
 import { reduce } from "./livechart/soundings";
 import type { NodeStore, NodeValues } from "./spatial/node-store";
@@ -83,15 +89,7 @@ export class LivechartService {
     }
   }
 
-  /** The current chart's cell reference for a living-chart cell. */
-  private chartCellRef(c: CellPosterior): number {
-    return chartPrior(this.store, c.z, c.x, c.y).cellRef;
-  }
-
   private adjust(c: CellPosterior): void {
-    if (c.cellRef < 0) {
-      c.cellRef = this.chartCellRef(c);
-    }
     const key = tileKey(c.z, c.x, c.y);
     const previous = this.store.adjustments.get(key);
     const next = adjustmentFor(c, previous);
@@ -181,15 +179,19 @@ export class LivechartService {
       return;
     }
     // Cells from an index with another leaf zoom are keyed at another zoom: drop them.
-    // A saved cellRef indexes the catalogue it was saved with, which a rebuilt index may
-    // number differently: cells forget it until they need it, adjustments take the
-    // current chart's.
+    // The index may have been rebuilt since the save, so each cell is moved onto the
+    // current chart's prior and cell reference; a saved cellRef indexes the catalogue it
+    // was saved with. Saved adjustments keep their depths: they only ever lower a cell.
     const z = this.store.adjustZoom;
     for (const c of listOf(saved.cells)) {
       if (isCell(c) && c.z === z) {
         // An uncharted cell's NaN prior is saved as null.
         const chartDepth = typeof c.chartDepth === "number" ? c.chartDepth : NaN;
-        this.posteriors.cells.set(tileKey(c.z, c.x, c.y), { ...c, chartDepth, cellRef: -1 });
+        const current = chartPrior(this.store, c.z, c.x, c.y);
+        this.posteriors.cells.set(
+          tileKey(c.z, c.x, c.y),
+          rebasePrior({ ...c, chartDepth }, current)
+        );
       }
     }
     for (const entry of listOf(saved.adjustments)) {
@@ -197,7 +199,7 @@ export class LivechartService {
         const [key, v] = entry as [unknown, unknown];
         const c = typeof key === "number" ? this.posteriors.cells.get(key) : undefined;
         if (c && isNodeValues(v)) {
-          this.store.adjustments.set(key as number, { ...v, cellRef: this.chartCellRef(c) });
+          this.store.adjustments.set(key as number, { ...v, cellRef: c.cellRef });
         }
       }
     }

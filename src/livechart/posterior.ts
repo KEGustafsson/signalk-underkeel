@@ -107,6 +107,36 @@ export class Posteriors {
   }
 }
 
+/**
+ * Moves a posterior onto another chart prior, for a saved cell meeting a rebuilt index:
+ * the old prior's precision and weighted depth come out, the new prior's go in, and the
+ * soundings' evidence stays. An uncharted prior carries no weight.
+ */
+export function rebasePrior(
+  c: CellPosterior,
+  prior: { depth: number; sigma: number; cellRef: number }
+): CellPosterior {
+  const oldP = Number.isFinite(c.chartDepth) ? 1 / c.chartSigma ** 2 : 0;
+  const newP = Number.isFinite(prior.depth) ? 1 / prior.sigma ** 2 : 0;
+  const evidenceP = 1 / c.sigma ** 2 - oldP;
+  const evidenceW = c.mean / c.sigma ** 2 - (oldP > 0 ? c.chartDepth * oldP : 0);
+  const rebased = {
+    ...c,
+    chartDepth: prior.depth,
+    chartSigma: prior.sigma,
+    cellRef: prior.cellRef
+  };
+  if (!(evidenceP > 0)) {
+    return { ...rebased, mean: newP > 0 ? prior.depth : c.mean, sigma: prior.sigma };
+  }
+  const prec = evidenceP + newP;
+  return {
+    ...rebased,
+    mean: (evidenceW + (newP > 0 ? prior.depth * newP : 0)) / prec,
+    sigma: Math.sqrt(1 / prec)
+  };
+}
+
 /** Trigger (plan §4.13): at least this many samples over at least this many passes. */
 export const MIN_SAMPLES = 5;
 export const MIN_PASSES = 2;
