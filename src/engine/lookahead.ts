@@ -8,6 +8,7 @@ import { gnssSigma } from "../model/position";
 import type { DynamicsOptions, VesselModel } from "../model/vessel";
 import { vesselTerms } from "../model/vessel";
 import type { ChartIndex } from "../spatial/chart-index";
+import { WFS_NOTICE } from "../ingest/wfs";
 import { FLAGS, flagNames } from "../spatial/node-store";
 import type { RiskTile } from "../spatial/pyramid";
 import { footprintGeom, mercatorBuffer, minDepthOver } from "../spatial/pyramid";
@@ -274,7 +275,7 @@ function classify(fps: FootprintResult[], opts: LookaheadOptions): Verdict {
  * without course and speed only the vessel's own footprint is checked
  * (`unknown`), and a fallback water level is published as an alert.
  */
-function degrade(c: Verdict, m: Motion, wl: WaterLevel): Verdict {
+function degrade(c: Verdict, m: Motion, wl: WaterLevel, fps: FootprintResult[]): Verdict {
   if (c.state !== "normal") {
     return c;
   }
@@ -287,6 +288,10 @@ function degrade(c: Verdict, m: Motion, wl: WaterLevel): Verdict {
   }
   if (wl.degraded) {
     return { ...c, state: "alert", reason: wl.degraded };
+  }
+  // Depths from an advisory source lack rocks and survey quality: never normal.
+  if (fps.some((f) => f.flags & FLAGS.NOT_FOR_NAVIGATION)) {
+    return { ...c, state: "alert", reason: WFS_NOTICE };
   }
   if (!m.moving) {
     return { ...c, reason: "low speed: only the current position is checked" };
@@ -445,7 +450,7 @@ export function evaluateLookahead(
     opts.turnFor
   );
   const fps = times.map((t) => footprint(t, origin, tracks, m, vessel, index, s, opts));
-  const verdict = degrade(classify(fps, opts), m, wl);
+  const verdict = degrade(classify(fps, opts), m, wl, fps);
   const escape =
     inputs.escape === true && m.moving && verdict.state !== "normal" && verdict.state !== "unknown"
       ? escapeHeading(times, origin, m, vessel, index, s, opts)

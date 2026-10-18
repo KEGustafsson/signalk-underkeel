@@ -64,7 +64,12 @@ export function chartPrior(
 export class Posteriors {
   readonly cells = new Map<number, CellPosterior>();
 
-  constructor(private readonly store: NodeStore) {}
+  constructor(private store: NodeStore) {}
+
+  /** Reads chart priors from a rebuilt index from now on. */
+  rebind(store: NodeStore): void {
+    this.store = store;
+  }
 
   cellOf(s: Sounding): { z: number; x: number; y: number } {
     const z = this.store.adjustZoom;

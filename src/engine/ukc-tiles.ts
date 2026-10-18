@@ -33,7 +33,7 @@ export interface UkcTileInput {
 /** Cells per tile side at most: 2^6 = 64. */
 export const DETAIL_ZOOMS = 6;
 
-const UNVERIFIED = FLAGS.NO_COVERAGE | FLAGS.UNASSESSED | FLAGS.NO_DEPTH;
+const UNVERIFIED = FLAGS.NO_COVERAGE | FLAGS.UNASSESSED | FLAGS.NO_DEPTH | FLAGS.NOT_FOR_NAVIGATION;
 
 /**
  * The class of one cell, or undefined outside every chart. A bound cell

@@ -21,19 +21,20 @@ export interface FakeClock extends Clock {
 
 export function fakeClock(start: number): FakeClock {
   let now = start;
-  let fn: (() => void) | undefined;
+  const timers = new Map<number, () => void>();
+  let next = 1;
   return {
     now: () => now,
     setInterval: (f) => {
-      fn = f;
-      return 1;
+      timers.set(next, f);
+      return next++;
     },
-    clearInterval: () => {
-      fn = undefined;
+    clearInterval: (h) => {
+      timers.delete(h as number);
     },
     advance(ms: number) {
       now += ms;
-      fn?.();
+      [...timers.values()].forEach((f) => f());
     }
   };
 }

@@ -19,6 +19,7 @@ import type { WaterLevel } from "./model/uncertainty";
 import type { VesselModel } from "./model/vessel";
 import { resolveVessel } from "./model/vessel";
 import type { ChartIndex } from "./spatial/chart-index";
+import { WFS_NOTICE } from "./ingest/wfs";
 import type { WaterLevelStatus } from "./water-level-service";
 import { WaterLevelService } from "./water-level-service";
 import { ChangeNotifier, groundingNotification, integrityNotification } from "./notifications";
@@ -127,8 +128,8 @@ export class Monitor {
     private readonly app: App,
     private readonly pluginId: string,
     private readonly config: PluginConfig,
-    private readonly index: ChartIndex | undefined,
-    private readonly indexReason: string | undefined,
+    private index: ChartIndex | undefined,
+    private indexReason: string | undefined,
     private readonly clock: Clock = SYSTEM_CLOCK,
     fetch: FetchLike = globalThis.fetch
   ) {
@@ -140,6 +141,13 @@ export class Monitor {
     this.hysteresis = new Hysteresis(config.lookahead.thresholds);
     this.last = this.evaluate();
     this.since = clock.now();
+  }
+
+  /** Swaps in a rebuilt index; hysteresis, acks and subscriptions carry over. */
+  setIndex(index: ChartIndex): void {
+    this.index = index;
+    this.indexReason = undefined;
+    this.levels.setIndex(index);
   }
 
   start(): void {
@@ -404,8 +412,11 @@ export class Monitor {
       this.notifier.send(PATHS.positionIntegrity, integrityNotification(this.integrityResult));
     }
     this.checkGrounding(r);
+    const status =
+      r.state === "normal" ? "Monitoring: normal" : `Monitoring: ${r.state} — ${r.reason}`;
+    // The WFS licence allows non-navigational use only; say so while it is on.
     this.app.setPluginStatus(
-      r.state === "normal" ? "Monitoring: normal" : `Monitoring: ${r.state} — ${r.reason}`
+      this.config.wfs && r.reason !== WFS_NOTICE ? `${status} · ${WFS_NOTICE}` : status
     );
   }
 

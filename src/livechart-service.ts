@@ -57,13 +57,22 @@ export class LivechartService {
   accepted = 0;
 
   constructor(
-    private readonly store: NodeStore,
+    private store: NodeStore,
     private readonly config: LivechartConfig,
     private readonly file: string,
     private readonly deps: LivechartDeps
   ) {
     this.posteriors = new Posteriors(store);
     this.load();
+  }
+
+  /** Moves the confirmed discrepancies onto a rebuilt index with the same leaf zoom. */
+  rebind(store: NodeStore): void {
+    for (const [key, v] of this.store.adjustments) {
+      store.adjustments.set(key, v);
+    }
+    this.store = store;
+    this.posteriors.rebind(store);
   }
 
   get path(): string {

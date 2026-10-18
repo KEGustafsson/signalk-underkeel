@@ -17,6 +17,8 @@ interface FeatureBase {
   /** Usage band 1–6 of the source cell; larger bands are larger scale. */
   band: number;
   lnam?: string;
+  /** From a source licensed for non-navigational use only (the Traficom WFS). */
+  advisory?: boolean;
 }
 
 /** Anything that bounds the depth from above: areas, soundings, hazards, land. */

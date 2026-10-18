@@ -8,7 +8,9 @@ export const FLAGS = {
   DREDGED: 8,
   LIVECHART_ADJUSTED: 16,
   /** No charted depth at all in (part of) the tile; dMin is -Infinity there. */
-  NO_DEPTH: 32
+  NO_DEPTH: 32,
+  /** Set from a source licensed for non-navigational use only (the Traficom WFS). */
+  NOT_FOR_NAVIGATION: 64
 } as const;
 
 const FLAG_NAMES: [number, string][] = [
@@ -16,7 +18,8 @@ const FLAG_NAMES: [number, string][] = [
   [FLAGS.NO_COVERAGE, "NO_COVERAGE"],
   [FLAGS.UNASSESSED, "UNASSESSED"],
   [FLAGS.DREDGED, "DREDGED"],
-  [FLAGS.LIVECHART_ADJUSTED, "LIVECHART_ADJUSTED"]
+  [FLAGS.LIVECHART_ADJUSTED, "LIVECHART_ADJUSTED"],
+  [FLAGS.NOT_FOR_NAVIGATION, "NOT_FOR_NAVIGATION"]
 ];
 
 /** Names of the flags a client should see (NO_DEPTH is internal). */

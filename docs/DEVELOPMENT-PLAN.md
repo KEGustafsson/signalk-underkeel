@@ -205,8 +205,16 @@ signalk-underkeel/
    `signalk-charts-provider-simple` (read-only access to its data directory, configured
    path), or point to a folder. Traficom distributes quality-assured S-57 ENCs for Finnish
    waters through its download service.
-2. **National open vector depth data.** For example, Traficom's _Merikartan syvyystiedot_
-   (depth contours and soundings, CC BY 4.0).
+2. **National vector depth data.** Implemented for Traficom's INSPIRE WFS
+   (`DepthArea_A`, `DredgedArea_A`, `Sounding_P`), off by default. Its licence allows
+   non-navigational use only, and it has no land, rocks, wrecks, obstructions or `M_QUAL`.
+   Decision (safety invariants 3 and 4): the plugin downloads a box of configurable radius
+   (default 10 km) around the vessel and a new one once the vessel is more than half the radius
+   from its centre; the index is rebuilt in a worker thread and swapped in. The box is one cell
+   of usage band 1, so every ENC cell wins where both cover. Water no depth area reaches is
+   land. Survey quality is an assumed CATZOC (configurable, default B). Every tile from the cell
+   carries `NOT_FOR_NAVIGATION`: the look-ahead is never `normal` there (at most `alert`, with
+   the licence notice), route legs are never `ok`, and the overlay never draws `clear`.
 3. **Unsurveyed-waterway depth data.** For example, SYKE lake and coastal data, explicitly
    _not for navigation_. Ingest it as **CATZOC U** with large σ, so it can only add caution,
    never confidence.

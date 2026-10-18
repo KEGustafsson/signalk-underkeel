@@ -115,7 +115,8 @@ function take(w: Walk, v: NodeValues, z: number, x: number, y: number): void {
  * at one carrying these would report a gap or an unassessed survey that
  * the footprint itself may not touch. Such tiles are always descended.
  */
-const PRECISE_FLAGS = FLAGS.NO_COVERAGE | FLAGS.UNASSESSED | FLAGS.NO_DEPTH;
+const PRECISE_FLAGS =
+  FLAGS.NO_COVERAGE | FLAGS.UNASSESSED | FLAGS.NO_DEPTH | FLAGS.NOT_FOR_NAVIGATION;
 
 /** Below this, a split tile's risk bound is negligible and its children need not be visited. */
 export const RISK_STOP_BELOW = 1e-4;

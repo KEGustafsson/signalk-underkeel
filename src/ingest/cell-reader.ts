@@ -5,6 +5,7 @@ import { usageBandFromName } from "./cells";
 import type { ChartFeature } from "./features";
 import type { GeoJsonFeatureCollection } from "./s57-geojson";
 import { parseLayer, S57_LAYERS } from "./s57-geojson";
+import { WFS_SOURCE } from "./wfs";
 
 /**
  * Reads one exported ENC cell: a directory holding `<LAYER>.geojson` files
@@ -47,7 +48,8 @@ export function cellInfoFromDsid(
     issueDate: typeof props.DSID_ISDT === "string" ? props.DSID_ISDT : undefined,
     band: usageBandFromName(name),
     verticalDatum: numeric(props.DSPM_VDAT),
-    soundingDatum: numeric(props.DSPM_SDAT)
+    soundingDatum: numeric(props.DSPM_SDAT),
+    source: typeof props.UK_SOURCE === "string" ? props.UK_SOURCE : undefined
   };
 }
 
@@ -67,11 +69,12 @@ export function readCellDirectory(dir: string, cellRef: number, bandOverride?: n
     throw new Error(`cell ${partial.name}: usage band unknown; set it explicitly`);
   }
   const info: CellInfo = { ...partial, band };
+  const advisory = info.source === WFS_SOURCE ? true : undefined;
   const features: ChartFeature[] = [];
   for (const layer of S57_LAYERS) {
     const collection = readCollection(path.join(dir, `${layer}.geojson`));
     if (collection) {
-      features.push(...parseLayer(layer, collection, { cellRef, band }));
+      features.push(...parseLayer(layer, collection, { cellRef, band, advisory }));
     }
   }
   if (!features.some((f) => f.role === "coverage")) {
