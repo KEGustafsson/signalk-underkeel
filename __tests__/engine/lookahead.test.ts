@@ -307,4 +307,24 @@ describe("probabilistic look-ahead on the synthetic chart", () => {
     );
     expect(calm.escapeHeading).toBeNull();
   });
+
+  test("an escape heading never counts water off the chart as clear", () => {
+    // A deep basin whose east edge is 200 m ahead; the vessel runs east near its north side.
+    const edge: ChartIndex = {
+      catalogue: { version: 1, cells: [] },
+      pyramid: buildPyramid(basin([22.0, 60.0, 22.02, 60.01], 10), { minZoom: 12, leafZoom: 18 }),
+      hazards: new HazardIndex([])
+    };
+    const r = evaluateLookahead(
+      nav(22.0165, 60.009, EAST, 3),
+      { ...ctx(DEEP_KEEL), escape: true },
+      edge,
+      NOW
+    );
+    expect(r.state).toBe("warn");
+    // Straight on leaves the chart; the escape turns south, back over charted water.
+    const turn = (r.escapeHeading as number) - EAST;
+    expect(turn).toBeGreaterThan(0);
+    expect(turn).toBeLessThanOrEqual(Math.PI / 2 + 1e-9);
+  });
 });

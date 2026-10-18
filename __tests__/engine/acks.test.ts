@@ -120,6 +120,24 @@ describe("acknowledged passages", () => {
     }
   });
 
+  test("a footprint edge that leaves a concave passage between its vertices is not covered", () => {
+    // A U-shaped passage open to the north; the footprint's ends sit in both arms.
+    const u: LonLat[] = [
+      [22.0, 60.0],
+      [22.01, 60.0],
+      [22.01, 60.005],
+      [22.006, 60.005],
+      [22.006, 60.001],
+      [22.004, 60.001],
+      [22.004, 60.005],
+      [22.0, 60.005]
+    ];
+    const across = result("warn", [fp(30, box(22.003, 60.002, 22.007, 60.0021), 0.08)]);
+    expect(suppress(across, ctx({ acks: [{ ...ACK, polygon: u }] })).state).toBe("warn");
+    const inArm = result("warn", [fp(30, box(22.001, 60.002, 22.003, 60.0021), 0.08)]);
+    expect(suppress(inArm, ctx({ acks: [{ ...ACK, polygon: u }] })).state).toBe("alert");
+  });
+
   test("a mooring zone suppresses the same way and names the zone", () => {
     const r = suppress(WARN, ctx({ acks: [], zones: [{ name: "home berth", polygon: PASSAGE }] }));
     expect(r).toMatchObject({

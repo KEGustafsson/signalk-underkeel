@@ -27,6 +27,17 @@ describe("acknowledgement store", () => {
   });
   afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
+  test("a failed save leaves the live list unchanged", () => {
+    const file = path.join(dir, "acks.json");
+    const store = new AckStore(file);
+    store.add(ACK);
+    // A directory where the temporary file should go makes every write fail.
+    fs.mkdirSync(`${file}.tmp-${process.pid}`);
+    expect(() => store.add({ ...ACK, id: "a2" })).toThrow();
+    expect(() => store.remove("a1")).toThrow();
+    expect(store.list(NOW).map((a) => a.id)).toEqual(["a1"]);
+  });
+
   test("entries survive a restart and expired ones are not listed", () => {
     const file = path.join(dir, "acks.json");
     const store = new AckStore(file);

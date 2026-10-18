@@ -51,4 +51,12 @@ export class ChangeNotifier {
       updates: [{ values: [{ path: path as Path, value: value as never }] }]
     });
   }
+
+  /** Sets a path this notifier raised back to normal; a path it never wrote stays untouched. */
+  clear(path: string, message: string): void {
+    const last = this.last.get(path);
+    if (last !== undefined && !last.startsWith("normal|")) {
+      this.send(path, { state: "normal", method: [], message });
+    }
+  }
 }

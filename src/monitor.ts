@@ -159,6 +159,9 @@ export class Monitor {
       u();
     }
     this.levels.stop();
+    // A raised integrity or grounding notification must not outlive the plugin.
+    this.notifier.clear(PATHS.positionIntegrity, "UKC monitoring stopped");
+    this.notifier.clear(PATHS.grounding, "UKC monitoring stopped");
   }
 
   onDelta(delta: Delta): void {

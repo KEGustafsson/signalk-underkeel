@@ -68,8 +68,43 @@ function riskyRings(result: LookaheadResult, th: Thresholds): LonLat[][] {
   return result.footprints.filter((f) => f.risk >= th.alert || f.uncovered).map((f) => f.ring);
 }
 
+function orient(p: LonLat, q: LonLat, r: LonLat): number {
+  return (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
+}
+
+/** Whether ab and cd cross at a point inside both; touching and collinear overlap do not count. */
+function crosses(a: LonLat, b: LonLat, c: LonLat, d: LonLat): boolean {
+  return orient(c, d, a) * orient(c, d, b) < 0 && orient(a, b, c) * orient(a, b, d) < 0;
+}
+
+/** Points tested along each footprint edge besides its ends. */
+const EDGE_SAMPLES = 8;
+
+/**
+ * Whether the whole ring, edges included, lies in the polygon. Vertices alone
+ * are not enough: a footprint edge can leave a concave passage between them.
+ */
+function ringWithin(ring: readonly LonLat[], polygon: readonly LonLat[]): boolean {
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i] as LonLat;
+    const b = ring[(i + 1) % ring.length] as LonLat;
+    for (let k = 0; k < EDGE_SAMPLES; k++) {
+      const t = k / EDGE_SAMPLES;
+      if (!inside([a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])], polygon)) {
+        return false;
+      }
+    }
+    for (let j = 0, l = polygon.length - 1; j < polygon.length; l = j++) {
+      if (crosses(a, b, polygon[l] as LonLat, polygon[j] as LonLat)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 function within(rings: LonLat[][], polygon: readonly LonLat[]): boolean {
-  return rings.length > 0 && rings.every((ring) => ring.every((p) => inside(p, polygon)));
+  return rings.length > 0 && rings.every((ring) => ringWithin(ring, polygon));
 }
 
 function angleBetween(a: number, b: number): number {

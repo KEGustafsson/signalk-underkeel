@@ -7,7 +7,10 @@ import type { LookaheadOptions } from "./lookahead";
 import type { Track } from "./trajectory";
 import { escapeTrack } from "./trajectory";
 
-/** Seconds until P reaches warn along one track; Infinity when it never does. */
+/**
+ * Seconds until P reaches warn or the footprint leaves chart coverage along
+ * one track; Infinity when neither happens. Uncharted water is never clear.
+ */
 function trackTts(
   track: Track,
   times: number[],
@@ -19,7 +22,8 @@ function trackTts(
   opts: LookaheadOptions
 ): number {
   for (const t of times) {
-    if (footprint(t, origin, [track], m, vessel, index, s, opts).risk >= opts.thresholds.warn) {
+    const fp = footprint(t, origin, [track], m, vessel, index, s, opts);
+    if (fp.uncovered || fp.risk >= opts.thresholds.warn) {
       return t;
     }
   }

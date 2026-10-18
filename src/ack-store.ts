@@ -50,26 +50,28 @@ export class AckStore {
     return this.acks.filter((a) => a.expires === undefined || Date.parse(a.expires) > now);
   }
 
+  /** Throws when the list cannot be saved; the live list is then unchanged. */
   add(ack: Ack): void {
-    this.acks = [...this.acks.filter((a) => a.id !== ack.id), ack];
-    this.save();
+    const next = [...this.acks.filter((a) => a.id !== ack.id), ack];
+    this.save(next);
+    this.acks = next;
   }
 
   /** Returns whether an entry was removed. */
   remove(id: string): boolean {
-    const before = this.acks.length;
-    this.acks = this.acks.filter((a) => a.id !== id);
-    if (this.acks.length === before) {
+    const next = this.acks.filter((a) => a.id !== id);
+    if (next.length === this.acks.length) {
       return false;
     }
-    this.save();
+    this.save(next);
+    this.acks = next;
     return true;
   }
 
-  private save(): void {
+  private save(list: Ack[]): void {
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
     const tmp = `${this.file}.tmp-${process.pid}`;
-    fs.writeFileSync(tmp, JSON.stringify(this.acks, null, 2));
+    fs.writeFileSync(tmp, JSON.stringify(list, null, 2));
     fs.renameSync(tmp, this.file);
   }
 }

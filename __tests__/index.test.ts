@@ -397,6 +397,8 @@ describe("plugin lifecycle", () => {
     );
     expect(integrity().data.sigmaPos).toBeGreaterThan(390);
     plugin.stop();
+    // A raised integrity warning does not outlive the plugin.
+    expect(integrity()).toMatchObject({ state: "normal", message: "UKC monitoring stopped" });
   });
 
   test("an acknowledged passage turns warn into alert until it is deleted", async () => {
@@ -451,14 +453,20 @@ describe("plugin lifecycle", () => {
       at(1000, 3);
       at(2000, 3);
       at(3000, 0.4);
+      type Note = { state: string; message: string } | undefined;
+      const raised = lastValue(f.deltas, "notifications.grounding") as Note;
       plugin.stop();
-      return lastValue(f.deltas, "notifications.grounding") as
-        { state: string; message: string } | undefined;
+      return { raised, stopped: lastValue(f.deltas, "notifications.grounding") as Note };
     };
-    expect(run({})).toBeUndefined();
-    expect(run({ groundingDetector: { enabled: true } })).toMatchObject({
-      state: "emergency",
-      message: "Grounding detected: SOG fell from 3.0 to 0.4 m/s; depth 1.9 m against draft 1.8 m"
+    expect(run({})).toEqual({ raised: undefined, stopped: undefined });
+    expect(run({ groundingDetector: { enabled: true } })).toEqual({
+      raised: {
+        state: "emergency",
+        method: ["visual", "sound"],
+        message: "Grounding detected: SOG fell from 3.0 to 0.4 m/s; depth 1.9 m against draft 1.8 m"
+      },
+      // Stopping the plugin clears the emergency it raised.
+      stopped: { state: "normal", method: [], message: "UKC monitoring stopped" }
     });
   });
 
