@@ -3,6 +3,7 @@
   "$id": "route-check-request.json",
   "title": "POST /route-check, /route-repair and /departure-window request",
   "type": "object",
+  "anyOf": [{ "required": ["route"] }, { "required": ["routeRef"] }],
   "properties": {
     "route": {
       "type": "object",

@@ -23,6 +23,7 @@ const KEYWORDS = new Set([
   "maximum",
   "exclusiveMinimum",
   "pattern",
+  "anyOf",
   "$ref"
 ]);
 
@@ -77,6 +78,9 @@ export class Validator {
       const r = this.resolve(s.$ref, file);
       this.check(r.schema, r.file, v, at, errors);
     }
+    if (Array.isArray(s.anyOf)) {
+      this.anyOf(s.anyOf as Schema[], file, v, at, errors);
+    }
     if (s.type !== undefined && !this.typeOk(s.type as string | string[], v)) {
       errors.push(`${at}: expected ${String(s.type)}, got ${JSON.stringify(v)}`);
       return;
@@ -98,6 +102,20 @@ export class Validator {
     } else if (typeof v === "object" && v !== null) {
       this.object(s, file, v as Record<string, unknown>, at, errors);
     }
+  }
+
+  /** Each branch is checked on its own; the value passes when one branch has no errors. */
+  private anyOf(branches: Schema[], file: string, v: unknown, at: string, errors: string[]): void {
+    const failures: string[] = [];
+    for (const b of branches) {
+      const e: string[] = [];
+      this.check(b, file, v, at, e);
+      if (e.length === 0) {
+        return;
+      }
+      failures.push(e.join(", "));
+    }
+    errors.push(`${at}: matches no anyOf branch (${failures.join("; ")})`);
   }
 
   private typeOk(type: string | string[], v: unknown): boolean {

@@ -56,6 +56,16 @@ describe("schema validator", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
+  test("a route request names its route inline, by reference, or both", () => {
+    const ref = "/resources/routes/abc";
+    expectValid("route-check-request.json", { route: ROUTE });
+    expectValid("route-check-request.json", { routeRef: ref });
+    expectValid("route-check-request.json", { route: ROUTE, routeRef: ref });
+    expect(v.validate("route-check-request.json", { speed: 3 })).toEqual([
+      "$: matches no anyOf branch ($: missing route; $: missing routeRef)"
+    ]);
+  });
+
   test("every schema parses and names itself by file", () => {
     for (const name of v.names()) {
       const raw = JSON.parse(
