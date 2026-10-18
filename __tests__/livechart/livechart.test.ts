@@ -256,6 +256,10 @@ describe("cell posterior and discrepancy", () => {
     const reloaded = new LivechartService(deeper, CONFIG, file, failOnError);
     expect(reloaded.discrepancies()[0]).toMatchObject({ charted: 10 });
     expect(minDepthOver(deeper, footprintGeom([SHOAL])).dMin).toBeLessThan(8.3);
+    // The adjustment made on load is saved without a new sounding.
+    reloaded.save();
+    const saved = JSON.parse(fs.readFileSync(file, "utf8")) as { adjustments: unknown[] };
+    expect(saved.adjustments).toHaveLength(1);
     fs.rmSync(dir, { recursive: true, force: true });
   });
 

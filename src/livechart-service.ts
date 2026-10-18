@@ -97,6 +97,7 @@ export class LivechartService {
       return;
     }
     this.store.adjustments.set(key, next);
+    this.dirty = true;
     if (this.config.writeNotes) {
       this.deps
         .setNote(noteId(c), noteFor(discrepancyOf(c)))
