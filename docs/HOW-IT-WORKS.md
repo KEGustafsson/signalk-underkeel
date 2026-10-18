@@ -431,8 +431,8 @@ and hazard, the explanation, and the response lists the cell editions used.
 
 ## 11. Asking about one spot
 
-The query endpoint answers the same question for one point or area at the current draft and
-water level: the class, P(UKC < 0), the deciding hazard, the explanation and the same sentence
+The query endpoint answers the same question for one point or area at the current water level,
+using the draft in the request when one is given and the configured vessel draft otherwise: the class, P(UKC < 0), the deciding hazard, the explanation and the same sentence
 as the notification. A plotter can use it for a cursor readout.
 
 ## 12. What the plugin never does
