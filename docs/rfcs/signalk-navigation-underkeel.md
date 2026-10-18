@@ -1,7 +1,6 @@
 # RFC draft: `navigation.underKeel.*` and `notifications.navigation.underKeel`
 
-Status: draft for the Signal K specification, not yet submitted. Implemented by
-`signalk-underkeel` 0.1.0.
+Status: draft for the Signal K specification.
 
 ## Motivation
 

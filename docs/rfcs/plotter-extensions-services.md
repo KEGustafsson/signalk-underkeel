@@ -1,8 +1,7 @@
 # RFC draft: a `services` section for the Plotter Extensions API
 
-Status: draft for Plotter Extensions API v2, not yet submitted. Shipped today under the vendor
-prefix as `x-freeboard.services.navigationSafety` by `signalk-underkeel` 0.1.0; a stub second
-provider passes the same contract tests (`__tests__/contract/`).
+Status: draft for Plotter Extensions API v2. Until the API defines `services`, a provider
+declares the section under the vendor prefix as `x-freeboard.services.navigationSafety`.
 
 ## Motivation
 
