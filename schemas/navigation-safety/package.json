@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "JSON Schemas of the provider-neutral navigation-safety contract (signalk-underkeel plan §5.1).",
-  "license": "MIT",
+  "license": "EUPL-1.2",
   "files": [
     "*.json",
     "README.md"

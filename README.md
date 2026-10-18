@@ -124,4 +124,5 @@ Contributor and AI-agent guidance is in [AGENTS.md](AGENTS.md).
 
 ## License
 
-MIT
+Copyright (c) 2026 Karl-Erik Gustafsson. Licensed under the
+[European Union Public Licence v. 1.2](LICENSE) (EUPL-1.2).
