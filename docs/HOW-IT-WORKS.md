@@ -142,6 +142,27 @@ flowchart TD
 - Each stored tile also carries flags: `NO_COVERAGE`, `UNASSESSED` (no survey quality, or
   CATZOC U), `SWEPT`, `DREDGED`, `NO_DEPTH`.
 
+### Learning from your own soundings
+
+The living chart is off by default. When it is on, the plugin reads the boat's depth sounder
+and keeps a running estimate of the depth in each cell of the index, about 76 m across at
+60° N:
+
+1. **Quality gate.** A sounding counts only with a satellite fix, HDOP below 2, roll within
+   15°, a plausible depth and a measured, not fallback, water level.
+2. **Reduce to chart datum.** The water level at that moment is taken off the measured depth.
+3. **Update the cell.** The chart's depth and σ are the starting point; each sounding moves
+   the estimate and narrows its σ.
+4. **Discrepancy.** After at least 5 soundings on at least 2 separate passes, a cell whose
+   estimate is more than 2σ shallower than the chart is marked shallower. Every check then
+   uses the shallower depth: look-ahead, route check, query and the UKC overlay. A Signal K
+   note marks the place on the chart with the evidence.
+
+Own soundings only ever make the chart shallower. Deeper readings never raise a charted depth,
+so a faulty transducer cannot switch off a hazard. The accepted soundings can be exported as
+IHO crowd-sourced bathymetry (CSB) GeoJSON from `GET /livechart/csb.geojson`; nothing is
+uploaded anywhere.
+
 ### Survey quality to uncertainty
 
 The CATZOC accuracies are read as 95 % bounds, so σ is half the table value. `d` is the
@@ -513,6 +534,35 @@ from east to west at 2.5 m/s:
 Each leg also returns its length, ETA at both ends, minimum UKC, σ, flags, the deciding position
 and hazard, the explanation, and the response lists the cell editions used.
 
+### Suggesting a way round
+
+`POST /route-repair` takes the same body as the route check. For every leg that is `fail` or
+`marginal`, it searches for a path around the shoal:
+
+1. A grid of cells is laid around the leg, reaching half the leg's length beyond it on every
+   side, and at least 300 m. A cell is blocked when its corridor would fail, or when it touches
+   water the plugin cannot check: no coverage, unassessed survey or no depth. A repair never
+   routes through unchecked water.
+2. The cheapest any-angle path through the open cells is found. Water with a higher grounding
+   probability costs more, so the path keeps away from the margin.
+3. Waypoints are dropped wherever the straight line between their neighbours still passes the
+   check, so the result has as few turns as it can.
+
+The answer lists the waypoints to insert into each failing leg and the legs they make, checked
+like any route. It never moves an existing point. When no path is found, the leg says why and
+gets no waypoints. A plotter shows the answer as a suggestion; the skipper decides whether to
+use it.
+
+### Choosing when to leave
+
+`POST /departure-window` also takes the route-check body, plus a horizon and a step: by default
+every 15 minutes over the next 48 hours. It checks the route for each departure with the water
+level the forecast gives for the time each leg is sailed, and returns the intervals in which
+every leg is `ok`, with the worst status of each departure. The horizon can be up to 7 days and
+the step no shorter than 5 minutes. A leg is checked again only when its water level changes.
+In Finnish waters this matters during low-water spells; in tidal waters it works as a tide-gate
+planner.
+
 ## 11. Asking about one spot
 
 The query endpoint answers the same question for one point or area at the current water level,
@@ -530,6 +580,9 @@ as the notification. A plotter can use it for a cursor readout.
 - Only the optional grounding detector writes `notifications.grounding`; look-ahead warnings
   use `notifications.navigation.underKeel`.
 - An acknowledged passage or a mooring zone never turns a warning into `normal`.
+- Its own soundings never make the chart deeper, and it never uploads them.
+- A suggested repair never moves an existing route point and never routes through unchecked
+  water.
 
 ## 13. Known limits
 
