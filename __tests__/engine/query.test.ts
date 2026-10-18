@@ -125,5 +125,13 @@ describe("query request validation", () => {
     expect(bad(box(-180, -85, 180, 85))).toEqual(["polygon must fit in a box 50 km across"]);
     expect(bad(box(-179.9, 60, 179.9, 60.01))).toEqual(["polygon must fit in a box 50 km across"]);
     expect(bad(box(22, 60, 22.3, 60.2))).toEqual([]);
+    const holed = box(22, 60, 22.3, 60.2);
+    holed.geometry.coordinates.push([
+      [22.1, 60.1],
+      [22.2, 60.1],
+      [22.2, 60.15],
+      [22.1, 60.1]
+    ]);
+    expect(bad(holed)).toEqual(["polygon holes are not supported"]);
   });
 });

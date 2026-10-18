@@ -45,6 +45,33 @@ function withinSpan(ring: LonLat[]): boolean {
   return ne[0] - sw[0] <= 180 && haversine(sw, ne) <= QUERY_LIMITS.maxPolygonMetres;
 }
 
+/** The outer ring of a GeoJSON Polygon, without the repeated closing position. */
+function parsePolygon(rings: unknown[], errors: string[]): LonLat[] | undefined {
+  if (rings.length > 1) {
+    // A hole would be queried as part of the polygon.
+    errors.push("polygon holes are not supported");
+    return undefined;
+  }
+  const outer = rings[0] as unknown;
+  if (!Array.isArray(outer) || outer.length < 4 || outer.length > QUERY_LIMITS.maxPoints) {
+    errors.push(`polygon outer ring must have 4..${QUERY_LIMITS.maxPoints} positions`);
+    return undefined;
+  }
+  const ring = outer.map(position);
+  if (ring.some((p) => p === undefined)) {
+    errors.push("polygon positions must be [lon, lat] within ±180 / ±85");
+    return undefined;
+  }
+  // GeoJSON repeats the first position at the end; the footprint ring does not.
+  const r = ring as LonLat[];
+  if (!withinSpan(r)) {
+    errors.push(`polygon must fit in a box ${QUERY_LIMITS.maxPolygonMetres / 1000} km across`);
+    return undefined;
+  }
+  const [first, last] = [r[0] as LonLat, r[r.length - 1] as LonLat];
+  return first[0] === last[0] && first[1] === last[1] ? r.slice(0, -1) : r;
+}
+
 function parseGeometry(g: unknown, errors: string[]): LonLat[] | undefined {
   const geom = g as { type?: unknown; coordinates?: unknown } | null;
   if (geom?.type === "Point") {
@@ -55,24 +82,7 @@ function parseGeometry(g: unknown, errors: string[]): LonLat[] | undefined {
     return p && [p];
   }
   if (geom?.type === "Polygon" && Array.isArray(geom.coordinates)) {
-    const outer = geom.coordinates[0] as unknown;
-    if (!Array.isArray(outer) || outer.length < 4 || outer.length > QUERY_LIMITS.maxPoints) {
-      errors.push(`polygon outer ring must have 4..${QUERY_LIMITS.maxPoints} positions`);
-      return undefined;
-    }
-    const ring = outer.map(position);
-    if (ring.some((p) => p === undefined)) {
-      errors.push("polygon positions must be [lon, lat] within ±180 / ±85");
-      return undefined;
-    }
-    // GeoJSON repeats the first position at the end; the footprint ring does not.
-    const r = ring as LonLat[];
-    if (!withinSpan(r)) {
-      errors.push(`polygon must fit in a box ${QUERY_LIMITS.maxPolygonMetres / 1000} km across`);
-      return undefined;
-    }
-    const [first, last] = [r[0] as LonLat, r[r.length - 1] as LonLat];
-    return first[0] === last[0] && first[1] === last[1] ? r.slice(0, -1) : r;
+    return parsePolygon(geom.coordinates as unknown[], errors);
   }
   errors.push("geometry must be a GeoJSON Point or Polygon");
   return undefined;

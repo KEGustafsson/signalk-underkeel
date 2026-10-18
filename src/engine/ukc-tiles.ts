@@ -47,6 +47,11 @@ export function classify(v: NodeValues, input: UkcTileInput, bound = false): Ukc
     }
     return v.flags & FLAGS.NO_COVERAGE ? undefined : "land";
   }
+  // Past the threshold a wider σ lowers P, so a bound's widest σ no longer
+  // bounds its children's P from above: some child is at P ≥ 0.5.
+  if (bound && v.dMin <= input.threshold) {
+    return "danger";
+  }
   const risk = probabilityBelowZero(
     v.dMin - input.threshold,
     Math.hypot(v.sigmaD, input.sigmaExtra)

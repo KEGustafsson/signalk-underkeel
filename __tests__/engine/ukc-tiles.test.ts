@@ -67,6 +67,15 @@ describe("UKC classes", () => {
     // A bound over land or a gap may also hold charted water: drawn, never hidden.
     expect(classify({ ...v, dMin: -Infinity }, input(2), true)).toBe("danger");
     expect(classify({ ...v, dMin: -Infinity, flags: 2 }, input(2), true)).toBe("unverified");
+    // Past the threshold the bound's wide σ lowers P below a finer child's.
+    const high: UkcTileInput = {
+      ...input(13),
+      thresholds: { alert: 0.5, warn: 0.62, alarm: 0.9 }
+    };
+    const wide = { ...v, dMin: 12, sigmaD: 4 };
+    expect(classify(wide, high)).toBe("caution");
+    expect(classify({ ...wide, sigmaD: 2.6 }, high)).toBe("danger");
+    expect(classify(wide, high, true)).toBe("danger");
   });
 
   test("the rock in the fairway is danger for a 3.6 m threshold and clear water is not", () => {
