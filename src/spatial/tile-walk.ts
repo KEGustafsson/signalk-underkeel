@@ -6,6 +6,11 @@ export interface TileCell {
   x: number;
   y: number;
   values: NodeValues;
+  /**
+   * The values bound finer cells (a split node cut at `maxZoom`) instead of
+   * holding over the whole cell.
+   */
+  bound: boolean;
 }
 
 /**
@@ -33,11 +38,11 @@ export function cellsInTile(
     }
     const i = store.find(cz, cx, cy);
     if (i < 0) {
-      out.push({ z: cz, x: cx, y: cy, values: NO_DATA });
+      out.push({ z: cz, x: cx, y: cy, values: NO_DATA, bound: false });
       return;
     }
     if (!store.isSplit(i) || cz >= limit) {
-      out.push({ z: cz, x: cx, y: cy, values: store.values(i) });
+      out.push({ z: cz, x: cx, y: cy, values: store.values(i), bound: store.isSplit(i) });
       return;
     }
     for (const [dx, dy] of CHILDREN) {
@@ -58,13 +63,13 @@ export function cellsInTile(
     if (az === z) {
       visit(z, x, y);
     } else if (!store.isSplit(i) || az >= limit) {
-      out.push({ z, x, y, values: store.values(i) });
+      out.push({ z, x, y, values: store.values(i), bound: store.isSplit(i) });
     } else {
-      out.push({ z, x, y, values: NO_DATA });
+      out.push({ z, x, y, values: NO_DATA, bound: false });
     }
     return out;
   }
-  out.push({ z, x, y, values: NO_DATA });
+  out.push({ z, x, y, values: NO_DATA, bound: false });
   return out;
 }
 

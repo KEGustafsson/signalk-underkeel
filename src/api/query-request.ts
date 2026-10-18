@@ -1,4 +1,5 @@
 import type { LonLat } from "../foundation/geo";
+import { haversine } from "../foundation/geo";
 import type { Parsed } from "./route-request";
 
 /**
@@ -10,7 +11,12 @@ export const QUERY_LIMITS = {
   maxPoints: 500,
   maxBuffer: 2000,
   maxDraft: 30,
-  maxSpeed: 30
+  maxSpeed: 30,
+  /**
+   * Polygon bounding-box diagonal, metres. The query walks every pyramid
+   * tile under the box on the event loop, so this bounds its cost.
+   */
+  maxPolygonMetres: 50_000
 } as const;
 
 export interface QueryRequest {
@@ -28,6 +34,15 @@ function inRange(v: unknown, min: number, max: number): v is number {
 function position(p: unknown): LonLat | undefined {
   const [lon, lat] = Array.isArray(p) ? (p as unknown[]) : [];
   return inRange(lon, -180, 180) && inRange(lat, -85, 85) ? [lon, lat] : undefined;
+}
+
+/** The ring's bounding box is at most maxPolygonMetres across; a box across ±180° is not. */
+function withinSpan(ring: LonLat[]): boolean {
+  const lons = ring.map((p) => p[0]);
+  const lats = ring.map((p) => p[1]);
+  const sw: LonLat = [Math.min(...lons), Math.min(...lats)];
+  const ne: LonLat = [Math.max(...lons), Math.max(...lats)];
+  return ne[0] - sw[0] <= 180 && haversine(sw, ne) <= QUERY_LIMITS.maxPolygonMetres;
 }
 
 function parseGeometry(g: unknown, errors: string[]): LonLat[] | undefined {
@@ -52,6 +67,10 @@ function parseGeometry(g: unknown, errors: string[]): LonLat[] | undefined {
     }
     // GeoJSON repeats the first position at the end; the footprint ring does not.
     const r = ring as LonLat[];
+    if (!withinSpan(r)) {
+      errors.push(`polygon must fit in a box ${QUERY_LIMITS.maxPolygonMetres / 1000} km across`);
+      return undefined;
+    }
     const [first, last] = [r[0] as LonLat, r[r.length - 1] as LonLat];
     return first[0] === last[0] && first[1] === last[1] ? r.slice(0, -1) : r;
   }

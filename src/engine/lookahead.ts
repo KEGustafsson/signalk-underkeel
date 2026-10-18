@@ -123,7 +123,7 @@ export interface LookaheadResult {
   reason: string;
   /** Minimum mean UKC over the horizon, metres; null when not computed. */
   clearance: number | null;
-  /** σ at the riskiest footprint, metres; null when not computed. */
+  /** σ of `clearance`, from the same footprint, metres; null when not computed. */
   clearanceSigma: number | null;
   /** Highest P(UKC < 0) over the horizon; null when not computed. */
   risk: number | null;
@@ -378,6 +378,24 @@ function finiteNav(nav: NavState): boolean {
   );
 }
 
+/**
+ * The footprint with the lowest mean UKC, so clearance and its σ come from
+ * one footprint; between equally shallow ones the wider σ is reported.
+ */
+function shallowestOf(fps: FootprintResult[]): FootprintResult | undefined {
+  let best: FootprintResult | undefined;
+  for (const f of fps) {
+    if (f.mean === null) {
+      continue;
+    }
+    const b = best?.mean as number;
+    if (best === undefined || f.mean < b || (f.mean === b && f.sigma > best.sigma)) {
+      best = f;
+    }
+  }
+  return best;
+}
+
 export function evaluateLookahead(
   nav: NavState,
   inputs: LookaheadInputs,
@@ -420,13 +438,12 @@ export function evaluateLookahead(
   const origin = nav.position.value;
   const fps = timesFor(m, vessel, opts).map((t) => footprint(t, origin, m, vessel, index, s, opts));
   const verdict = degrade(classify(fps, opts), m, wl);
-  const means = fps.map((f) => f.mean).filter((u): u is number => u !== null);
-  const worst = riskiest(fps);
+  const shallowest = shallowestOf(fps);
   return {
     state: verdict.state,
     reason: verdict.reason,
-    clearance: means.length > 0 ? Math.min(...means) : null,
-    clearanceSigma: worst ? worst.sigma : null,
+    clearance: shallowest ? shallowest.mean : null,
+    clearanceSigma: shallowest ? shallowest.sigma : null,
     risk: fps.length > 0 ? Math.max(...fps.map((f) => f.risk)) : null,
     timeToShoal: verdict.tts,
     horizon: m.horizon,

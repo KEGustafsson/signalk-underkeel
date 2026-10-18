@@ -23,16 +23,16 @@ produce `normal`.
 
 Water-level sources, set under **Water level** in the plugin configuration:
 
-- `none`: chart datum with σ 0.3 m;
+- `none`: chart datum, with a σ for the unknown tide;
 - `manual`: a fixed height above chart datum with its σ;
 - `signalk-tide`: `environment.tide.heightNow`, bounded ahead by `heightLow`;
 - `fmi`: the Finnish Meteorological Institute sea-level forecast at the vessel, anchored to the
   nearest tide gauge. FMI reports above theoretical mean water and above N2000; each cell's
-  S-57 vertical datum is mapped to one of them. VERDAT 3, 19 and 26 map to mean water by
-  default; add entries for cells on N2000. An unmapped datum adds σ 0.5 m.
+  S-57 vertical datum is mapped to one of them; the defaults cover the mean-water datums, and
+  cells on N2000 need an entry. An unmapped datum widens σ.
 
-A source that has not updated for 30 minutes falls back to chart datum with σ 0.3 m, and the
-state carries the reason.
+A source that stops updating falls back to chart datum with a wider σ, and the state carries
+the reason.
 
 REST, base `/plugins/signalk-underkeel/v1`, open to readonly users:
 

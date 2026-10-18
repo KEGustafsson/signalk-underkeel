@@ -44,6 +44,17 @@ describe("probabilistic look-ahead on the synthetic chart", () => {
     expect(r.timeToShoal).toBeNull();
   });
 
+  test("clearance and its σ come from the same footprint", () => {
+    for (const lon of [westOfRock(170), westOfRock(25), 22.003, 22.022]) {
+      const r = evaluateLookahead(nav(lon, FAIRWAY_LAT), ctx(DEEP_KEEL), index, NOW);
+      const charted = r.footprints.filter((f) => f.mean !== null);
+      const min = Math.min(...charted.map((f) => f.mean as number));
+      const atMin = charted.filter((f) => f.mean === min);
+      expect(r.clearance).toBe(min);
+      expect(r.clearanceSigma).toBe(Math.max(...atMin.map((f) => f.sigma)));
+    }
+  });
+
   test("the rock far ahead is an alert, nearer a warn, close an alarm", () => {
     const far = evaluateLookahead(nav(westOfRock(170), FAIRWAY_LAT), ctx(DEEP_KEEL), index, NOW);
     expect(far.state).toBe("alert");

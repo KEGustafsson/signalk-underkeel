@@ -150,8 +150,11 @@ function checkCorridor(index: ChartIndex, a: LonLat, b: LonLat, r: number, s: Sc
   return { ...leg, result: { ...leg.result, flags, coveredDMin: covered, cellRefs: [...cells] } };
 }
 
+/** P at or above this fails a leg whatever the accepted probability. */
+const FAIL_RISK = 0.5;
+
 function statusOf(risk: number, charted: number | null, flags: number, p: number): LegStatus {
-  if (risk >= 5 * p) {
+  if (risk >= Math.min(5 * p, Math.max(p, FAIL_RISK))) {
     return "fail";
   }
   if (charted === null || flags & (FLAGS.NO_COVERAGE | FLAGS.UNASSESSED | FLAGS.NO_DEPTH)) {

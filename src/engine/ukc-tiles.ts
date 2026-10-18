@@ -35,9 +35,16 @@ export const DETAIL_ZOOMS = 6;
 
 const UNVERIFIED = FLAGS.NO_COVERAGE | FLAGS.UNASSESSED | FLAGS.NO_DEPTH;
 
-/** The class of one cell, or undefined outside every chart. */
-export function classify(v: NodeValues, input: UkcTileInput): UkcClass | undefined {
+/**
+ * The class of one cell, or undefined outside every chart. A bound cell
+ * (`bound`) whose shallowest part is land or a gap may also hold charted
+ * water, so it is drawn as danger or unverified, never hidden.
+ */
+export function classify(v: NodeValues, input: UkcTileInput, bound = false): UkcClass | undefined {
   if (v.dMin === -Infinity) {
+    if (bound) {
+      return v.flags & FLAGS.NO_COVERAGE ? "unverified" : "danger";
+    }
     return v.flags & FLAGS.NO_COVERAGE ? undefined : "land";
   }
   const risk = probabilityBelowZero(
@@ -67,7 +74,7 @@ export function ukcTile(
 ): UkcRect[] {
   const rects: UkcRect[] = [];
   for (const c of cellsInTile(store, z, x, y, z + DETAIL_ZOOMS)) {
-    const cls = classify(c.values, input);
+    const cls = classify(c.values, input, c.bound);
     if (cls === undefined) {
       continue;
     }

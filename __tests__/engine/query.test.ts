@@ -108,5 +108,22 @@ describe("query request validation", () => {
     expect(
       bad({ geometry: { type: "Point", coordinates: [22, 60] }, bufferMetres: -1, draft: 0 })
     ).toEqual(["bufferMetres must be 0..2000", "draft must be 0.1..30"]);
+    const box = (w: number, s: number, e: number, n: number) => ({
+      geometry: {
+        type: "Polygon",
+        coordinates: [
+          [
+            [w, s],
+            [e, s],
+            [e, n],
+            [w, n],
+            [w, s]
+          ]
+        ]
+      }
+    });
+    expect(bad(box(-180, -85, 180, 85))).toEqual(["polygon must fit in a box 50 km across"]);
+    expect(bad(box(-179.9, 60, 179.9, 60.01))).toEqual(["polygon must fit in a box 50 km across"]);
+    expect(bad(box(22, 60, 22.3, 60.2))).toEqual([]);
   });
 });

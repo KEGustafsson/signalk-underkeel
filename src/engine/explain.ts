@@ -127,8 +127,8 @@ const m = (v: number): string => `${v.toFixed(2).replace(/\.?0+$/, "") || "0"} m
 const signed = (v: number): string => (v < 0 ? `− ${m(-v)}` : `+ ${m(v)}`);
 
 /**
- * "charted 2.4 m (±1.06 m, SWEPT) + water level − 0.31 m (fmi) − draft 1.9 m
- *  − squat 0.08 m − heel 0 m − wave 0.15 m → μ = −0.04 m, σ = 0.58 m, P = 53 %"
+ * "charted 2.4 m (±1.06 m, SWEPT) − 0.31 m water level (fmi) − draft 1.9 m
+ *  − squat 0.08 m + heel 0 m − wave 0.15 m → μ = −0.04 m, σ = 0.58 m, P = 53 %"
  */
 export function sentence(e: Explanation): string {
   const notes = [`±${m(e.sigmaCharted)}`, ...e.flags].join(", ");

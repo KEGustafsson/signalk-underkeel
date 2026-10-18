@@ -41,6 +41,7 @@ describe("vector tile encoder", () => {
       [3, { class: "danger" }],
       [3, { class: "clear" }]
     ]);
+    // Cursor continues across rings: the second ring's MoveTo is relative to (0, 64).
     expect(layer?.features[0]?.rings).toEqual([
       [
         [0, 0],
@@ -55,7 +56,7 @@ describe("vector tile encoder", () => {
         [128, 64]
       ]
     ]);
-    // Cursor continues across rings: the second ring's MoveTo is relative to (0, 64).
+    // The cursor resets per feature: the next feature's MoveTo is relative to (0, 0).
     expect(layer?.features[1]?.rings[0]?.[0]).toEqual([0, 64]);
   });
 

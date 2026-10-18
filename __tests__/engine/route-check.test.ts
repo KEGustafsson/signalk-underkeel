@@ -97,6 +97,12 @@ describe("corridor route check on the synthetic chart", () => {
     expect(["marginal", "fail"]).toContain(strict?.status);
   });
 
+  test("a loose accepted probability still fails on the rock", () => {
+    const leg = checkRoute(index, input(fairway, 3.6, { probability: 0.5 }), NOW).legs[0];
+    expect(leg?.risk).toBeGreaterThanOrEqual(0.5);
+    expect(leg?.status).toBe("fail");
+  });
+
   test("the lowest water level over the arrival interval is used", () => {
     const seen: [number, number][] = [];
     const r = checkRoute(
