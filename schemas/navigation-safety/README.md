@@ -11,8 +11,10 @@ Plotter Extensions manifest. `signalk-underkeel` is the first provider.
 | `route-check-response.json`      | `POST /route-check`                                               |
 | `route-repair-response.json`     | `POST /route-repair`                                              |
 | `departure-window-response.json` | `POST /departure-window`                                          |
+| `query-request.json`             | body of `POST /query`                                             |
 | `query-response.json`            | `POST /query`                                                     |
 | `envelope-response.json`         | `GET /envelope`                                                   |
+| `ack-request.json`               | body of `POST /acks`                                              |
 | `ack.json`                       | one entry of `GET /acks`, and the `POST /acks` response           |
 | `notification.json`              | the value of `notifications.navigation.underKeel`                 |
 | `defs.json`                      | shared definitions                                                |

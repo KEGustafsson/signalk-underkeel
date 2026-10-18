@@ -35,7 +35,8 @@ host builds native UX on it and any provider that implements the contract lights
 | `query`           | `POST /query`                            | `query-response.json`            |
 | `acks`            | `GET/POST /acks`, `DELETE /acks/:id`     | `ack.json`                       |
 
-Requests to the route endpoints share `route-check-request.json`; errors are `error.json`.
+Requests to the route endpoints share `route-check-request.json`; `POST /query` takes
+`query-request.json` and `POST /acks` takes `ack-request.json`. Errors are `error.json`.
 
 ## Rules every provider follows
 

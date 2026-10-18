@@ -1,7 +1,9 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
+import { parseAckRequest } from "../../src/api/ack-request";
 import { buildManifest } from "../../src/api/manifest";
+import { parseQueryRequest } from "../../src/api/query-request";
 import underkeel = require("../../src/index");
 import { FIXTURES, M_PER_DEG_LON, ROCK } from "../helpers/fixture-index";
 import { Validator } from "../helpers/json-schema";
@@ -85,6 +87,39 @@ describe("signalk-underkeel satisfies the contract", () => {
     dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-contract-"));
   });
   afterAll(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+
+  test("query and acknowledgement requests the schemas allow are accepted", () => {
+    const square = {
+      type: "Polygon",
+      coordinates: [
+        [
+          [22.0, 60.0],
+          [22.01, 60.0],
+          [22.01, 60.01],
+          [22.0, 60.01],
+          [22.0, 60.0]
+        ]
+      ]
+    };
+    const point = {
+      geometry: { type: "Point", coordinates: ROCK },
+      bufferMetres: 20,
+      draft: 2,
+      speed: 3
+    };
+    for (const body of [point, { geometry: square }]) {
+      expectValid("query-request.json", body);
+      expect(parseQueryRequest(body).ok).toBe(true);
+    }
+    expect(v.validate("query-request.json", {})).toEqual(["$: missing geometry"]);
+    expect(v.validate("query-request.json", { geometry: ROUTE })).toHaveLength(1);
+    const ack = { polygon: square, sector: 20, ttl: 600, notificationId: "n1" };
+    for (const body of [ack, {}]) {
+      expectValid("ack-request.json", body);
+      expect(parseAckRequest(body).ok).toBe(true);
+    }
+    expect(v.validate("ack-request.json", { ttl: 0 })).toEqual(["$.ttl: 0 ≤ 0"]);
+  });
 
   test("manifest, REST responses and the notification", async () => {
     expectValid(
