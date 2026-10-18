@@ -27,19 +27,25 @@ function monitorSection(m: Monitor): Record<string, unknown> {
       envelopeRev: m.envelope.rev
     },
     vessel: m.vesselNotes,
-    waterLevel: m.waterLevelStatus()
+    waterLevel: m.waterLevelStatus(),
+    integrity: m.integrityResult ?? null
   };
 }
 
 export function statusReport(s: {
   load: IndexLoad | undefined;
   monitor: Monitor | undefined;
+  zoneErrors?: string[];
   stopped: EngineStatus;
   now: number;
 }): unknown {
   return {
     ...(s.monitor ? monitorSection(s.monitor) : { engine: s.stopped, vessel: [] }),
     index: indexSection(s.load),
+    mooringZones: {
+      loaded: s.monitor?.zones.map((z) => z.name) ?? [],
+      errors: s.zoneErrors ?? []
+    },
     checkedAt: new Date(s.now).toISOString()
   };
 }

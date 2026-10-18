@@ -48,6 +48,17 @@ describe("plugin configuration", () => {
     expect(c.routeCheck.probability).toBe(0.01);
   });
 
+  test("fan spread and turn rate are read in degrees", () => {
+    const deg = Math.PI / 180;
+    const l = parseConfig({
+      lookahead: { sigmaCog: 8, sigmaRot: 0.2, maxTurnRate: 99, kp: 3 }
+    }).lookahead;
+    expect(l.sigmaCog).toBeCloseTo(8 * deg, 12);
+    expect(l.sigmaRot).toBeCloseTo(0.2 * deg, 12);
+    expect(l.maxTurnRate).toBe(DEFAULT_LOOKAHEAD.maxTurnRate);
+    expect(l.kp).toBe(3);
+  });
+
   test("water level defaults to no source and the default datum table", () => {
     expect(parseConfig({}).waterLevel).toEqual({
       source: "none",

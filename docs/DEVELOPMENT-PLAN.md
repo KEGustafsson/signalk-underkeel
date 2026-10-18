@@ -467,6 +467,34 @@ suppressing.
 | Mooring zones         | User-drawn regions, for example the home berth.                |
 | Acknowledged passages | §4.12.                                                         |
 
+**As built (M4).**
+
+- Each step is scored over the convex hull of the five members' hull footprints, one query per
+  step. Scoring members one by one would leave the water between them unchecked; the hull is
+  never less conservative than the members.
+- A rate of turn, measured or ± σ_ROT (default 0.1°/s), is held for at most 60 s and the
+  member then runs straight. At low speed the horizon reaches minutes, and a turn held that
+  long sweeps the fan across water the boat is not steering for.
+- σ_pos combines GNSS (HDOP × 3 m, 5 m without HDOP) and, from the integrity monitor, its
+  inflation. The buffer is max(10 m, k_p · σ_pos). Speed error (σ_SOG 0.1 m/s) lengthens each
+  footprint by k_p · σ_SOG · t fore and aft instead of widening it, since it moves the boat
+  along its track. The chart's σP is already burned into the pyramid around point hazards.
+- The escape fan uses the maximum turn rate (default 3°/s) and stops at the first heading,
+  smallest change first, that stays clear over the whole horizon. The monitor searches it at
+  most every 3 s and holds the heading in between.
+- Integrity: dead reckoning runs on each fix's own timestamp, so a GNSS feed slower than the
+  1 Hz tick is not read as divergence. σ_DR = √(σ_anchor² + σ_GNSS² + (0.2 m/s · run)²);
+  a consistent run re-anchors every 60 s; a diverged one is not re-anchored, and clears
+  only when the growing σ_DR covers the offset. The current is learned with a 120 s low-pass
+  while |ROT| < 0.01 rad/s. A fix whose `methodQuality` is not a satellite fix sets
+  σ_pos ≥ 50 m. Without speed through water the check reports itself unavailable in the
+  notification and in `/status`.
+- Hysteresis applies between `normal`, `alert`, `warn` and `alarm`. `unknown` and `off` pass
+  through at once, so stale input is never held as an earlier state.
+- Measured on the synthetic archipelago at leaf z20 (`npm run bench`, x86, plain Node):
+  median 1.2 ms and p95 4 ms per tick, escape fan included. Under Jest the same run is about
+  15× slower.
+
 **Stale data.** If position is older than 10 s, the state becomes `UNKNOWN` and the plugin
 raises a `notifications.navigation.underKeel` alert with the message "UKC monitoring
 degraded: position stale". It never reports `normal` on stale input.
@@ -482,6 +510,11 @@ The plugin raises `notifications.grounding` as an emergency when all of the foll
 - an IMU deceleration spike is present.
 
 Off by default. This is the only code path that touches the standard emergency alarm.
+
+**As built (M4).** SOG must fall by more than 70 % within 5 s from at least 0.5 m/s; a
+`propulsion.*.transmission.gear` change in the last 10 s vetoes it. Signal K has no standard
+IMU path, so the deceleration condition is tested only when `imuPath` is configured. Once
+fired, the notification holds until SOG stays above 0.5 m/s for 10 s.
 
 ### 4.10 Signal K data model and REST API
 
@@ -632,6 +665,17 @@ never `normal`.
 
 Acknowledgements are kept per vessel and exported as Signal K **notes**, so they appear on
 the chart and can be deleted there.
+
+**As built (M4).** `POST /acks` takes an optional GeoJSON Polygon (default: the hull of the
+current look-ahead footprints), `sector` in degrees (default 20), `ttl` in seconds and
+`notificationId`; heading, water level and draft are taken from the plugin's current state.
+`GET /acks` is readonly; `POST` and `DELETE /acks/:id` need readwrite. They are stored in
+`acks.json` in the plugin data directory, so no database dependency is added; export as
+Signal K notes is a follow-up. Suppression applies to the published state after hysteresis,
+because it changes the state, not P. It never suppresses a negative mean UKC within
+`certainWithin`: an acknowledgement covers an uncertain chart, not a charted depth shallower
+than the keel. Mooring zones are Signal K `regions` resources named in the configuration and
+suppress the same way, with the zone's name in the reason.
 
 ### 4.13 Living chart
 

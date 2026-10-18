@@ -21,11 +21,15 @@ export interface ApiProvider {
   query(body: unknown): ApiReply;
   ukcTile(z: number, x: number, y: number): TileReply;
   ukcStyle(): unknown;
+  acks(): ApiReply;
+  addAck(body: unknown): ApiReply;
+  deleteAck(id: string): ApiReply;
 }
 
 type Registrar = {
   get(path: string, ...handlers: RequestHandler[]): unknown;
   post(path: string, ...handlers: RequestHandler[]): unknown;
+  delete(path: string, ...handlers: RequestHandler[]): unknown;
 };
 
 /** Request bodies above this size are refused before parsing. */
@@ -75,9 +79,23 @@ function readonly(router: RouterLike): Registrar {
   return router.access ? router.access("readonly") : router;
 }
 
+/** Without the access API the plain router is admin-only, which is stricter still. */
+function readwrite(router: RouterLike): Registrar {
+  return router.access ? router.access("readwrite") : router;
+}
+
+function send(res: Response, reply: ApiReply): void {
+  if (reply.body === undefined) {
+    res.status(reply.status).end();
+  } else {
+    res.status(reply.status).json(reply.body);
+  }
+}
+
 /**
- * REST routes, base `/plugins/signalk-underkeel/v1` (plan §4.10). None of
- * them changes state, so all are open to readonly users. `GET
+ * REST routes, base `/plugins/signalk-underkeel/v1` (plan §4.10). Reads
+ * are open to readonly users; adding or deleting an acknowledgement needs
+ * readwrite. `GET
  * /envelope?rev=N` answers 304 when the client already holds rev N, so
  * clients can poll on the `envelopeRev` delta without refetching.
  */
@@ -121,6 +139,16 @@ export function registerRoutes(router: RouterLike, api: ApiProvider): void {
   });
   r.get(`${API_BASE}/ukc-style.json`, (_req: Request, res: Response) => {
     res.json(api.ukcStyle());
+  });
+  r.get(`${API_BASE}/acks`, (_req: Request, res: Response) => send(res, api.acks()));
+  const w = readwrite(router);
+  w.post(`${API_BASE}/acks`, (req: Request, res: Response) => {
+    readJsonBody(req)
+      .then((body) => send(res, api.addAck(body)))
+      .catch((err: Error) => res.status(400).json({ errors: [err.message] }));
+  });
+  w.delete(`${API_BASE}/acks/:id`, (req: Request, res: Response) => {
+    send(res, api.deleteAck(String((req.params as Record<string, unknown> | undefined)?.id ?? "")));
   });
 }
 

@@ -1,20 +1,19 @@
 import type { Path, Plugin, PluginRouter, ServerAPI } from "@signalk/server-api";
-import { manifestProvider, PLUGIN_ID, ukcStyle } from "./api/manifest";
+import { manifestProvider, PLUGIN_ID } from "./api/manifest";
 import { registerRoutes } from "./api/routes";
 import type { PluginConfig } from "./config";
 import { parseConfig, SCHEMA } from "./config";
 import type { EngineStatus } from "./foundation/state";
 import { createStatus, PATHS } from "./foundation/state";
-import { statusReport } from "./status-report";
 import type { IndexLoad } from "./index-loader";
 import { loadOrBuildIndex } from "./index-loader";
 import type { Clock } from "./monitor";
 import { Monitor, SYSTEM_CLOCK } from "./monitor";
 import type { FetchLike } from "./model/fmi";
-import { CHART_DATUM } from "./model/water-level";
-import { query, ukcTileReply } from "./query-service";
-import type { QueryServiceDeps } from "./query-service";
-import { routeCheck } from "./route-service";
+import { AckStore } from "./ack-store";
+import type { PluginState } from "./api-wiring";
+import { apiFor } from "./api-wiring";
+import { loadZones } from "./zones";
 import fs from "fs";
 import path from "path";
 
@@ -30,10 +29,10 @@ export = function underkeel(
   clock: Clock = SYSTEM_CLOCK,
   fetch: FetchLike = globalThis.fetch
 ): Plugin {
-  let monitor: Monitor | undefined;
-  let load: IndexLoad | undefined;
-  let config: PluginConfig | undefined;
-  let stopped: EngineStatus = createStatus("off", "plugin not started", new Date(clock.now()));
+  const state: PluginState = {
+    zoneErrors: [],
+    stopped: createStatus("off", "plugin not started", new Date(clock.now()))
+  };
 
   return {
     id: PLUGIN_ID,
@@ -44,20 +43,33 @@ export = function underkeel(
     schema: SCHEMA,
 
     start(options: unknown): void {
-      config = parseConfig(options);
-      load = loadOrBuildIndex(config, app.getDataDirPath());
+      const config = parseConfig(options);
+      const load = loadOrBuildIndex(config, app.getDataDirPath());
       if (load.reason) {
         app.setPluginError(load.reason);
       }
-      monitor = new Monitor(app, PLUGIN_ID, config, load.index, load.reason, clock, fetch);
+      const monitor = new Monitor(app, PLUGIN_ID, config, load.index, load.reason, clock, fetch);
+      const acks = new AckStore(path.join(app.getDataDirPath(), "acks.json"));
+      if (acks.error) {
+        app.error(acks.error);
+      }
+      monitor.useAcks(acks);
       monitor.start();
+      Object.assign(state, { config, load, monitor, acks, zoneErrors: [] });
+      void loadZones(config.mooringZones, (id) => app.resourcesApi.getResource("regions", id)).then(
+        ({ zones, errors }) => {
+          monitor.setZones(zones);
+          state.zoneErrors = errors;
+          errors.forEach((e) => app.error(e));
+        }
+      );
       app.registerResourceProvider(manifestProvider(VERSION));
     },
 
     stop(): void {
-      monitor?.stop();
-      monitor = undefined;
-      stopped = createStatus("off", "plugin stopped", new Date(clock.now()));
+      state.monitor?.stop();
+      state.monitor = undefined;
+      state.stopped = createStatus("off", "plugin stopped", new Date(clock.now()));
       app.handleMessage(PLUGIN_ID, {
         updates: [
           {
@@ -67,6 +79,7 @@ export = function underkeel(
               { path: PATHS.clearanceSigma as Path, value: null },
               { path: PATHS.risk as Path, value: null },
               { path: PATHS.timeToShoal as Path, value: null },
+              { path: PATHS.escapeHeading as Path, value: null },
               {
                 path: PATHS.notification as Path,
                 value: { state: "normal", method: [], message: "UKC monitoring stopped" } as never
@@ -78,35 +91,7 @@ export = function underkeel(
     },
 
     registerWithRouter(router: PluginRouter): void {
-      const queryDeps = (): QueryServiceDeps => ({
-        index: load?.index,
-        indexReason: load?.reason ?? "plugin not started",
-        config: config ?? parseConfig({}),
-        vessel: () => monitor?.vessel(),
-        waterLevel: () => monitor?.waterLevel() ?? CHART_DATUM,
-        waveHeight: () => monitor?.nav.waveHeight?.value
-      });
-      registerRoutes(router, {
-        query: (body) => query(body, queryDeps()),
-        ukcTile: (z, x, y) => ukcTileReply(z, x, y, queryDeps()),
-        ukcStyle,
-        status: () => statusReport({ load, monitor, stopped, now: clock.now() }),
-        envelope: () =>
-          monitor
-            ? { rev: monitor.envelope.rev, envelope: monitor.envelope.envelope }
-            : { rev: 0, envelope: { type: "FeatureCollection", features: [] } },
-        routeCheck: (body) =>
-          routeCheck(body, {
-            index: load?.index,
-            indexReason: load?.reason ?? "plugin not started",
-            config: config ?? parseConfig({}),
-            vessel: () => monitor?.vessel(),
-            waterLevel: (start, end) => monitor?.waterLevelOver(start, end) ?? CHART_DATUM,
-            waveHeight: () => monitor?.nav.waveHeight?.value,
-            getRoute: (id) => app.resourcesApi.getResource("routes", id),
-            now: () => clock.now()
-          })
-      });
+      registerRoutes(router, apiFor(app, clock, state));
     }
   };
 };

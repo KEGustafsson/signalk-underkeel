@@ -8,9 +8,13 @@ export const PATHS = {
   clearanceSigma: "navigation.underKeel.clearanceSigma",
   risk: "navigation.underKeel.risk",
   timeToShoal: "navigation.underKeel.timeToShoal",
+  escapeHeading: "navigation.underKeel.escapeHeading",
   envelopeRev: "navigation.underKeel.envelopeRev",
   waterLevel: "navigation.underKeel.waterLevel",
-  notification: "notifications.navigation.underKeel"
+  notification: "notifications.navigation.underKeel",
+  positionIntegrity: "notifications.navigation.positionIntegrity",
+  /** Written only by the optional grounding detector (safety invariant 7). */
+  grounding: "notifications.grounding"
 } as const;
 
 export interface EngineStatus {

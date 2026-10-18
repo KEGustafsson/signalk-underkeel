@@ -209,17 +209,33 @@ flowchart TD
   M -- no --> ONE[check only the hull<br/>at the current position]
   M -- yes --> S{SOG ≥ 0.5 kn?}
   S -- no --> ONE
-  S -- yes --> CONE[footprints along COG<br/>for H = max 60 s, 555.6 m ÷ SOG]
-  ONE & CONE --> Q[for each footprint:<br/>shallowest depth + σ from the index,<br/>P per index tile, keep the highest]
-  Q --> ST[state table, section 7]
-  ST --> PUB[publish values, envelope<br/>and notification]
+  S -- yes --> CONE[fan of five tracks from COG, SOG<br/>and rate of turn, for<br/>H = max 60 s, 555.6 m ÷ SOG]
+  ONE & CONE --> Q[for each step: one footprint<br/>around the five hulls; shallowest depth<br/>+ σ from the index, P per index tile,<br/>keep the highest]
+  Q --> ST[state table and hysteresis,<br/>section 7]
+  ST --> Z{inside an acknowledged<br/>passage or mooring zone?}
+  Z -- yes --> AL[warn and alarm published<br/>as alert with the reason]
+  Z -- no --> PUB[publish values, envelope,<br/>escape heading and notification]
+  AL --> PUB
 ```
 
-A footprint is the hull rectangle (length × beam) turned to the heading, placed where COG and
-SOG put the boat after t seconds. It widens by tan 5° per metre run, because the course
-becomes less certain the further ahead it goes, and it gets a 10 m buffer for position error.
-Footprints are at most 3 s apart; for a fast boat the step shrinks so neighbouring footprints
-still touch. At 5 kn (2.6 m/s) the horizon is 214 s, checked with 73 footprints.
+The prediction is a fan of five tracks. The central track keeps the current speed and rate of
+turn. The other four add or take 1σ of course (5°) and of rate of turn (0.1°/s), because the
+course becomes less certain the further ahead it goes. A turn is held for at most 60 s; after
+that the track runs straight.
+
+At each step the plugin places the hull rectangle (length × beam) on each of the five tracks
+and joins them into one footprint, the convex hull of the five. The index is asked about that
+footprint, so the water between the tracks is checked too. The footprint gets a buffer for
+position error, at least 10 m or 2σ of the position uncertainty, and grows fore and aft with
+the speed uncertainty. The position σ comes from the GNSS (HDOP × 3 m, 5 m without HDOP) and
+is raised by the integrity check in section 7.
+
+Steps are at most 3 s apart; for a fast boat the step shrinks so neighbouring footprints still
+touch. At 5 kn (2.6 m/s) the horizon is 214 s.
+
+Below 18 kn the horizon always reaches 555.6 m ahead, so slowing down does not shorten the
+envelope. The same distance takes longer, though: 154 s at 7 kn, 270 s at 4 kn. Warn and alarm
+count seconds to the shoal, so at lower speed they come closer to it.
 
 The look-ahead uses the current speed for squat and the current roll for heel. Roll older than
 10 s is ignored.
@@ -241,6 +257,11 @@ when it rests on less than full input:
 - course or speed stale: `unknown` ("only the current position is checked");
 - water level is a fallback: `alert` with the fallback's reason.
 
+A state is raised after 2 consecutive seconds at its level and lowered after 5 consecutive
+seconds below 80 % of its threshold, so a footprint that touches a shoal edge now and then
+does not toggle the alarm. `unknown` and `off` apply at once: missing input is never held as an
+earlier state.
+
 ### The approach, step by step
 
 The simulated vessel runs west at 5 kn along 60.0814° N toward an island. The envelope is
@@ -254,13 +275,16 @@ coloured per footprint class (green clear, amber caution, red danger) over the U
 | State    | Vessel at | Reason published            | Why                                                           |
 | -------- | --------- | --------------------------- | ------------------------------------------------------------- |
 | `normal` | 22.0790 E | none                        | no footprint in the 214 s horizon reaches P 1 %               |
-| `alert`  | 22.0750 E | `shoal risk ahead in 183 s` | the island is in the horizon, but more than 120 s ahead       |
-| `warn`   | 22.0710 E | `shoal ahead in 99 s`       | P ≥ 5 % reached within 120 s                                  |
-| `alarm`  | 22.0670 E | `shoal ahead in 21 s`       | P ≥ 20 % within 60 s, and the mean UKC is below 0 within 30 s |
+| `alert`  | 22.0750 E | `shoal risk ahead in 168 s` | the island is in the horizon, but more than 120 s ahead       |
+| `warn`   | 22.0710 E | `shoal ahead in 90 s`       | P ≥ 5 % reached within 120 s                                  |
+| `alarm`  | 22.0670 E | `shoal ahead in 18 s`       | P ≥ 20 % within 60 s, and the mean UKC is below 0 within 30 s |
 
 In `alert`, `warn` and `alarm` the deciding point is the island itself, with P > 99 %. What
 changes is how soon the boat gets there. The white ring is the centre of the index tile that set
 the highest P; in clear water that can be a large tile whose centre lies off the track.
+
+The escape heading published at the same points is 255° in `alert`, 245° in `warn` and 220° in
+`alarm`: a turn to port that passes south of the island, growing as the island gets closer.
 
 The thresholds and time windows are set under **Look-ahead**:
 
@@ -272,16 +296,18 @@ The thresholds and time windows are set under **Look-ahead**:
 
 Published every second:
 
-| Path                                  | Unit  | Meaning                                                           |
-| ------------------------------------- | ----- | ----------------------------------------------------------------- |
-| `navigation.underKeel.state`          |       | `normal`, `alert`, `warn`, `alarm`, `unknown`, `off`              |
-| `navigation.underKeel.clearance`      | m     | lowest mean UKC over the horizon                                  |
-| `navigation.underKeel.clearanceSigma` | m     | σ of that clearance, from the same footprint                      |
-| `navigation.underKeel.risk`           | ratio | highest P(UKC < 0) over the horizon                               |
-| `navigation.underKeel.timeToShoal`    | s     | seconds until P first reaches the warn level; null if it does not |
-| `navigation.underKeel.envelopeRev`    |       | increments when `GET /envelope` changes                           |
-| `navigation.underKeel.waterLevel`     | m     | water level applied above chart datum                             |
-| `notifications.navigation.underKeel`  |       | state, message and the explanation of every term                  |
+| Path                                         | Unit  | Meaning                                                           |
+| -------------------------------------------- | ----- | ----------------------------------------------------------------- |
+| `navigation.underKeel.state`                 |       | `normal`, `alert`, `warn`, `alarm`, `unknown`, `off`              |
+| `navigation.underKeel.clearance`             | m     | lowest mean UKC over the horizon                                  |
+| `navigation.underKeel.clearanceSigma`        | m     | σ of that clearance, from the same footprint                      |
+| `navigation.underKeel.risk`                  | ratio | highest P(UKC < 0) over the horizon                               |
+| `navigation.underKeel.timeToShoal`           | s     | seconds until P first reaches the warn level; null if it does not |
+| `navigation.underKeel.escapeHeading`         | rad   | true heading to turn to, below; null in `normal`                  |
+| `navigation.underKeel.envelopeRev`           |       | increments when `GET /envelope` changes                           |
+| `navigation.underKeel.waterLevel`            | m     | water level applied above chart datum                             |
+| `notifications.navigation.underKeel`         |       | state, message and the explanation of every term                  |
+| `notifications.navigation.positionIntegrity` |       | GNSS fix doubtful, below                                          |
 
 `clearance` is `null` when nothing is charted, and also when a footprint reaches land, as in the
 Data Browser picture: the lowest UKC is then −∞, which JSON cannot carry. `state` and `risk`
@@ -295,13 +321,13 @@ and the named hazard when one set the depth. The `alarm` from the approach:
 {
   "state": "alarm",
   "method": ["visual", "sound"],
-  "message": "shoal ahead in 21 s: land + 0.2 m water level (manual) − draft 2.2 m − squat 0.1 m + heel 0 m − wave 0 m → μ = −∞ m, σ = 0.51 m, P = > 99 %",
+  "message": "shoal ahead in 18 s: land + 0.2 m water level (manual) − draft 2.2 m − squat 0.1 m + heel 0 m − wave 0 m → μ = −∞ m, σ = 0.51 m, P = > 99 %",
   "data": {
     "engineState": "alarm",
     "clearance": null,
     "clearanceSigma": 0.51,
     "risk": 1,
-    "timeToShoal": 21,
+    "timeToShoal": 18,
     "explanation": {
       "charted": null,
       "sigmaCharted": 0.5,
@@ -325,6 +351,64 @@ and the named hazard when one set the depth. The `alarm` from the approach:
 
 `clearanceSigma` is rounded here. The server adds `id` and `status` for acknowledging and
 silencing.
+
+### Escape heading
+
+In `alert`, `warn` and `alarm` the plugin also looks for a way out. It tries headings in 5°
+steps out to 90° either side, smallest change first, each reached by a turn at the boat's
+maximum rate of turn (3°/s by default). The first heading that stays clear over the whole
+horizon wins; if none does, the one with the most time before shoal water. The result is
+published as `navigation.underKeel.escapeHeading`. It is searched at most every 3 s and held in
+between. The plugin only publishes it; it never steers.
+
+### Position integrity
+
+The look-ahead is only as good as the position. Each second the plugin compares the GNSS fix
+with a dead-reckoning track from heading, speed through water and a current learned while the
+boat holds its course. When the fix moves further from that track than their combined
+uncertainty allows, as when GNSS is jammed or spoofed:
+
+- the position σ is raised to the distance between them, so every footprint grows;
+- `notifications.navigation.positionIntegrity` is raised as `warn` with the reason.
+
+A fix that is not a satellite fix sets the position σ to at least 50 m, and an HDOP above 4 is
+reported the same way. Without speed through water the check cannot run; the notification and
+`/status` say so.
+
+### Acknowledged passages and mooring zones
+
+Some places alarm every time and are known to be fine, such as a narrow channel the skipper
+uses daily. `POST /acks` records an acknowledgement for the current situation:
+
+- the area of the current look-ahead footprints, or a polygon given in the request;
+- a heading sector, ±20° by default;
+- the current water level and draft;
+- an optional expiry.
+
+Later, while the footprint is inside that area, the heading inside the sector, the water level
+no more than 5 cm lower and the draft no deeper, `warn` and `alarm` are published as `alert`
+with the reason "acknowledged passage". They are never published as `normal`. A negative mean
+UKC within 30 s is never suppressed: an acknowledgement covers an uncertain chart, not a charted
+depth shallower than the keel. `GET /acks` lists them; `POST` and `DELETE /acks/:id` need
+read-write access.
+
+Mooring zones work the same way without a heading or water-level condition. They are Signal K
+regions named in the settings, for example the home berth; inside one, `warn` and `alarm` are
+published as `alert` with the zone's name.
+
+### Grounding detector
+
+The optional grounding detector, off by default, is the only part of the plugin that writes
+`notifications.grounding`, the Signal K emergency that means "aground". It fires when all of
+these hold:
+
+- SOG falls by more than 70 % within 5 s, from at least 0.5 m/s;
+- there was no gear change in the last 10 s;
+- the measured depth is within 0.3 m of the draft, or the look-ahead puts P ≥ 80 % under the
+  boat;
+- when an acceleration path is configured, a deceleration of at least 2 m/s² in the last 5 s.
+
+It holds until SOG stays above 0.5 m/s for 10 s.
 
 ## 8. Water level
 
@@ -443,8 +527,9 @@ as the notification. A plotter can use it for a cursor readout.
 - It never marks a route leg `ok` when the corridor lacks coverage or survey quality; such legs
   are `unverified`.
 - It never sends autopilot or steering commands.
-- It never writes `notifications.grounding`; look-ahead warnings use
-  `notifications.navigation.underKeel`.
+- Only the optional grounding detector writes `notifications.grounding`; look-ahead warnings
+  use `notifications.navigation.underKeel`.
+- An acknowledged passage or a mooring zone never turns a warning into `normal`.
 
 ## 13. Known limits
 

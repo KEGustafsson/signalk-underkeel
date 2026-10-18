@@ -2,27 +2,26 @@ import type { Delta, Path, ServerAPI, Unsubscribes } from "@signalk/server-api";
 import type { PluginConfig } from "./config";
 import { buildEnvelope, EnvelopeTracker } from "./engine/envelope";
 import type { LookaheadResult, NavState, Sample } from "./engine/lookahead";
+import type { AckStore } from "./ack-store";
+import type { Zone } from "./engine/acks";
+import { suppress } from "./engine/acks";
+import { GroundingDetector } from "./engine/grounding-detect";
+import { Hysteresis } from "./engine/hysteresis";
 import { evaluateLookahead } from "./engine/lookahead";
 import type { UnderKeelNotification } from "./engine/notify";
 import { notificationFor } from "./engine/notify";
 import type { LonLat } from "./foundation/geo";
-import { haversine } from "./foundation/geo";
 import { PATHS } from "./foundation/state";
-import type { DatumUse } from "./ingest/datum";
-import { datumUses } from "./ingest/datum";
 import type { FetchLike } from "./model/fmi";
-import { FmiProvider } from "./model/fmi";
+import type { IntegrityResult } from "./model/integrity";
+import { IntegrityMonitor } from "./model/integrity";
 import type { WaterLevel } from "./model/uncertainty";
-import type { ProviderHealth, WaterLevelProvider } from "./model/water-level";
-import {
-  lowestWaterLevel,
-  manualProvider,
-  resolveWaterLevel,
-  SignalKTideProvider
-} from "./model/water-level";
 import type { VesselModel } from "./model/vessel";
 import { resolveVessel } from "./model/vessel";
 import type { ChartIndex } from "./spatial/chart-index";
+import type { WaterLevelStatus } from "./water-level-service";
+import { WaterLevelService } from "./water-level-service";
+import { ChangeNotifier, groundingNotification, integrityNotification } from "./notifications";
 
 /**
  * Signal K wiring for the look-ahead: keeps the latest navigation inputs,
@@ -51,38 +50,16 @@ const INPUT_PATHS = [
   "navigation.courseOverGroundTrue",
   "navigation.speedOverGround",
   "navigation.headingTrue",
+  "navigation.rateOfTurn",
+  "navigation.speedThroughWater",
+  "navigation.gnss.horizontalDilution",
+  "navigation.gnss.methodQuality",
   "navigation.attitude",
   "environment.water.waves.significantHeight"
 ] as const;
 
-const TIDE_PATHS = ["environment.tide.heightNow", "environment.tide.heightLow"] as const;
-
-/** FMI is re-fetched when the vessel is this far from the forecast point. */
-const FMI_REFETCH_METRES = 10000;
-/** A failed or moved-triggered FMI fetch is retried no sooner than this. */
-const FMI_RETRY_MS = 60000;
-
-function createProvider(config: PluginConfig, fetch: FetchLike): WaterLevelProvider | undefined {
-  const w = config.waterLevel;
-  switch (w.source) {
-    case "manual":
-      return manualProvider(w.height, w.sigma);
-    case "signalk-tide":
-      return new SignalKTideProvider(w.sigma);
-    case "fmi":
-      return new FmiProvider(fetch);
-    case "none":
-      return undefined;
-  }
-}
-
-/** What `GET /status` reports about the water level. */
-export interface WaterLevelStatus {
-  source: PluginConfig["waterLevel"]["source"];
-  applied: WaterLevel;
-  health?: ProviderHealth;
-  datums: DatumUse[];
-}
+/** The escape fan is searched at most once in this many ms. */
+const ESCAPE_EVERY_MS = 3000;
 
 /** Signal K timestamps from the future are clock errors; trust receipt time then. */
 const FUTURE_TOLERANCE_MS = 5000;
@@ -120,10 +97,19 @@ export class Monitor {
   vesselNotes: string[] = [];
   private timer: unknown;
   private readonly unsubscribes: Unsubscribes = [];
-  private lastNotification = "";
-  private readonly provider: WaterLevelProvider | undefined;
-  private readonly datums: DatumUse[];
-  private lastFetch = -Infinity;
+  private readonly levels: WaterLevelService;
+  private readonly integrity = new IntegrityMonitor();
+  integrityResult?: IntegrityResult;
+  private readonly notifier: ChangeNotifier;
+  /** notifications.grounding is first written when the detector fires, never before. */
+  private everGrounded = false;
+  private acks?: AckStore;
+  private readonly grounding?: GroundingDetector;
+  zones: Zone[] = [];
+  private readonly hysteresis: Hysteresis;
+  /** The escape fan is searched at most this often; the heading is held between. */
+  private escape: number | null = null;
+  private escapeAt = -Infinity;
 
   constructor(
     private readonly app: App,
@@ -134,8 +120,12 @@ export class Monitor {
     private readonly clock: Clock = SYSTEM_CLOCK,
     fetch: FetchLike = globalThis.fetch
   ) {
-    this.provider = createProvider(config, fetch);
-    this.datums = index ? datumUses(index.catalogue.cells, config.waterLevel.datums) : [];
+    this.levels = new WaterLevelService(config, index, fetch);
+    this.notifier = new ChangeNotifier(app, pluginId);
+    if (config.groundingDetector) {
+      this.grounding = new GroundingDetector(config.groundingDetector);
+    }
+    this.hysteresis = new Hysteresis(config.lookahead.thresholds);
     this.last = this.evaluate();
     this.since = clock.now();
   }
@@ -144,10 +134,12 @@ export class Monitor {
     this.app.subscriptionmanager.subscribe(
       {
         context: "vessels.self" as never,
-        subscribe: [
-          ...INPUT_PATHS,
-          ...(this.provider instanceof SignalKTideProvider ? TIDE_PATHS : [])
-        ].map((path) => ({ path: path as Path, policy: "instant" }))
+        subscribe: [...INPUT_PATHS, ...this.levels.paths(), ...(this.grounding?.paths() ?? [])].map(
+          (path) => ({
+            path: path as Path,
+            policy: "instant"
+          })
+        )
       },
       this.unsubscribes,
       (err) => this.app.error(`subscription failed: ${String(err)}`),
@@ -166,9 +158,10 @@ export class Monitor {
     for (const u of this.unsubscribes.splice(0)) {
       u();
     }
-    if (this.provider instanceof FmiProvider) {
-      this.provider.abort();
-    }
+    this.levels.stop();
+    // A raised integrity or grounding notification must not outlive the plugin.
+    this.notifier.clear(PATHS.positionIntegrity, "UKC monitoring stopped");
+    this.notifier.clear(PATHS.grounding, "UKC monitoring stopped");
   }
 
   onDelta(delta: Delta): void {
@@ -185,7 +178,8 @@ export class Monitor {
   }
 
   private record(path: string, value: unknown, at: number): void {
-    if (this.provider instanceof SignalKTideProvider && this.provider.record(path, value, at)) {
+    this.grounding?.record(path, value, at);
+    if (this.levels.record(path, value, at)) {
       return;
     }
     const set = <T>(key: keyof NavState, v: T | undefined) => {
@@ -207,6 +201,18 @@ export class Monitor {
         break;
       case "navigation.headingTrue":
         set("heading", asNumber(value));
+        break;
+      case "navigation.rateOfTurn":
+        set("rot", asNumber(value));
+        break;
+      case "navigation.gnss.horizontalDilution":
+        set("hdop", asNumber(value));
+        break;
+      case "navigation.speedThroughWater":
+        set("stw", asNumber(value));
+        break;
+      case "navigation.gnss.methodQuality":
+        set("methodQuality", typeof value === "string" ? value : undefined);
         break;
       case "navigation.attitude":
         set("roll", asNumber((value as { roll?: unknown } | null)?.roll));
@@ -233,45 +239,82 @@ export class Monitor {
     return resolved.vessel;
   }
 
-  /** The water level the engine applies now. */
-  waterLevel(): WaterLevel {
-    const now = this.clock.now();
-    return resolveWaterLevel(this.provider, this.datums, this.nav.position?.value, now, now);
+  /**
+   * Acknowledged passages and mooring zones act on the published state,
+   * after hysteresis: they change the state, not P, so hysteresis would
+   * otherwise never let an acknowledged warn go.
+   */
+  private suppressed(r: LookaheadResult): LookaheadResult {
+    const vessel = this.vessel();
+    const heading = this.heading();
+    if (!vessel || heading === undefined) {
+      return r;
+    }
+    return suppress(r, {
+      acks: this.acks?.list(this.clock.now()) ?? [],
+      zones: this.zones,
+      heading,
+      waterLevel: this.waterLevel().h,
+      draft: vessel.draft,
+      now: this.clock.now(),
+      thresholds: this.config.lookahead.thresholds,
+      certainWithin: this.config.lookahead.certainWithin
+    });
   }
 
-  /**
-   * The lowest water level over [start, end] (epoch ms), for route checks.
-   * A route has no single position, so FMI answers with the forecast held
-   * for the vessel's position.
-   */
+  /** Fresh true heading, else COG; undefined when neither is fresh. */
+  heading(): number | undefined {
+    const now = this.clock.now();
+    const limit = this.config.lookahead.staleAfter * 1000;
+    const fresh = (x: Sample<number> | undefined) =>
+      x && now - x.at <= limit ? x.value : undefined;
+    return fresh(this.nav.heading) ?? fresh(this.nav.cog);
+  }
+
+  /** Acknowledged passages to honour from now on. */
+  useAcks(store: AckStore): void {
+    this.acks = store;
+  }
+
+  /** Mooring zones to suppress warnings in. */
+  setZones(zones: Zone[]): void {
+    this.zones = zones;
+  }
+
+  /** The water level the engine applies now. */
+  waterLevel(): WaterLevel {
+    return this.levels.now(this.nav.position?.value, this.clock.now());
+  }
+
+  /** The lowest water level over [start, end] (epoch ms), for route checks. */
   waterLevelOver(start: number, end: number): WaterLevel {
-    return lowestWaterLevel(this.provider, this.datums, undefined, start, end, this.clock.now());
+    return this.levels.over(start, end, this.clock.now());
   }
 
   waterLevelStatus(): WaterLevelStatus {
-    return {
-      source: this.config.waterLevel.source,
-      applied: this.waterLevel(),
-      health: this.provider?.health(this.clock.now()),
-      datums: this.datums
-    };
+    return this.levels.status(this.nav.position?.value, this.clock.now());
   }
 
-  /** Starts an FMI fetch when one is due or the vessel left the forecast area. */
-  private refreshFmi(): void {
-    const p = this.provider;
-    const pos = this.nav.position?.value;
-    if (!(p instanceof FmiProvider) || !pos) {
-      return;
-    }
-    const now = this.clock.now();
-    const at = p.forecastPosition();
-    const moved = at === undefined || haversine(at, pos) > FMI_REFETCH_METRES;
-    const since = now - this.lastFetch;
-    if (since >= this.config.waterLevel.updateInterval * 1000 || (moved && since >= FMI_RETRY_MS)) {
-      this.lastFetch = now;
-      void p.update(pos, now);
-    }
+  /** Runs the integrity check on the inputs that are still fresh. */
+  private checkIntegrity(now: number): IntegrityResult {
+    const fresh = <T>(x: Sample<T> | undefined): T | undefined =>
+      x && now - x.at <= this.config.lookahead.staleAfter * 1000 ? x.value : undefined;
+    const n = this.nav;
+    const result = this.integrity.update(
+      {
+        position: fresh(n.position),
+        heading: fresh(n.heading),
+        stw: fresh(n.stw),
+        cog: fresh(n.cog),
+        sog: fresh(n.sog),
+        rot: fresh(n.rot),
+        hdop: fresh(n.hdop),
+        methodQuality: fresh(n.methodQuality)
+      },
+      n.position?.at ?? now
+    );
+    this.integrityResult = result;
+    return result;
   }
 
   private evaluate(): LookaheadResult {
@@ -283,22 +326,39 @@ export class Monitor {
         clearanceSigma: null,
         risk: null,
         timeToShoal: null,
+        escapeHeading: null,
         horizon: 0,
         footprints: []
       };
     }
-    return evaluateLookahead(
+    const now = this.clock.now();
+    const escape = now - this.escapeAt >= ESCAPE_EVERY_MS;
+    const r = evaluateLookahead(
       this.nav,
-      { vessel: this.vessel(), dynamics: this.config.dynamics, waterLevel: this.waterLevel() },
+      {
+        vessel: this.vessel(),
+        dynamics: this.config.dynamics,
+        waterLevel: this.waterLevel(),
+        positionSigma: this.checkIntegrity(now).sigmaPos,
+        escape
+      },
       this.index,
-      this.clock.now(),
+      now,
       this.config.lookahead
     );
+    if (r.state === "normal" || r.state === "unknown") {
+      this.escape = null;
+      this.escapeAt = -Infinity;
+    } else if (escape) {
+      this.escapeAt = now;
+      this.escape = r.escapeHeading;
+    }
+    return { ...r, escapeHeading: this.escape };
   }
 
   tick(): void {
-    this.refreshFmi();
-    const next = this.evaluate();
+    this.levels.refresh(this.nav.position?.value, this.clock.now());
+    const next = this.suppressed(this.hysteresis.next(this.evaluate()));
     if (next.state !== this.last.state) {
       this.since = this.clock.now();
     }
@@ -314,6 +374,7 @@ export class Monitor {
             { path: PATHS.clearanceSigma as Path, value: r.clearanceSigma },
             { path: PATHS.risk as Path, value: r.risk },
             { path: PATHS.timeToShoal as Path, value: r.timeToShoal },
+            { path: PATHS.escapeHeading as Path, value: r.escapeHeading },
             { path: PATHS.envelopeRev as Path, value: this.envelope.rev },
             { path: PATHS.waterLevel as Path, value: this.waterLevel().h }
           ]
@@ -321,21 +382,30 @@ export class Monitor {
       ]
     });
     this.notify(notificationFor(r));
+    if (this.integrityResult) {
+      this.notifier.send(PATHS.positionIntegrity, integrityNotification(this.integrityResult));
+    }
+    this.checkGrounding(r);
     this.app.setPluginStatus(
       r.state === "normal" ? "Monitoring: normal" : `Monitoring: ${r.state} — ${r.reason}`
     );
   }
 
-  /** Publishes the notification only when its state or message changes. */
+  /** Publishes the look-ahead notification only when its state or message changes. */
   notify(n: UnderKeelNotification): void {
-    const key = `${n.state}|${n.message}`;
-    if (key === this.lastNotification) {
-      return;
+    this.notifier.send(PATHS.notification, n);
+  }
+
+  /** `notifications.grounding` from the optional detector (safety invariant 7). */
+  private checkGrounding(r: LookaheadResult): void {
+    if (this.grounding) {
+      const draft = this.vessel()?.draft;
+      const g = this.grounding.check(this.clock.now(), draft, r.footprints[0]?.risk ?? 0);
+      if (g.grounded || this.everGrounded) {
+        this.everGrounded = true;
+        this.notifier.send(PATHS.grounding, groundingNotification(g));
+      }
     }
-    this.lastNotification = key;
-    this.app.handleMessage(this.pluginId, {
-      updates: [{ values: [{ path: PATHS.notification as Path, value: n as never }] }]
-    });
   }
 
   private publishMeta(): void {
@@ -347,6 +417,7 @@ export class Monitor {
             { path: PATHS.clearanceSigma as Path, value: { units: "m" } },
             { path: PATHS.risk as Path, value: { units: "ratio" } },
             { path: PATHS.timeToShoal as Path, value: { units: "s" } },
+            { path: PATHS.escapeHeading as Path, value: { units: "rad" } },
             { path: PATHS.waterLevel as Path, value: { units: "m" } }
           ]
         }

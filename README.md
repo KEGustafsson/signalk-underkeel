@@ -7,16 +7,20 @@ and own-sounding discrepancies for chartplotters such as Freeboard-SK.
 > Advisory navigation aid, non-commercial. Not ECDIS, and not a replacement for official charts
 > or a proper lookout: always carry and use an official nautical chart, paper or ENC.
 
-With a chart index and a configured draft, the plugin checks a straight cone along COG every
-second. For each footprint it computes P(UKC < 0) from the charted depth and its survey
+With a chart index and a configured draft, the plugin predicts a fan of five tracks from COG,
+SOG and rate of turn every second. For each footprint it computes P(UKC < 0) from the charted depth and its survey
 uncertainty (CATZOC), the draft, squat, heel, a wave allowance and the water level, and
 publishes:
 
 - `navigation.underKeel.state`: `normal`, `alert`, `warn`, `alarm`, `unknown` or `off`;
 - `navigation.underKeel.clearance` and `.clearanceSigma` (predicted minimum UKC and its σ),
-  `.risk` (highest P(UKC < 0) over the horizon), `.timeToShoal`, `.envelopeRev` and
+  `.risk` (highest P(UKC < 0) over the horizon), `.timeToShoal`, `.escapeHeading` (the
+  heading with the longest time to shoal, when not `normal`), `.envelopeRev` and
   `.waterLevel` (the level applied above chart datum);
-- `notifications.navigation.underKeel`, with an explanation of every term behind the result.
+- `notifications.navigation.underKeel`, with an explanation of every term behind the result;
+- `notifications.navigation.positionIntegrity` (`warn`) when GNSS leaves dead reckoning from
+  heading and speed through water, the fix is not a satellite fix, or HDOP exceeds 4. The
+  position uncertainty then widens every footprint.
 
 Stale position, a missing draft or index, no chart coverage or a fallback water level never
 produce `normal`.
@@ -34,6 +38,11 @@ Water-level sources, set under **Water level** in the plugin configuration:
 A source that stops updating falls back to chart datum with a wider σ, and the state carries
 the reason.
 
+**Mooring zones**: Signal K region ids listed in the configuration suppress warn and alarm
+to alert inside them, with the zone named. **Grounding detector** (off by default): a sudden
+stop in water as shallow as the keel raises `notifications.grounding`; it is the only part of
+the plugin that writes that path.
+
 REST, base `/plugins/signalk-underkeel/v1`, open to readonly users:
 
 - `GET /status`: engine state, chart index and cell editions, look-ahead summary, water-level
@@ -46,6 +55,10 @@ REST, base `/plugins/signalk-underkeel/v1`, open to readonly users:
   its explanation and the cell editions used.
 - `POST /query`: a GeoJSON Point or Polygon, with an optional buffer, draft and speed; returns
   the class, P(UKC < 0), the deciding hazard and the explanation, for cursor readouts.
+- `GET /acks`, `POST /acks`, `DELETE /acks/:id`: acknowledged passages. Inside one, with the
+  heading within ±20° and no less water or more draft than when acknowledged, warn and alarm
+  are published as alert with the reason "acknowledged passage". Adding and deleting need a
+  readwrite user.
 - `GET /tiles/ukc/{z}/{x}/{y}.pbf`: Mapbox vector tiles from zoom 11, one `ukc` layer of cells
   classed `clear`, `caution`, `danger`, `unverified` or `land` for the current draft and water
   level. `GET /ukc-style.json` is a MapLibre style for them.

@@ -39,14 +39,20 @@ export function geomBounds(geom: Geom): Rect {
 
 /** Even-odd ray cast; a point exactly on an edge may fall either side. */
 export function pointInRing(p: XY, ring: Ring): boolean {
+  return inRing(p[0], p[1], ring);
+}
+
+// The query hot path calls these per tile; scalar arguments keep it allocation-free.
+
+function inRing(x: number, y: number, ring: Ring): boolean {
   let inside = false;
   const n = ring.length;
   for (let i = 0, j = n - 1; i < n; j = i++) {
     const a = ring[i] as XY;
     const b = ring[j] as XY;
-    if (a[1] > p[1] !== b[1] > p[1]) {
-      const xCross = ((b[0] - a[0]) * (p[1] - a[1])) / (b[1] - a[1]) + a[0];
-      if (p[0] < xCross) {
+    if (a[1] > y !== b[1] > y) {
+      const xCross = ((b[0] - a[0]) * (y - a[1])) / (b[1] - a[1]) + a[0];
+      if (x < xCross) {
         inside = !inside;
       }
     }
@@ -54,22 +60,35 @@ export function pointInRing(p: XY, ring: Ring): boolean {
   return inside;
 }
 
-/** Inside the outer ring and outside every hole. */
-export function pointInPolygon(p: XY, poly: PolygonGeom): boolean {
-  if (!pointInRing(p, poly.outer)) {
+function inPolygon(x: number, y: number, poly: PolygonGeom): boolean {
+  if (!inRing(x, y, poly.outer)) {
     return false;
   }
-  return !poly.holes.some((hole) => pointInRing(p, hole));
+  for (const hole of poly.holes) {
+    if (inRing(x, y, hole)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** Inside the outer ring and outside every hole. */
+export function pointInPolygon(p: XY, poly: PolygonGeom): boolean {
+  return inPolygon(p[0], p[1], poly);
+}
+
+function segmentDistance(x: number, y: number, a: XY, b: XY): number {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const len2 = dx * dx + dy * dy;
+  const t = len2 === 0 ? 0 : ((x - a[0]) * dx + (y - a[1]) * dy) / len2;
+  const c = Math.max(0, Math.min(1, t));
+  return Math.hypot(x - (a[0] + c * dx), y - (a[1] + c * dy));
 }
 
 /** Distance from p to the closest point of segment a→b (a point segment when a = b). */
 export function pointSegmentDistance(p: XY, a: XY, b: XY): number {
-  const dx = b[0] - a[0];
-  const dy = b[1] - a[1];
-  const len2 = dx * dx + dy * dy;
-  const t = len2 === 0 ? 0 : ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len2;
-  const c = Math.max(0, Math.min(1, t));
-  return Math.hypot(p[0] - (a[0] + c * dx), p[1] - (a[1] + c * dy));
+  return segmentDistance(p[0], p[1], a, b);
 }
 
 /** 0 inside or on the rectangle, else the distance to its nearest edge or corner. */
@@ -79,36 +98,34 @@ export function pointRectDistance(p: XY, r: Rect): number {
   return Math.hypot(dx, dy);
 }
 
+/** One Liang–Barsky clip against edge (p, q); returns false when the segment misses. */
+function clip(p: number, q: number, t: { t0: number; t1: number }): boolean {
+  if (p === 0) {
+    return q >= 0;
+  }
+  const r = q / p;
+  if (p < 0) {
+    t.t0 = Math.max(t.t0, r);
+  } else {
+    t.t1 = Math.min(t.t1, r);
+  }
+  return t.t0 <= t.t1;
+}
+
+const span = { t0: 0, t1: 1 };
+
 /** Liang–Barsky: does segment a→b touch the closed rectangle? */
 export function segmentIntersectsRect(a: XY, b: XY, r: Rect): boolean {
-  let t0 = 0;
-  let t1 = 1;
   const dx = b[0] - a[0];
   const dy = b[1] - a[1];
-  const edges: [number, number][] = [
-    [-dx, a[0] - r.minX],
-    [dx, r.maxX - a[0]],
-    [-dy, a[1] - r.minY],
-    [dy, r.maxY - a[1]]
-  ];
-  for (const [p, q] of edges) {
-    if (p === 0) {
-      if (q < 0) {
-        return false;
-      }
-      continue;
-    }
-    const t = q / p;
-    if (p < 0) {
-      t0 = Math.max(t0, t);
-    } else {
-      t1 = Math.min(t1, t);
-    }
-    if (t0 > t1) {
-      return false;
-    }
-  }
-  return true;
+  span.t0 = 0;
+  span.t1 = 1;
+  return (
+    clip(-dx, a[0] - r.minX, span) &&
+    clip(dx, r.maxX - a[0], span) &&
+    clip(-dy, a[1] - r.minY, span) &&
+    clip(dy, r.maxY - a[1], span)
+  );
 }
 
 function rectCorners(r: Rect): XY[] {
@@ -125,11 +142,14 @@ export function segmentRectDistance(a: XY, b: XY, r: Rect): number {
   if (segmentIntersectsRect(a, b, r)) {
     return 0;
   }
-  let d = Math.min(pointRectDistance(a, r), pointRectDistance(b, r));
-  for (const c of rectCorners(r)) {
-    d = Math.min(d, pointSegmentDistance(c, a, b));
-  }
-  return d;
+  return Math.min(
+    pointRectDistance(a, r),
+    pointRectDistance(b, r),
+    segmentDistance(r.minX, r.minY, a, b),
+    segmentDistance(r.maxX, r.minY, a, b),
+    segmentDistance(r.maxX, r.maxY, a, b),
+    segmentDistance(r.minX, r.maxY, a, b)
+  );
 }
 
 /** Segment distance, or Infinity when its bounding box alone is farther than `limit`. */
@@ -172,7 +192,12 @@ function polygonBoundaryRectDistance(poly: PolygonGeom, r: Rect, limit: number):
  * boundary, so the boundary distance is exact.
  */
 export function polygonRectDistance(poly: PolygonGeom, r: Rect, limit = Infinity): number {
-  if (rectCorners(r).some((c) => pointInPolygon(c, poly))) {
+  if (
+    inPolygon(r.minX, r.minY, poly) ||
+    inPolygon(r.maxX, r.minY, poly) ||
+    inPolygon(r.maxX, r.maxY, poly) ||
+    inPolygon(r.minX, r.maxY, poly)
+  ) {
     return 0;
   }
   return polygonBoundaryRectDistance(poly, r, limit);
