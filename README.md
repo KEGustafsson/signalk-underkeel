@@ -17,9 +17,17 @@ second against the chart with a fixed safety margin, and publishes:
 
 Stale position, a missing draft or index, or no chart coverage never produce `normal`.
 
-REST, base `/plugins/signalk-underkeel/v1`: `GET /status` and `GET /envelope?rev=` (the
-look-ahead as GeoJSON; 304 when the client already has that rev). The plugin also registers a
-`plotterExtensions` resource declaring the experimental `navigationSafety` service.
+REST, base `/plugins/signalk-underkeel/v1`, open to readonly users:
+
+- `GET /status`: engine state, chart index and cell editions, look-ahead summary.
+- `GET /envelope?rev=`: the look-ahead as GeoJSON; 304 when the client already has that rev.
+- `POST /route-check`: a route as a GeoJSON LineString or `/resources/routes/<id>`; each leg is
+  checked over a corridor of the cross-track limit plus a planning buffer and returned as `ok`,
+  `marginal` (inside the safety margin), `fail` or `unverified` (no coverage or unassessed
+  survey, never folded into `ok`), with the cell editions used.
+
+The plugin also registers a `plotterExtensions` resource declaring the experimental
+`navigationSafety` service.
 
 ## Documentation map
 

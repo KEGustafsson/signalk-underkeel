@@ -9,6 +9,8 @@ All notable changes to signalk-underkeel are documented here.
 - Deterministic look-ahead (M1): straight cone along COG, chart-datum UKC with a fixed margin,
   `navigation.underKeel.*` deltas, `notifications.navigation.underKeel`, `GET /status`,
   `GET /envelope`, and a `plotterExtensions` manifest resource.
+- Corridor route check (M2): `POST /route-check` with per-leg `ok` / `marginal` / `fail` /
+  `unverified`, ETAs, the shallowest charted depth and hazard, and chart-edition provenance.
 - Development plan in `docs/DEVELOPMENT-PLAN.md`.
 - Chart index library: S-57 GeoJSON ingest with cell provenance, CATZOC → σ table,
   min-depth pyramid with a fast-check conservativeness property test, hazard R-tree, and

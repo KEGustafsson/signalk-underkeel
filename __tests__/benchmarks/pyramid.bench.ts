@@ -76,7 +76,7 @@ describe("pyramid benchmark", () => {
     }
     const queryMs = (performance.now() - t1) / N;
 
-    console.log(
+    process.stdout.write(
       [
         `features:        ${features.length}`,
         `nodes:           ${store.count}`,
@@ -84,7 +84,7 @@ describe("pyramid benchmark", () => {
         `query/footprint: ${queryMs.toFixed(3)} ms (budget 1 ms on Pi 4)`,
         `visits/query:    ${(visits / N).toFixed(1)}`,
         `heap used:       ${(process.memoryUsage().heapUsed / 1e6).toFixed(0)} MB`
-      ].join("\n")
+      ].join("\n") + "\n"
     );
     expect(store.count).toBeGreaterThan(0);
   });

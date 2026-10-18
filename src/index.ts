@@ -10,6 +10,7 @@ import type { IndexLoad } from "./index-loader";
 import { loadOrBuildIndex } from "./index-loader";
 import type { Clock } from "./monitor";
 import { Monitor, SYSTEM_CLOCK } from "./monitor";
+import { routeCheck } from "./route-service";
 import fs from "fs";
 import path from "path";
 
@@ -23,6 +24,7 @@ const VERSION = (
 export = function underkeel(app: ServerAPI, clock: Clock = SYSTEM_CLOCK): Plugin {
   let monitor: Monitor | undefined;
   let load: IndexLoad | undefined;
+  let config: PluginConfig | undefined;
   let stopped: EngineStatus = createStatus("off", "plugin not started", new Date(clock.now()));
 
   return {
@@ -34,7 +36,7 @@ export = function underkeel(app: ServerAPI, clock: Clock = SYSTEM_CLOCK): Plugin
     schema: SCHEMA,
 
     start(options: unknown): void {
-      const config: PluginConfig = parseConfig(options);
+      config = parseConfig(options);
       load = loadOrBuildIndex(config, app.getDataDirPath());
       if (load.reason) {
         app.setPluginError(load.reason);
@@ -71,7 +73,16 @@ export = function underkeel(app: ServerAPI, clock: Clock = SYSTEM_CLOCK): Plugin
         envelope: () =>
           monitor
             ? { rev: monitor.envelope.rev, envelope: monitor.envelope.envelope }
-            : { rev: 0, envelope: { type: "FeatureCollection", features: [] } }
+            : { rev: 0, envelope: { type: "FeatureCollection", features: [] } },
+        routeCheck: (body) =>
+          routeCheck(body, {
+            index: load?.index,
+            indexReason: load?.reason ?? "plugin not started",
+            config: config ?? parseConfig({}),
+            vessel: () => monitor?.vessel(),
+            getRoute: (id) => app.resourcesApi.getResource("routes", id),
+            now: () => clock.now()
+          })
       });
     }
   };

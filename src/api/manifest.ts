@@ -39,7 +39,7 @@ export function buildManifest(version: string): Record<string, Manifest> {
         navigationSafety: {
           apiVersion: "1",
           base: `/plugins/${PLUGIN_ID}${API_BASE}`,
-          provides: ["lookahead"],
+          provides: ["lookahead", "routeCheck"],
           statePath: "navigation.underKeel",
           notificationPath: "notifications.navigation.underKeel"
         }
