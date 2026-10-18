@@ -158,8 +158,25 @@ export class LivechartService {
 
   /** Restores saved state; anything malformed is skipped, so a bad file never stops the plugin. */
   private load(): void {
-    if (!fs.existsSync(this.file)) {
+    const saved = this.readSaved();
+    if (!saved) {
       return;
+    }
+    this.restoreCells(saved.cells);
+    this.restoreAdjustments(saved.adjustments);
+    // Against a rebuilt chart a cell may qualify that did not before; adjust() only lowers.
+    for (const c of this.posteriors.cells.values()) {
+      if (isDiscrepancy(c)) {
+        this.adjust(c);
+      }
+    }
+    this.samples = listOf(saved.samples).filter(isSounding).slice(-MAX_SAMPLES);
+  }
+
+  /** The saved state file as a version-1 record, or undefined with the reason reported. */
+  private readSaved(): Record<string, unknown> | undefined {
+    if (!fs.existsSync(this.file)) {
+      return undefined;
     }
     let saved: unknown;
     try {
@@ -168,22 +185,26 @@ export class LivechartService {
       this.deps.error(
         `${this.file} is not readable JSON, starting empty: ${(err as Error).message}`
       );
-      return;
+      return undefined;
     }
     if (!isRecord(saved)) {
       this.deps.error(`${this.file} is not a living-chart state, starting empty`);
-      return;
+      return undefined;
     }
     if (saved.version !== 1) {
       this.deps.error(`${this.file} has version ${String(saved.version)}, starting empty`);
-      return;
+      return undefined;
     }
+    return saved;
+  }
+
+  private restoreCells(cells: unknown): void {
     // Cells from an index with another leaf zoom are keyed at another zoom: drop them.
     // The index may have been rebuilt since the save, so each cell is moved onto the
     // current chart's prior and cell reference; a saved cellRef indexes the catalogue it
     // was saved with. Saved adjustments keep their depths: they only ever lower a cell.
     const z = this.store.adjustZoom;
-    for (const c of listOf(saved.cells)) {
+    for (const c of listOf(cells)) {
       if (isCell(c) && c.z === z) {
         // An uncharted cell's NaN prior is saved as null.
         const chartDepth = typeof c.chartDepth === "number" ? c.chartDepth : NaN;
@@ -194,7 +215,10 @@ export class LivechartService {
         );
       }
     }
-    for (const entry of listOf(saved.adjustments)) {
+  }
+
+  private restoreAdjustments(adjustments: unknown): void {
+    for (const entry of listOf(adjustments)) {
       if (Array.isArray(entry) && entry.length === 2) {
         const [key, v] = entry as [unknown, unknown];
         const c = typeof key === "number" ? this.posteriors.cells.get(key) : undefined;
@@ -203,7 +227,6 @@ export class LivechartService {
         }
       }
     }
-    this.samples = listOf(saved.samples).filter(isSounding).slice(-MAX_SAMPLES);
   }
 }
 

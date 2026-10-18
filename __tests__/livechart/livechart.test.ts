@@ -240,6 +240,25 @@ describe("cell posterior and discrepancy", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
+  test("soundings that agreed with the old chart lower a deeper rebuilt chart on load", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-livechart-"));
+    const file = path.join(dir, "livechart.json");
+    const svc = new LivechartService(store(), CONFIG, file, failOnError);
+    // 8.0 m below datum on the 8 m chart: no discrepancy, nothing saved as an adjustment.
+    for (const start of [T0, T0 + 15 * 60_000]) {
+      for (let k = 0; k < 3; k++) {
+        svc.onSounding(raw(8.2, start + k * 1000));
+      }
+    }
+    expect(svc.discrepancies()).toEqual([]);
+    svc.save();
+    const deeper = buildPyramid(basin([22.0, 60.0, 22.1, 60.1], 10), { minZoom: 12, leafZoom: 18 });
+    const reloaded = new LivechartService(deeper, CONFIG, file, failOnError);
+    expect(reloaded.discrepancies()[0]).toMatchObject({ charted: 10 });
+    expect(minDepthOver(deeper, footprintGeom([SHOAL])).dMin).toBeLessThan(8.3);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
   test("a cell reference saved with another index is replaced by the current chart's", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-livechart-"));
     const file = path.join(dir, "livechart.json");
