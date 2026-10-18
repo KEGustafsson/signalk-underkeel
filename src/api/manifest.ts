@@ -2,16 +2,29 @@ import type { ResourceProvider } from "@signalk/server-api";
 import { API_BASE } from "./routes";
 
 /**
- * Plotter Extensions manifest contribution (plan §4.14). Only the parts
- * that exist are declared: the UKC data overlay and the experimental
- * `services.navigationSafety` section listing what this build serves. The
- * settings panel is added when its page exists.
+ * Plotter Extensions manifest contribution (plan §4.14, §5). The plotter UI
+ * is declared here rather than built into a plotter: the UKC tile overlay,
+ * the look-ahead envelope and route-check legs as data overlays a
+ * background runtime keeps current, a status widget, a details panel and a
+ * toolbar button. Their pages are served from ASSET_BASE (see assets.ts).
  */
 
 export const PLUGIN_ID = "signalk-underkeel";
 
+/** Where the extension pages are served; outside /plugins, which needs an admin login. */
+export const ASSET_BASE = `/plotterext/${PLUGIN_ID}`;
+
+interface IframeContribution {
+  id: string;
+  title: string;
+  type: "iframe";
+  url: string;
+  lifecycle?: "onOpen" | "keepAlive" | "whileEnabled";
+}
+
 export interface Manifest {
   name: string;
+  description: string;
   version: string;
   apiVersion: "1";
   requires: string[];
@@ -20,11 +33,21 @@ export interface Manifest {
     id: string;
     title: string;
     type: "data";
-    band: "aboveCharts";
+    band: "aboveCharts" | "aboveResources";
     visible: boolean;
     opacity: number;
-    minZoom: number;
+    minZoom?: number;
     style: string;
+  }[];
+  background: IframeContribution[];
+  widgets: (IframeContribution & { size: "1x1" | "2x1" | "1x2" | "2x2" })[];
+  panels: IframeContribution[];
+  buttons: {
+    id: string;
+    title: string;
+    slot: "mapToolbar";
+    icon: string;
+    action: { type: "togglePanel"; panel: string };
   }[];
   services: {
     navigationSafety: {
@@ -84,26 +107,103 @@ export function ukcStyle(): Record<string, unknown> {
   };
 }
 
+/** The pages a host shows: a background runtime, a status widget, a details panel and its button. */
+const UI: Pick<Manifest, "background" | "widgets" | "panels" | "buttons"> = {
+  background: [
+    {
+      id: "live",
+      title: "Look-ahead and route check",
+      type: "iframe",
+      url: `${ASSET_BASE}/runtime.html`
+    }
+  ],
+  widgets: [
+    {
+      id: "status",
+      title: "Under-keel status",
+      type: "iframe",
+      url: `${ASSET_BASE}/widget.html`,
+      size: "2x1",
+      lifecycle: "whileEnabled"
+    }
+  ],
+  panels: [
+    {
+      id: "details",
+      title: "Under-keel details",
+      type: "iframe",
+      url: `${ASSET_BASE}/panel.html`,
+      lifecycle: "onOpen"
+    }
+  ],
+  buttons: [
+    {
+      id: "open-details",
+      title: "Under-keel details",
+      slot: "mapToolbar",
+      icon: "sailing",
+      action: { type: "togglePanel", panel: "details" }
+    }
+  ]
+};
+
+function overlays(): Manifest["overlays"] {
+  return [
+    {
+      id: "ukc",
+      title: "Under-keel risk",
+      type: "data",
+      band: "aboveCharts",
+      visible: false,
+      opacity: 0.6,
+      minZoom: UKC_MIN_ZOOM,
+      style: `${BASE}/ukc-style.json`
+    },
+    {
+      id: "lookahead",
+      title: "Under-keel look-ahead",
+      type: "data",
+      band: "aboveResources",
+      visible: true,
+      opacity: 0.8,
+      style: `${ASSET_BASE}/lookahead-style.json`
+    },
+    {
+      id: "routecheck",
+      title: "Under-keel route check",
+      type: "data",
+      band: "aboveResources",
+      visible: true,
+      opacity: 0.9,
+      style: `${ASSET_BASE}/routecheck-style.json`
+    }
+  ];
+}
+
 export function buildManifest(version: string): Record<string, Manifest> {
   return {
     [PLUGIN_ID]: {
       name: "Under-Keel Awareness",
+      description:
+        "Look-ahead grounding risk, route checks and a UKC overlay. Advisory: always use an official chart.",
       version,
       apiVersion: "1",
       requires: [],
-      optional: ["overlays.data", "x-freeboard.services.navigationSafety"],
-      overlays: [
-        {
-          id: "ukc",
-          title: "Under-keel risk",
-          type: "data",
-          band: "aboveCharts",
-          visible: false,
-          opacity: 0.6,
-          minZoom: UKC_MIN_ZOOM,
-          style: `${BASE}/ukc-style.json`
-        }
+      optional: [
+        "overlays.data",
+        "background.iframe",
+        "widgets",
+        "panels.iframe",
+        "buttons",
+        "signalk.stream",
+        "routes",
+        "units",
+        "ui",
+        "events.publish",
+        "x-freeboard.services.navigationSafety"
       ],
+      ...UI,
+      overlays: overlays(),
       services: {
         navigationSafety: {
           apiVersion: "1",

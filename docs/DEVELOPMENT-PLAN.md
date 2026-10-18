@@ -34,6 +34,22 @@ against the chart.
 | How danger looks (envelope layer, leg colouring, alarm popover, editor UX) | **Freeboard core**                    | Core plotter UX; must feel native in the route editor, not an iframe                             |
 | The seam between them                                                      | **Provider-neutral service contract** | Freeboard must not hard-depend on one plugin                                                     |
 
+**Decision (Phase 10): the Freeboard UI ships in the plugin.** The plugin serves its own UI
+through the Plotter Extensions API instead of changing Freeboard core:
+
+- a background runtime;
+- a status widget;
+- a details panel;
+- a toolbar button;
+- two data overlays, the look-ahead envelope and the route legs.
+
+Freeboard core stays unchanged, and the UI ships and versions with the plugin. Any host that
+implements the API can show it.
+
+The cost: the UI runs in iframes, so it cannot colour legs inside Freeboard's route editor
+while they are dragged. The alarm popover, Suggest fix and departure-window strip of §5.4 are
+not built. §5 remains the design for a later core integration; §4.14 lists what is built.
+
 ### Correction to the earlier chat answer
 
 The earlier answer said to raise `notifications.grounding`. In the Signal K spec that path is
@@ -816,9 +832,29 @@ cells; a cell coarser than that is classed by its bound (shallowest depth, wides
 overlay never shows water safer than any point in it. A fallback water level draws no cell as
 `clear`.
 
+**As built (Phase 10).** The manifest declares the UI of the Phase 10 decision (§1). Its pages
+are served from `public/` at `/plotterext/signalk-underkeel/`: the `/plugins/*` paths need an
+admin login, and an extension page must load without one. The bus client is copied from
+`signalk-plotterext-bus` into `public/vendor/` at build time.
+
+| Contribution                       | What it does                                                                                                      |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| background `live` (runtime.html)   | fetches `/envelope` on each `envelopeRev`; checks the routes on the chart on each `route.*` event (debounced 1 s) |
+| overlay `lookahead`                | envelope fill, outline, dashed central track and the worst footprint, coloured by state                           |
+| overlay `routecheck`               | route legs coloured `ok` / `marginal` / `fail` / `unverified`                                                     |
+| overlay `ukc`                      | the M3 UKC tiles, off by default                                                                                  |
+| widget `status` (2×1)              | state colour, minimum clearance in the host's depth unit, time to shoal and the reason; a tap opens the panel     |
+| panel `details`                    | advisory note, state, water level, the WFS notice when that source is on, and a leg table per route with re-check |
+| button `open-details` (mapToolbar) | toggles the panel                                                                                                 |
+
+`requires` is empty: on a host without a capability, the page that needs it shows less and
+says so.
+
 ---
 
 ## 5. Freeboard-SK core
+
+Not started. The Phase 10 decision (§1) put the UI in the plugin first.
 
 ### 5.1 The provider-neutral contract (`x-freeboard.services.navigationSafety`)
 

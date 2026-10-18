@@ -21,8 +21,9 @@ rationale; the [README](../README.md) lists the REST endpoints and the chart exp
 10. [Checking a route](#10-checking-a-route)
 11. [Asking about one spot](#11-asking-about-one-spot)
 12. [Traficom WFS depths (optional)](#12-traficom-wfs-depths-optional)
-13. [What the plugin never does](#13-what-the-plugin-never-does)
-14. [Known limits](#14-known-limits)
+13. [In Freeboard](#13-in-freeboard)
+14. [What the plugin never does](#14-what-the-plugin-never-does)
+15. [Known limits](#15-known-limits)
 
 ## 1. About the screenshots
 
@@ -605,7 +606,41 @@ flowchart TD
 - **Status:** `GET /status` has a `wfs` section with the box, its fetch time, the feature counts
   and the notice; the plugin status line repeats the notice while the source is on.
 
-## 13. What the plugin never does
+## 13. In Freeboard
+
+The plugin serves its own Freeboard UI through the Plotter Extensions API, so Freeboard itself
+needs no change. The screenshots use a Freeboard-SK 3.4.0-beta.1 build with the Traficom WMS
+chart, on the route from the Nauvo fairway west to Stenskär harbour at 7 kn, with a 1.8 m draft.
+
+| Where in Freeboard                     | What the plugin adds                                                                 |
+| -------------------------------------- | ------------------------------------------------------------------------------------ |
+| Layers → Charts → Plugin layers        | Under-keel look-ahead (on), Under-keel route check (on), Under-keel risk (off)       |
+| Widget grid                            | Under-keel status: state colour, minimum clearance, time to shoal and the reason     |
+| Toolbar button (boat icon), the widget | Under-keel details panel: state, water level, and a leg table per route on the chart |
+| Hidden background page                 | refetches the envelope and checks the routes on the chart 1 s after each change      |
+
+![Freeboard: the look-ahead envelope ahead of the vessel and the status widget](images/how-it-works/freeboard-lookahead.jpg)
+
+_Heading west at 7 kn, the envelope reaches the islet ahead and is coloured by state, here
+warn. The widget at the top shows the state, the minimum clearance and the time to shoal. The
+route legs are coloured by the route check._
+
+![Freeboard: the UKC risk overlay switched on from the chart list](images/how-it-works/freeboard-risk.jpg)
+
+_Under-keel risk is off by default. Ticked in the chart list, it draws the UKC tiles of §9 over
+the chart._
+
+![Freeboard: the details panel with the route-check legs](images/how-it-works/freeboard-panel.jpg)
+
+_The details panel lists every leg of each route on the chart. Legs 4 and 5 fail on a 1 m
+sounding about 60 m off the track: its 50 m survey-category-B position uncertainty reaches the
+10 m cross-track corridor. The legs west of the fairway fail because the open data has a
+0–3 m depth area in the channel, which counts as 0 m._
+
+The widget and the panel use Freeboard's depth unit. On a host that lacks a capability, the
+page says what is missing: no Signal K stream on the widget, or no shared routes in the panel.
+
+## 14. What the plugin never does
 
 - It never reports `normal` on stale position, missing draft, missing index, missing chart
   coverage or a fallback water level. Each gives `unknown`, `off`, `warn` or `alert` with a
@@ -620,7 +655,7 @@ flowchart TD
 - A suggested repair never moves an existing route point and never routes through unchecked
   water.
 
-## 14. Known limits
+## 15. Known limits
 
 - The index resolves about 19 m at 60° N. A leaf that touches land counts as land, so up to one
   leaf width of water along a shore is drawn as land or danger.
@@ -630,5 +665,8 @@ flowchart TD
   their boundary vertex for vertex. A boundary split differently on each side, an overlap or a
   gap leaves the leaf unassessed.
 - Only unencrypted S-57 cells exported with `scripts/enc-to-geojson.sh` are read.
-- No released chart plotter is assumed to draw the envelope or the leg colours; the plugin
-  serves them as GeoJSON and vector tiles.
+- The look-ahead follows course and turn rate, not the route. In a winding fairway it sees the
+  shore ahead before each bend and raises warn or alarm until the boat turns.
+- Freeboard shows the envelope and leg colours through the Plotter Extensions API. It cannot
+  colour legs while they are dragged in its route editor; the check runs 1 s after the change.
+  Other plotters get the same data as GeoJSON and vector tiles.
