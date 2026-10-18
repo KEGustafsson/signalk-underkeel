@@ -4,8 +4,8 @@ This guide follows the plugin from chart files to an alarm on the plotter, with 
 it uses at each step. The [development plan](DEVELOPMENT-PLAN.md) holds the design and its
 rationale; the [README](../README.md) lists the REST endpoints and the chart export command.
 
-> Advisory navigation aid. Not ECDIS, and not a replacement for official charts or a proper
-> lookout.
+> Advisory navigation aid, non-commercial. Not ECDIS, and not a replacement for official charts
+> or a proper lookout: always carry and use an official nautical chart, paper or ENC.
 
 ## Contents
 
@@ -35,7 +35,8 @@ length 12 m and beam 4 m; the water level is set manually to +0.2 m.
 - **Depths the plugin used:** contains information received from the Finnish Transport and
   Communications Agency's nautical chart data base 10/2026, under the
   [Traficom hydrographic data license](https://julkinen.traficom.fi/inspirepalvelu/rajoitettu/wfs?request=getcapabilities),
-  which allows non-navigational use only. The plugin indexed the WFS layers `DepthArea_A` and
+  which allows non-navigational use only. **The WFS data, and every screenshot drawn from it,
+  is not for navigational purposes.** The plugin indexed the WFS layers `DepthArea_A` and
   `Sounding_P`, fetched 2026-10-18 for 22.02–22.15° E, 60.025–60.125° N, as one cell named
   `FI4WFS01`.
 - **What the WFS lacks:** land, rocks, wrecks, obstructions and survey quality (`M_QUAL`). For
@@ -45,7 +46,8 @@ length 12 m and beam 4 m; the water level is set manually to +0.2 m.
   (`/ukc-style.json`, `/envelope`, `/route-check`) over the WMS with MapLibre GL. They were not
   taken in a chart plotter.
 
-The chart data is not in this repository; only the screenshots are.
+The chart data is not in this repository; only the screenshots are. Each map screenshot repeats
+the attribution and the not-for-navigation notice in its footer.
 
 ## 2. The whole picture
 

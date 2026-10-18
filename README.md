@@ -4,8 +4,8 @@ Under-keel clearance awareness for Signal K. The plugin turns S-57 chart data in
 queryable hazard model on the server and publishes look-ahead grounding risk, route checks
 and own-sounding discrepancies for chartplotters such as Freeboard-SK.
 
-> Advisory navigation aid. Not ECDIS, and not a replacement for official charts or a proper
-> lookout.
+> Advisory navigation aid, non-commercial. Not ECDIS, and not a replacement for official charts
+> or a proper lookout: always carry and use an official nautical chart, paper or ENC.
 
 With a chart index and a configured draft, the plugin checks a straight cone along COG every
 second. For each footprint it computes P(UKC < 0) from the charted depth and its survey
