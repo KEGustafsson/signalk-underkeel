@@ -1,5 +1,5 @@
 import type { Path, Plugin, PluginRouter, ServerAPI } from "@signalk/server-api";
-import { manifestProvider, PLUGIN_ID } from "./api/manifest";
+import { manifestProvider, PLUGIN_ID, ukcStyle } from "./api/manifest";
 import { registerRoutes } from "./api/routes";
 import type { PluginConfig } from "./config";
 import { parseConfig, SCHEMA } from "./config";
@@ -10,6 +10,10 @@ import type { IndexLoad } from "./index-loader";
 import { loadOrBuildIndex } from "./index-loader";
 import type { Clock } from "./monitor";
 import { Monitor, SYSTEM_CLOCK } from "./monitor";
+import type { FetchLike } from "./model/fmi";
+import { CHART_DATUM } from "./model/water-level";
+import { query, ukcTileReply } from "./query-service";
+import type { QueryServiceDeps } from "./query-service";
 import { routeCheck } from "./route-service";
 import fs from "fs";
 import path from "path";
@@ -21,7 +25,11 @@ const VERSION = (
   }
 ).version;
 
-export = function underkeel(app: ServerAPI, clock: Clock = SYSTEM_CLOCK): Plugin {
+export = function underkeel(
+  app: ServerAPI,
+  clock: Clock = SYSTEM_CLOCK,
+  fetch: FetchLike = globalThis.fetch
+): Plugin {
   let monitor: Monitor | undefined;
   let load: IndexLoad | undefined;
   let config: PluginConfig | undefined;
@@ -41,7 +49,7 @@ export = function underkeel(app: ServerAPI, clock: Clock = SYSTEM_CLOCK): Plugin
       if (load.reason) {
         app.setPluginError(load.reason);
       }
-      monitor = new Monitor(app, PLUGIN_ID, config, load.index, load.reason, clock);
+      monitor = new Monitor(app, PLUGIN_ID, config, load.index, load.reason, clock, fetch);
       monitor.start();
       app.registerResourceProvider(manifestProvider(VERSION));
     },
@@ -56,6 +64,8 @@ export = function underkeel(app: ServerAPI, clock: Clock = SYSTEM_CLOCK): Plugin
             values: [
               { path: PATHS.state as Path, value: "off" },
               { path: PATHS.clearance as Path, value: null },
+              { path: PATHS.clearanceSigma as Path, value: null },
+              { path: PATHS.risk as Path, value: null },
               { path: PATHS.timeToShoal as Path, value: null },
               {
                 path: PATHS.notification as Path,
@@ -68,7 +78,18 @@ export = function underkeel(app: ServerAPI, clock: Clock = SYSTEM_CLOCK): Plugin
     },
 
     registerWithRouter(router: PluginRouter): void {
+      const queryDeps = (): QueryServiceDeps => ({
+        index: load?.index,
+        indexReason: load?.reason ?? "plugin not started",
+        config: config ?? parseConfig({}),
+        vessel: () => monitor?.vessel(),
+        waterLevel: () => monitor?.waterLevel() ?? CHART_DATUM,
+        waveHeight: () => monitor?.nav.waveHeight?.value
+      });
       registerRoutes(router, {
+        query: (body) => query(body, queryDeps()),
+        ukcTile: (z, x, y) => ukcTileReply(z, x, y, queryDeps()),
+        ukcStyle,
         status: () => statusReport({ load, monitor, stopped, now: clock.now() }),
         envelope: () =>
           monitor
@@ -80,6 +101,8 @@ export = function underkeel(app: ServerAPI, clock: Clock = SYSTEM_CLOCK): Plugin
             indexReason: load?.reason ?? "plugin not started",
             config: config ?? parseConfig({}),
             vessel: () => monitor?.vessel(),
+            waterLevel: (start, end) => monitor?.waterLevelOver(start, end) ?? CHART_DATUM,
+            waveHeight: () => monitor?.nav.waveHeight?.value,
             getRoute: (id) => app.resourcesApi.getResource("routes", id),
             now: () => clock.now()
           })

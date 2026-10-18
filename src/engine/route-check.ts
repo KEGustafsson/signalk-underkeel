@@ -1,18 +1,23 @@
 import type { LonLat } from "../foundation/geo";
 import { EARTH_RADIUS, haversine, project } from "../foundation/geo";
 import { geomBounds } from "../foundation/geometry";
-import type { VesselModel } from "../model/vessel";
+import type { VesselTerms, WaterLevel } from "../model/uncertainty";
+import { sigmaExtra, thresholdDepth } from "../model/uncertainty";
+import type { DynamicsOptions, VesselModel } from "../model/vessel";
+import { vesselTerms } from "../model/vessel";
 import type { ChartIndex } from "../spatial/chart-index";
-import { FLAGS } from "../spatial/node-store";
-import type { DepthResult } from "../spatial/pyramid";
+import { FLAGS, flagNames } from "../spatial/node-store";
+import type { DepthResult, RiskTile } from "../spatial/pyramid";
 import { footprintGeom, mercatorBuffer, minDepthOver } from "../spatial/pyramid";
+import type { Explanation } from "./explain";
+import { explainTile } from "./explain";
 
 /**
- * Corridor route check (plan §4.11), deterministic as in milestone M2: each
- * leg is checked over `buffer(leg, xteLimit + planning buffer)` against the
- * chart at chart datum with a fixed margin. A leg whose corridor touches
- * missing coverage or an unassessed survey is `unverified`, never `ok`
- * (safety invariant 4).
+ * Corridor route check (plan §4.11): each leg is checked over
+ * `buffer(leg, xteLimit + planning buffer)`, and scored by the highest
+ * per-tile P(UKC < 0) in that corridor with the leg's squat and the water
+ * level at its arrival. A leg whose corridor touches missing coverage or an
+ * unassessed survey is `unverified`, never `ok` (safety invariant 4).
  */
 
 export type LegStatus = "ok" | "marginal" | "fail" | "unverified";
@@ -28,8 +33,13 @@ export interface RouteCheckInput {
   /** Planning position uncertainty added to the corridor, metres. */
   planningBuffer: number;
   vessel: VesselModel;
-  /** Safety margin under the keel, metres. */
-  margin: number;
+  dynamics: DynamicsOptions;
+  /** Water level over the leg's arrival interval [start, end] (epoch ms); the worst one is used. */
+  waterLevel(start: number, end: number): WaterLevel;
+  /** Significant wave height to allow for, metres. */
+  waveHeight?: number;
+  /** Accept threshold: a leg is ok below this P(UKC < 0). */
+  probability: number;
 }
 
 export interface LegResult {
@@ -41,8 +51,12 @@ export interface LegResult {
   length: number;
   /** Arrival at the leg's start and end points, ISO 8601. */
   eta: { start: string; end: string };
-  /** Charted depth minus draft and margin over the charted part; null when nothing is charted. */
+  /** Mean UKC at the shallowest charted depth, metres; null when nothing is charted or land. */
   minUkc: number | null;
+  /** σ of the UKC at the riskiest tile, metres. */
+  sigma: number;
+  /** Highest per-tile P(UKC < 0) in the corridor. */
+  risk: number;
   /** Shallowest charted depth in the corridor, metres; null for land or nothing charted. */
   charted: number | null;
   flags: string[];
@@ -50,30 +64,20 @@ export interface LegResult {
     position: LonLat;
     hazard?: { class: string; lnam?: string; valsou: number | null };
   };
-  explanation: { charted: number | null; draft: number; margin: number; waterLevel: number };
+  explanation?: Explanation;
 }
 
 export interface RouteCheckResult {
   checkedAt: string;
   charts: { cell: string; edition: number; update: number }[];
   waterLevelSource: string;
+  /** Set when the water level over the route is a fallback, with the reason. */
+  waterLevelDegraded?: string;
   legs: LegResult[];
 }
 
 /** Long legs are checked in pieces this long so the corridor hugs the line. */
 const SEGMENT_METRES = 1000;
-
-const FLAG_NAMES: [number, string][] = [
-  [FLAGS.SWEPT, "SWEPT"],
-  [FLAGS.NO_COVERAGE, "NO_COVERAGE"],
-  [FLAGS.UNASSESSED, "UNASSESSED"],
-  [FLAGS.DREDGED, "DREDGED"],
-  [FLAGS.LIVECHART_ADJUSTED, "LIVECHART_ADJUSTED"]
-];
-
-export function flagNames(flags: number): string[] {
-  return FLAG_NAMES.filter(([bit]) => (flags & bit) !== 0).map(([, name]) => name);
-}
 
 /** True bearing from a to b in the local tangent plane, radians. */
 function bearing(a: LonLat, b: LonLat): number {
@@ -116,65 +120,51 @@ interface LegDepth {
   ring: LonLat[];
 }
 
-/** Depths deeper than draft + margin + this are reported as a lower bound. */
+/** Depths deeper than the UKC-zero depth plus this are reported as a lower bound. */
 const CLEARANCE_RESOLUTION = 5;
 
-function checkCorridor(
-  index: ChartIndex,
-  a: LonLat,
-  b: LonLat,
-  r: number,
-  clearAbove: number
-): LegDepth {
+interface Scoring {
+  threshold: number;
+  sigmaExtra: number;
+}
+
+function checkCorridor(index: ChartIndex, a: LonLat, b: LonLat, r: number, s: Scoring): LegDepth {
   let best: LegDepth | undefined;
   let flags = 0;
+  let covered = Infinity;
   const cells = new Set<number>();
   for (const [p, q] of pieces(a, b, haversine(a, b))) {
     const ring = corridorRing(p, q, r);
-    const result = minDepthOver(index.pyramid, footprintGeom(ring), { clearAbove });
+    const result = minDepthOver(index.pyramid, footprintGeom(ring), {
+      clearAbove: s.threshold + CLEARANCE_RESOLUTION,
+      risk: { threshold: s.threshold, sigmaExtra: s.sigmaExtra }
+    });
     flags |= result.flags;
+    covered = Math.min(covered, result.coveredDMin);
     result.cellRefs.forEach((c) => cells.add(c));
-    if (best === undefined || result.coveredDMin < best.result.coveredDMin) {
+    if (best === undefined || result.maxRisk > best.result.maxRisk) {
       best = { result, ring };
     }
   }
   const leg = best as LegDepth;
-  return { ...leg, result: { ...leg.result, flags, cellRefs: [...cells] } };
+  return { ...leg, result: { ...leg.result, flags, coveredDMin: covered, cellRefs: [...cells] } };
 }
 
-function statusOf(minUkc: number | null, margin: number, flags: number): LegStatus {
-  if (minUkc !== null && minUkc + margin < 0) {
+/** P at or above this fails a leg whatever the accepted probability. */
+const FAIL_RISK = 0.5;
+
+function statusOf(risk: number, charted: number | null, flags: number, p: number): LegStatus {
+  if (risk >= Math.min(5 * p, Math.max(p, FAIL_RISK))) {
     return "fail";
   }
-  if (minUkc === null || flags & (FLAGS.NO_COVERAGE | FLAGS.UNASSESSED | FLAGS.NO_DEPTH)) {
+  if (charted === null || flags & (FLAGS.NO_COVERAGE | FLAGS.UNASSESSED | FLAGS.NO_DEPTH)) {
     return "unverified";
   }
-  return minUkc < 0 ? "marginal" : "ok";
+  return risk >= p ? "marginal" : "ok";
 }
 
 function finiteOrNull(v: number): number | null {
   return Number.isFinite(v) ? Math.round(v * 100) / 100 : null;
-}
-
-type Hazard = { class: string; lnam?: string; valsou: number | null };
-
-/**
- * The charted hazard behind the corridor's shallowest depth, if it is a
- * named one. A shallower hazard did not set that depth (it would have
- * lowered it), so only one at exactly that depth is named.
- */
-function hazardIn(index: ChartIndex, ring: LonLat[], depth: number): Hazard | undefined {
-  const geom = footprintGeom(ring);
-  const hit = index.hazards
-    .near(geom, mercatorBuffer(geomBounds(geom), 0))
-    .find((h) => h.feature.depth === depth);
-  return (
-    hit && {
-      class: hit.feature.objectClass,
-      lnam: hit.feature.lnam,
-      valsou: finiteOrNull(hit.feature.depth)
-    }
-  );
 }
 
 function checkLeg(
@@ -186,43 +176,45 @@ function checkLeg(
   const from = input.coordinates[i] as LonLat;
   const to = input.coordinates[i + 1] as LonLat;
   const length = haversine(from, to);
-  const end = start + (length / (input.speeds[i] as number)) * 1000;
-  const { result, ring } = checkCorridor(
-    index,
-    from,
-    to,
-    input.xteLimit + input.planningBuffer,
-    input.vessel.draft + input.margin + CLEARANCE_RESOLUTION
-  );
+  const speed = input.speeds[i] as number;
+  const end = start + (length / speed) * 1000;
+  const wl = input.waterLevel(start, end);
+  const terms = vesselTerms(input.vessel, { speed, waveHeight: input.waveHeight }, input.dynamics);
+  const s = { threshold: thresholdDepth(terms, wl), sigmaExtra: sigmaExtra(terms, wl) };
+  const { result, ring } = checkCorridor(index, from, to, input.xteLimit + input.planningBuffer, s);
   const covered = result.coveredDMin;
-  const nothingCharted = covered === Infinity;
   const land = covered === -Infinity;
-  const charted = nothingCharted || land ? null : covered;
-  const minUkc = charted === null ? null : charted - input.vessel.draft - input.margin;
+  const charted = covered === Infinity || land ? null : covered;
   const flags = flagNames(result.flags);
   if (land) {
     flags.push("LAND");
   }
+  const tile = result.riskTile;
+  const why = tile ? explainTile(index, tile, ring, terms, wl) : undefined;
+  let status: LegStatus = land
+    ? "fail"
+    : statusOf(result.maxRisk, charted, result.flags, input.probability);
+  // A fallback water level is a guess, so a leg it clears is not verified (invariant 3).
+  if (wl.degraded) {
+    flags.push("WATER_LEVEL_FALLBACK");
+    if (status === "ok") {
+      status = "unverified";
+    }
+  }
   const leg: LegResult = {
     index: i,
-    status: land ? "fail" : statusOf(minUkc, input.margin, result.flags),
+    status,
     from,
     to,
     length: Math.round(length),
     eta: { start: new Date(start).toISOString(), end: new Date(end).toISOString() },
-    minUkc: minUkc === null ? null : finiteOrNull(minUkc),
+    minUkc: charted === null ? null : finiteOrNull(charted - s.threshold),
+    sigma: finiteOrNull(tile ? Math.hypot(tile.sigmaD, s.sigmaExtra) : s.sigmaExtra) ?? 0,
+    risk: Math.round(result.maxRisk * 10000) / 10000,
     charted: charted === null ? null : finiteOrNull(charted),
     flags,
-    worst: result.worst && {
-      position: result.worst.center,
-      hazard: nothingCharted ? undefined : hazardIn(index, ring, covered)
-    },
-    explanation: {
-      charted: charted === null ? null : finiteOrNull(charted),
-      draft: input.vessel.draft,
-      margin: input.margin,
-      waterLevel: 0
-    }
+    worst: tile && { position: tile.center, hazard: why?.hazard },
+    explanation: why?.explanation
   };
   return { leg, cellRefs: result.cellRefs };
 }
@@ -241,6 +233,7 @@ export function checkRoute(
     legs.push(leg);
     cellRefs.forEach((c) => cells.add(c));
   }
+  const wl = input.waterLevel(input.departure, t);
   return {
     checkedAt: new Date(now).toISOString(),
     charts: [...cells]
@@ -249,7 +242,8 @@ export function checkRoute(
         const c = index.catalogue.cells[ref];
         return c ? [{ cell: c.name, edition: c.edition, update: c.update }] : [];
       }),
-    waterLevelSource: "chart-datum",
+    waterLevelSource: wl.source,
+    waterLevelDegraded: wl.degraded,
     legs
   };
 }

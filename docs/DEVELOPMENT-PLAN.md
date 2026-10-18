@@ -345,6 +345,28 @@ FMI series. **An unknown datum sets σ_wl = 0.5 m and flags the cell.**
 **Fail-safe.** If the provider is stale for more than 30 minutes, the engine falls back to
 `h = 0` (chart datum) with σ = 0.3 m, and publishes the reason. It never stays silent.
 
+**As built (M3).**
+
+- `levelAt` is synchronous and answers from data the provider already holds; FMI refreshes
+  itself every 10 minutes (configurable) and when the vessel moves 10 km from the forecast
+  point. The 1 Hz loop never waits on the network.
+- FMI stored queries, checked against `opendata.fmi.fi` on 2026-10-17:
+  `fmi::forecast::sealevel::point::simple` (SeaLevel, SeaLevelN2000; centimetres, hourly
+  for 48 h) and `fmi::observations::mareograph::instant::simple` (WATLEV,
+  WLEVN2K_PT1S_INSTANT; millimetres) at the nearest of the 14 coastal gauges, used when it
+  is within 60 km. The gauge's offset from the forecast decays with a 6 h time constant.
+- σ defaults are not yet calibrated: gauge 0.03 m + 0.002 m/km to the gauge, forecast
+  0.1 m, both + 0.02 m per hour of lead, capped at 0.5 m. Calibration against FMI history
+  remains open.
+- Datum table: VERDAT 3, 19 and 26 → theoretical mean water, σ 0.1 m for the epoch
+  difference. N2000 has no VERDAT code, so cells on it are mapped in the configuration.
+- The engine applies one level per tick. When the index holds cells on different datums,
+  it takes the lowest level and the widest σ among them, which can only raise P(UKC < 0).
+  Per-cell levels are a follow-up.
+- Route checks take the lowest level over each leg's ETA interval. FMI answers them with the
+  forecast held for the vessel's position. A fallback level makes every `ok` leg
+  `unverified`.
+
 ### 4.6 Vessel model
 
 Read from Signal K where available (`design.draft.maximum`, `design.beam`, `design.length`),
@@ -696,6 +718,13 @@ The plugin also declares the **new `services` section** described in §5.1.
   }
 }
 ```
+
+**As built (M3).** The overlay's `style` points at `/plugins/signalk-underkeel/v1/ukc-style.json`,
+which the plugin serves; the `/plotterext/...` paths above are placeholders until the settings
+panel exists. Tiles below zoom 11 are empty. Each tile is drawn from at most 64 × 64 pyramid
+cells; a cell coarser than that is classed by its bound (shallowest depth, widest σ), so the
+overlay never shows water safer than any point in it. A fallback water level draws no cell as
+`clear`.
 
 ---
 

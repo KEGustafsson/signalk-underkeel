@@ -1,4 +1,5 @@
 import type { UnderKeelState } from "../foundation/state";
+import type { Explanation } from "./explain";
 import type { LookaheadResult } from "./lookahead";
 import { describe } from "./lookahead";
 
@@ -18,7 +19,11 @@ export interface UnderKeelNotification {
   data: {
     engineState: UnderKeelState;
     clearance: number | null;
+    clearanceSigma: number | null;
+    risk: number | null;
     timeToShoal: number | null;
+    /** The worst point's terms (plan §4.10: `data.explanation`). */
+    explanation?: Explanation;
   };
 }
 
@@ -66,7 +71,10 @@ export function notificationFor(result: LookaheadResult): UnderKeelNotification 
     data: {
       engineState: result.state,
       clearance: result.clearance,
-      timeToShoal: result.timeToShoal
+      clearanceSigma: result.clearanceSigma,
+      risk: result.risk,
+      timeToShoal: result.timeToShoal,
+      explanation: result.worst?.explanation
     }
   };
 }

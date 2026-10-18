@@ -1,20 +1,26 @@
 import type { LonLat } from "../foundation/geo";
 import { project, tileSize } from "../foundation/geo";
+import { geomBounds } from "../foundation/geometry";
 import type { UnderKeelState } from "../foundation/state";
-import type { CellInfo } from "../ingest/cells";
-import type { VesselModel } from "../model/vessel";
+import type { VesselTerms, WaterLevel } from "../model/uncertainty";
+import { sigmaExtra, thresholdDepth } from "../model/uncertainty";
+import type { DynamicsOptions, VesselModel } from "../model/vessel";
+import { vesselTerms } from "../model/vessel";
 import type { ChartIndex } from "../spatial/chart-index";
-import { FLAGS } from "../spatial/node-store";
+import { FLAGS, flagNames } from "../spatial/node-store";
+import type { RiskTile } from "../spatial/pyramid";
 import { footprintGeom, mercatorBuffer, minDepthOver } from "../spatial/pyramid";
 import { DEFAULT_BUILD } from "../spatial/pyramid-build";
-import { geomBounds } from "../foundation/geometry";
+import type { Explanation } from "./explain";
+import { explain, sentence } from "./explain";
 import { footprintRing } from "./footprint";
 
 /**
- * Deterministic look-ahead (milestone M1): a straight cone along COG,
- * checked every `step` seconds against the chart with a fixed safety
- * margin. Water level is chart datum. Stale or missing input never yields
- * `normal` (safety invariant 3).
+ * Look-ahead (plan §4.7–§4.8): a straight cone along COG, each footprint
+ * scored by P(UKC < 0) from the charted depth and its survey σ, the water
+ * level, draft, squat, heel and wave allowance. Stale or missing input,
+ * and a degraded water-level source, never yield `normal` (safety
+ * invariant 3).
  */
 
 export interface Sample<T> {
@@ -31,6 +37,17 @@ export interface NavState {
   sog?: Sample<number>;
   /** Heading, true, radians. */
   heading?: Sample<number>;
+  /** Roll, radians. */
+  roll?: Sample<number>;
+  /** Significant wave height, metres. */
+  waveHeight?: Sample<number>;
+}
+
+/** P(UKC < 0) levels of the state table (plan §4.7). */
+export interface Thresholds {
+  alert: number;
+  warn: number;
+  alarm: number;
 }
 
 export interface LookaheadOptions {
@@ -43,16 +60,17 @@ export interface LookaheadOptions {
   positionBuffer: number;
   /** The cone widens by tan(halfAngle) per metre run, radians. */
   coneHalfAngle: number;
-  /** Fixed safety margin under the keel, metres. */
-  margin: number;
   /** Inputs older than this (seconds) are stale. */
   staleAfter: number;
   /** Below this SOG (m/s) only the current position is checked. */
   lowSpeed: number;
-  /** A shoal within this many seconds raises warn. */
+  thresholds: Thresholds;
+  /** P ≥ warn within this many seconds raises warn. */
   warnWithin: number;
-  /** A shoal within this many seconds raises alarm. */
+  /** P ≥ alarm within this many seconds raises alarm. */
   alarmWithin: number;
+  /** A negative mean UKC within this many seconds raises alarm whatever P is. */
+  certainWithin: number;
 }
 
 export const DEFAULT_LOOKAHEAD: LookaheadOptions = {
@@ -61,14 +79,15 @@ export const DEFAULT_LOOKAHEAD: LookaheadOptions = {
   step: 3,
   positionBuffer: 10,
   coneHalfAngle: (5 * Math.PI) / 180,
-  margin: 0.5,
   staleAfter: 10,
   lowSpeed: 0.5 * (1852 / 3600),
+  thresholds: { alert: 0.01, warn: 0.05, alarm: 0.2 },
   warnWithin: 120,
-  alarmWithin: 30
+  alarmWithin: 60,
+  certainWithin: 30
 };
 
-/** Depths deeper than draft + margin + this are reported as a lower bound. */
+/** Depths deeper than the UKC-zero depth plus this are reported as a lower bound. */
 const CLEARANCE_RESOLUTION = 5;
 
 export interface FootprintResult {
@@ -76,39 +95,50 @@ export interface FootprintResult {
   t: number;
   center: LonLat;
   ring: LonLat[];
-  dMin: number;
-  /** Charted depth minus draft and margin over the covered part; null when nothing is covered. */
-  ukc: number | null;
+  /** Shallowest charted depth over the covered part; null when nothing is charted. */
+  charted: number | null;
+  /** Mean UKC at the shallowest charted depth, metres; null when nothing is charted. */
+  mean: number | null;
+  /** σ of the UKC at the riskiest tile, metres. */
+  sigma: number;
+  /** Highest per-tile P(UKC < 0). */
+  risk: number;
   /** Part of the footprint has no chart coverage. */
   uncovered: boolean;
   flags: number;
-  cellRef: number;
   /** Widest source σP the footprint touched, metres. */
   sigmaP: number;
+  riskTile?: RiskTile;
 }
 
 export interface WorstPoint {
   t: number;
   position: LonLat;
-  charted: number;
-  ukc: number;
-  cell?: Pick<CellInfo, "name" | "edition" | "update">;
-  hazard?: { class: string; lnam?: string; depth: number };
+  explanation: Explanation;
 }
 
 export interface LookaheadResult {
   state: UnderKeelState;
   /** Why the engine is in this state; empty only for a clean `normal`. */
   reason: string;
-  /** Minimum UKC over the horizon, metres; null when not computed. */
+  /** Minimum mean UKC over the horizon, metres; null when not computed. */
   clearance: number | null;
-  /** Seconds until the first footprint with UKC < 0; null if none. */
+  /** σ of `clearance`, from the same footprint, metres; null when not computed. */
+  clearanceSigma: number | null;
+  /** Highest P(UKC < 0) over the horizon; null when not computed. */
+  risk: number | null;
+  /** Seconds until P first reaches the warn level; null if it does not. */
   timeToShoal: number | null;
   horizon: number;
   footprints: FootprintResult[];
   worst?: WorstPoint;
-  draft?: number;
-  margin?: number;
+  waterLevel?: WaterLevel;
+}
+
+export interface LookaheadInputs {
+  vessel: VesselModel | undefined;
+  dynamics: DynamicsOptions;
+  waterLevel: WaterLevel;
 }
 
 function stale(sample: Sample<unknown> | undefined, now: number, opts: LookaheadOptions): boolean {
@@ -116,139 +146,16 @@ function stale(sample: Sample<unknown> | undefined, now: number, opts: Lookahead
 }
 
 function degraded(state: UnderKeelState, reason: string): LookaheadResult {
-  return { state, reason, clearance: null, timeToShoal: null, horizon: 0, footprints: [] };
-}
-
-interface Track {
-  origin: LonLat;
-  cog: number;
-  sog: number;
-  heading: number;
-  horizon: number;
-}
-
-/**
- * Seconds between footprints. The plan's Δt applies at ordinary speeds; a
- * fast boat would leave gaps between Δt-spaced hulls, so the step shrinks
- * until consecutive footprints (hull length plus the buffer at both ends)
- * still touch.
- */
-export function stepFor(sog: number, vessel: VesselModel, opts: LookaheadOptions): number {
-  const reach = vessel.length + 2 * opts.positionBuffer;
-  return sog > 0 ? Math.min(opts.step, reach / sog) : opts.step;
-}
-
-function footprints(
-  track: Track,
-  vessel: VesselModel,
-  index: ChartIndex,
-  opts: LookaheadOptions
-): FootprintResult[] {
-  const out: FootprintResult[] = [];
-  const clearAbove = vessel.draft + opts.margin + CLEARANCE_RESOLUTION;
-  const times: number[] = [];
-  const step = stepFor(track.sog, vessel, opts);
-  for (let t = 0; t < track.horizon; t += step) {
-    times.push(t);
-  }
-  times.push(track.horizon);
-  for (const t of times) {
-    const run = track.sog * t;
-    const center = t === 0 ? track.origin : project(track.origin, track.cog, run);
-    const width = vessel.beam + 2 * run * Math.tan(opts.coneHalfAngle);
-    const ring = footprintRing(center, track.heading, vessel.length, width);
-    const r = minDepthOver(index.pyramid, footprintGeom(ring), {
-      bufferMetres: opts.positionBuffer,
-      clearAbove
-    });
-    // A query that visited no tile (a degenerate footprint) proved nothing.
-    const examined = r.visits > 0;
-    const charted = examined && r.coveredDMin !== Infinity;
-    out.push({
-      t,
-      center,
-      ring,
-      dMin: r.coveredDMin,
-      ukc: charted ? r.coveredDMin - vessel.draft - opts.margin : null,
-      uncovered: !examined || (r.flags & FLAGS.NO_COVERAGE) !== 0,
-      flags: r.flags,
-      cellRef: r.cellRef,
-      sigmaP: r.sigmaP
-    });
-  }
-  return out;
-}
-
-function worstOf(
-  fps: FootprintResult[],
-  index: ChartIndex,
-  opts: LookaheadOptions
-): WorstPoint | undefined {
-  let worst: FootprintResult | undefined;
-  for (const f of fps) {
-    if (f.ukc !== null && (worst === undefined || f.ukc < (worst.ukc as number))) {
-      worst = f;
-    }
-  }
-  if (worst === undefined || worst.ukc === null) {
-    return undefined;
-  }
-  // A hazard reaches k·σP from its position and then fills its whole leaf
-  // tile, so the naming search looks that far out. It only picks the name;
-  // the depth already came from the pyramid. A shallower hazard in that
-  // reach did not set the minimum (it would have lowered it), so only one
-  // at exactly the charted minimum is named.
-  const geom = footprintGeom(worst.ring);
-  const leafDiagonal =
-    tileSize(index.pyramid.leafZoom) * Math.cos((worst.center[1] * Math.PI) / 180) * Math.SQRT2;
-  const reach = opts.positionBuffer + DEFAULT_BUILD.k * worst.sigmaP + leafDiagonal;
-  const hit = index.hazards
-    .near(geom, mercatorBuffer(geomBounds(geom), reach))
-    .find((h) => h.feature.depth === worst.dMin);
-  const cell = index.catalogue.cells[worst.cellRef];
   return {
-    t: worst.t,
-    position: worst.center,
-    charted: worst.dMin,
-    ukc: worst.ukc,
-    cell: cell && { name: cell.name, edition: cell.edition, update: cell.update },
-    hazard: hit && {
-      class: hit.feature.objectClass,
-      lnam: hit.feature.lnam,
-      depth: hit.feature.depth
-    }
+    state,
+    reason,
+    clearance: null,
+    clearanceSigma: null,
+    risk: null,
+    timeToShoal: null,
+    horizon: 0,
+    footprints: []
   };
-}
-
-function fmt(m: number): string {
-  return Number.isFinite(m) ? `${m.toFixed(1)} m` : "land";
-}
-
-function classify(
-  fps: FootprintResult[],
-  opts: LookaheadOptions
-): { state: UnderKeelState; reason: string; tts: number | null } {
-  const shoal = fps.find((f) => f.ukc !== null && f.ukc < 0);
-  const uncovered = fps.find((f) => f.uncovered);
-  const tts = shoal ? shoal.t : null;
-  if (tts !== null && tts <= opts.alarmWithin) {
-    return {
-      state: "alarm",
-      reason: tts === 0 ? "shoal under the vessel" : `shoal ahead in ${tts.toFixed(0)} s`,
-      tts
-    };
-  }
-  if (tts !== null && tts <= opts.warnWithin) {
-    return { state: "warn", reason: `shoal ahead in ${tts.toFixed(0)} s`, tts };
-  }
-  if (uncovered) {
-    const where = uncovered.t === 0 ? "at the vessel" : `ahead in ${uncovered.t.toFixed(0)} s`;
-    return { state: "warn", reason: `no chart coverage ${where}`, tts };
-  }
-  if (tts !== null) {
-    return { state: "alert", reason: `shoal ahead in ${tts.toFixed(0)} s`, tts };
-  }
-  return { state: "normal", reason: "", tts: null };
 }
 
 interface Motion {
@@ -271,26 +178,192 @@ function motionOf(nav: NavState, now: number, opts: LookaheadOptions): Motion {
 }
 
 /**
- * Without course and speed only the vessel's own footprint is checked, so a
- * clear answer is reported as `unknown`, never `normal`.
+ * Seconds between footprints. The plan's Δt applies at ordinary speeds; a
+ * fast boat would leave gaps between Δt-spaced hulls, so the step shrinks
+ * until consecutive footprints (hull length plus the buffer at both ends)
+ * still touch.
  */
-function degradeForMotion(
-  c: { state: UnderKeelState; reason: string },
-  m: Motion
-): { state: UnderKeelState; reason: string } {
+export function stepFor(sog: number, vessel: VesselModel, opts: LookaheadOptions): number {
+  const reach = vessel.length + 2 * opts.positionBuffer;
+  return sog > 0 ? Math.min(opts.step, reach / sog) : opts.step;
+}
+
+function timesFor(m: Motion, vessel: VesselModel, opts: LookaheadOptions): number[] {
+  const times: number[] = [];
+  const step = stepFor(m.sog, vessel, opts);
+  for (let t = 0; t < m.horizon; t += step) {
+    times.push(t);
+  }
+  times.push(m.horizon);
+  return times;
+}
+
+interface Scoring {
+  terms: VesselTerms;
+  threshold: number;
+  sigmaExtra: number;
+}
+
+function footprint(
+  t: number,
+  origin: LonLat,
+  m: Motion,
+  vessel: VesselModel,
+  index: ChartIndex,
+  s: Scoring,
+  opts: LookaheadOptions
+): FootprintResult {
+  const run = m.sog * t;
+  const center = t === 0 ? origin : project(origin, m.cog, run);
+  const width = vessel.beam + 2 * run * Math.tan(opts.coneHalfAngle);
+  const ring = footprintRing(center, m.heading, vessel.length, width);
+  const r = minDepthOver(index.pyramid, footprintGeom(ring), {
+    bufferMetres: opts.positionBuffer,
+    clearAbove: s.threshold + CLEARANCE_RESOLUTION,
+    risk: { threshold: s.threshold, sigmaExtra: s.sigmaExtra }
+  });
+  // A query that visited no tile (a degenerate footprint) proved nothing.
+  const examined = r.visits > 0;
+  const charted = !examined || r.coveredDMin === Infinity ? null : r.coveredDMin;
+  return {
+    t,
+    center,
+    ring,
+    charted,
+    mean: charted === null ? null : charted - s.threshold,
+    sigma: r.riskTile ? Math.hypot(r.riskTile.sigmaD, s.sigmaExtra) : s.sigmaExtra,
+    risk: r.maxRisk,
+    uncovered: !examined || (r.flags & FLAGS.NO_COVERAGE) !== 0,
+    flags: r.flags,
+    sigmaP: r.sigmaP,
+    riskTile: r.riskTile
+  };
+}
+
+interface Verdict {
+  state: UnderKeelState;
+  reason: string;
+  tts: number | null;
+}
+
+const inS = (t: number): string => `${t.toFixed(0)} s`;
+
+function classify(fps: FootprintResult[], opts: LookaheadOptions): Verdict {
+  const th = opts.thresholds;
+  const alarm = fps.find(
+    (f) =>
+      (f.t <= opts.alarmWithin && f.risk >= th.alarm) ||
+      (f.t <= opts.certainWithin && f.mean !== null && f.mean < 0)
+  );
+  const warn = fps.find((f) => f.risk >= th.warn);
+  const tts = warn ? warn.t : null;
+  if (alarm) {
+    const reason = alarm.t === 0 ? "shoal under the vessel" : `shoal ahead in ${inS(alarm.t)}`;
+    return { state: "alarm", reason, tts: tts ?? alarm.t };
+  }
+  if (warn && tts !== null && tts <= opts.warnWithin) {
+    // At a coverage edge the risk comes from the gap's unassessed σ, so say so.
+    const gap = ((warn.riskTile?.flags ?? 0) & FLAGS.NO_COVERAGE) !== 0;
+    const what = gap ? "no chart coverage" : "shoal";
+    return { state: "warn", reason: `${what} ahead in ${inS(tts)}`, tts };
+  }
+  const uncovered = fps.find((f) => f.uncovered);
+  if (uncovered) {
+    const where = uncovered.t === 0 ? "at the vessel" : `ahead in ${inS(uncovered.t)}`;
+    return { state: "warn", reason: `no chart coverage ${where}`, tts };
+  }
+  const alert = fps.find((f) => f.risk >= th.alert);
+  if (alert) {
+    return { state: "alert", reason: `shoal risk ahead in ${inS(alert.t)}`, tts };
+  }
+  return { state: "normal", reason: "", tts: null };
+}
+
+/**
+ * A clear answer is downgraded when it rests on less than full input:
+ * without course and speed only the vessel's own footprint is checked
+ * (`unknown`), and a fallback water level is published as an alert.
+ */
+function degrade(c: Verdict, m: Motion, wl: WaterLevel): Verdict {
   if (c.state !== "normal") {
     return c;
   }
   if (!m.known) {
     return {
+      ...c,
       state: "unknown",
       reason: "course or speed stale: only the current position is checked"
     };
   }
+  if (wl.degraded) {
+    return { ...c, state: "alert", reason: wl.degraded };
+  }
   if (!m.moving) {
-    return { state: "normal", reason: "low speed: only the current position is checked" };
+    return { ...c, reason: "low speed: only the current position is checked" };
   }
   return c;
+}
+
+function riskiest(fps: FootprintResult[]): FootprintResult | undefined {
+  let worst: FootprintResult | undefined;
+  for (const f of fps) {
+    if (f.charted === null) {
+      continue;
+    }
+    const better =
+      worst === undefined ||
+      f.risk > worst.risk ||
+      (f.risk === worst.risk && (f.mean as number) < (worst.mean as number));
+    if (better) {
+      worst = f;
+    }
+  }
+  return worst;
+}
+
+function worstOf(
+  fps: FootprintResult[],
+  index: ChartIndex,
+  s: Scoring,
+  wl: WaterLevel,
+  opts: LookaheadOptions
+): WorstPoint | undefined {
+  const worst = riskiest(fps);
+  if (!worst) {
+    return undefined;
+  }
+  const tile = worst.riskTile ?? {
+    dMin: worst.charted as number,
+    sigmaD: 0,
+    cellRef: -1,
+    flags: worst.flags
+  };
+  // A hazard reaches k·σP from its position and then fills its whole leaf
+  // tile, so the naming search looks that far out. Only a hazard whose depth
+  // is the tile's depth is named: it is the one that set it.
+  const geom = footprintGeom(worst.ring);
+  const leafDiagonal =
+    tileSize(index.pyramid.leafZoom) * Math.cos((worst.center[1] * Math.PI) / 180) * Math.SQRT2;
+  const reach = opts.positionBuffer + DEFAULT_BUILD.k * worst.sigmaP + leafDiagonal;
+  const hit = index.hazards
+    .near(geom, mercatorBuffer(geomBounds(geom), reach))
+    .find((h) => h.feature.depth === tile.dMin);
+  const cell = index.catalogue.cells[tile.cellRef];
+  const explanation = explain(
+    tile,
+    {
+      flags: flagNames(tile.flags),
+      cell: cell && { name: cell.name, edition: cell.edition, update: cell.update },
+      hazard: hit && {
+        class: hit.feature.objectClass,
+        lnam: hit.feature.lnam,
+        depth: hit.feature.depth
+      }
+    },
+    s.terms,
+    wl
+  );
+  return { t: worst.t, position: worst.riskTile?.center ?? worst.center, explanation };
 }
 
 function finiteNav(nav: NavState): boolean {
@@ -299,13 +372,33 @@ function finiteNav(nav: NavState): boolean {
     p !== undefined &&
     Number.isFinite(p[0]) &&
     Number.isFinite(p[1]) &&
-    [nav.cog, nav.sog, nav.heading].every((s) => s === undefined || Number.isFinite(s.value))
+    [nav.cog, nav.sog, nav.heading, nav.roll, nav.waveHeight].every(
+      (s) => s === undefined || Number.isFinite(s.value)
+    )
   );
+}
+
+/**
+ * The footprint with the lowest mean UKC, so clearance and its σ come from
+ * one footprint; between equally shallow ones the wider σ is reported.
+ */
+function shallowestOf(fps: FootprintResult[]): FootprintResult | undefined {
+  let best: FootprintResult | undefined;
+  for (const f of fps) {
+    if (f.mean === null) {
+      continue;
+    }
+    const b = best?.mean as number;
+    if (best === undefined || f.mean < b || (f.mean === b && f.sigma > best.sigma)) {
+      best = f;
+    }
+  }
+  return best;
 }
 
 export function evaluateLookahead(
   nav: NavState,
-  vessel: VesselModel | undefined,
+  inputs: LookaheadInputs,
   index: ChartIndex | undefined,
   now: number,
   opts: LookaheadOptions = DEFAULT_LOOKAHEAD
@@ -313,6 +406,7 @@ export function evaluateLookahead(
   if (!index) {
     return degraded("off", "no chart index loaded");
   }
+  const vessel = inputs.vessel;
   if (!vessel) {
     return degraded("unknown", "vessel draft not configured");
   }
@@ -326,32 +420,41 @@ export function evaluateLookahead(
     return degraded("unknown", "non-finite navigation input");
   }
   const m = motionOf(nav, now, opts);
-  const fps = footprints({ origin: nav.position.value, ...m }, vessel, index, opts);
-  const c = classify(fps, opts);
-  const ukcs = fps.map((f) => f.ukc).filter((u): u is number => u !== null);
-  const { state, reason } = degradeForMotion(c, m);
+  const wl = inputs.waterLevel;
+  const terms = vesselTerms(
+    vessel,
+    {
+      speed: m.sog,
+      roll: stale(nav.roll, now, opts) ? undefined : nav.roll?.value,
+      waveHeight: nav.waveHeight?.value
+    },
+    inputs.dynamics
+  );
+  const s: Scoring = {
+    terms,
+    threshold: thresholdDepth(terms, wl),
+    sigmaExtra: sigmaExtra(terms, wl)
+  };
+  const origin = nav.position.value;
+  const fps = timesFor(m, vessel, opts).map((t) => footprint(t, origin, m, vessel, index, s, opts));
+  const verdict = degrade(classify(fps, opts), m, wl);
+  const shallowest = shallowestOf(fps);
   return {
-    state,
-    reason,
-    clearance: ukcs.length > 0 ? Math.min(...ukcs) : null,
-    timeToShoal: c.tts,
+    state: verdict.state,
+    reason: verdict.reason,
+    clearance: shallowest ? shallowest.mean : null,
+    clearanceSigma: shallowest ? shallowest.sigma : null,
+    risk: fps.length > 0 ? Math.max(...fps.map((f) => f.risk)) : null,
+    timeToShoal: verdict.tts,
     horizon: m.horizon,
     footprints: fps,
-    worst: worstOf(fps, index, opts),
-    draft: vessel.draft,
-    margin: opts.margin
+    worst: worstOf(fps, index, s, wl, opts),
+    waterLevel: wl
   };
 }
 
 /** One-line explanation of the worst point, for notification messages. */
 export function describe(result: LookaheadResult): string {
   const w = result.worst;
-  if (!w || result.draft === undefined || result.margin === undefined) {
-    return result.reason;
-  }
-  const hazard = w.hazard ? ` (${w.hazard.class}${w.hazard.lnam ? ` ${w.hazard.lnam}` : ""})` : "";
-  return (
-    `${result.reason}: charted ${fmt(w.charted)}${hazard} − draft ${fmt(result.draft)}` +
-    ` − margin ${fmt(result.margin)} → UKC ${fmt(w.ukc)}`
-  );
+  return w ? `${result.reason}: ${sentence(w.explanation)}` : result.reason;
 }

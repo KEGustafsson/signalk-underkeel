@@ -4,33 +4,59 @@ Under-keel clearance awareness for Signal K. The plugin turns S-57 chart data in
 queryable hazard model on the server and publishes look-ahead grounding risk, route checks
 and own-sounding discrepancies for chartplotters such as Freeboard-SK.
 
-> Advisory navigation aid. Not ECDIS, and not a replacement for official charts or a proper
-> lookout.
+> Advisory navigation aid, non-commercial. Not ECDIS, and not a replacement for official charts
+> or a proper lookout: always carry and use an official nautical chart, paper or ENC.
 
 With a chart index and a configured draft, the plugin checks a straight cone along COG every
-second against the chart with a fixed safety margin, and publishes:
+second. For each footprint it computes P(UKC < 0) from the charted depth and its survey
+uncertainty (CATZOC), the draft, squat, heel, a wave allowance and the water level, and
+publishes:
 
 - `navigation.underKeel.state`: `normal`, `alert`, `warn`, `alarm`, `unknown` or `off`;
-- `navigation.underKeel.clearance`, `.timeToShoal`, `.envelopeRev` and `.waterLevel` (the
-  water level applied above chart datum; 0 with no water-level source);
-- `notifications.navigation.underKeel`, with the charted depth, draft and margin behind it.
+- `navigation.underKeel.clearance` and `.clearanceSigma` (predicted minimum UKC and its σ),
+  `.risk` (highest P(UKC < 0) over the horizon), `.timeToShoal`, `.envelopeRev` and
+  `.waterLevel` (the level applied above chart datum);
+- `notifications.navigation.underKeel`, with an explanation of every term behind the result.
 
-Stale position, a missing draft or index, or no chart coverage never produce `normal`.
+Stale position, a missing draft or index, no chart coverage or a fallback water level never
+produce `normal`.
+
+Water-level sources, set under **Water level** in the plugin configuration:
+
+- `none`: chart datum, with a σ for the unknown tide;
+- `manual`: a fixed height above chart datum with its σ;
+- `signalk-tide`: `environment.tide.heightNow`, bounded ahead by `heightLow`;
+- `fmi`: the Finnish Meteorological Institute sea-level forecast at the vessel, anchored to the
+  nearest tide gauge. FMI reports above theoretical mean water and above N2000; each cell's
+  S-57 vertical datum is mapped to one of them; the defaults cover the mean-water datums, and
+  cells on N2000 need an entry. An unmapped datum widens σ.
+
+A source that stops updating falls back to chart datum with a wider σ, and the state carries
+the reason.
 
 REST, base `/plugins/signalk-underkeel/v1`, open to readonly users:
 
-- `GET /status`: engine state, chart index and cell editions, look-ahead summary.
+- `GET /status`: engine state, chart index and cell editions, look-ahead summary, water-level
+  source health and datum mapping.
 - `GET /envelope?rev=`: the look-ahead as GeoJSON; 304 when the client already has that rev.
 - `POST /route-check`: a route as a GeoJSON LineString or `/resources/routes/<id>`; each leg is
-  checked over a corridor of the cross-track limit plus a planning buffer and returned as `ok`,
-  `marginal` (inside the safety margin), `fail` or `unverified` (no coverage or unassessed
-  survey, never folded into `ok`), with the cell editions used.
+  checked over a corridor of the cross-track limit plus a planning buffer at the lowest water
+  level expected while on it, and returned as `ok`, `marginal`, `fail` or `unverified` (no
+  coverage, unassessed survey or a fallback water level; never folded into `ok`), with P(UKC < 0),
+  its explanation and the cell editions used.
+- `POST /query`: a GeoJSON Point or Polygon, with an optional buffer, draft and speed; returns
+  the class, P(UKC < 0), the deciding hazard and the explanation, for cursor readouts.
+- `GET /tiles/ukc/{z}/{x}/{y}.pbf`: Mapbox vector tiles from zoom 11, one `ukc` layer of cells
+  classed `clear`, `caution`, `danger`, `unverified` or `land` for the current draft and water
+  level. `GET /ukc-style.json` is a MapLibre style for them.
 
-The plugin also registers a `plotterExtensions` resource declaring the experimental
-`navigationSafety` service.
+The plugin also registers a `plotterExtensions` resource declaring the UKC data overlay and the
+experimental `navigationSafety` service.
 
 ## Documentation map
 
+- [How it works](docs/HOW-IT-WORKS.md): the plugin step by step for users, with flowcharts and
+  screenshots.
 - [Development plan](docs/DEVELOPMENT-PLAN.md): architecture, risk model, APIs, Freeboard
   integration and milestones.
 - [Release checklist](docs/release-checklist.md): commands to run before publishing.

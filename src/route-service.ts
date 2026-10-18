@@ -3,6 +3,7 @@ import { parseRouteRequest, routeResourceCoordinates, speedsFor } from "./api/ro
 import type { PluginConfig } from "./config";
 import { checkRoute } from "./engine/route-check";
 import type { LonLat } from "./foundation/geo";
+import type { WaterLevel } from "./model/uncertainty";
 import type { VesselModel } from "./model/vessel";
 import { FALLBACK_HULL } from "./model/vessel";
 import type { ChartIndex } from "./spatial/chart-index";
@@ -14,6 +15,10 @@ export interface RouteServiceDeps {
   indexReason: string | undefined;
   config: PluginConfig;
   vessel(): VesselModel | undefined;
+  /** Water level over an arrival interval (epoch ms); the lowest applies. */
+  waterLevel(start: number, end: number): WaterLevel;
+  /** Current significant wave height, if known, metres. */
+  waveHeight(): number | undefined;
   getRoute(id: string): Promise<unknown>;
   now(): number;
 }
@@ -69,7 +74,10 @@ export async function routeCheck(body: unknown, deps: RouteServiceDeps): Promise
       xteLimit: req.xteLimit ?? deps.config.routeCheck.xteLimit,
       planningBuffer: deps.config.lookahead.positionBuffer,
       vessel,
-      margin: deps.config.lookahead.margin
+      dynamics: deps.config.dynamics,
+      waterLevel: deps.waterLevel,
+      waveHeight: deps.waveHeight(),
+      probability: req.probability ?? deps.config.routeCheck.probability
     },
     deps.now()
   );

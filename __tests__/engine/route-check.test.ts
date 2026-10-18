@@ -1,6 +1,7 @@
 import fc from "fast-check";
 import type { RouteCheckInput } from "../../src/engine/route-check";
-import { checkRoute, corridorRing, flagNames } from "../../src/engine/route-check";
+import { checkRoute, corridorRing } from "../../src/engine/route-check";
+import { flagNames } from "../../src/spatial/node-store";
 import { haversine, project, toMercator } from "../../src/foundation/geo";
 import type { LonLat } from "../../src/foundation/geo";
 import { pointInPolygon, pointSegmentDistance } from "../../src/foundation/geometry";
@@ -10,10 +11,16 @@ import { FLAGS } from "../../src/spatial/node-store";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
 import { BANK, fixtureIndex, ROCK } from "../helpers/fixture-index";
 import { area, basin, coverage, point } from "../helpers/synthetic";
+import { CHART_DATUM } from "../helpers/engine";
+import { DEFAULT_DYNAMICS } from "../../src/model/vessel";
 
 const NOW = Date.parse("2026-10-18T07:00:00Z");
 
-function input(coordinates: LonLat[], draft: number, extra: Partial<RouteCheckInput> = {}) {
+function input(
+  coordinates: LonLat[],
+  draft: number,
+  extra: Partial<RouteCheckInput> = {}
+): RouteCheckInput {
   return {
     coordinates,
     departure: NOW,
@@ -21,7 +28,9 @@ function input(coordinates: LonLat[], draft: number, extra: Partial<RouteCheckIn
     xteLimit: 20,
     planningBuffer: 10,
     vessel: { draft, length: 12, beam: 4 },
-    margin: 0.5,
+    dynamics: DEFAULT_DYNAMICS,
+    waterLevel: () => CHART_DATUM,
+    probability: 0.01,
     ...extra
   };
 }
@@ -38,18 +47,79 @@ describe("corridor route check on the synthetic chart", () => {
     const leg = r.legs[0];
     expect(leg?.status).toBe("fail");
     expect(leg?.charted).toBe(3.5);
-    expect(leg?.minUkc).toBeCloseTo(-0.6, 6);
+    expect(leg?.minUkc).toBeLessThan(0);
+    expect(leg?.risk).toBeGreaterThan(0.5);
+    expect(leg?.sigma).toBeGreaterThan(0.3);
     expect(leg?.worst?.hazard).toMatchObject({ class: "UWTROC", lnam: "FI5-ROCK", valsou: 3.5 });
-    expect(leg?.explanation).toEqual({ charted: 3.5, draft: 3.6, margin: 0.5, waterLevel: 0 });
+    expect(leg?.explanation).toMatchObject({
+      charted: 3.5,
+      draft: 3.6,
+      waterLevel: 0,
+      waterLevelSource: "chart-datum",
+      flags: ["SWEPT"]
+    });
+    expect(leg?.explanation?.squat).toBeGreaterThan(0);
     expect(r.charts).toEqual([{ cell: "FI5SYNTH", edition: 3, update: 1 }]);
     expect(r.waterLevelSource).toBe("chart-datum");
   });
 
-  test("inside the margin is marginal, clear of it ok", () => {
-    expect(checkRoute(index, input(fairway, 3.2), NOW).legs[0]?.status).toBe("marginal");
+  test("a fallback water level leaves no leg ok", () => {
+    const fallback = {
+      ...CHART_DATUM,
+      source: "fallback",
+      degraded: "water level from fmi is 40 min old"
+    };
+    const ok = checkRoute(index, input(fairway, 1.5), NOW);
+    expect(ok.legs[0]?.status).toBe("ok");
+    const r = checkRoute(index, input(fairway, 1.5, { waterLevel: () => fallback }), NOW);
+    expect(r.legs[0]?.status).toBe("unverified");
+    expect(r.legs[0]?.flags).toContain("WATER_LEVEL_FALLBACK");
+    expect(r.waterLevelDegraded).toBe("water level from fmi is 40 min old");
+    expect(
+      checkRoute(index, input(fairway, 3.6, { waterLevel: () => fallback }), NOW).legs[0]?.status
+    ).toBe("fail");
+  });
+
+  test("P between the threshold and 5× it is marginal, below it ok", () => {
+    const marginal = checkRoute(index, input(fairway, 2.8), NOW).legs[0];
+    expect(marginal?.status).toBe("marginal");
+    expect(marginal?.risk).toBeGreaterThanOrEqual(0.01);
+    expect(marginal?.risk).toBeLessThan(0.05);
     const ok = checkRoute(index, input(fairway, 1.9), NOW).legs[0];
     expect(ok?.status).toBe("ok");
     expect(ok?.flags).toContain("SWEPT");
+  });
+
+  test("a stricter threshold turns ok into marginal", () => {
+    const strict = checkRoute(index, input(fairway, 2.4, { probability: 1e-5 }), NOW).legs[0];
+    const loose = checkRoute(index, input(fairway, 2.4), NOW).legs[0];
+    expect(loose?.status).toBe("ok");
+    expect(["marginal", "fail"]).toContain(strict?.status);
+  });
+
+  test("a loose accepted probability still fails on the rock", () => {
+    const leg = checkRoute(index, input(fairway, 3.6, { probability: 0.5 }), NOW).legs[0];
+    expect(leg?.risk).toBeGreaterThanOrEqual(0.5);
+    expect(leg?.status).toBe("fail");
+  });
+
+  test("the lowest water level over the arrival interval is used", () => {
+    const seen: [number, number][] = [];
+    const r = checkRoute(
+      index,
+      input(fairway, 1.9, {
+        waterLevel: (a, b) => {
+          seen.push([a, b]);
+          return { h: -1.4, sigma: 0.05, source: "test" };
+        }
+      }),
+      NOW
+    );
+    expect(seen[0]?.[0]).toBe(NOW);
+    expect(seen[0]?.[1]).toBeGreaterThan(NOW);
+    expect(r.legs[0]?.status).toBe("fail");
+    expect(r.legs[0]?.explanation?.waterLevel).toBe(-1.4);
+    expect(r.waterLevelSource).toBe("test");
   });
 
   test("a leg into the coverage gap is unverified, never ok", () => {

@@ -8,14 +8,21 @@ import { loadOrBuildIndex } from "../src/index-loader";
 import { parseConfig } from "../src/config";
 import { stepFor, DEFAULT_LOOKAHEAD } from "../src/engine/lookahead";
 import underkeel = require("../src/index");
+import { tileAt, toMercator } from "../src/foundation/geo";
 import { FIXTURES, M_PER_DEG_LON, ROCK } from "./helpers/fixture-index";
+import { decodeMvt } from "./helpers/mvt-decode";
 
 interface FakeRes {
   json: (body: unknown) => void;
+  send: (body: unknown) => void;
+  type: (t: string) => FakeRes;
   status: (code: number) => FakeRes & { end: () => void };
 }
 
-type Handler = (req: { query?: Record<string, string>; body?: unknown }, res: FakeRes) => void;
+type Handler = (
+  req: { query?: Record<string, string>; params?: Record<string, string>; body?: unknown },
+  res: FakeRes
+) => void;
 
 interface FakeClock extends Clock {
   advance(ms: number): void;
@@ -89,24 +96,36 @@ function fakeRouter(withAccess = true) {
     return { get: reg("GET"), post: reg("POST") };
   };
   const router = withAccess ? { ...plain, access: scoped } : plain;
-  const call = (p: string, query: Record<string, string> = {}) => {
+  const call = (
+    p: string,
+    query: Record<string, string> = {},
+    params: Record<string, string> = {}
+  ) => {
     let body: unknown;
     let code = 200;
+    let type: string | undefined;
     const res: FakeRes = {
       json: (b) => (body = b),
+      send: (b) => (body = b),
+      type: (t) => {
+        type = t;
+        return res;
+      },
       status: (c) => {
         code = c;
         return { ...res, end: () => undefined };
       }
     };
-    routes.get(`GET ${p}`)?.({ query }, res);
-    return { code, body };
+    routes.get(`GET ${p}`)?.({ query, params }, res);
+    return { code, body, type };
   };
   const post = (p: string, reqBody: unknown) =>
     new Promise<{ code: number; body: unknown }>((resolve) => {
       let code = 200;
       const res: FakeRes = {
         json: (b) => resolve({ code, body: b }),
+        send: (b) => resolve({ code, body: b }),
+        type: () => res,
         status: (c) => {
           code = c;
           return { ...res, end: () => resolve({ code, body: undefined }) };
@@ -170,7 +189,10 @@ describe("plugin lifecycle", () => {
     expect(Object.fromEntries(levels)).toEqual({
       "GET /v1/status": "readonly",
       "GET /v1/envelope": "readonly",
-      "POST /v1/route-check": "readonly"
+      "POST /v1/route-check": "readonly",
+      "POST /v1/query": "readonly",
+      "GET /v1/tiles/ukc/:z/:x/:file": "readonly",
+      "GET /v1/ukc-style.json": "readonly"
     });
   });
 
@@ -255,6 +277,68 @@ describe("plugin lifecycle", () => {
     });
   });
 
+  test("applies the FMI level, and falls back with a reason when the feed goes stale", async () => {
+    const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 1.5 } } });
+    const clock = fakeClock(T0);
+    let up = true;
+    const urls: string[] = [];
+    const fetch = (url: string) => {
+      urls.push(url);
+      const forecast = url.includes("forecast");
+      const body = `<wfs:FeatureCollection>${[-1, 0, 1, 2]
+        .map(
+          (
+            k
+          ) => `<BsWfs:BsWfsElement><BsWfs:Time>${new Date(T0 + k * 3600000).toISOString()}</BsWfs:Time>
+          <BsWfs:ParameterName>SeaLevel</BsWfs:ParameterName><BsWfs:ParameterValue>30</BsWfs:ParameterValue></BsWfs:BsWfsElement>`
+        )
+        .join("")}</wfs:FeatureCollection>`;
+      return Promise.resolve({
+        ok: up && forecast,
+        status: up && forecast ? 200 : 503,
+        text: () => Promise.resolve(body)
+      });
+    };
+    const plugin = underkeel(f.app, clock, fetch);
+    const { router, call } = fakeRouter();
+    plugin.registerWithRouter?.(router as never);
+    plugin.start(
+      {
+        cellsDir: FIXTURES,
+        leafZoom: 18,
+        waterLevel: { source: "fmi", datums: [{ verdat: 13, series: "mw", sigma: 0.05 }] }
+      },
+      () => undefined
+    );
+    const flush = () => new Promise((r) => setImmediate(r));
+    const at = (t: number) => {
+      f.send(navDelta(22.005, 60.015, 1, t));
+      clock.advance(t - clock.now());
+    };
+
+    at(T0 + 1000);
+    expect(urls.length).toBe(2);
+    expect(lastValue(f.deltas, "navigation.underKeel.state")).toBe("alert");
+    await flush();
+    at(T0 + 2000);
+    expect(lastValue(f.deltas, "navigation.underKeel.state")).toBe("normal");
+    expect(lastValue(f.deltas, "navigation.underKeel.waterLevel")).toBeCloseTo(0.3, 9);
+    const status = call("/v1/status").body as {
+      waterLevel: { source: string; health: { ok: boolean }; applied: { h: number; note: string } };
+    };
+    expect(status.waterLevel).toMatchObject({ source: "fmi", health: { ok: true } });
+    expect(status.waterLevel.applied.note).toBe("vertical datum unknown for FI4SYNTH");
+
+    up = false;
+    clock.advance(31 * 60000);
+    at(clock.now() + 1000);
+    expect(lastValue(f.deltas, "navigation.underKeel.state")).toBe("alert");
+    const n = lastValue(f.deltas, "notifications.navigation.underKeel") as { message: string };
+    expect(n.message).toMatch(/water level from fmi is 31 min old/);
+    plugin.stop();
+    await flush();
+  });
+
   test("POST /v1/route-check answers with per-leg results", async () => {
     const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 3.6 } } });
     const plugin = underkeel(f.app, fakeClock(T0));
@@ -274,6 +358,46 @@ describe("plugin lifecycle", () => {
     });
     expect(r.code).toBe(200);
     expect(r.body).toMatchObject({ legs: [{ index: 0, status: "fail" }] });
+    plugin.stop();
+  });
+
+  test("POST /v1/query and the UKC tiles answer for the current vessel", async () => {
+    const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 3.6 } } });
+    const plugin = underkeel(f.app, fakeClock(T0));
+    const { router, call, post } = fakeRouter();
+    plugin.registerWithRouter?.(router as never);
+    const tile = (z: string, x: string, file: string) =>
+      call("/v1/tiles/ukc/:z/:x/:file", {}, { z, x, file });
+    expect((await post("/v1/query", { geometry: { type: "Point", coordinates: ROCK } })).code).toBe(
+      503
+    );
+    plugin.start({ cellsDir: FIXTURES, leafZoom: 18 }, () => undefined);
+
+    const rock = await post("/v1/query", { geometry: { type: "Point", coordinates: ROCK } });
+    expect(rock.code).toBe(200);
+    expect(rock.body).toMatchObject({ class: "danger", hazard: { lnam: "FI5-ROCK" } });
+    const shallow = await post("/v1/query", {
+      geometry: { type: "Point", coordinates: ROCK },
+      draft: 1.5
+    });
+    expect(shallow.body).toMatchObject({ explanation: { draft: 1.5 } });
+    expect((await post("/v1/query", { geometry: { type: "Line" } })).code).toBe(400);
+
+    const [mx, my] = toMercator(ROCK[0], ROCK[1]);
+    const t = tileAt(16, mx, my);
+    const ok = tile("16", String(t.x), `${t.y}.pbf`);
+    expect(ok.code).toBe(200);
+    expect(ok.type).toBe("application/vnd.mapbox-vector-tile");
+    const classes = decodeMvt(ok.body as Uint8Array)[0]?.features.map((ft) => ft.properties.class);
+    expect(classes).toContain("danger");
+    expect(tile("16", String(t.x), `${t.y}.png`).code).toBe(400);
+    expect(tile("16", String(2 ** 16), "0.pbf").code).toBe(400);
+    expect(decodeMvt(tile("8", "0", "0.pbf").body as Uint8Array)[0]?.features).toEqual([]);
+
+    const style = call("/v1/ukc-style.json").body as { sources: { ukc: { tiles: string[] } } };
+    expect(style.sources.ukc.tiles).toEqual([
+      "/plugins/signalk-underkeel/v1/tiles/ukc/{z}/{x}/{y}.pbf"
+    ]);
     plugin.stop();
   });
 
@@ -323,6 +447,8 @@ describe("plugin lifecycle", () => {
     plugin.stop();
     expect(lastValue(f.deltas, "navigation.underKeel.clearance")).toBeNull();
     expect(lastValue(f.deltas, "navigation.underKeel.timeToShoal")).toBeNull();
+    expect(lastValue(f.deltas, "navigation.underKeel.clearanceSigma")).toBeNull();
+    expect(lastValue(f.deltas, "navigation.underKeel.risk")).toBeNull();
   });
 
   test("a non-finite or out-of-range position clears the sample", () => {
@@ -396,10 +522,19 @@ describe("manifest and step", () => {
     expect(m?.services.navigationSafety).toEqual({
       apiVersion: "1",
       base: "/plugins/signalk-underkeel/v1",
-      provides: ["lookahead", "routeCheck"],
+      provides: ["lookahead", "routeCheck", "query"],
       statePath: "navigation.underKeel",
       notificationPath: "notifications.navigation.underKeel"
     });
+    expect(m?.optional).toEqual(["overlays.data", "x-freeboard.services.navigationSafety"]);
+    expect(m?.overlays).toEqual([
+      expect.objectContaining({
+        id: "ukc",
+        type: "data",
+        minZoom: 11,
+        style: "/plugins/signalk-underkeel/v1/ukc-style.json"
+      })
+    ]);
   });
 
   test("a fast boat gets a shorter step so footprints still overlap", () => {

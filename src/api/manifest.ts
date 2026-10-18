@@ -3,9 +3,9 @@ import { API_BASE } from "./routes";
 
 /**
  * Plotter Extensions manifest contribution (plan §4.14). Only the parts
- * that exist are declared: the experimental `services.navigationSafety`
- * section lists what this build serves. The UKC overlay and the settings
- * panel are added when their endpoints exist.
+ * that exist are declared: the UKC data overlay and the experimental
+ * `services.navigationSafety` section listing what this build serves. The
+ * settings panel is added when its page exists.
  */
 
 export const PLUGIN_ID = "signalk-underkeel";
@@ -16,6 +16,16 @@ export interface Manifest {
   apiVersion: "1";
   requires: string[];
   optional: string[];
+  overlays: {
+    id: string;
+    title: string;
+    type: "data";
+    band: "aboveCharts";
+    visible: boolean;
+    opacity: number;
+    minZoom: number;
+    style: string;
+  }[];
   services: {
     navigationSafety: {
       apiVersion: "1";
@@ -27,6 +37,53 @@ export interface Manifest {
   };
 }
 
+const BASE = `/plugins/${PLUGIN_ID}${API_BASE}`;
+
+/** Zoom below which the UKC tiles are empty. */
+export const UKC_MIN_ZOOM = 11;
+
+/** Fill colour per UKC class; land is left to the chart. */
+const UKC_COLOURS = {
+  danger: "#d7301f",
+  caution: "#fdae61",
+  unverified: "#9e9ac8",
+  clear: "#41ab5d"
+} as const;
+
+/** MapLibre style for the UKC overlay tiles. */
+export function ukcStyle(): Record<string, unknown> {
+  return {
+    version: 8,
+    name: "Under-keel risk",
+    sources: {
+      ukc: {
+        type: "vector",
+        tiles: [`${BASE}/tiles/ukc/{z}/{x}/{y}.pbf`],
+        minzoom: UKC_MIN_ZOOM,
+        maxzoom: 18
+      }
+    },
+    layers: [
+      {
+        id: "ukc-fill",
+        type: "fill",
+        source: "ukc",
+        "source-layer": "ukc",
+        filter: ["!=", ["get", "class"], "land"],
+        paint: {
+          "fill-color": [
+            "match",
+            ["get", "class"],
+            ...Object.entries(UKC_COLOURS).flat(),
+            "#000000"
+          ],
+          "fill-opacity": ["match", ["get", "class"], "clear", 0.25, 0.55]
+        }
+      }
+    ]
+  };
+}
+
 export function buildManifest(version: string): Record<string, Manifest> {
   return {
     [PLUGIN_ID]: {
@@ -34,12 +91,24 @@ export function buildManifest(version: string): Record<string, Manifest> {
       version,
       apiVersion: "1",
       requires: [],
-      optional: ["x-freeboard.services.navigationSafety"],
+      optional: ["overlays.data", "x-freeboard.services.navigationSafety"],
+      overlays: [
+        {
+          id: "ukc",
+          title: "Under-keel risk",
+          type: "data",
+          band: "aboveCharts",
+          visible: false,
+          opacity: 0.6,
+          minZoom: UKC_MIN_ZOOM,
+          style: `${BASE}/ukc-style.json`
+        }
+      ],
       services: {
         navigationSafety: {
           apiVersion: "1",
-          base: `/plugins/${PLUGIN_ID}${API_BASE}`,
-          provides: ["lookahead", "routeCheck"],
+          base: BASE,
+          provides: ["lookahead", "routeCheck", "query"],
           statePath: "navigation.underKeel",
           notificationPath: "notifications.navigation.underKeel"
         }

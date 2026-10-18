@@ -18,7 +18,9 @@ export const LIMITS = {
   maxSpeed: 30,
   maxXte: 2000,
   minDraft: 0.01,
-  maxDraft: 30
+  maxDraft: 30,
+  minProbability: 1e-6,
+  maxProbability: 0.5
 } as const;
 
 export interface RouteRequest {
@@ -31,6 +33,8 @@ export interface RouteRequest {
   speed?: number | number[];
   xteLimit?: number;
   draft?: number;
+  /** Accept threshold for P(UKC < 0). */
+  probability?: number;
 }
 
 export type Parsed<T> = { ok: true; value: T } | { ok: false; errors: string[] };
@@ -130,6 +134,13 @@ export function parseRouteRequest(body: unknown): Parsed<RouteRequest> {
       req.xteLimit = b.xteLimit;
     } else {
       errors.push(`xteLimit must be 0..${LIMITS.maxXte} m`);
+    }
+  }
+  if (b.probability !== undefined) {
+    if (inRange(b.probability, LIMITS.minProbability, LIMITS.maxProbability)) {
+      req.probability = b.probability;
+    } else {
+      errors.push(`probability must be ${LIMITS.minProbability}..${LIMITS.maxProbability}`);
     }
   }
   const draft = (b.vessel as { draft?: unknown } | undefined)?.draft;

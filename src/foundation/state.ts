@@ -5,6 +5,8 @@ export type UnderKeelState = "normal" | "alert" | "warn" | "alarm" | "unknown" |
 export const PATHS = {
   state: "navigation.underKeel.state",
   clearance: "navigation.underKeel.clearance",
+  clearanceSigma: "navigation.underKeel.clearanceSigma",
+  risk: "navigation.underKeel.risk",
   timeToShoal: "navigation.underKeel.timeToShoal",
   envelopeRev: "navigation.underKeel.envelopeRev",
   waterLevel: "navigation.underKeel.waterLevel",
