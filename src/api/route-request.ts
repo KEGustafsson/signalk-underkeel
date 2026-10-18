@@ -1,4 +1,5 @@
 import type { LonLat } from "../foundation/geo";
+import { haversine } from "../foundation/geo";
 
 /**
  * Validation of the `POST /route-check` body (plan §4.11). Everything a
@@ -8,9 +9,15 @@ import type { LonLat } from "../foundation/geo";
 
 export const LIMITS = {
   maxPoints: 1000,
+  /**
+   * Total route length, metres. The check runs one corridor query per
+   * kilometre on the event loop, so this bounds what one request costs.
+   */
+  maxRouteMetres: 500_000,
   minSpeed: 0.1,
   maxSpeed: 30,
   maxXte: 2000,
+  minDraft: 0.01,
   maxDraft: 30
 } as const;
 
@@ -55,6 +62,14 @@ function parseCoordinates(route: unknown, errors: string[]): LonLat[] | undefine
     }
     out.push([lon, lat]);
   }
+  let total = 0;
+  for (let i = 1; i < out.length; i++) {
+    total += haversine(out[i - 1] as LonLat, out[i] as LonLat);
+  }
+  if (total > LIMITS.maxRouteMetres) {
+    errors.push(`route must be at most ${LIMITS.maxRouteMetres / 1000} km long`);
+    return undefined;
+  }
   return out;
 }
 
@@ -65,7 +80,10 @@ function parseSpeed(raw: unknown, errors: string[]): number | number[] | undefin
     return undefined;
   }
   const ok = (v: unknown) => inRange(v, LIMITS.minSpeed, LIMITS.maxSpeed);
-  const s = raw as { default?: unknown; legs?: unknown };
+  const s = (typeof raw === "object" && raw !== null ? raw : {}) as {
+    default?: unknown;
+    legs?: unknown;
+  };
   const candidate = Array.isArray(raw) ? raw : isNum(raw) ? raw : (s.legs ?? s.default);
   if (Array.isArray(candidate) ? candidate.every(ok) : ok(candidate)) {
     return candidate as number | number[];
@@ -108,10 +126,10 @@ export function parseRouteRequest(body: unknown): Parsed<RouteRequest> {
   }
   const draft = (b.vessel as { draft?: unknown } | undefined)?.draft;
   if (draft !== undefined) {
-    if (inRange(draft, 0.01, LIMITS.maxDraft)) {
+    if (inRange(draft, LIMITS.minDraft, LIMITS.maxDraft)) {
       req.draft = draft;
     } else {
-      errors.push(`vessel.draft must be 0..${LIMITS.maxDraft} m`);
+      errors.push(`vessel.draft must be ${LIMITS.minDraft}..${LIMITS.maxDraft} m`);
     }
   }
   return errors.length > 0 ? { ok: false, errors } : { ok: true, value: req };

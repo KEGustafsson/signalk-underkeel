@@ -1,6 +1,7 @@
 import type { LookaheadOptions } from "./engine/lookahead";
 import { DEFAULT_LOOKAHEAD } from "./engine/lookahead";
 import type { VesselModel } from "./model/vessel";
+import { LIMITS } from "./api/route-request";
 
 /**
  * Plugin configuration: the JSON schema shown in the Signal K admin UI and
@@ -128,8 +129,8 @@ export function parseConfig(raw: unknown): PluginConfig {
     },
     lookahead,
     routeCheck: {
-      speed: num(rc.speed, DEFAULT_ROUTE_CHECK.speed, 0.1, 30),
-      xteLimit: num(rc.xteLimit, DEFAULT_ROUTE_CHECK.xteLimit, 0, 2000)
+      speed: num(rc.speed, DEFAULT_ROUTE_CHECK.speed, LIMITS.minSpeed, LIMITS.maxSpeed),
+      xteLimit: num(rc.xteLimit, DEFAULT_ROUTE_CHECK.xteLimit, 0, LIMITS.maxXte)
     }
   };
 }

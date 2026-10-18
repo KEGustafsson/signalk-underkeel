@@ -146,7 +146,7 @@ function statusOf(minUkc: number | null, margin: number, flags: number): LegStat
   if (minUkc !== null && minUkc + margin < 0) {
     return "fail";
   }
-  if (minUkc === null || flags & (FLAGS.NO_COVERAGE | FLAGS.UNASSESSED)) {
+  if (minUkc === null || flags & (FLAGS.NO_COVERAGE | FLAGS.UNASSESSED | FLAGS.NO_DEPTH)) {
     return "unverified";
   }
   return minUkc < 0 ? "marginal" : "ok";

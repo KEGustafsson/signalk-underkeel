@@ -69,13 +69,26 @@ describe("route-check request validation", () => {
     [{ route: { type: "LineString", coordinates: [[22, 60], "x"] } }, /within/],
     [{ route: LINE, speed: 0 }, /speed/],
     [{ route: LINE, speed: [2, 99] }, /speed/],
+    [{ route: LINE, speed: null }, /speed must be/],
     [{ route: LINE, departure: "tomorrow" }, /ISO 8601/],
     [{ route: LINE, xteLimit: -1 }, /xteLimit/],
-    [{ route: LINE, vessel: { draft: 100 } }, /draft/]
+    [{ route: LINE, vessel: { draft: 100 } }, /draft/],
+    [{ route: LINE, vessel: { draft: 0 } }, /vessel\.draft must be 0\.01\.\.30 m/]
   ])("rejects %j", (body, message) => {
     const r = parseRouteRequest(body);
     expect(r.ok).toBe(false);
     expect(r.ok ? "" : r.errors.join("; ")).toMatch(message);
+  });
+
+  test("a route longer than the limit is refused, also by reference", () => {
+    // 0.1° of longitude at 60°N is about 5.6 km; 100 legs is about 560 km.
+    const coordinates = Array.from({ length: 101 }, (_, i) => [20 + i * 0.1, 60]);
+    const r = parseRouteRequest({ route: { type: "LineString", coordinates } });
+    expect(r.ok ? "" : r.errors.join("; ")).toMatch(/at most 500 km/);
+    const ok = coordinates.slice(0, 80);
+    expect(parseRouteRequest({ route: { type: "LineString", coordinates: ok } }).ok).toBe(true);
+    const geometry = { type: "LineString", coordinates };
+    expect(routeResourceCoordinates({ feature: { geometry } })).toBeUndefined();
   });
 
   test("too many points are refused", () => {
