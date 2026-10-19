@@ -83,10 +83,20 @@ export interface RouteCheckResult {
 /** Long legs are checked in pieces about this long so the corridor hugs the line. */
 const SEGMENT_METRES = 1000;
 
+/** Longitude in [-180, 180). */
+function wrapLon(lon: number): number {
+  return ((((lon + 180) % 360) + 360) % 360) - 180;
+}
+
+/** b moved by whole turns of longitude to within 180° of a: the short way round. */
+function nearSide(a: LonLat, b: LonLat): LonLat {
+  return [a[0] + wrapLon(b[0] - a[0]), b[1]];
+}
+
 /** True bearing from a to b in the local tangent plane, radians. */
 function bearing(a: LonLat, b: LonLat): number {
   const deg = Math.PI / 180;
-  const east = (b[0] - a[0]) * deg * EARTH_RADIUS * Math.cos(a[1] * deg);
+  const east = (nearSide(a, b)[0] - a[0]) * deg * EARTH_RADIUS * Math.cos(a[1] * deg);
   const north = (b[1] - a[1]) * deg * EARTH_RADIUS;
   return Math.atan2(east, north);
 }
@@ -94,12 +104,13 @@ function bearing(a: LonLat, b: LonLat): number {
 /**
  * Rectangle around segment a→b, `r` metres to each side and past each
  * end. It contains the capsule buffer(a→b, r), so the check is never
- * narrower than the corridor.
+ * narrower than the corridor. Across ±180° the ring keeps a's side and
+ * reaches past it.
  */
 export function corridorRing(a: LonLat, b: LonLat, r: number): LonLat[] {
   const brg = bearing(a, b);
   const start = project(a, brg + Math.PI, r);
-  const end = project(b, brg, r);
+  const end = project(nearSide(a, b), brg, r);
   return [
     project(end, brg + Math.PI / 2, r),
     project(start, brg + Math.PI / 2, r),
@@ -110,9 +121,11 @@ export function corridorRing(a: LonLat, b: LonLat, r: number): LonLat[] {
 
 /** The point `t` of the way along the rhumb line a→b, the line drawn straight on the chart. */
 function alongRhumb(a: LonLat, b: LonLat, t: number): LonLat {
+  const near = nearSide(a, b);
   const [ax, ay] = toMercator(a[0], a[1]);
-  const [bx, by] = toMercator(b[0], b[1]);
-  return fromMercator(ax + (bx - ax) * t, ay + (by - ay) * t);
+  const [bx, by] = toMercator(near[0], near[1]);
+  const p = fromMercator(ax + (bx - ax) * t, ay + (by - ay) * t);
+  return [wrapLon(p[0]), p[1]];
 }
 
 function unitVector(p: LonLat): [number, number, number] {

@@ -293,6 +293,21 @@ describe("corridor geometry", () => {
     );
   });
 
+  test("a leg across 180° is checked the short way round", () => {
+    const rings = legCorridors([179.99, 60], [-179.99, 60], 40);
+    expect(rings.length).toBeGreaterThan(0);
+    for (const ring of rings) {
+      const lons = ring.map((q) => q[0]);
+      expect(Math.max(...lons) - Math.min(...lons)).toBeLessThan(0.05);
+      for (const lon of lons) {
+        expect(180 - Math.abs(lon)).toBeLessThan(0.02);
+      }
+    }
+    // The corridor reaches the antimeridian from both sides.
+    expect(rings.some((ring) => ring.some((q) => q[0] >= 180))).toBe(true);
+    expect(rings.some((ring) => ring.some((q) => q[0] <= -179.99))).toBe(true);
+  });
+
   test("flag names", () => {
     expect(flagNames(FLAGS.SWEPT | FLAGS.UNASSESSED)).toEqual(["SWEPT", "UNASSESSED"]);
     expect(flagNames(0)).toEqual([]);
