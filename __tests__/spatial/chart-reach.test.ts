@@ -60,10 +60,10 @@ describe("chart position reach", () => {
     expect(query(features, 2, 100).dMin).toBe(12);
   });
 
-  test.each([
+  test.each<[Catzoc, string]>([
     [3, "B"],
     [4, "C"]
-  ] as const)("a drying area 60 m off under CATZOC %s (%s) is found", (catzoc) => {
+  ])("a drying area 60 m off under CATZOC %s (%s) is found", (catzoc) => {
     const features = [coverage(BOX), quality(BOX, catzoc), area(BOX, 15), dryingNorth(60)];
     expect(query(features).dMin).toBe(-1);
     // Without the chart's position the 10 m buffer stops short of it.
