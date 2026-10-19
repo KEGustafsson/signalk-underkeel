@@ -146,3 +146,5 @@ All notable changes to signalk-underkeel are documented here.
   path. Other REST failures that are not a bad request body are a generic 500 as well.
 - The envelope `rev` starts at the plugin's start time in ms instead of 0, so after a restart
   `GET /envelope?rev=N` no longer answers 304 to a client holding a rev from the earlier run.
+- UKC tiles are sent with `Cache-Control: no-cache`, as the Plotter Extensions spec asks for
+  tiles that change, so a browser revalidates them when the water level or draft changes.

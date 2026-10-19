@@ -15,3 +15,20 @@ describe("route errors", () => {
     }
   });
 });
+
+describe("UKC tile headers", () => {
+  test("UKC tiles change with the water level and vessel, so caches revalidate them", () => {
+    const api = {
+      ukcTile: () => ({
+        status: 200,
+        contentType: "application/vnd.mapbox-vector-tile",
+        body: new Uint8Array([1])
+      })
+    } as unknown;
+    const { router, call } = fakeRouter();
+    registerRoutes(router as never, api as ApiProvider);
+    const tile = call("/v1/tiles/ukc/:z/:x/:file", {}, { z: "16", x: "0", file: "0.pbf" });
+    expect(tile.code).toBe(200);
+    expect(tile.headers["cache-control"]).toBe("no-cache");
+  });
+});

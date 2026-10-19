@@ -158,6 +158,8 @@ export function registerRoutes(router: RouterLike, api: ApiProvider): void {
     const p = (req.params ?? {}) as Record<string, string | undefined>;
     const y = /^(\d{1,8})\.pbf$/.exec(p.file ?? "")?.[1];
     const reply = api.ukcTile(int(p.z), int(p.x), int(y));
+    // The tiles follow the water level and vessel: Plotter Extensions §Live changes.
+    res.setHeader("Cache-Control", "no-cache");
     if (reply.body instanceof Uint8Array) {
       res.status(reply.status).type(reply.contentType).send(Buffer.from(reply.body));
     } else {

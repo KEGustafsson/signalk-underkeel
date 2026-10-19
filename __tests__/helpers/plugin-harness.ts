@@ -7,6 +7,7 @@ interface FakeRes {
   json: (body: unknown) => void;
   send: (body: unknown) => void;
   type: (t: string) => FakeRes;
+  setHeader: (name: string, value: string) => void;
   status: (code: number) => FakeRes & { end: () => void };
 }
 
@@ -128,6 +129,7 @@ export function fakeRouter(withAccess = true) {
     let body: unknown;
     let code = 200;
     let type: string | undefined;
+    const headers: Record<string, string> = {};
     const res: FakeRes = {
       json: (b) => (body = b),
       send: (b) => (body = b),
@@ -135,13 +137,14 @@ export function fakeRouter(withAccess = true) {
         type = t;
         return res;
       },
+      setHeader: (name, value) => (headers[name.toLowerCase()] = value),
       status: (c) => {
         code = c;
         return { ...res, end: () => undefined };
       }
     };
     routes.get(`GET ${p}`)?.({ query, params }, res);
-    return { code, body, type };
+    return { code, body, type, headers };
   };
   const del = (p: string, params: Record<string, string>) =>
     new Promise<{ code: number; body: unknown }>((resolve) => {
@@ -150,6 +153,7 @@ export function fakeRouter(withAccess = true) {
         json: (b) => resolve({ code, body: b }),
         send: (b) => resolve({ code, body: b }),
         type: () => res,
+        setHeader: () => undefined,
         status: (c) => {
           code = c;
           return { ...res, end: () => resolve({ code, body: undefined }) };
@@ -164,6 +168,7 @@ export function fakeRouter(withAccess = true) {
         json: (b) => resolve({ code, body: b }),
         send: (b) => resolve({ code, body: b }),
         type: () => res,
+        setHeader: () => undefined,
         status: (c) => {
           code = c;
           return { ...res, end: () => resolve({ code, body: undefined }) };
