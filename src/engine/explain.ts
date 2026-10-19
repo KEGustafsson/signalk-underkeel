@@ -4,9 +4,11 @@ import type { CellInfo } from "../ingest/cells";
 import type { Ukc, VesselTerms, WaterLevel } from "../model/uncertainty";
 import { ukcAt } from "../model/uncertainty";
 import type { ChartIndex } from "../spatial/chart-index";
+import { chartReach } from "../spatial/chart-position";
 import { flagNames } from "../spatial/node-store";
 import type { RiskTile } from "../spatial/pyramid";
 import { footprintGeom, mercatorBuffer } from "../spatial/pyramid";
+import { DEFAULT_BUILD } from "../spatial/pyramid-build";
 
 /**
  * Explanation object (plan §4.7): every term behind a UKC estimate, so a
@@ -95,7 +97,12 @@ function hazardIn(
   );
 }
 
-/** The explanation of the deciding tile under `ring`, with its cell and hazard. */
+/**
+ * The explanation of the deciding tile under `ring`, queried with
+ * `bufferMetres` and the default chart reach, with its cell and hazard. The
+ * hazard lies within its burn radius of that tile, and the tile counted
+ * within its chart reach, each k·σP, so the naming search adds both.
+ */
 export function explainTile(
   index: ChartIndex,
   tile: RiskTile,
@@ -104,7 +111,8 @@ export function explainTile(
   wl: WaterLevel,
   bufferMetres = 0
 ): { hazard?: NamedHazard; explanation: Explanation } {
-  const hazard = hazardIn(index, ring, tile.dMin, bufferMetres);
+  const reach = bufferMetres + 2 * chartReach(DEFAULT_BUILD.k, tile.sigmaP);
+  const hazard = hazardIn(index, ring, tile.dMin, reach);
   const cell = index.catalogue.cells[tile.cellRef];
   const explanation = explain(
     tile,

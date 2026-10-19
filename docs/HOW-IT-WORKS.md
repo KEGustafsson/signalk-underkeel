@@ -261,7 +261,10 @@ At each step the plugin places the hull rectangle (length × beam) on each of th
 and joins them into one footprint, the convex hull of the five. The index is asked about that
 footprint, so the water between the tracks is checked too. The footprint gets a buffer for
 position error, at least 10 m or 2σ of the position uncertainty, and grows fore and aft with
-the speed uncertainty. The position σ comes from the GNSS (HDOP × 3 m, 5 m without HDOP) and
+the speed uncertainty. The chart's own position error is added per index tile: a tile counts
+2 × σP of its survey zone further out, 50 m at CATZOC B and 500 m at C, so a drying area drawn
+60 m off the hull in B water is in reach. Unassessed and Traficom WFS water adds nothing, since
+it never reads as `normal` anyway. The position σ comes from the GNSS (HDOP × 3 m, 5 m without HDOP) and
 is raised by the integrity check in section 7.
 
 Steps are at most 3 s apart; for a fast boat the step shrinks so neighbouring footprints still
@@ -540,7 +543,7 @@ each leg at the time the boat would be on it. The request fields are listed in t
 ```mermaid
 flowchart TD
   R[route] --> L[for each leg]
-  L --> C[corridor = leg ± cross-track limit 30 m<br/>+ position buffer 10 m<br/>+ 2 × chart σP]
+  L --> C[corridor = leg ± cross-track limit 30 m<br/>+ position buffer 10 m<br/>+ 2 × σP of each chart tile's survey]
   C --> W[lowest water level between<br/>arrival at the leg's start and end]
   W --> Q["highest P(UKC &lt; 0) in the corridor<br/>with squat at the leg's speed"]
   Q --> F{"corridor touches land, or<br/>P ≥ 5 × accepted P<br/>(at most 50 %, at least accepted P)?"}
@@ -696,7 +699,8 @@ page says what is missing: no Signal K stream on the widget, or no shared routes
 - The index resolves about 19 m at 60° N. A leaf that touches land counts as land, so up to one
   leaf width of water along a shore is drawn as land or danger.
 - Burn discs are as wide as the survey's position uncertainty: a CATZOC C sounding blocks a
-  disc 1 km across.
+  disc 1 km across, and since each C tile also counts 500 m beyond a footprint, the sounding
+  reaches a footprint up to 1 km away.
 - An index leaf that straddles two survey zones takes the worse zone's σ when the zones share
   their boundary vertex for vertex. A boundary split differently on each side, an overlap or a
   gap leaves the leaf unassessed. The same holds for two cells of one usage band meeting along

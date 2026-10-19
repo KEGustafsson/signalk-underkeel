@@ -8,8 +8,8 @@ import { vesselTerms } from "../model/vessel";
 import type { ChartIndex } from "../spatial/chart-index";
 import { FLAGS, flagNames } from "../spatial/node-store";
 import type { DepthResult, RiskTile } from "../spatial/pyramid";
-import { footprintGeom, mercatorBuffer } from "../spatial/pyramid";
-import { minDepthWithChartPosition } from "../spatial/chart-position";
+import { footprintGeom, mercatorBuffer, minDepthOver } from "../spatial/pyramid";
+import { DEFAULT_BUILD } from "../spatial/pyramid-build";
 import type { Explanation } from "./explain";
 import { explainTile } from "./explain";
 
@@ -184,8 +184,6 @@ export function legCorridors(a: LonLat, b: LonLat, r: number): LonLat[][] {
 interface LegDepth {
   result: DepthResult;
   ring: LonLat[];
-  /** Chart position buffer the ring was queried with, metres. */
-  bufferMetres: number;
 }
 
 /** Depths deeper than the UKC-zero depth plus this are reported as a lower bound. */
@@ -220,7 +218,8 @@ function* corridorSteps(
   let covered = Infinity;
   const cells = new Set<number>();
   for (const ring of legCorridors(a, b, r)) {
-    const { result, bufferMetres } = minDepthWithChartPosition(index.pyramid, footprintGeom(ring), {
+    const result = minDepthOver(index.pyramid, footprintGeom(ring), {
+      chartReachK: DEFAULT_BUILD.k,
       clearAbove: s.threshold + CLEARANCE_RESOLUTION,
       risk: { threshold: s.threshold, sigmaExtra: s.sigmaExtra }
     });
@@ -228,7 +227,7 @@ function* corridorSteps(
     covered = Math.min(covered, result.coveredDMin);
     result.cellRefs.forEach((c) => cells.add(c));
     if (best === undefined || result.maxRisk > best.result.maxRisk) {
-      best = { result, ring, bufferMetres };
+      best = { result, ring };
     }
     yield;
   }
@@ -285,7 +284,7 @@ function* legSteps(
   const wl = input.waterLevel(start, end, [from, to]);
   const terms = vesselTerms(input.vessel, { speed, waveHeight: input.waveHeight }, input.dynamics);
   const s = { threshold: thresholdDepth(terms, wl), sigmaExtra: sigmaExtra(terms, wl) };
-  const { result, ring, bufferMetres } = yield* corridorSteps(
+  const { result, ring } = yield* corridorSteps(
     index,
     from,
     to,
@@ -300,7 +299,7 @@ function* legSteps(
     flags.push("LAND");
   }
   const tile = result.riskTile;
-  const why = tile ? explainTile(index, tile, ring, terms, wl, bufferMetres) : undefined;
+  const why = tile ? explainTile(index, tile, ring, terms, wl) : undefined;
   let status: LegStatus = land
     ? "fail"
     : statusOf(result.maxRisk, charted, result.flags, input.probability);

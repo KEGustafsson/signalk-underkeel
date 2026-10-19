@@ -13,7 +13,7 @@ import { HazardIndex } from "../../src/spatial/hazards";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
 import { CHART_DATUM, ctx } from "../helpers/engine";
 import { BANK, FAIRWAY_LAT, fixtureIndex, M_PER_DEG_LON, ROCK } from "../helpers/fixture-index";
-import { basin, point } from "../helpers/synthetic";
+import { area, basin, coverage, point, quality } from "../helpers/synthetic";
 
 const NOW = 1_800_000_000_000;
 const DEEP_KEEL: VesselModel = { draft: 3.2, length: 12, beam: 4 };
@@ -246,9 +246,9 @@ describe("probabilistic look-ahead on the synthetic chart", () => {
   });
 
   test("a turn toward the rock is caught by the fan; the same track held straight passes", () => {
-    // 150 m west of the rock and 120 m north of it, heading east: straight
+    // 150 m west of the rock and 140 m north of it, heading east: straight
     // runs clear to the north; a 1.2°/s turn to starboard curves onto it.
-    const start = nav(ROCK[0] - 150 / M_PER_DEG_LON, ROCK[1] + 120 / 111320, EAST, 3);
+    const start = nav(ROCK[0] - 150 / M_PER_DEG_LON, ROCK[1] + 140 / 111320, EAST, 3);
     const straight = evaluateLookahead(start, ctx(DEEP_KEEL), index, NOW);
     const turning = evaluateLookahead(
       { ...start, rot: { value: (1.2 * Math.PI) / 180, at: NOW } },
@@ -263,15 +263,15 @@ describe("probabilistic look-ahead on the synthetic chart", () => {
   });
 
   test("a stale rate of turn is ignored", () => {
-    const start = nav(ROCK[0] - 150 / M_PER_DEG_LON, ROCK[1] + 120 / 111320, EAST, 3);
+    const start = nav(ROCK[0] - 150 / M_PER_DEG_LON, ROCK[1] + 140 / 111320, EAST, 3);
     const old = { value: (1.2 * Math.PI) / 180, at: NOW - 60_000 };
     const r = evaluateLookahead({ ...start, rot: old }, ctx(DEEP_KEEL), index, NOW);
     expect(r.state).toBe(evaluateLookahead(start, ctx(DEEP_KEEL), index, NOW).state);
   });
 
   test("a wide GNSS fix grows the buffer until it reaches the rock", () => {
-    // 100 m north of the rock heading east: k_p · σ_pos reaches it only with a poor fix.
-    const beside = nav(westOfRock(30), ROCK[1] + 100 / 111320);
+    // 120 m north of the rock heading east: k_p · σ_pos reaches it only with a poor fix.
+    const beside = nav(westOfRock(30), ROCK[1] + 120 / 111320);
     const good = evaluateLookahead(
       { ...beside, hdop: { value: 0.8, at: NOW } },
       ctx(DEEP_KEEL),
@@ -394,6 +394,39 @@ describe("probabilistic look-ahead on the synthetic chart", () => {
     const turn = (r.escapeHeading as number) - EAST;
     expect(turn).toBeGreaterThan(0);
     expect(turn).toBeLessThanOrEqual(Math.PI / 2 + 1e-9);
+  });
+});
+
+describe("chart position uncertainty", () => {
+  // A drying patch 60 m north of a stopped boat: beyond the 10 m buffer, in
+  // reach once the survey's k_p·σP (B 50 m, C 500 m) is added.
+  const box = [22.0, 60.0, 22.06, 60.03] as const;
+  const north = 60 / 111195;
+  const chart = (catzoc: 1 | 3 | 4): ChartIndex => ({
+    catalogue: { version: 1, cells: [] },
+    pyramid: buildPyramid(
+      [
+        coverage(box),
+        quality(box, catzoc),
+        area(box, 15),
+        area([22.028, 60.015 + north, 22.032, 60.016 + north], -1)
+      ],
+      { minZoom: 12, leafZoom: 20 }
+    ),
+    hazards: new HazardIndex([])
+  });
+  test.each([
+    [3, "B"],
+    [4, "C"]
+  ] as const)("a drying area 60 m off under CATZOC %s (%s) alarms", (catzoc) => {
+    const r = evaluateLookahead(nav(22.03, 60.015, EAST, 0), ctx(SHALLOW_KEEL), chart(catzoc), NOW);
+    expect(r.state).toBe("alarm");
+    expect(r.footprints[0]?.charted).toBe(-1);
+  });
+
+  test("under CATZOC A1 (±5 m) the same area is out of reach", () => {
+    const r = evaluateLookahead(nav(22.03, 60.015, EAST, 0), ctx(SHALLOW_KEEL), chart(1), NOW);
+    expect(r.state).toBe("normal");
   });
 });
 

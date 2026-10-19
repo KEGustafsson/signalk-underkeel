@@ -62,10 +62,12 @@ All notable changes to signalk-underkeel are documented here.
   the great circle where that strays more than 10 m from it. Pieces were stepped on a fixed
   flat-earth bearing, which drifted 75 m off the drawn line on a 78 km leg at 60° N and left a
   12.9 km last piece on a 485 km leg.
-- Route check, route repair and `POST /query` widen their buffer by 2·σP of the assessed
-  surveys they reach (at most 1 km), since depth areas and lines are not widened when the index
-  is built; unassessed and not-for-navigation water adds none and stays `unverified`.
-  A drying area 60 m off a leg in CATZOC B or C water returned `ok` with P = 0.
+- The look-ahead, route check, route repair and `POST /query` count each index tile within
+  their buffer plus k·σP of that tile's assessed survey (k = k_p for the look-ahead, 2 for the
+  rest, at most 1 km), since depth areas and lines are not widened when the index is built;
+  unassessed and not-for-navigation water adds none and stays `unverified`. A drying area 60 m
+  off a leg or a footprint in CATZOC B or C water returned `ok` or `normal` with P = 0, and a
+  poor survey anywhere in reach no longer widens the buffer for a well-surveyed rock.
 - Route legs take the water level at their own ends: with FMI, a leg more than 30 km from the
   forecast point falls back to chart datum and is never `ok`, instead of taking the level
   forecast at the vessel.

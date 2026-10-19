@@ -10,6 +10,7 @@ import { gnssSigma } from "../model/position";
 import type { DynamicsOptions, VesselModel } from "../model/vessel";
 import { vesselTerms } from "../model/vessel";
 import type { ChartIndex } from "../spatial/chart-index";
+import { chartReach } from "../spatial/chart-position";
 import { flagNames } from "../spatial/node-store";
 import type { RiskTile } from "../spatial/pyramid";
 import { footprintGeom, mercatorBuffer, minDepthOver } from "../spatial/pyramid";
@@ -272,7 +273,8 @@ function worstOf(
   fps: FootprintResult[],
   index: ChartIndex,
   s: Scoring,
-  wl: WaterLevel
+  wl: WaterLevel,
+  kp: number
 ): WorstPoint | undefined {
   const worst = riskiest(fps);
   if (!worst) {
@@ -285,12 +287,14 @@ function worstOf(
     flags: worst.flags
   };
   // A hazard reaches k·σP from its position and then fills its whole leaf
-  // tile, so the naming search looks that far out. Only a hazard whose depth
-  // is the tile's depth is named: it is the one that set it.
+  // tile, which counts k_p·σP beyond the buffer, so the naming search looks
+  // that far out. Only a hazard whose depth is the tile's depth is named:
+  // it is the one that set it.
   const geom = footprintGeom(worst.ring);
   const leafDiagonal =
     tileSize(index.pyramid.leafZoom) * Math.cos((worst.center[1] * Math.PI) / 180) * Math.SQRT2;
-  const reach = worst.buffer + DEFAULT_BUILD.k * worst.sigmaP + leafDiagonal;
+  const reach =
+    worst.buffer + DEFAULT_BUILD.k * worst.sigmaP + chartReach(kp, worst.sigmaP) + leafDiagonal;
   const hit = index.hazards
     .near(geom, mercatorBuffer(geomBounds(geom), reach))
     .find((h) => h.feature.depth === tile.dMin);
@@ -436,7 +440,7 @@ export function evaluateLookahead(
     escapeHeading: escape,
     horizon: times[times.length - 1] as number,
     footprints: fps,
-    worst: worstOf(fps, index, s, wl),
+    worst: worstOf(fps, index, s, wl, opts.kp),
     waterLevel: wl
   };
 }

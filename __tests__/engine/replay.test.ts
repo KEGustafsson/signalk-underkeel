@@ -63,8 +63,9 @@ const PASSAGES: Passage[] = [
     vessel: { draft: 3.2, length: 12, beam: 4 }
   },
   {
-    // CATZOC C (σP 250 m) burns the 1.8 m sounding 500 m around it, so the
-    // passage starts north of the swept fairway to leave room to warn.
+    // CATZOC C (σP 250 m) burns the 1.8 m sounding 500 m around it, and a
+    // C tile counts 500 m beyond the footprint, so the passage starts north
+    // of the swept fairway to leave room to warn.
     name: "southbound across the fairway onto the CATZOC C bank",
     start: [22.012, 60.0145],
     cog: Math.PI,

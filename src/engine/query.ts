@@ -4,8 +4,8 @@ import { sigmaExtra, thresholdDepth } from "../model/uncertainty";
 import type { ChartIndex } from "../spatial/chart-index";
 import { FLAGS, flagNames } from "../spatial/node-store";
 import type { DepthResult } from "../spatial/pyramid";
-import { minDepthWithChartPosition } from "../spatial/chart-position";
-import { footprintGeom } from "../spatial/pyramid";
+import { footprintGeom, minDepthOver } from "../spatial/pyramid";
+import { DEFAULT_BUILD } from "../spatial/pyramid-build";
 import type { FootprintClass } from "./envelope";
 import { classOf } from "./envelope";
 import type { Explanation, NamedHazard } from "./explain";
@@ -67,11 +67,11 @@ export function queryUkc(index: ChartIndex, input: QueryInput): QueryResult {
     threshold: thresholdDepth(input.terms, wl),
     sigmaExtra: sigmaExtra(input.terms, wl)
   };
-  const { result: r, bufferMetres } = minDepthWithChartPosition(
-    index.pyramid,
-    footprintGeom(input.ring),
-    { bufferMetres: input.bufferMetres, risk }
-  );
+  const r = minDepthOver(index.pyramid, footprintGeom(input.ring), {
+    bufferMetres: input.bufferMetres,
+    chartReachK: DEFAULT_BUILD.k,
+    risk
+  });
   const covered = r.coveredDMin;
   const charted = covered === Infinity ? null : covered;
   const flags = flagNames(r.flags);
@@ -80,7 +80,7 @@ export function queryUkc(index: ChartIndex, input: QueryInput): QueryResult {
   }
   const tile = r.riskTile;
   const why = tile
-    ? explainTile(index, tile, input.ring, input.terms, wl, bufferMetres)
+    ? explainTile(index, tile, input.ring, input.terms, wl, input.bufferMetres)
     : undefined;
   return {
     class: classFor(r, charted, wl, input.thresholds),

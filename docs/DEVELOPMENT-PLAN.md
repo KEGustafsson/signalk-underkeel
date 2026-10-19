@@ -302,16 +302,18 @@ splitting every tile down to the leaf zoom.
 
 Expected cost is about 50 to 300 cell visits per look-ahead footprint.
 
-**Chart position in the query buffer.** Depth areas and lines are not burned, so a route
-check, a repair cost cell and `POST /query` widen their buffer by `k·σP` (k = 2, at most
-1000 m) of the surveys the footprint reaches, and repeat the query until that σP stops
-growing (`spatial/chart-position.ts`). σP is taken from assessed tiles (CATZOC A1–D) at
-their own resolution, not from split tiles the walk stopped at early, whose children's σP may
-come from a survey the footprint does not reach. Unassessed and `NOT_FOR_NAVIGATION` tiles add
-no buffer: their flags already make a leg `unverified` and a query never `clear`, and the
-unassessed σP of 500 m would make nearly every leg over WFS water `fail` on land within 1 km
-that the data does not put there. A point hazard is counted twice this way, burned and
-buffered, which errs on the shallow side.
+**Chart position in the query.** Depth areas and lines are not burned, so the look-ahead
+(k = k_p), a route check, a repair cost cell and `POST /query` (k = 2) count each tile within
+the query buffer plus `k·σP` of that tile's own survey, at most 1000 m
+(`spatial/chart-position.ts`). A drying area drawn 60 m off a footprint in CATZOC B water
+(σP 25 m) is therefore in reach, while an A1 rock beside it is not widened by C water
+elsewhere in the query. A split tile prunes its subtree by the widest σP of the assessed leaves
+under it, so the walk descends wherever any leaf may reach and nowhere else. Unassessed and
+`NOT_FOR_NAVIGATION` tiles add no reach: their flags already make a leg `unverified`, a query
+never `clear` and the look-ahead never `normal`, and the unassessed σP of 500 m would make
+nearly every leg over WFS water `fail` on land within 1 km that the data does not put there. A
+point hazard is counted twice this way, burned and reached, which errs on the shallow side: a
+CATZOC C sounding counts up to 1 km from its position.
 
 **Storage.**
 
@@ -460,8 +462,9 @@ P   = Φ(−UKC / σ)                                            // P(UKC < 0)
 - `σ_pos(t)` combines the following, root-sum-square:
   - the GNSS horizontal error, from `navigation.gnss.horizontalDilution` and fix type;
   - the integrity monitor's inflation (§4.8);
-  - the chart's `σP`;
   - prediction spread that grows with look-ahead time.
+- The chart's `σP` is added to the buffer per tile, `k_p·σP` of that tile's survey (§4.3),
+  which is never narrower than taking it root-sum-square.
 - `k_p` is 2 by default, and acts as the "how far off do I believe my position" knob.
 - **Explanation object:** every result carries all terms, their sources, the worst cell's
   `cellRef` and its exact R-tree hazard (with LNAM), so the UI can render the breakdown
@@ -548,7 +551,8 @@ suppressing.
 - σ_pos combines GNSS (HDOP × 3 m, 5 m without HDOP) and, from the integrity monitor, its
   inflation. The buffer is max(10 m, k_p · σ_pos). Speed error (σ_SOG 0.1 m/s) lengthens each
   footprint by k_p · σ_SOG · t fore and aft instead of widening it, since it moves the boat
-  along its track. The chart's σP is already burned into the pyramid around point hazards.
+  along its track. The chart's σP widens the buffer per tile by k_p·σP of the tile's own
+  assessed survey (§4.3), on top of the burn around point hazards.
 - The escape fan uses the maximum turn rate (default 3°/s) and stops at the first heading,
   smallest change first, that stays clear over the whole horizon. The monitor searches it at
   most every 3 s and holds the heading in between.
