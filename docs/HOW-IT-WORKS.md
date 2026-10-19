@@ -582,7 +582,8 @@ the answer as a suggestion; the skipper decides whether to use it.
 
 `POST /departure-window` also takes the route-check body, plus a horizon and a step: by default
 every 15 minutes over the next 48 hours. It checks the route for each departure with the water
-level the forecast gives for the time each leg is sailed, and returns the intervals in which
+level the forecast gives for the time each leg is sailed, up to one step later so a departure
+between two samples is covered too, and returns the intervals in which
 every leg is `ok`, with the worst status of each departure. A leg is checked again only when
 its water level changes. A window over a long route or one of many legs is refused when it
 would cost one request too much work; a longer step or a shorter horizon fits it. The limits

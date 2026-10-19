@@ -717,7 +717,9 @@ evaluated lazily as Theta* expands. Simplification replaces a span with its chor
 chord passes the corridor check, so no simplification makes a leg fail; a path that still fails
 is reported with a reason and no waypoints. Both `/route-repair` and `/departure-window` take
 the `/route-check` body; the window adds `horizon` (default 48 h, at most 7 days) and `step`
-(default 15 min, at least 5 min, at most 1000 departures). Leg results are reused across
+(default 15 min, at least 5 min, at most 1000 departures). Each leg takes the lowest level from
+its arrival until one step after it leaves, so a sampled `ok` departure also holds for every
+departure until the next sample and a coarse step cannot skip a low water. Leg results are reused across
 departures for the same water level rounded down to the centimetre (σ rounded up). One request
 repairs at most 10 legs, and the rest are listed with a reason; a window is refused when its
 departures times the route length exceed 20 000 km or its departures times legs exceed 20 000,

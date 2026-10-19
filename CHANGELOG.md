@@ -68,6 +68,9 @@ All notable changes to signalk-underkeel are documented here.
 - Route legs take the water level at their own ends: with FMI, a leg more than 30 km from the
   forecast point falls back to chart datum and is never `ok`, instead of taking the level
   forecast at the vessel.
+- Departure window: each leg takes the lowest water level until one step after it is sailed,
+  so a coarse step no longer reports a window across a low water it did not sample (a 12 h
+  step over a semidiurnal tide returned a 24 h window in which a +6 h departure failed).
 - `navigation.underKeel.clearance` is published as `null` when the look-ahead reaches land,
   never `-Infinity`. In-process subscribers such as signalk-to-influxdb received the raw
   value and the database refused the write; no published number is now NaN or infinite.

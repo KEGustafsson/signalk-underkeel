@@ -166,6 +166,23 @@ describe("departure window", () => {
     expect(w.steps.at(-1)?.status).not.toBe("ok");
   });
 
+  test("a low water between two sampled departures is not a window", async () => {
+    // High water at 0, 12 and 24 h, low water at 6 and 18 h; sampled every 12 h.
+    const h = (t: number) => 0.5 + Math.cos(((t - NOW) / (12 * HOUR)) * 2 * Math.PI);
+    const lowest = (s: number, e: number): WaterLevel => {
+      let m = Math.min(h(s), h(e));
+      for (let t = s; t <= e; t += 60_000) {
+        m = Math.min(m, h(t));
+      }
+      return { h: m, sigma: 0.05, source: "manual" };
+    };
+    const route = input(LEG, { vessel: shallow, waterLevel: lowest });
+    const at6 = checkRoute(index, { ...route, departure: NOW + 6 * HOUR }, NOW).legs[0];
+    expect(at6?.status).toBe("fail");
+    const w = await departureWindow(index, route, NOW, NOW + 24 * HOUR, 12 * HOUR);
+    expect(w.windows).toEqual([]);
+  });
+
   test("legs are re-checked only when their water level changes", async () => {
     const route = input(LEG, { vessel: shallow, waterLevel: (s) => tide(s) });
     const w = await departureWindow(index, route, NOW, NOW + 12 * HOUR, 15 * 60_000);
