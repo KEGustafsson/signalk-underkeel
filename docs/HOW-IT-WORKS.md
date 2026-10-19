@@ -169,7 +169,10 @@ and keeps a running estimate of the depth in each cell of the index, about 76 m 
    note marks the place on the chart with the evidence.
 
 Own soundings only ever make the chart shallower. Deeper readings never raise a charted depth,
-so a faulty transducer cannot switch off a hazard. The accepted soundings can be exported as
+so a faulty transducer cannot switch off a hazard. The shallower cells survive a change of the
+index's leaf zoom: each new cell takes the shallowest depth of the old cells it holds. A state
+file that does not load whole is renamed to `livechart.json.bad-<time>` and reported, so it is
+never saved over. The accepted soundings can be exported as
 IHO crowd-sourced bathymetry (CSB) GeoJSON from `GET /livechart/csb.geojson`; nothing is
 uploaded anywhere.
 

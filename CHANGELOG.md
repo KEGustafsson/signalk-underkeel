@@ -154,3 +154,7 @@ All notable changes to signalk-underkeel are documented here.
 - The living-chart quality gate drops a sounding whose position was measured more than 2 s
   from the depth. Any fresh position counted before, up to 10 s old: about 30 m at 6 kn on
   76 m cells.
+- Living-chart shoals survive a change of leaf zoom: saved adjustments are mapped onto the new
+  zoom instead of being dropped, which let the next save overwrite them. A `livechart.json`
+  that is unreadable, of another version or partly malformed is renamed to
+  `livechart.json.bad-<ms>` and reported instead of being overwritten at the next save.

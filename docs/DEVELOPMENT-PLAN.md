@@ -784,7 +784,12 @@ readings leave it as it is. Notes are written with `resourcesApi.setResource("no
 rewritten as evidence grows. Posteriors, adjustments and the last 20 000 accepted soundings are
 kept in `livechart.json` beside the index (no database dependency) and saved at most once a
 minute and on stop. A failed save is reported and retried at the next one, and a malformed file
-is skipped entry by entry rather than stopping the plugin. The CSB export
+is skipped entry by entry rather than stopping the plugin; a file that did not load whole (bad
+JSON, another version, malformed entries, cells at another zoom) is first renamed to
+`livechart.json.bad-<ms>` and reported, so no save overwrites it, and if it cannot be renamed
+it is not saved over at all. The file records its living-chart zoom; after a leaf-zoom change
+the adjustments are mapped onto the new zoom (a coarser cell takes the lowest `dMin` and largest
+σ of the cells in it, a finer cell copies its parent's) and the posteriors are dropped. The CSB export
 (`GET /livechart/csb.geojson`) is B-12 GeoJSON of depths below the transducer, with the
 transducer depth as the sounder's `draft`; it is never uploaded.
 

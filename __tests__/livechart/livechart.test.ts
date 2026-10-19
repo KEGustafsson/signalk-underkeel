@@ -397,9 +397,78 @@ describe("cell posterior and discrepancy", () => {
         ]
       })
     );
-    expect(errors).toEqual([]);
+    expect(errors).toEqual([expect.stringMatching(/had 8 malformed entries, skipped; moved to/)]);
     expect(svc.discrepancies()).toEqual([]);
     expect((svc.csb() as { features: unknown[] }).features).toHaveLength(1);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("a state file that does not load is moved aside, never saved over", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-livechart-"));
+    const file = path.join(dir, "livechart.json");
+    for (const bad of ["{not json", JSON.stringify({ version: 2, cells: [] })]) {
+      fs.writeFileSync(file, bad);
+      const errors: string[] = [];
+      const svc = new LivechartService(store(), CONFIG, file, {
+        setNote: () => Promise.resolve(),
+        error: (m) => errors.push(m)
+      });
+      expect(errors).toEqual([expect.stringMatching(/starting empty.*; moved to .*\.bad-\d+$/)]);
+      const aside = (errors[0] ?? "").split("moved to ")[1] as string;
+      svc.onSounding(raw(6, T0));
+      svc.save();
+      expect(fs.readFileSync(aside, "utf8")).toBe(bad);
+      expect(JSON.parse(fs.readFileSync(file, "utf8"))).toMatchObject({ version: 1 });
+      fs.rmSync(aside);
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("confirmed shoals survive a change of leaf zoom either way", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-livechart-"));
+    const file = path.join(dir, "livechart.json");
+    const atZoom = (leafZoom: number) =>
+      buildPyramid(basin([22.0, 60.0, 22.1, 60.1], 8), { minZoom: 12, leafZoom });
+    const errors: string[] = [];
+    const deps = { setNote: () => Promise.resolve(), error: (m: string) => errors.push(m) };
+    const confirm = (leafZoom: number) => {
+      const svc = new LivechartService(atZoom(leafZoom), CONFIG, file, failOnError);
+      for (const start of [T0, T0 + 15 * 60_000]) {
+        for (let k = 0; k < 3; k++) {
+          svc.onSounding(raw(5.2, start + k * 1000));
+        }
+      }
+      expect(svc.discrepancies()).toHaveLength(1);
+      svc.save();
+    };
+    const shoalDepth = (s: ReturnType<typeof atZoom>, p: LonLat = SHOAL) =>
+      minDepthOver(s, footprintGeom([p])).dMin;
+
+    // z18 cells onto z16: the z16 cell holding the shoal takes its depth.
+    confirm(18);
+    const coarse = atZoom(16);
+    const onCoarse = new LivechartService(coarse, CONFIG, file, deps);
+    expect(shoalDepth(coarse)).toBeLessThan(5.3);
+    expect(errors).toEqual([
+      expect.stringMatching(/was saved at zoom 18: its 1 cells are dropped/)
+    ]);
+    // Saved at z16 without cells, it loads whole and survives a rebuilt index of that zoom.
+    onCoarse.save();
+    const again = atZoom(16);
+    const reloaded = new LivechartService(again, CONFIG, file, failOnError);
+    expect(shoalDepth(again)).toBeLessThan(5.3);
+    const rebuilt = atZoom(16);
+    reloaded.rebind(rebuilt);
+    expect(shoalDepth(rebuilt)).toBeLessThan(5.3);
+
+    // z16 cells onto z18: every z18 cell inside the shoal's z16 cell takes its depth.
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.mkdirSync(dir);
+    confirm(16);
+    const fine = atZoom(18);
+    new LivechartService(fine, CONFIG, file, deps);
+    expect(shoalDepth(fine)).toBeLessThan(5.3);
+    expect(fine.adjustments.size).toBe(16);
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
