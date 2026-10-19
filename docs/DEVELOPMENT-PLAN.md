@@ -305,12 +305,13 @@ Expected cost is about 50 to 300 cell visits per look-ahead footprint.
 **Chart position in the query buffer.** Depth areas and lines are not burned, so a route
 check, a repair cost cell and `POST /query` widen their buffer by `k·σP` (k = 2, at most
 1000 m) of the surveys the footprint reaches, and repeat the query until that σP stops
-growing (`spatial/chart-position.ts`). σP is taken from tiles at their own resolution, not
-from split tiles the walk stopped at early, whose children's σP may come from a survey the
-footprint does not reach. A point hazard is counted twice this way, burned and buffered,
-which errs on the shallow side. An unassessed survey (σP 500 m) widens the buffer by 1 km,
-so a leg into a coverage gap or over WFS water near land can `fail` where it was
-`unverified`; neither is ever `ok`.
+growing (`spatial/chart-position.ts`). σP is taken from assessed tiles (CATZOC A1–D) at
+their own resolution, not from split tiles the walk stopped at early, whose children's σP may
+come from a survey the footprint does not reach. Unassessed and `NOT_FOR_NAVIGATION` tiles add
+no buffer: their flags already make a leg `unverified` and a query never `clear`, and the
+unassessed σP of 500 m would make nearly every leg over WFS water `fail` on land within 1 km
+that the data does not put there. A point hazard is counted twice this way, burned and
+buffered, which errs on the shallow side.
 
 **Storage.**
 

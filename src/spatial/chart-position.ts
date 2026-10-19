@@ -8,7 +8,10 @@ import { DEFAULT_BUILD } from "./pyramid-build";
  * Depth areas and lines are not widened by their survey's position
  * uncertainty when the pyramid is built (only point hazards are burned),
  * so a query carries it in its buffer (plan §4.3, §4.7): k·σP of the
- * surveys the footprint reaches, k as the build burns point hazards with.
+ * assessed surveys the footprint reaches, k as the build burns point
+ * hazards with. Unassessed and not-for-navigation water adds no buffer:
+ * its flags already keep a footprint from reading as safe (invariant 4),
+ * and a 1 km guess would fail nearly every leg near land.
  * A wider buffer can reach a worse survey, so the query is repeated until
  * σP stops growing.
  */

@@ -123,14 +123,14 @@ describe("corridor route check on the synthetic chart", () => {
   });
 
   test("a leg into the coverage gap is unverified, never ok", () => {
-    // Starts just inside the gap, more than 1 km from the bank: the gap's edge tiles are
-    // unassessed, so their position uncertainty reaches that far.
+    // From CATZOC B water in FI4SYNTH east into the gap; the unassessed tiles at its edge add
+    // no position buffer.
     const r = checkRoute(
       index,
       input(
         [
-          [22.042, 60.0],
-          [22.05, 60.0]
+          [22.036, 60.025],
+          [22.045, 60.025]
         ],
         1.0
       ),

@@ -47,9 +47,10 @@ export interface DepthResult extends NodeValues {
   maxRisk: number;
   riskTile?: RiskTile;
   /**
-   * The widest σP of the tiles taken at their own resolution. `sigmaP`
-   * also holds split tiles the walk stopped at, whose children's widest
-   * σP may come from a survey the footprint does not reach.
+   * The widest σP of the assessed tiles taken at their own resolution.
+   * `sigmaP` also holds split tiles the walk stopped at, whose children's
+   * widest σP may come from a survey the footprint does not reach, and
+   * unassessed tiles, whose σP is the configured guess, not a survey's.
    */
   surveySigmaP: number;
 }
@@ -127,6 +128,9 @@ function take(w: Walk, v: NodeValues, z: number, x: number, y: number): void {
 const PRECISE_FLAGS =
   FLAGS.NO_COVERAGE | FLAGS.UNASSESSED | FLAGS.NO_DEPTH | FLAGS.NOT_FOR_NAVIGATION;
 
+/** Tiles whose σP is no survey's position accuracy: they leave a footprint unchecked anyway. */
+const UNSURVEYED = FLAGS.UNASSESSED | FLAGS.NOT_FOR_NAVIGATION;
+
 /** Below this, a split tile's risk bound is negligible and its children need not be visited. */
 export const RISK_STOP_BELOW = 1e-4;
 
@@ -163,7 +167,7 @@ function visit(w: Walk, z: number, x: number, y: number): void {
   const split = w.store.isSplit(i);
   if (!split || canStop(w, v)) {
     take(w, v, z, x, y);
-    if (!split) {
+    if (!split && (v.flags & UNSURVEYED) === 0) {
       w.surveySigmaP = Math.max(w.surveySigmaP, v.sigmaP);
     }
     return;
