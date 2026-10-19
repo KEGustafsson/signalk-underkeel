@@ -99,7 +99,7 @@ export class Monitor {
     if (config.groundingDetector) {
       this.grounding = new GroundingDetector(config.groundingDetector);
     }
-    this.hysteresis = new Hysteresis(config.lookahead.thresholds);
+    this.hysteresis = new Hysteresis(config.lookahead);
     this.last = this.evaluate();
     this.since = clock.now();
   }

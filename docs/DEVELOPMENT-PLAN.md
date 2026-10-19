@@ -473,7 +473,8 @@ P   = Φ(−UKC / σ)                                            // P(UKC < 0)
 | `alarm`  | P ≥ 20 % and TTS ≤ 60 s, or deterministic UKC < 0 at P50 within 30 s |
 
 **Hysteresis.** Raising a state needs 2 consecutive ticks. Lowering it needs 5 consecutive
-ticks below the threshold minus 20 %.
+ticks below the threshold minus 20 %, with P taken over the footprints inside the held state's
+window (`alarmWithin` for `alarm`, `warnWithin` for `warn`, the whole horizon for `alert`).
 
 ### 4.8 Look-ahead engine (1 Hz)
 
@@ -551,7 +552,9 @@ suppressing.
   σ_pos ≥ 50 m. Without speed through water the check reports itself unavailable in the
   notification and in `/status`.
 - Hysteresis applies between `normal`, `alert`, `warn` and `alarm`. `unknown` and `off` pass
-  through at once, so stale input is never held as an earlier state.
+  through at once, so stale input is never held as an earlier state. The risk state before
+  them stays held: after the gap a lower state still needs the 5 lowering ticks, and a higher
+  one is taken at once.
 - Measured on the synthetic archipelago at leaf z20 (`npm run bench`, x86, plain Node):
   median 1.2 ms and p95 4 ms per tick, escape fan included. Under Jest the same run is about
   15× slower.

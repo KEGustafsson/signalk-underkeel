@@ -185,3 +185,8 @@ All notable changes to signalk-underkeel are documented here.
 - The grounding detector no longer treats a repeated, unchanged
   `propulsion.*.transmission.gear` value as a gear change. Servers that publish the gear every
   second vetoed every grounding.
+- Hysteresis lowers a held `alarm` or `warn` once P inside that state's window (60 s, 120 s)
+  is clear. Risk further ahead held the state and its reason indefinitely, for example after
+  the vessel slowed.
+- After `unknown` or `off`, a held risk state is lowered by the usual 5 clear ticks; before, the
+  first `normal` after the gap was published at once.

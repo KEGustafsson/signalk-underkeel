@@ -293,8 +293,10 @@ when it rests on less than full input:
 
 A state is raised after 2 consecutive seconds at its level and lowered after 5 consecutive
 seconds below 80 % of its threshold, so a footprint that touches a shoal edge now and then
-does not toggle the alarm. `unknown` and `off` apply at once: missing input is never held as an
-earlier state.
+does not toggle the alarm. Only footprints inside the state's own window count for lowering:
+60 s for `alarm`, 120 s for `warn`. `unknown` and `off` apply at once: missing input is never
+held as an earlier state. The state before them is remembered, so when input returns it still
+takes 5 clear seconds to lower it, and a higher state is taken at once.
 
 ### The approach, step by step
 
