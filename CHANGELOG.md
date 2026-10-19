@@ -70,3 +70,6 @@ All notable changes to signalk-underkeel are documented here.
 - A footprint on the shared edge of two adjacent cells of one usage band is covered. Each cell's
   `M_COVR` alone held only part of the index tile on the edge, so the tile read `NO_COVERAGE`
   and route legs along every seam came back unverified.
+- Position buffers, burn discs and footprint offsets reach their full distance on the WGS84
+  ellipsoid. They were sized on a sphere and fell short north–south below about 55° latitude,
+  by up to 0.7 % at the equator (a 100 m buffer reached 99.3 m).

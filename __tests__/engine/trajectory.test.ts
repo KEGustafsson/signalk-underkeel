@@ -44,7 +44,8 @@ describe("CTRV tracks", () => {
           const angle = Math.abs(rot * t);
           const expected =
             angle < 1e-9 ? sog * t : ((2 * sog) / Math.abs(rot)) * Math.sin(angle / 2);
-          expect(Math.abs(chord - expected)).toBeLessThan(0.002 * sog * t + 0.01);
+          // project works on WGS84, haversine on the mean sphere: up to 0.4 % apart at 60° N.
+          expect(Math.abs(chord - expected)).toBeLessThan(0.005 * sog * t + 0.01);
         }
       )
     );

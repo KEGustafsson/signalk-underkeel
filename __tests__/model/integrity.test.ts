@@ -49,7 +49,8 @@ describe("position integrity", () => {
 
   test("a GNSS jump beyond 3 σ_DR inflates σ_pos to the divergence and says so", () => {
     const steps = passage(90, 3, [0, 0], (t) =>
-      t >= 30 ? { position: project(project(START, EAST, 3 * t), 0, 400) } : {}
+      // 410 m on WGS84; haversine on the mean sphere reads it ~0.2 % shorter at 60° N.
+      t >= 30 ? { position: project(project(START, EAST, 3 * t), 0, 410) } : {}
     );
     const out = run(new IntegrityMonitor(), steps);
     expect(out[29]?.ok).toBe(true);
