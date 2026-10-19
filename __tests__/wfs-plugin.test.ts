@@ -6,6 +6,7 @@ import type { FetchLike } from "../src/model/fmi";
 import { buildChartIndex, loadChartIndex, saveChartIndex } from "../src/spatial/chart-index";
 import type { IndexBuilder } from "../src/wfs-service";
 import underkeel = require("../src/index");
+import { FIXTURES } from "./helpers/fixture-index";
 import { fakeApp, fakeClock, fakeRouter, lastValue, navDelta, T0 } from "./helpers/plugin-harness";
 
 /** One depth area over the whole test water, 10 m. */
@@ -111,6 +112,35 @@ describe("plugin with the Traficom WFS source", () => {
     }
     expect(h.subscribed).toContain("environment.depth.belowSurface");
     plugin.stop();
+  });
+
+  test("turned back on, the source's saved box is indexed again at start", async () => {
+    const clock = fakeClock(T0);
+    const cells = (h: ReturnType<typeof fakeApp>, plugin: ReturnType<typeof underkeel>) => {
+      const { router, call } = fakeRouter();
+      plugin.registerWithRouter?.(router as never);
+      const status = call("/v1/status").body as { index: { cells: { name: string }[] } };
+      return status.index.cells.map((c) => c.name);
+    };
+    const on = { vessel: { draft: 2 }, cellsDir: FIXTURES, wfs: { enabled: true, radiusKm: 3 } };
+    const first = fakeApp(dataDir);
+    const a = underkeel(first.app, clock, fetch, build);
+    a.start(on, () => undefined);
+    first.send(navDelta(22.0, 60.0, 0, clock.now()));
+    clock.advance(10_000);
+    for (let i = 0; i < 5; i++) {
+      await settle();
+    }
+    a.stop();
+    // Off: the saved index is rebuilt from the ENC cells alone; the box stays on disk.
+    const off = underkeel(fakeApp(dataDir).app, clock, fetch, build);
+    off.start({ vessel: { draft: 2 }, cellsDir: FIXTURES }, () => undefined);
+    off.stop();
+    const again = fakeApp(dataDir);
+    const b = underkeel(again.app, clock, fetch, build);
+    b.start(on, () => undefined);
+    expect(cells(again, b)).toContain("FI1WFS01");
+    b.stop();
   });
 
   test("with the source turned off, a saved index holding the WFS cell is not used", async () => {

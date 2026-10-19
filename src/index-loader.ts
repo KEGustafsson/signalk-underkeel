@@ -45,7 +45,8 @@ export function cellDirectories(cellsDir: string | undefined): string[] {
 /**
  * `extraDirs` are cells kept by the plugin itself, such as the Traficom WFS
  * box. A saved index that still holds such a cell after the source was
- * turned off is rebuilt without it.
+ * turned off is rebuilt without it, and one that lacks it once the source is
+ * back on is rebuilt with it.
  */
 export function loadOrBuildIndex(
   cfg: PluginConfig,
@@ -55,9 +56,9 @@ export function loadOrBuildIndex(
   const indexDir = cfg.indexDir ?? path.join(dataDir, "index");
   try {
     const saved = exists(indexDir);
-    const stale = saved && !cfg.wfs && holdsWfs(indexDir);
+    const { stale, mismatch } = savedMatches(cfg, indexDir, saved, extraDirs);
     const sources = Boolean(cfg.cellsDir) || extraDirs.length > 0;
-    if (sources && (cfg.rebuildIndex || stale || !saved)) {
+    if (sources && (cfg.rebuildIndex || mismatch || !saved)) {
       return build(cfg, indexDir, [...cellDirectories(cfg.cellsDir), ...extraDirs]);
     }
     if (stale || !saved) {
@@ -88,6 +89,18 @@ function missingReason(cfg: PluginConfig, indexDir: string, stale: boolean): str
   return cfg.wfs
     ? "waiting for the first Traficom WFS download"
     : `no chart index in ${indexDir}; set cellsDir`;
+}
+
+/** Whether a saved index holds the plugin's own cells exactly when they are in use. */
+function savedMatches(
+  cfg: PluginConfig,
+  indexDir: string,
+  saved: boolean,
+  extraDirs: string[]
+): { stale: boolean; mismatch: boolean } {
+  const holds = saved && holdsWfs(indexDir);
+  const stale = holds && !cfg.wfs;
+  return { stale, mismatch: stale || (saved && extraDirs.length > 0 && !holds) };
 }
 
 function holdsWfs(indexDir: string): boolean {
