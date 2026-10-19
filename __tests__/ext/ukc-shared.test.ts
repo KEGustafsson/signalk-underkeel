@@ -52,4 +52,14 @@ describe("extension display logic", () => {
     expect(UKC.worstStatus([])).toBe("unverified");
     expect(UKC.worstStatus(undefined)).toBe("unverified");
   });
+
+  test("a visible route without a result reads as not checked yet, and only visible routes show", () => {
+    const checked = { r1: { name: "A", legs: [{ status: "ok" }] }, gone: { name: "B", legs: [] } };
+    expect(UKC.routeEntries(checked, [{ routeId: "r1" }, { routeId: "r2", name: "C" }])).toEqual([
+      ["r1", checked.r1],
+      ["r2", { name: "C", legs: [], pending: true }]
+    ]);
+    expect(UKC.routeEntries(checked, null)).toEqual(Object.entries(checked));
+    expect(UKC.routeEntries(undefined, [])).toEqual([]);
+  });
 });

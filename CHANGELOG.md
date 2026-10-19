@@ -227,3 +227,7 @@ All notable changes to signalk-underkeel are documented here.
 - The look-ahead envelope draws water from an advisory (WFS) source, with unassessed survey
   quality or against a fallback water level as `unverified`, never `clear`, as the README
   states; before, those footprints were green while the state was `alert`.
+- Route-check results reach the details panel on a chart host without data overlays, or while
+  the host is still loading the overlay style; the runtime stored them only after the overlay
+  call, which failed there. A visible route without a result reads "not checked yet" instead of
+  "No route on the chart."

@@ -92,6 +92,23 @@
     }, "ok");
   }
 
+  /**
+   * The route results the panel lists: one per visible route, a route the
+   * runtime has not answered for yet marked pending. Without the visible set
+   * (a host that lists no routes) every result is listed.
+   */
+  function routeEntries(routeCheck, visible) {
+    const results = routeCheck || {};
+    if (!visible) {
+      return Object.entries(results);
+    }
+    return visible.map(function (r) {
+      return Object.prototype.hasOwnProperty.call(results, r.routeId)
+        ? [r.routeId, results[r.routeId]]
+        : [r.routeId, { name: r.name, legs: [], pending: true }];
+    });
+  }
+
   const api = {
     API: API,
     stateStyle: stateStyle,
@@ -100,7 +117,8 @@
     reason: reason,
     routeLine: routeLine,
     legFeatures: legFeatures,
-    worstStatus: worstStatus
+    worstStatus: worstStatus,
+    routeEntries: routeEntries
   };
   if (typeof module !== "undefined" && module.exports) {
     module.exports = api;

@@ -63,9 +63,8 @@ async function refreshStatus() {
   }
 }
 
-function renderRoutes(routeCheck) {
+function renderRoutes(entries) {
   const el = document.getElementById("routes");
-  const entries = Object.entries(routeCheck || {});
   if (!client.hasCapability("routes")) {
     el.textContent = "This chart host does not share its routes, so none is checked here.";
     return;
@@ -81,12 +80,12 @@ function renderRoutes(routeCheck) {
       const worst = UKC.worstStatus(r.legs);
       title.append(`${r.name || "Unsaved route"}: `);
       const badge = document.createElement("b");
-      badge.className = r.error ? "unverified" : worst;
-      badge.textContent = r.error ? "not checked" : worst;
+      badge.className = r.error || r.pending ? "unverified" : worst;
+      badge.textContent = r.pending ? "not checked yet" : r.error ? "not checked" : worst;
       title.append(badge);
       box.append(title);
-      if (r.error) {
-        box.append(r.error);
+      if (r.error || r.pending) {
+        box.append(r.error || "");
         return box;
       }
       const table = document.createElement("table");
@@ -113,7 +112,8 @@ function renderRoutes(routeCheck) {
 
 async function refreshRoutes() {
   const { routeCheck } = await client.state.get(["routeCheck"], "extension");
-  renderRoutes(routeCheck);
+  const visible = client.hasCapability("routes") ? (await client.call("route.list")).routes : null;
+  renderRoutes(UKC.routeEntries(routeCheck, visible));
 }
 
 if (client.hasCapability("signalk.stream")) {

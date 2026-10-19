@@ -5,6 +5,18 @@ const UKC = globalThis.UKC;
 const client = await connectExtension();
 const has = (c) => client.hasCapability(c);
 
+/** A host may lack data overlays, or refuse one whose style is still loading. */
+async function setOverlay(overlayId, source, data) {
+  if (!has("overlays.data")) {
+    return;
+  }
+  try {
+    await client.call("overlay.setData", { overlayId, source, data });
+  } catch (err) {
+    console.warn(`under-keel ${overlayId} overlay`, err);
+  }
+}
+
 // ---- look-ahead envelope: refetched whenever the plugin bumps envelopeRev ----
 let envelopeRev = 0;
 let fetching = false;
@@ -24,7 +36,7 @@ async function refreshEnvelope() {
     }
     const body = await res.json();
     envelopeRev = body.rev;
-    await client.call("overlay.setData", { overlayId: "lookahead", source: "envelope", data: body.envelope });
+    await setOverlay("lookahead", "envelope", body.envelope);
   } catch (err) {
     console.warn("under-keel envelope", err);
   } finally {
@@ -57,14 +69,11 @@ function nextSeq(routeId) {
   return n;
 }
 
+/** The panel reads the results from state, so they go there first, whatever the overlay does. */
 async function publish() {
-  const features = [...results].flatMap(([id, r]) => UKC.legFeatures(id, r.legs));
-  await client.call("overlay.setData", {
-    overlayId: "routecheck",
-    source: "legs",
-    data: { type: "FeatureCollection", features }
-  });
   await client.state.set({ routeCheck: Object.fromEntries(results) }, "extension");
+  const features = [...results].flatMap(([id, r]) => UKC.legFeatures(id, r.legs));
+  await setOverlay("routecheck", "legs", { type: "FeatureCollection", features });
 }
 
 async function check(routeId) {
