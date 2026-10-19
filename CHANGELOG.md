@@ -231,3 +231,5 @@ All notable changes to signalk-underkeel are documented here.
   the host is still loading the overlay style; the runtime stored them only after the overlay
   call, which failed there. A visible route without a result reads "not checked yet" instead of
   "No route on the chart."
+- The runtime clears the stored route-check results when it starts. The host keeps extension
+  state across sessions, so the panel listed results from an earlier session as current.

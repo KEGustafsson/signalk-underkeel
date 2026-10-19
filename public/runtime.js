@@ -132,6 +132,9 @@ async function checkAll() {
   routes.forEach((r) => schedule(r.routeId));
 }
 
+// The host persists extension state across sessions: results from an earlier one are not current.
+await publish();
+
 if (has("routes")) {
   await client.subscribe(["route.**"], (name, params) => {
     if (name === "route.hidden") {
