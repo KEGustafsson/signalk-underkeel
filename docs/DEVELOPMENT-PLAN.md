@@ -210,7 +210,8 @@ signalk-underkeel/
    non-navigational use only, and it has no land, rocks, wrecks, obstructions or `M_QUAL`.
    Decision (safety invariants 3 and 4): the plugin downloads a box of configurable radius
    (default 10 km) around the vessel and a new one once the vessel is more than half the radius
-   from its centre; the index is rebuilt in a worker thread and swapped in. The box is one cell
+   from its centre, checked every 10 s, at most once a minute and 5 minutes after a failed
+   download; the index is rebuilt in a worker thread and swapped in. The box is one cell
    of usage band 1, so every ENC cell wins where both cover. Water no depth area reaches is
    land. Survey quality is an assumed CATZOC (configurable, default B). Every tile from the cell
    carries `NOT_FOR_NAVIGATION`: the look-ahead is never `normal` there (at most `alert`, with
