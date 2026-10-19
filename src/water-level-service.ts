@@ -121,12 +121,21 @@ export class WaterLevelService {
   }
 
   /**
-   * The lowest level over [start, end] (epoch ms), for route checks. A
-   * route has no single position, so FMI answers with the forecast held for
-   * the vessel's position.
+   * The lowest level over [start, end] (epoch ms) at any of `at`, for
+   * route checks; a fallback at any position wins. FMI answers only within
+   * its forecast distance of where the forecast was fetched, so a leg far
+   * from the vessel falls back rather than taking the vessel's level.
    */
-  over(start: number, end: number, now: number): WaterLevel {
-    return lowestWaterLevel(this.provider, this.datums, undefined, start, end, now);
+  over(start: number, end: number, at: readonly LonLat[], now: number): WaterLevel {
+    let out: WaterLevel | undefined;
+    for (const p of at) {
+      const wl = lowestWaterLevel(this.provider, this.datums, p, start, end, now);
+      if (wl.degraded) {
+        return wl;
+      }
+      out = out ? { ...out, h: Math.min(out.h, wl.h), sigma: Math.max(out.sigma, wl.sigma) } : wl;
+    }
+    return out ?? lowestWaterLevel(this.provider, this.datums, undefined, start, end, now);
   }
 
   status(position: LonLat | undefined, now: number): WaterLevelStatus {

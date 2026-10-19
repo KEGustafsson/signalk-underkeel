@@ -58,7 +58,7 @@ export async function departureWindow(
       const a = input.coordinates[i] as LonLat;
       const b = input.coordinates[i + 1] as LonLat;
       const end = start + (haversine(a, b) / (input.speeds[i] as number)) * 1000;
-      const wl = rounded(input.waterLevel(start, end));
+      const wl = rounded(input.waterLevel(start, end, [a, b]));
       const key = `${i}|${wl.h}|${wl.sigma}|${wl.degraded ?? ""}`;
       let status = memo.get(key);
       if (status === undefined) {

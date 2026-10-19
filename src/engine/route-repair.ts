@@ -139,7 +139,10 @@ export function repairLeg(
   opts: RepairOptions = DEFAULT_REPAIR
 ): LegRepair {
   const speed = input.speeds[leg.index] as number;
-  const wl = input.waterLevel(Date.parse(leg.eta.start), Date.parse(leg.eta.end));
+  const wl = input.waterLevel(Date.parse(leg.eta.start), Date.parse(leg.eta.end), [
+    leg.from,
+    leg.to
+  ]);
   const terms = vesselTerms(input.vessel, { speed, waveHeight: input.waveHeight }, input.dynamics);
   const risk = { threshold: thresholdDepth(terms, wl), sigmaExtra: sigmaExtra(terms, wl) };
   const corridor = input.xteLimit + input.planningBuffer;

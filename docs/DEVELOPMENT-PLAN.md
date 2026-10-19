@@ -420,10 +420,12 @@ and `h = 0` would then assume more water than was last observed.
   `heightLow` applies until 6 h past `timeLow`, when the next flood has turned. Without
   `timeLow` that bound ends 6 h after the reading, since the low may be due at once. Without
   `heightLow`, or past the bound, there is no level and the engine falls back.
-- Route checks take the lowest level over each leg's ETA interval, sampled every 10 minutes
-  and at every FMI forecast point inside it. FMI answers them with the
-  forecast held for the vessel's position. A fallback level makes every `ok` leg
-  `unverified`.
+- Route checks take the lowest level over each leg's ETA interval at both of its ends, sampled
+  every 10 minutes and at every FMI forecast point inside it. FMI answers only within 30 km of
+  the point its forecast was fetched for, so a leg farther from the vessel gets the chart-datum
+  fallback and is at best `unverified`. Applying the vessel's forecast to every leg took the
+  level at Kemi (+0.62 m) for legs off Vaasa (+0.23 m) with no degraded flag. A fallback level
+  makes every `ok` leg `unverified`.
 
 ### 4.6 Vessel model
 

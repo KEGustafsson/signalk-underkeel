@@ -65,6 +65,9 @@ All notable changes to signalk-underkeel are documented here.
 - Route check, route repair and `POST /query` widen their buffer by 2·σP of the surveys they
   reach (at most 1 km), since depth areas and lines are not widened when the index is built.
   A drying area 60 m off a leg in CATZOC B or C water returned `ok` with P = 0.
+- Route legs take the water level at their own ends: with FMI, a leg more than 30 km from the
+  forecast point falls back to chart datum and is never `ok`, instead of taking the level
+  forecast at the vessel.
 - `navigation.underKeel.clearance` is published as `null` when the look-ahead reaches land,
   never `-Infinity`. In-process subscribers such as signalk-to-influxdb received the raw
   value and the database refused the write; no published number is now NaN or infinite.

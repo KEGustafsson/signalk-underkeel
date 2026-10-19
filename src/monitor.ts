@@ -273,9 +273,9 @@ export class Monitor {
     return this.levels.now(this.nav.position?.value, this.clock.now());
   }
 
-  /** The lowest water level over [start, end] (epoch ms), for route checks. */
-  waterLevelOver(start: number, end: number): WaterLevel {
-    return this.levels.over(start, end, this.clock.now());
+  /** The lowest water level over [start, end] (epoch ms) at the positions `at`, for route checks. */
+  waterLevelOver(start: number, end: number, at: readonly LonLat[]): WaterLevel {
+    return this.levels.over(start, end, at, this.clock.now());
   }
 
   waterLevelStatus(): WaterLevelStatus {

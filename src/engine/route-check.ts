@@ -35,8 +35,11 @@ export interface RouteCheckInput {
   planningBuffer: number;
   vessel: VesselModel;
   dynamics: DynamicsOptions;
-  /** Water level over the leg's arrival interval [start, end] (epoch ms); the worst one is used. */
-  waterLevel(start: number, end: number): WaterLevel;
+  /**
+   * Water level over the arrival interval [start, end] (epoch ms) at the
+   * positions `at`, a leg's two ends; the worst one is used.
+   */
+  waterLevel(start: number, end: number, at: readonly LonLat[]): WaterLevel;
   /** Significant wave height to allow for, metres. */
   waveHeight?: number;
   /** Accept threshold: a leg is ok below this P(UKC < 0). */
@@ -233,7 +236,7 @@ export function checkLeg(
   const length = haversine(from, to);
   const speed = input.speeds[i] as number;
   const end = start + (length / speed) * 1000;
-  const wl = input.waterLevel(start, end);
+  const wl = input.waterLevel(start, end, [from, to]);
   const terms = vesselTerms(input.vessel, { speed, waveHeight: input.waveHeight }, input.dynamics);
   const s = { threshold: thresholdDepth(terms, wl), sigmaExtra: sigmaExtra(terms, wl) };
   const { result, ring, bufferMetres } = checkCorridor(
@@ -294,7 +297,7 @@ export function checkRoute(
     legs.push(leg);
     cellRefs.forEach((c) => cells.add(c));
   }
-  const wl = input.waterLevel(input.departure, t);
+  const wl = input.waterLevel(input.departure, t, input.coordinates);
   return {
     checkedAt: new Date(now).toISOString(),
     charts: [...cells]

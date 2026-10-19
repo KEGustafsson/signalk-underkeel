@@ -24,8 +24,8 @@ export interface RouteServiceDeps {
   indexReason: string | undefined;
   config: PluginConfig;
   vessel(): VesselModel | undefined;
-  /** Water level over an arrival interval (epoch ms); the lowest applies. */
-  waterLevel(start: number, end: number): WaterLevel;
+  /** Water level over an arrival interval (epoch ms) at the positions `at`; the lowest applies. */
+  waterLevel(start: number, end: number, at: readonly LonLat[]): WaterLevel;
   /** Current significant wave height, if known, metres. */
   waveHeight(): number | undefined;
   getRoute(id: string): Promise<unknown>;
