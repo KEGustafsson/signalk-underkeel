@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "route-check-request.json",
+  "title": "POST /route-check, /route-repair and /departure-window request",
+  "type": "object",
+  "anyOf": [{ "required": ["route"] }, { "required": ["routeRef"] }],
+  "properties": {
+    "route": {
+      "type": "object",
+      "required": ["type", "coordinates"],
+      "properties": {
+        "type": { "const": "LineString" },
+        "coordinates": {
+          "type": "array",
+          "items": { "$ref": "defs.json#/$defs/lonLat" },
+          "minItems": 2
+        }
+      }
+    },
+    "routeRef": { "type": "string", "pattern": "^/resources/routes/[A-Za-z0-9._:-]{1,128}$" },
+    "departure": { "$ref": "defs.json#/$defs/isoTime" },
+    "speed": {
+      "description": "m/s: one value, a per-leg array, or { default } / { legs }.",
+      "type": ["number", "array", "object"]
+    },
+    "xteLimit": { "type": "number", "minimum": 0 },
+    "probability": { "type": "number", "exclusiveMinimum": 0, "maximum": 0.5 },
+    "vessel": {
+      "type": "object",
+      "properties": { "draft": { "type": "number", "exclusiveMinimum": 0 } }
+    },
+    "horizon": { "description": "departure-window only, seconds", "type": "number", "minimum": 0 },
+    "step": { "description": "departure-window only, seconds", "type": "number", "minimum": 300 }
+  }
+}

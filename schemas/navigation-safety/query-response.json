@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "query-response.json",
+  "title": "POST /query response: point or polygon UKC for the current vessel",
+  "type": "object",
+  "required": ["class", "charted", "mean", "sigma", "risk", "flags", "cells"],
+  "properties": {
+    "class": { "$ref": "defs.json#/$defs/class" },
+    "charted": { "$ref": "defs.json#/$defs/metresOrNull" },
+    "mean": { "$ref": "defs.json#/$defs/metresOrNull" },
+    "sigma": { "type": "number", "minimum": 0 },
+    "risk": { "$ref": "defs.json#/$defs/probability" },
+    "flags": { "type": "array", "items": { "type": "string" } },
+    "cells": { "type": "array", "items": { "$ref": "defs.json#/$defs/cellEdition" } },
+    "hazard": { "$ref": "defs.json#/$defs/hazard" },
+    "explanation": { "$ref": "defs.json#/$defs/explanation" },
+    "sentence": { "type": "string" },
+    "waterLevelDegraded": { "type": "string" }
+  }
+}

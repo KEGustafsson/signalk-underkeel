@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "route-repair-response.json",
+  "title": "POST /route-repair response: waypoints to insert per failing leg; a suggestion",
+  "type": "object",
+  "required": ["checkedAt", "repairs"],
+  "properties": {
+    "checkedAt": { "$ref": "defs.json#/$defs/isoTime" },
+    "repairs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["index", "waypoints", "legs"],
+        "properties": {
+          "index": { "type": "integer", "minimum": 0 },
+          "waypoints": { "type": "array", "items": { "$ref": "defs.json#/$defs/lonLat" } },
+          "legs": { "type": "array", "items": { "$ref": "defs.json#/$defs/leg" } },
+          "reason": { "type": "string" }
+        }
+      }
+    }
+  }
+}

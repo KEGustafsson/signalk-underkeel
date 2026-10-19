@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "defs.json",
+  "title": "Navigation-safety contract: shared definitions",
+  "$defs": {
+    "lonLat": {
+      "type": "array",
+      "items": { "type": "number" },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "point": {
+      "type": "object",
+      "required": ["type", "coordinates"],
+      "properties": {
+        "type": { "const": "Point" },
+        "coordinates": { "$ref": "#/$defs/lonLat" }
+      }
+    },
+    "polygon": {
+      "description": "A GeoJSON Polygon with its outer ring only, closed: the first position is repeated at the end.",
+      "type": "object",
+      "required": ["type", "coordinates"],
+      "properties": {
+        "type": { "const": "Polygon" },
+        "coordinates": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": { "type": "array", "minItems": 4, "items": { "$ref": "#/$defs/lonLat" } }
+        }
+      }
+    },
+    "isoTime": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+    },
+    "probability": { "type": "number", "minimum": 0, "maximum": 1 },
+    "metresOrNull": { "type": ["number", "null"] },
+    "legStatus": {
+      "description": "unverified: the corridor touches missing coverage, an unassessed survey or a fallback water level; never folded into ok.",
+      "enum": ["ok", "marginal", "fail", "unverified"]
+    },
+    "class": { "enum": ["clear", "caution", "danger", "unverified"] },
+    "engineState": { "enum": ["normal", "alert", "warn", "alarm", "unknown", "off"] },
+    "cellEdition": {
+      "type": "object",
+      "required": ["edition", "update"],
+      "properties": {
+        "cell": { "type": "string" },
+        "name": { "type": "string" },
+        "edition": { "type": "number" },
+        "update": { "type": "number" }
+      }
+    },
+    "hazard": {
+      "type": "object",
+      "required": ["class"],
+      "properties": {
+        "class": { "type": "string" },
+        "lnam": { "type": "string" },
+        "valsou": { "$ref": "#/$defs/metresOrNull" },
+        "depth": { "$ref": "#/$defs/metresOrNull" }
+      }
+    },
+    "explanation": {
+      "description": "Every term behind a UKC estimate (plan §4.7), in metres.",
+      "type": "object",
+      "required": [
+        "charted",
+        "sigmaCharted",
+        "flags",
+        "waterLevel",
+        "sigmaWaterLevel",
+        "waterLevelSource",
+        "draft",
+        "heel",
+        "squat",
+        "wave",
+        "margin",
+        "mean",
+        "sigma",
+        "risk"
+      ],
+      "properties": {
+        "charted": { "$ref": "#/$defs/metresOrNull" },
+        "sigmaCharted": { "type": "number", "minimum": 0 },
+        "flags": { "type": "array", "items": { "type": "string" } },
+        "cell": { "$ref": "#/$defs/cellEdition" },
+        "hazard": { "$ref": "#/$defs/hazard" },
+        "waterLevel": { "type": "number" },
+        "sigmaWaterLevel": { "type": "number", "minimum": 0 },
+        "waterLevelSource": { "type": "string" },
+        "draft": { "type": "number" },
+        "heel": { "type": "number" },
+        "squat": { "type": "number" },
+        "wave": { "type": "number" },
+        "margin": { "type": "number" },
+        "mean": { "$ref": "#/$defs/metresOrNull" },
+        "sigma": { "type": "number", "minimum": 0 },
+        "risk": { "$ref": "#/$defs/probability" }
+      }
+    },
+    "leg": {
+      "type": "object",
+      "required": [
+        "index",
+        "status",
+        "from",
+        "to",
+        "length",
+        "eta",
+        "minUkc",
+        "sigma",
+        "risk",
+        "charted",
+        "flags"
+      ],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "status": { "$ref": "#/$defs/legStatus" },
+        "from": { "$ref": "#/$defs/lonLat" },
+        "to": { "$ref": "#/$defs/lonLat" },
+        "length": { "type": "number", "minimum": 0 },
+        "eta": {
+          "type": "object",
+          "required": ["start", "end"],
+          "properties": {
+            "start": { "$ref": "#/$defs/isoTime" },
+            "end": { "$ref": "#/$defs/isoTime" }
+          }
+        },
+        "minUkc": { "$ref": "#/$defs/metresOrNull" },
+        "sigma": { "type": "number", "minimum": 0 },
+        "risk": { "$ref": "#/$defs/probability" },
+        "charted": { "$ref": "#/$defs/metresOrNull" },
+        "flags": { "type": "array", "items": { "type": "string" } },
+        "worst": {
+          "type": "object",
+          "required": ["position"],
+          "properties": {
+            "position": { "$ref": "#/$defs/lonLat" },
+            "hazard": { "$ref": "#/$defs/hazard" }
+          }
+        },
+        "explanation": { "$ref": "#/$defs/explanation" }
+      }
+    },
+    "errors": {
+      "type": "object",
+      "required": ["errors"],
+      "properties": { "errors": { "type": "array", "items": { "type": "string" }, "minItems": 1 } }
+    }
+  }
+}

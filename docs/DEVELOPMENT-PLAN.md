@@ -826,6 +826,12 @@ The contract schemas (request/response JSON Schema) live in a small shared packa
 `@signalk/navigation-safety-schema`, consumed by both sides. Contract tests run in both
 repositories.
 
+**As built (M6).** The schemas live in `schemas/navigation-safety/` as a private package
+until the contract is accepted upstream. `__tests__/contract/` validates this plugin's
+responses and a stub second provider's against them with a validator that refuses any
+keyword it does not implement. The RFC drafts are in `docs/rfcs/`; opening them upstream is
+the maintainers' step.
+
 ### 5.2 New module layout
 
 ```

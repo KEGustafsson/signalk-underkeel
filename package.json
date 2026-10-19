@@ -61,7 +61,7 @@
   "bugs": {
     "url": "https://github.com/KEGustafsson/signalk-underkeel/issues"
   },
-  "license": "MIT",
+  "license": "EUPL-1.2",
   "jest": {
     "testEnvironment": "node",
     "maxWorkers": 1,

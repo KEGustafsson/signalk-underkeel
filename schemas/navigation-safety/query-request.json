@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "query-request.json",
+  "title": "POST /query request",
+  "type": "object",
+  "required": ["geometry"],
+  "properties": {
+    "geometry": {
+      "anyOf": [
+        {
+          "$ref": "defs.json#/$defs/point"
+        },
+        {
+          "$ref": "defs.json#/$defs/polygon"
+        }
+      ]
+    },
+    "bufferMetres": {
+      "type": "number",
+      "minimum": 0
+    },
+    "draft": {
+      "description": "metres; the vessel's configured draft when absent",
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "speed": {
+      "description": "m/s, for squat; 0 when absent",
+      "type": "number",
+      "minimum": 0
+    }
+  }
+}

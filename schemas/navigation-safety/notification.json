@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "notification.json",
+  "title": "notifications.navigation.underKeel value",
+  "type": "object",
+  "required": ["state", "method", "message", "data"],
+  "properties": {
+    "state": { "enum": ["normal", "alert", "warn", "alarm"] },
+    "method": { "type": "array", "items": { "enum": ["visual", "sound"] } },
+    "message": { "type": "string" },
+    "data": {
+      "type": "object",
+      "required": ["engineState", "clearance", "clearanceSigma", "risk", "timeToShoal"],
+      "properties": {
+        "engineState": { "$ref": "defs.json#/$defs/engineState" },
+        "clearance": { "$ref": "defs.json#/$defs/metresOrNull" },
+        "clearanceSigma": { "$ref": "defs.json#/$defs/metresOrNull" },
+        "risk": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "timeToShoal": { "type": ["number", "null"], "minimum": 0 },
+        "explanation": { "$ref": "defs.json#/$defs/explanation" }
+      }
+    }
+  }
+}

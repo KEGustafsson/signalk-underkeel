@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "route-check-response.json",
+  "title": "POST /route-check response (plan §4.11)",
+  "type": "object",
+  "required": ["checkedAt", "charts", "waterLevelSource", "legs"],
+  "properties": {
+    "checkedAt": { "$ref": "defs.json#/$defs/isoTime" },
+    "charts": { "type": "array", "items": { "$ref": "defs.json#/$defs/cellEdition" } },
+    "waterLevelSource": { "type": "string" },
+    "waterLevelDegraded": { "type": "string" },
+    "legs": { "type": "array", "items": { "$ref": "defs.json#/$defs/leg" } }
+  }
+}
