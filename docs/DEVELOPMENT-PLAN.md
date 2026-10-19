@@ -498,7 +498,9 @@ window (`alarmWithin` for `alarm`, `warnWithin` for `warn`, the whole horizon fo
 
 Footprint at each step (Δt = 3 s) is a rectangle of hull length × beam, inflated by `σ_pos(t)`.
 Δt shrinks at speed so that consecutive footprints, hull length plus the position buffer at
-both ends, still touch: a fast boat must not skip a rock between two samples.
+both ends, still touch: a fast boat must not skip a rock between two samples. A tick scores at
+most 400 footprints: Δt grows toward that touching limit when the horizon would need more, and
+the horizon is cut only past it. Configuration caps D at 5 NM and the minimum horizon at 600 s.
 
 **Output per tick.**
 

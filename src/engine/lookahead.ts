@@ -104,6 +104,9 @@ export interface LookaheadOptions {
   certainWithin: number;
 }
 
+/** Configurable maxima: each footprint costs a chart query every tick. */
+export const LOOKAHEAD_LIMITS = { distance: 5 * 1852, minHorizon: 600 } as const;
+
 export const DEFAULT_LOOKAHEAD: LookaheadOptions = {
   distance: 0.3 * 1852,
   minHorizon: 60,
@@ -225,13 +228,26 @@ export function stepFor(sog: number, vessel: VesselModel, opts: LookaheadOptions
   return sog > 0 ? Math.min(opts.step, reach / sog) : opts.step;
 }
 
+/**
+ * Footprints per tick at most. Footprints a step apart still touch up to
+ * reach / SOG, so a long horizon at low speed takes longer steps rather
+ * than more footprints; only when that is not enough is the horizon cut.
+ */
+export const MAX_FOOTPRINTS = 400;
+
 function timesFor(m: Motion, vessel: VesselModel, opts: LookaheadOptions): number[] {
+  const gapFree = m.sog > 0 ? (vessel.length + 2 * opts.positionBuffer) / m.sog : opts.step;
+  const step = Math.min(
+    gapFree,
+    Math.max(stepFor(m.sog, vessel, opts), m.horizon / (MAX_FOOTPRINTS - 1))
+  );
+  const horizon = Math.min(m.horizon, step * (MAX_FOOTPRINTS - 1));
+  const n = Math.ceil(horizon / step - 1e-9);
   const times: number[] = [];
-  const step = stepFor(m.sog, vessel, opts);
-  for (let t = 0; t < m.horizon; t += step) {
-    times.push(t);
+  for (let i = 0; i < n; i++) {
+    times.push(i * step);
   }
-  times.push(m.horizon);
+  times.push(horizon);
   return times;
 }
 
@@ -414,10 +430,10 @@ export function evaluateLookahead(
     // Over land the mean is -Infinity: there is no clearance to report, and the state says why.
     clearance: shallowest && Number.isFinite(shallowest.mean) ? shallowest.mean : null,
     clearanceSigma: shallowest ? shallowest.sigma : null,
-    risk: fps.length > 0 ? Math.max(...fps.map((f) => f.risk)) : null,
+    risk: fps.reduce<number | null>((max, f) => Math.max(max ?? 0, f.risk), null),
     timeToShoal: verdict.tts,
     escapeHeading: escape,
-    horizon: m.horizon,
+    horizon: times[times.length - 1] as number,
     footprints: fps,
     worst: worstOf(fps, index, s, wl),
     waterLevel: wl

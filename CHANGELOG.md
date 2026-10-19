@@ -199,3 +199,6 @@ All notable changes to signalk-underkeel are documented here.
 - A `table` heel model without a fresh roll applies the table's largest draft change instead of
   its smallest, and takes the largest change over the rolls seen; route checks, which have no
   roll, use the largest change too.
+- Look-ahead cost is bounded: the distance is capped at 5 NM and the minimum horizon at 600 s,
+  and a tick scores at most 400 footprints, lengthening the step while footprints still touch.
+  A 10 NM distance at 0.3 m/s took about 20 000 footprints and 10 s per 1 Hz tick.
