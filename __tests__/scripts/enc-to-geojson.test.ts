@@ -2,6 +2,7 @@ import { spawnSync } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
+import { S57_LAYERS } from "../../src/ingest/s57-geojson";
 
 const SCRIPT = path.resolve(__dirname, "..", "..", "scripts", "enc-to-geojson.sh");
 
@@ -71,6 +72,13 @@ onPosix("scripts/enc-to-geojson.sh", () => {
       "DSID.geojson",
       "M_COVR.geojson"
     ]);
+  });
+
+  test("exports every layer the cell reader reads", () => {
+    const layers = ["DSID", ...S57_LAYERS, "M_SDAT", "M_VDAT"];
+    const r = run({ env: { FAKE_LAYERS: layers.join(" ") } });
+    expect(r.status).toBe(0);
+    expect(fs.readdirSync(r.out).sort()).toEqual(layers.map((l) => `${l}.geojson`).sort());
   });
 
   test("fails without GDAL on PATH", () => {
