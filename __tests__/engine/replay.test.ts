@@ -1,7 +1,8 @@
 import { haversine } from "../../src/foundation/geo";
 import type { LonLat } from "../../src/foundation/geo";
 import type { UnderKeelState } from "../../src/foundation/state";
-import { evaluateLookahead } from "../../src/engine/lookahead";
+import { Hysteresis } from "../../src/engine/hysteresis";
+import { DEFAULT_LOOKAHEAD, evaluateLookahead } from "../../src/engine/lookahead";
 import type { VesselModel } from "../../src/model/vessel";
 import { ctx } from "../helpers/engine";
 import { BANK, fixtureIndex, ROCK } from "../helpers/fixture-index";
@@ -12,7 +13,9 @@ import { project } from "../../src/foundation/geo";
  * zero missed alarms on annotated hazards). Each passage is a straight
  * track through an annotated hazard; the engine must reach `alarm` before
  * the bow does, and the timeline must escalate without skipping straight
- * from normal to alarm when there was time to warn.
+ * from normal to alarm when there was time to warn. Both hold for the raw
+ * engine state and for the published one, which hysteresis raises only
+ * after two ticks.
  */
 
 interface Passage {
@@ -27,8 +30,16 @@ interface Passage {
 
 const T0 = 1_800_000_000_000;
 
-function replay(p: Passage): { t: number; state: UnderKeelState; distance: number }[] {
-  const timeline: { t: number; state: UnderKeelState; distance: number }[] = [];
+interface Tick {
+  t: number;
+  state: UnderKeelState;
+  published: UnderKeelState;
+  distance: number;
+}
+
+function replay(p: Passage): Tick[] {
+  const timeline: Tick[] = [];
+  const hysteresis = new Hysteresis(DEFAULT_LOOKAHEAD);
   for (let t = 0; t <= p.seconds; t++) {
     const pos = project(p.start, p.cog, p.sog * t);
     const at = T0 + t * 1000;
@@ -43,9 +54,10 @@ function replay(p: Passage): { t: number; state: UnderKeelState; distance: numbe
       fixtureIndex(),
       at
     );
-    timeline.push({ t, state: r.state, distance: haversine(pos, p.hazard) });
-    // Every check is on the timeline up to the first alarm.
-    if (r.state === "alarm") {
+    const published = hysteresis.next(r).state;
+    timeline.push({ t, state: r.state, published, distance: haversine(pos, p.hazard) });
+    // Every check is on the timeline up to the first published alarm.
+    if (published === "alarm") {
       break;
     }
   }
@@ -78,16 +90,19 @@ const PASSAGES: Passage[] = [
 
 describe("replay over annotated hazards", () => {
   for (const p of PASSAGES) {
-    test(p.name, () => {
-      const timeline = replay(p);
-      const firstAlarm = timeline.find((e) => e.state === "alarm");
-      expect(firstAlarm).toBeDefined();
-      // Alarm while the hull (half-length from its centre) is still short of the hazard.
-      expect(firstAlarm?.distance).toBeGreaterThan(p.vessel.length / 2);
-      const firstWarn = timeline.find((e) => e.state === "warn");
-      expect(firstWarn).toBeDefined();
-      expect(firstWarn?.t).toBeLessThan(firstAlarm?.t ?? -1);
-      expect(timeline[0]?.state).not.toBe("alarm");
-    });
+    let replayed: Tick[] | undefined;
+    const timeline = (): Tick[] => (replayed ??= replay(p));
+    for (const key of ["state", "published"] as const) {
+      test(`${p.name} (${key === "state" ? "engine" : "published"} state)`, () => {
+        const firstAlarm = timeline().find((e) => e[key] === "alarm");
+        expect(firstAlarm).toBeDefined();
+        // Alarm while the hull (half-length from its centre) is still short of the hazard.
+        expect(firstAlarm?.distance).toBeGreaterThan(p.vessel.length / 2);
+        const firstWarn = timeline().find((e) => e[key] === "warn");
+        expect(firstWarn).toBeDefined();
+        expect(firstWarn?.t).toBeLessThan(firstAlarm?.t ?? -1);
+        expect(timeline()[0]?.[key]).not.toBe("alarm");
+      });
+    }
   }
 });
