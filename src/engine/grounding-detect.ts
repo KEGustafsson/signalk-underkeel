@@ -42,6 +42,8 @@ export interface GroundingCheck {
 export class GroundingDetector {
   private sog: { v: number; at: number }[] = [];
   private gearAt = -Infinity;
+  /** Last gear per transmission: servers repeat unchanged values, which are no gear change. */
+  private readonly gears = new Map<string, unknown>();
   private depth?: { v: number; at: number };
   private spikeAt = -Infinity;
   private latched?: string[];
@@ -62,7 +64,10 @@ export class GroundingDetector {
     } else if (path === "environment.depth.belowSurface" && v !== undefined) {
       this.depth = { v, at };
     } else if (GEAR_PATH.test(path)) {
-      this.gearAt = at;
+      if (!this.gears.has(path) || this.gears.get(path) !== value) {
+        this.gearAt = at;
+      }
+      this.gears.set(path, value);
     } else if (
       path === this.opts.imuPath &&
       v !== undefined &&

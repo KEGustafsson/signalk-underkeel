@@ -36,6 +36,19 @@ describe("grounding detector", () => {
     expect(slow.check(T0 + 30_000, 1.8, 0).grounded).toBe(false);
   });
 
+  test("a gear value repeated unchanged is no gear change", () => {
+    const d = new GroundingDetector();
+    for (let k = 0; k <= 23; k++) {
+      d.record("propulsion.main.transmission.gear", "forward", T0 - 20_000 + k * 1000);
+    }
+    grounding(d);
+    expect(d.check(T0 + 3000, 1.8, 0).grounded).toBe(true);
+    const changed = new GroundingDetector();
+    changed.record("propulsion.main.transmission.gear", "forward", T0 - 20_000);
+    grounding(changed, (at) => changed.record("propulsion.main.transmission.gear", "neutral", at));
+    expect(changed.check(T0 + 3000, 1.8, 0).grounded).toBe(false);
+  });
+
   test("P ≥ 80 % under the vessel stands in for measured depth", () => {
     const d = new GroundingDetector();
     d.record("navigation.speedOverGround", 3, T0);

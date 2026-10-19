@@ -182,3 +182,6 @@ All notable changes to signalk-underkeel are documented here.
   zoom instead of being dropped, which let the next save overwrite them. A `livechart.json`
   that is unreadable, of another version or partly malformed is renamed to
   `livechart.json.bad-<ms>` and reported instead of being overwritten at the next save.
+- The grounding detector no longer treats a repeated, unchanged
+  `propulsion.*.transmission.gear` value as a gear change. Servers that publish the gear every
+  second vetoed every grounding.
