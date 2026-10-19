@@ -309,7 +309,7 @@ describe("cell posterior and discrepancy", () => {
     fs.writeFileSync(file, JSON.stringify(saved));
     const fresh = store();
     new LivechartService(fresh, CONFIG, file, failOnError);
-    const [[key, v]] = [...fresh.adjustments] as [number, { cellRef: number }][];
+    const [key, v] = [...fresh.adjustments][0] as [number, { cellRef: number }];
     const n = 2 ** fresh.adjustZoom;
     const current = chartPrior(fresh, fresh.adjustZoom, Math.floor(key / n), key % n).cellRef;
     expect(v.cellRef).not.toBe(99);

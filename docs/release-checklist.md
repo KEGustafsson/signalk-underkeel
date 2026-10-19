@@ -4,7 +4,7 @@ Run this sequence before publishing a package or changing release automation.
 
 1. `npm run lint`
 2. `npm run format:check`
-3. `npm run check:ts`
+3. `npm run check:ts` and `npm run check:ts:tests`
 4. `npm run build`
 5. `npm test`
 6. `npm run check:release-docs`

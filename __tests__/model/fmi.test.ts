@@ -8,6 +8,7 @@ import {
   nearestStation,
   parseSimpleFeatures
 } from "../../src/model/fmi";
+import type { WaterLevelProvider } from "../../src/model/water-level";
 import { lowestWaterLevel, resolveWaterLevel } from "../../src/model/water-level";
 
 const NOW = Date.parse("2026-10-18T07:00:00Z");
@@ -179,7 +180,9 @@ describe("FMI provider", () => {
     await p.update(HELSINKI, NOW + 20 * 60000);
     const later = NOW + 25 * 60000;
     expect(resolveWaterLevel(p, uses, HELSINKI, later, later).degraded).toBeUndefined();
-    expect(p.health(later).message).toBe("forecast request failed: Error: HTTP 500");
+    expect((p as WaterLevelProvider).health(later).message).toBe(
+      "forecast request failed: Error: HTTP 500"
+    );
     const stale = NOW + 31 * 60000;
     expect(resolveWaterLevel(p, uses, HELSINKI, stale, stale).degraded).toBe(
       "water level from fmi is 31 min old"

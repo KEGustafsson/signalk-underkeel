@@ -1,4 +1,4 @@
-import type { Delta, ServerAPI } from "@signalk/server-api";
+import type { Delta, ServerAPI, Update } from "@signalk/server-api";
 import type { Clock } from "../../src/monitor";
 
 /** A fake Signal K app, router and clock for plugin-level tests. */
@@ -40,6 +40,9 @@ export function fakeClock(start: number): FakeClock {
   };
 }
 
+/** A delta whose updates all carry values, as navDelta builds them. */
+export type ValuesDelta = Delta & { updates: Extract<Update, { values: unknown }>[] };
+
 /** Matches any of the Signal K paths, where `*` stands for any run of characters. */
 function pathPattern(paths: string[]): RegExp {
   const one = (p: string) =>
@@ -52,7 +55,7 @@ function pathPattern(paths: string[]): RegExp {
 
 /** Delivers the delta's values that one subscription matches, as the server does per subscription. */
 function deliver(d: Delta, match: RegExp, cb: (d: Delta) => void): void {
-  const updates = d.updates.flatMap((u) => {
+  const updates = d.updates.flatMap((u): Update[] => {
     if (!("values" in u)) {
       return [u];
     }
@@ -195,7 +198,7 @@ export function notificationCount(deltas: Partial<Delta>[]): number {
 
 export const T0 = Date.parse("2026-10-17T12:00:00Z");
 
-export function navDelta(lon: number, lat: number, sog: number, at: number): Delta {
+export function navDelta(lon: number, lat: number, sog: number, at: number): ValuesDelta {
   return {
     updates: [
       {
