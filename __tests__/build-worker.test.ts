@@ -2,7 +2,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import type { BuildJob } from "../src/spatial/build-worker";
-import { loadChartIndex } from "../src/spatial/chart-index";
+import { commitChartIndex, loadChartIndex } from "../src/spatial/chart-index";
 import type { IndexBuilder } from "../src/wfs-service";
 import { FIXTURES } from "./helpers/fixture-index";
 
@@ -40,9 +40,12 @@ function runWorkerEntry(data: BuildJob): unknown[] {
 }
 
 describe("index build worker entry", () => {
-  test("builds and saves the index, then reports ok", () => {
+  test("builds and stages the index, leaving the index directory to the main thread", () => {
     const j = job();
-    expect(runWorkerEntry(j)).toEqual([{ ok: true }]);
+    const messages = runWorkerEntry(j);
+    expect(messages).toEqual([{ ok: true, staging: expect.any(String) }]);
+    expect(fs.existsSync(j.indexDir)).toBe(false);
+    commitChartIndex(j.indexDir, (messages[0] as { staging: string }).staging);
     expect(loadChartIndex(j.indexDir).catalogue.cells.map((c) => c.name)).toEqual(["FI5SYNTH"]);
   });
 
