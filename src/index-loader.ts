@@ -189,12 +189,13 @@ function savedCells(indexDir: string): CellInfo[] {
     .cells;
 }
 
-const cellKey = (c: Pick<CellInfo, "name" | "edition" | "update">): string =>
-  `${c.name} edition ${c.edition} update ${c.update}`;
+const cellKey = (c: Pick<CellInfo, "name" | "edition" | "update" | "datumAreas">): string =>
+  `${c.name} edition ${c.edition} update ${c.update}` +
+  (c.datumAreas ? ` datum areas ${c.datumAreas.join(",")}` : "");
 
 /**
  * Why the saved index no longer matches the cells directory, from each
- * cell's DSID, or undefined when it does. A new edition or update, or a
+ * cell's DSID and datum areas, or undefined when it does. A new edition or update, or a
  * cell added or removed, changes which depths and hazards the index holds.
  */
 function cellsChange(

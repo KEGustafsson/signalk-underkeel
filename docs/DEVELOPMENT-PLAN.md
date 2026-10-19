@@ -396,6 +396,8 @@ FMI series. **An unknown datum sets σ_wl = 0.5 m and flags the cell.**
   remains open.
 - Datum table: VERDAT 3, 19 and 26 → theoretical mean water, σ 0.1 m for the epoch
   difference. N2000 has no VERDAT code, so cells on it are mapped in the configuration.
+- A cell's datum is the DSID's (`DSPM_SDAT`, else `DSPM_VDAT`). `M_SDAT` / `M_VDAT` areas
+  on another VERDAT make the whole cell unknown (σ 0.5 m); a datum per area is a follow-up.
 - The engine applies one level per tick. When the index holds cells on different datums,
   it takes the lowest level and the widest σ among them, which can only raise P(UKC < 0).
   Per-cell levels are a follow-up.

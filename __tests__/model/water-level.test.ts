@@ -51,6 +51,22 @@ describe("chart datum mapping", () => {
       [undefined, false, UNKNOWN_DATUM_SIGMA]
     ]);
   });
+
+  test("a cell with datum areas on another VERDAT is unknown and names them", () => {
+    const mixed: CellInfo = { ...cell("MIX", 3), datumAreas: [24] };
+    const uses = datumUses([cell("A", 3), mixed]);
+    expect(uses).toEqual([
+      { series: "mw", sigma: 0.1, verdat: 3, known: true, cells: ["A"] },
+      {
+        series: "mw",
+        sigma: UNKNOWN_DATUM_SIGMA,
+        verdat: 3,
+        known: false,
+        datumAreas: [24],
+        cells: ["MIX"]
+      }
+    ]);
+  });
 });
 
 describe("water-level resolution", () => {

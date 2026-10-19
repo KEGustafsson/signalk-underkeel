@@ -90,3 +90,7 @@ All notable changes to signalk-underkeel are documented here.
 - A saved index is rebuilt at start when a cell in the cells directory was added, removed or
   given a new edition or update, with the cells named in the index reason. It was reused until
   **Rebuild index at start** was ticked, so an added cell's rocks were missing from it.
+- `M_SDAT` and `M_VDAT` datum areas are read. A cell with an area on another `VERDAT` than its
+  `DSID` datum is matched as an unknown datum (σ 0.5 m), listed with `datumAreas` in the
+  `/status` datum mapping. Only the `DSID` datum was read, so such a cell's water level could
+  be applied on the wrong datum.

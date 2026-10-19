@@ -9,7 +9,8 @@ import { WFS_SOURCE } from "./wfs";
 
 /**
  * Reads one exported ENC cell: a directory holding `<LAYER>.geojson` files
- * plus `DSID.geojson` (the dataset identification record) for provenance.
+ * plus `DSID.geojson` (the dataset identification record) and the datum
+ * areas `M_SDAT.geojson` / `M_VDAT.geojson` for provenance.
  * `scripts/enc-to-geojson.sh` produces this layout from a `.000` file.
  */
 
@@ -53,10 +54,26 @@ export function cellInfoFromDsid(
   };
 }
 
-/** Provenance of an exported cell from its DSID alone, without reading its layers. */
+/** VERDAT codes of the areas in `file` that are not `datum`. */
+function otherDatums(file: string, datum: number | undefined): number[] {
+  const areas = readCollection(file)?.features ?? [];
+  return areas
+    .map((f) => numeric(f.properties?.VERDAT))
+    .filter((v): v is number => v !== undefined && v !== datum);
+}
+
+/**
+ * Provenance of an exported cell from its DSID and datum areas, without
+ * reading its depth layers.
+ */
 export function readCellInfo(dir: string): ReturnType<typeof cellInfoFromDsid> {
   const dsid = readCollection(path.join(dir, "DSID.geojson"));
-  return cellInfoFromDsid(dsid?.features[0]?.properties ?? {}, path.basename(dir));
+  const info = cellInfoFromDsid(dsid?.features[0]?.properties ?? {}, path.basename(dir));
+  const areas = new Set([
+    ...otherDatums(path.join(dir, "M_SDAT.geojson"), info.soundingDatum),
+    ...otherDatums(path.join(dir, "M_VDAT.geojson"), info.verticalDatum)
+  ]);
+  return areas.size > 0 ? { ...info, datumAreas: [...areas].sort((a, b) => a - b) } : info;
 }
 
 /**

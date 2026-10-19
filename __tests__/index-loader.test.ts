@@ -116,6 +116,20 @@ describe("saved index against the cells directory", () => {
     expect(r.reason).toMatch(/FI5SYNTH edition 3 update 2/);
   });
 
+  test("datum areas exported after the index was saved rebuild it", () => {
+    copyCell("FI5SYNTH");
+    load();
+    const area = { type: "Feature", geometry: null, properties: { VERDAT: 24 } };
+    fs.writeFileSync(
+      path.join(cellsDir, "FI5SYNTH", "M_SDAT.geojson"),
+      JSON.stringify({ type: "FeatureCollection", features: [area] })
+    );
+    const r = load();
+    expect(r.built).toBe(true);
+    expect(r.index?.catalogue.cells[0]?.datumAreas).toEqual([24]);
+    expect(r.reason).toMatch(/FI5SYNTH edition 3 update 1 datum areas 24/);
+  });
+
   test("Rebuild index at start still rebuilds an unchanged directory", () => {
     copyCell("FI4SYNTH");
     load();
