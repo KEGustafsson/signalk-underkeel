@@ -73,18 +73,6 @@ describe("route-check request validation", () => {
     [{ route: LINE, speed: 0 }, /speed/],
     [{ route: LINE, speed: [2, 99] }, /speed/],
     [{ route: LINE, speed: null }, /speed must be/],
-    [
-      {
-        route: {
-          type: "LineString",
-          coordinates: [
-            [179.9, 60],
-            [-179.9, 60]
-          ]
-        }
-      },
-      /must not cross the ±180° meridian/
-    ],
     [{ route: LINE, departure: "tomorrow" }, /ISO 8601/],
     [{ route: LINE, xteLimit: -1 }, /xteLimit/],
     [{ route: LINE, vessel: { draft: 100 } }, /draft/],
@@ -249,4 +237,17 @@ describe("JSON body", () => {
     const big = "x".repeat(MAX_BODY_BYTES + 1);
     await expect(readJsonBody(streamRequest([big]))).rejects.toThrow(/too large/);
   });
+});
+
+test("a leg across ±180° is accepted and taken the short way round", () => {
+  const r = parseRouteRequest({
+    route: {
+      type: "LineString",
+      coordinates: [
+        [179.9, 60],
+        [-179.9, 60]
+      ]
+    }
+  });
+  expect(r.ok).toBe(true);
 });

@@ -98,7 +98,8 @@ All notable changes to signalk-underkeel are documented here.
   every leaf there was `NO_COVERAGE` and `UNASSESSED`, so any leg or footprint touching 180° was
   `unverified` and a repair across it found no path. A cell ending at 180° with nothing past it
   still leaves a gap. Route repair also takes longitudes the short way round, so its search grid
-  across 180° covers the leg instead of the whole world.
+  across 180° covers the leg instead of the whole world, and `POST /route-check`,
+  `/route-repair` and `/departure-window` accept legs across ±180° instead of refusing them.
 - Depth queries near the antimeridian also read the tiles at the other end of the world: a
   footprint or position buffer reaching past ±180° used to miss a rock a few hundred metres
   away on the other side, and a footprint drawn wholly past 180° returned no depth and no flag.

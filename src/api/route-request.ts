@@ -71,14 +71,6 @@ function parseCoordinates(route: unknown, errors: string[]): LonLat[] | undefine
     }
     out.push([lon, lat]);
   }
-  for (let i = 1; i < out.length; i++) {
-    // The chart index has no longitude wrap: a leg across ±180° would be
-    // checked over a corridor spanning the globe.
-    if (Math.abs((out[i] as LonLat)[0] - (out[i - 1] as LonLat)[0]) > 180) {
-      errors.push("route legs must not cross the ±180° meridian");
-      return undefined;
-    }
-  }
   if (routeMetres(out) > LIMITS.maxRouteMetres) {
     errors.push(`route must be at most ${LIMITS.maxRouteMetres / 1000} km long`);
     return undefined;
