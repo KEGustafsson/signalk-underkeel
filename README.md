@@ -140,4 +140,7 @@ Contributor and AI-agent guidance is in [AGENTS.md](AGENTS.md).
 ## License
 
 Copyright (c) 2026 Karl-Erik Gustafsson. Licensed under the
-[European Union Public Licence v. 1.2](LICENSE) (EUPL-1.2).
+[European Union Public Licence v. 1.2](LICENSE) (EUPL-1.2), except the navigation-safety
+contract schemas in [`schemas/navigation-safety/`](schemas/navigation-safety/), which are
+licensed under the [Apache License 2.0](schemas/navigation-safety/LICENSE) so that other plotters
+and providers can adopt the contract.

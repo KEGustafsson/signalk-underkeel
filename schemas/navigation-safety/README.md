@@ -22,3 +22,9 @@ Plotter Extensions manifest. `signalk-underkeel` is the first provider.
 Errors are `{ "errors": [string, …] }` with a 4xx or 5xx status (`defs.json#/$defs/errors`).
 
 The package is private until the contract is accepted upstream (plan §8, M6).
+
+## License
+
+Copyright (c) 2026 Karl-Erik Gustafsson. These schemas are licensed under the
+[Apache License 2.0](LICENSE), so that any plotter or provider, open or closed source, can adopt
+the contract. The rest of signalk-underkeel is licensed under EUPL-1.2.
