@@ -26,7 +26,7 @@
     "check:release-docs": "node scripts/check-release-truth.js",
     "audit:shipped": "node scripts/audit-shipped.js",
     "verify": "npm run check:ts && npm run check:ts:tests && npm run lint && npm test",
-    "verify:ci-local": "npm run check:ts && npm run check:ts:tests && npm run lint && npm run format:check && npm run test:coverage && npm run build && npm run check:release-docs",
+    "verify:ci-local": "npm run check:ts && npm run check:ts:tests && npm run lint && npm run format:check && npm run build && npm run test:coverage && npm run check:release-docs",
     "test": "jest --runInBand",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage --runInBand",

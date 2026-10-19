@@ -71,8 +71,12 @@ jobs:
             npm install
           fi
 
+      # Built first: the worker-thread test runs the compiled lib/.
+      - name: Build
+        run: npm run build
+
       # Single required gate: type-check + lint + full test suite.
-      # Tests run against src/ via ts-jest (no stale lib/ artifact).
+      # Tests run against src/ via ts-jest, except the worker thread above.
       - name: Verify (check:ts + lint + test)
         run: npm run verify
 
@@ -81,9 +85,6 @@ jobs:
       - name: Coverage gate
         if: matrix.node-version == 22
         run: npm run test:coverage
-
-      - name: Build
-        run: npm run build
 
       - name: Release documentation and package truth
         run: npm run check:release-docs
