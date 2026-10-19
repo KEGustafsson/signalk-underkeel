@@ -6,7 +6,8 @@ import { fakeRouter } from "../helpers/plugin-harness";
 
 describe("route errors", () => {
   test("a handler failure is a generic 500, never the raw message", async () => {
-    const leak = () => Promise.reject(new Error("EACCES: open '/home/pi/.signalk/x.json'"));
+    const leak = () =>
+      Promise.reject(new Error("EACCES: open '/srv/signalk/plugin-config-data/x.json'"));
     const api = { routeCheck: leak, routeRepair: leak, departureWindow: leak } as unknown;
     const { router, post } = fakeRouter();
     registerRoutes(router as never, api as ApiProvider);
