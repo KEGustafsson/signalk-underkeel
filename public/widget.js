@@ -8,8 +8,7 @@ let unit = "m";
 /** The plugin publishes every second; a silent stream for this long is shown as unknown. */
 const STALE_MS = 10000;
 let staleTimer;
-/** Latest timestamp seen per path, epoch ms. */
-const seen = {};
+const fresh = UKC.freshness(STALE_MS);
 
 function armStale(ms) {
   clearTimeout(staleTimer);
@@ -55,11 +54,7 @@ if (!client.hasCapability("signalk.stream")) {
         render();
         return;
       }
-      const left = UKC.freshFor(ev.timestamp, seen[ev.path], Date.now(), STALE_MS);
-      const t = Date.parse(ev.timestamp);
-      if (isFinite(t)) {
-        seen[ev.path] = Math.max(t, seen[ev.path] ?? t);
-      }
+      const left = fresh(ev.path, ev.timestamp, Date.now());
       if (left === 0) {
         return;
       }

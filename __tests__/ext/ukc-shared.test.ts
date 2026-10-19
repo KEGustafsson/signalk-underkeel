@@ -80,4 +80,16 @@ describe("extension display logic", () => {
     expect(UKC.freshFor(next, serverTime, now, 10000)).toBe(10000);
     expect(UKC.freshFor(new Date(serverTime).toISOString(), serverTime, now, 10000)).toBe(0);
   });
+
+  test("the freshness tracker remembers the latest timestamp per path", () => {
+    const now = Date.parse("2026-10-19T12:00:00Z");
+    const at = (s: number) => new Date(now + s * 1000).toISOString();
+    const fresh = UKC.freshness(10000);
+    expect(fresh("a", at(-60), now)).toBe(0);
+    expect(fresh("a", at(-59), now)).toBe(10000);
+    expect(fresh("a", at(-59), now)).toBe(0);
+    expect(fresh("b", at(-59), now)).toBe(0);
+    expect(fresh("a", at(-70), now)).toBe(0);
+    expect(fresh("a", at(-58), now)).toBe(10000);
+  });
 });

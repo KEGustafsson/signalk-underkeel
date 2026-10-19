@@ -110,6 +110,19 @@
     return Math.max(0, Math.min(staleMs, staleMs - (now - t)));
   }
 
+  /** freshFor with the latest timestamp seen per path kept for the caller. */
+  function freshness(staleMs) {
+    const seen = {};
+    return function (path, timestamp, now) {
+      const left = freshFor(timestamp, seen[path], now, staleMs);
+      const t = Date.parse(timestamp);
+      if (isFinite(t) && !(seen[path] >= t)) {
+        seen[path] = t;
+      }
+      return left;
+    };
+  }
+
   /**
    * The route results the panel lists: one per visible route, a route the
    * runtime has not answered for yet marked pending. Without the visible set
@@ -137,7 +150,8 @@
     legFeatures: legFeatures,
     worstStatus: worstStatus,
     routeEntries: routeEntries,
-    freshFor: freshFor
+    freshFor: freshFor,
+    freshness: freshness
   };
   if (typeof module !== "undefined" && module.exports) {
     module.exports = api;

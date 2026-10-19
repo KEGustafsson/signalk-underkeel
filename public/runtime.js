@@ -8,20 +8,46 @@ const has = (c) => client.hasCapability(c);
 /** A host may lack data overlays, or refuse one whose style is still loading. */
 async function setOverlay(overlayId, source, data) {
   if (!has("overlays.data")) {
-    return;
+    return false;
   }
   try {
     await client.call("overlay.setData", { overlayId, source, data });
+    return true;
   } catch (err) {
     console.warn(`under-keel ${overlayId} overlay`, err);
+    return false;
   }
 }
 
-// ---- look-ahead envelope: refetched whenever the plugin bumps envelopeRev ----
-let envelopeRev = 0;
+/** The plugin publishes every second; a path silent this long is no longer current. */
+const STALE_MS = 10000;
+const FETCH_TIMEOUT_MS = 8000;
+const fresh = UKC.freshness(STALE_MS);
+/** Handlers per Signal K path, called only with values the plugin published recently. */
+const onPath = {};
+const isDown = (state) => state === "off" || state === "unknown";
+
+// ---- look-ahead envelope: fetched on each new envelopeRev, withdrawn when the plugin is not live ----
+/** Without a Signal K stream the runtime polls; `?rev` makes an unchanged envelope a 304. */
+const POLL_MS = 3000;
+const EMPTY = { type: "FeatureCollection", features: [] };
+/** The rev the overlay shows; null while it shows nothing. */
+let shownRev = null;
+/** Bumped on each clear, so a reply that was in flight cannot bring the envelope back. */
+let generation = 0;
+let engineState;
+let watchdog;
 let fetching = false;
 /** A bump that arrives mid-fetch may be newer than the reply in flight: fetch again after it. */
 let refreshQueued = false;
+
+function clearEnvelope() {
+  generation++;
+  if (shownRev !== null) {
+    shownRev = null;
+    void setOverlay("lookahead", "envelope", EMPTY);
+  }
+}
 
 async function refreshEnvelope() {
   if (fetching) {
@@ -29,16 +55,28 @@ async function refreshEnvelope() {
     return;
   }
   fetching = true;
+  const g = generation;
   try {
-    const res = await fetch(`${UKC.API}/envelope?rev=${envelopeRev}`, { credentials: "same-origin" });
-    if (res.status === 304 || !res.ok) {
+    const query = shownRev === null ? "" : `?rev=${shownRev}`;
+    const res = await fetch(`${UKC.API}/envelope${query}`, {
+      credentials: "same-origin",
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
+    });
+    if (res.status === 304) {
+      return;
+    }
+    if (!res.ok) {
+      console.warn(`under-keel envelope: HTTP ${res.status}`);
+      clearEnvelope();
       return;
     }
     const body = await res.json();
-    envelopeRev = body.rev;
-    await setOverlay("lookahead", "envelope", body.envelope);
+    if (g === generation && (await setOverlay("lookahead", "envelope", body.envelope)) && g === generation) {
+      shownRev = body.rev;
+    }
   } catch (err) {
     console.warn("under-keel envelope", err);
+    clearEnvelope();
   } finally {
     fetching = false;
     if (refreshQueued) {
@@ -48,14 +86,25 @@ async function refreshEnvelope() {
   }
 }
 
-if (has("signalk.stream")) {
-  await client.signalk.subscribe(["navigation.underKeel.envelopeRev"], (ev) => {
-    if (ev.value !== envelopeRev) {
-      void refreshEnvelope();
-    }
-  });
-}
-void refreshEnvelope();
+onPath["navigation.underKeel.state"] = (state) => {
+  const wasDown = engineState === undefined || isDown(engineState);
+  engineState = state;
+  if (isDown(state)) {
+    clearEnvelope();
+  } else if (wasDown) {
+    void refreshEnvelope();
+  }
+};
+
+onPath["navigation.underKeel.envelopeRev"] = (rev, left) => {
+  clearTimeout(watchdog);
+  watchdog = setTimeout(clearEnvelope, left);
+  if (isDown(engineState)) {
+    clearEnvelope();
+  } else if (rev !== shownRev) {
+    void refreshEnvelope();
+  }
+};
 
 // ---- route check: every visible route, again after each edit ----
 const results = new Map();
@@ -128,8 +177,12 @@ function schedule(routeId) {
 }
 
 async function checkAll() {
-  const { routes } = await client.call("route.list");
-  routes.forEach((r) => schedule(r.routeId));
+  try {
+    const { routes } = await client.call("route.list");
+    routes.forEach((r) => schedule(r.routeId));
+  } catch (err) {
+    console.warn("under-keel route list", err);
+  }
 }
 
 // The host persists extension state across sessions: results from an earlier one are not current.
@@ -158,4 +211,16 @@ if (has("routes")) {
   });
   await client.subscribe(["ukc.checkRoutes"], () => void checkAll());
   await checkAll();
+}
+
+if (has("signalk.stream")) {
+  await client.signalk.subscribe(Object.keys(onPath), (ev) => {
+    const left = fresh(ev.path, ev.timestamp, Date.now());
+    if (left > 0) {
+      onPath[ev.path](ev.value, left);
+    }
+  });
+} else {
+  setInterval(() => void refreshEnvelope(), POLL_MS);
+  void refreshEnvelope();
 }

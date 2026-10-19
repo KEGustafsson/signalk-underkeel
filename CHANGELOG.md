@@ -236,3 +236,6 @@ All notable changes to signalk-underkeel are documented here.
 - The status widget judges a value by its timestamp. Signal K replays its cached values on
   every subscribe, so after a reconnect a normal state from a stalled plugin showed green for
   up to 10 s. While stale, the widget shows no clearance or time to shoal under Unknown.
+- The look-ahead overlay is withdrawn when the plugin goes quiet: after 10 s without an
+  `envelopeRev` delta, when the state is `off` or `unknown`, and when the envelope fetch fails.
+  Without a Signal K stream the runtime polls `/envelope` every 3 s; it fetched it once before.
