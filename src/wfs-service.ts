@@ -9,7 +9,7 @@ import { boxAround, downloadWfsCell, WFS_CELL_NAME, WFS_NOTICE } from "./ingest/
 import type { Clock } from "./monitor";
 import type { BuildJob } from "./spatial/build-worker";
 import type { ChartIndex } from "./spatial/chart-index";
-import { loadChartIndex } from "./spatial/chart-index";
+import { commitChartIndex, loadChartIndex } from "./spatial/chart-index";
 
 /**
  * Keeps a Traficom WFS box around the vessel (plan §4.2). When the vessel
@@ -25,9 +25,11 @@ let exits: Promise<unknown> = Promise.resolve();
 
 /**
  * Builds in a worker thread from the compiled `lib/spatial/build-worker.js`.
- * An aborted worker runs, and may still be saving into the index directory,
- * until terminate() resolves, so its build rejects only then and the next
- * build starts only then; stop() itself returns at once.
+ * The worker only stages the index; it is moved into the index directory
+ * here, on the main thread, and never for an aborted build, so a worker
+ * still exiting cannot replace an index saved after it was aborted. An
+ * aborted worker runs until terminate() resolves, so its build rejects only
+ * then and the next build starts only then; stop() itself returns at once.
  */
 export const workerBuilder: IndexBuilder = async (job, signal) => {
   await exits;
@@ -44,14 +46,22 @@ export const workerBuilder: IndexBuilder = async (job, signal) => {
       void exit.then(() => reject(new Error("aborted")));
     };
     signal.addEventListener("abort", abort, { once: true });
-    worker.once("message", (m: { ok: boolean; error?: string }) => {
+    worker.once("message", (m: { ok: boolean; staging?: string; error?: string }) => {
       if (signal.aborted) {
+        if (m.staging) {
+          fs.rmSync(m.staging, { recursive: true, force: true });
+        }
         return;
       }
       signal.removeEventListener("abort", abort);
       void worker.terminate();
-      if (m.ok) {
-        resolve(loadChartIndex(job.indexDir));
+      if (m.ok && m.staging) {
+        try {
+          commitChartIndex(job.indexDir, m.staging);
+          resolve(loadChartIndex(job.indexDir));
+        } catch (err) {
+          reject(err as Error);
+        }
       } else {
         reject(new Error(m.error ?? "index build failed"));
       }

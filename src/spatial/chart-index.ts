@@ -56,16 +56,14 @@ interface StoredHazard extends Omit<DepthFeature, "depth"> {
 }
 
 /**
- * Writes the three index files into a staging directory beside `dir` and
- * swaps it in only after all of them are written, so a crash or a full disk
- * never leaves a catalogue from one build beside a pyramid from another.
+ * Writes the three index files into a new staging directory beside `dir`
+ * and returns its path; `commitChartIndex` swaps it in.
  */
-export function saveChartIndex(dir: string, index: ChartIndex): void {
+export function stageChartIndex(dir: string, index: ChartIndex): string {
   // A worker thread shares the process id, so the id alone would let a WFS
   // rebuild and a save on the main thread remove each other's directories.
   const suffix = `${process.pid}-${threadId}-${randomBytes(4).toString("hex")}`;
   const staging = `${dir}.tmp-${suffix}`;
-  const previous = `${dir}.old-${suffix}`;
   fs.mkdirSync(staging, { recursive: true });
   fs.writeFileSync(path.join(staging, FILES.cells), JSON.stringify(index.catalogue, null, 2));
   fs.writeFileSync(path.join(staging, FILES.pyramid), serializePyramid(index.pyramid));
@@ -74,6 +72,16 @@ export function saveChartIndex(dir: string, index: ChartIndex): void {
     depth: Number.isFinite(f.depth) ? f.depth : null
   }));
   fs.writeFileSync(path.join(staging, FILES.hazards), JSON.stringify(hazards));
+  return staging;
+}
+
+/**
+ * Moves a staged index into `dir` only after all its files are written, so
+ * a crash or a full disk never leaves a catalogue from one build beside a
+ * pyramid from another.
+ */
+export function commitChartIndex(dir: string, staging: string): void {
+  const previous = `${dir}.old-${path.basename(staging).slice(`${path.basename(dir)}.tmp-`.length)}`;
   const hadIndex = fs.existsSync(dir);
   if (hadIndex) {
     fs.renameSync(dir, previous);
@@ -82,6 +90,10 @@ export function saveChartIndex(dir: string, index: ChartIndex): void {
   if (hadIndex) {
     fs.rmSync(previous, { recursive: true, force: true });
   }
+}
+
+export function saveChartIndex(dir: string, index: ChartIndex): void {
+  commitChartIndex(dir, stageChartIndex(dir, index));
 }
 
 function isCompleteIndex(dir: string): boolean {
