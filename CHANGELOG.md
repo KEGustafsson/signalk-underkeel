@@ -249,3 +249,5 @@ All notable changes to signalk-underkeel are documented here.
   arrived for 20 s. A request that hung left the chip on its last state, such as Normal.
 - The details panel names the water-level source the engine applies and the reason it is
   degraded, such as an FMI fallback, instead of the configured source.
+- "Check routes again" is hidden on a chart host without `events.publish`, `routes` or
+  `background.iframe`, where pressing it did nothing.

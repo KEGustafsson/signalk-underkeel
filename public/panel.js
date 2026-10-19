@@ -136,7 +136,10 @@ await client.subscribe(["state.changed"], (_name, params) => {
     void refreshRoutes();
   }
 });
-document.getElementById("recheck").addEventListener("click", () => {
+// The background runtime answers the button, over an event the host must carry.
+const recheck = document.getElementById("recheck");
+recheck.hidden = !["events.publish", "routes", "background.iframe"].every((c) => client.hasCapability(c));
+recheck.addEventListener("click", () => {
   void client.publish("ukc.checkRoutes", {}, "extension");
 });
 await refreshStatus();
