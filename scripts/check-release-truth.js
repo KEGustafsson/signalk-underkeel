@@ -71,25 +71,25 @@ if (!keywords.includes("signalk-node-server-plugin")) {
   fail('package.json keywords must include "signalk-node-server-plugin".');
 }
 
-const publishWorkflow = readText(".github/workflows/publish-packages.yml");
-const buildIndex = publishWorkflow.indexOf("npm run build");
-const packIndex = publishWorkflow.indexOf("npm pack");
-const releaseCheckIndex = publishWorkflow.indexOf("npm run check:release-docs");
+const packageWorkflow = readText(".github/workflows/package-tarball.yml");
+const buildIndex = packageWorkflow.indexOf("npm run build");
+const packIndex = packageWorkflow.indexOf("npm pack");
+const releaseCheckIndex = packageWorkflow.indexOf("npm run check:release-docs");
 
 if (buildIndex === -1) {
-  fail(".github/workflows/publish-packages.yml must run npm run build.");
+  fail(".github/workflows/package-tarball.yml must run npm run build.");
 }
 if (packIndex === -1) {
-  fail(".github/workflows/publish-packages.yml must run npm pack.");
+  fail(".github/workflows/package-tarball.yml must run npm pack.");
 }
 if (buildIndex !== -1 && packIndex !== -1 && buildIndex > packIndex) {
-  fail(".github/workflows/publish-packages.yml must build before packing.");
+  fail(".github/workflows/package-tarball.yml must build before packing.");
 }
 if (releaseCheckIndex === -1) {
-  fail(".github/workflows/publish-packages.yml must run npm run check:release-docs.");
+  fail(".github/workflows/package-tarball.yml must run npm run check:release-docs.");
 }
 if (releaseCheckIndex !== -1 && packIndex !== -1 && releaseCheckIndex > packIndex) {
-  fail(".github/workflows/publish-packages.yml must check release docs before packing.");
+  fail(".github/workflows/package-tarball.yml must check release docs before packing.");
 }
 
 if (failures.length > 0) {
