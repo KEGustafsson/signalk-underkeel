@@ -100,3 +100,5 @@ All notable changes to signalk-underkeel are documented here.
 - Saving the index names its staging and backup directories by process, thread and a random
   suffix. A WFS rebuild in the worker thread and a save on the main thread shared the process
   id, so one save could delete the other's staging directory or its backup of the last index.
+- The published package includes `scripts/enc-to-geojson.sh`, which the README and the
+  configuration tell users to run; it was left out of `files`.

@@ -6,6 +6,7 @@
   "files": [
     "lib/",
     "public/",
+    "scripts/enc-to-geojson.sh",
     "CHANGELOG.md"
   ],
   "keywords": [
