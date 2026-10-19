@@ -67,3 +67,6 @@ All notable changes to signalk-underkeel are documented here.
 - A rock or sounding charted inside a swept area keeps its survey's depth σ. The swept σ of
   0.1 m applied to every tile in the area, so a CATZOC C rock 4 m deep in an 8 m swept fairway
   read P(UKC < 0) = 0.08 % instead of 19 % for a 3 m threshold.
+- A footprint on the shared edge of two adjacent cells of one usage band is covered. Each cell's
+  `M_COVR` alone held only part of the index tile on the edge, so the tile read `NO_COVERAGE`
+  and route legs along every seam came back unverified.

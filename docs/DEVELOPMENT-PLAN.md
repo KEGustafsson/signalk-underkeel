@@ -340,6 +340,8 @@ Two overrides apply on top of the table:
 assessed zones reaching it cover it together, which holds where they share the boundary vertex
 for vertex. It takes the worst σ of those zones. A boundary split differently on each side, an
 overlap or a gap leaves the leaf `UNASSESSED`.
+Coverage follows the same rule per usage band: a leaf on the shared edge of two `M_COVR`
+polygons of one band is covered when they match vertex for vertex, and `NO_COVERAGE` otherwise.
 
 ### 4.5 Water level
 

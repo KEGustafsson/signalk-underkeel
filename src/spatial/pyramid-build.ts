@@ -121,7 +121,7 @@ function depthOf(f: ChartFeature): number | undefined {
 
 interface Analysis {
   hits: Hit[];
-  /** Highest usage band whose coverage contains the whole tile. */
+  /** Highest usage band whose coverage holds the whole tile. */
   bandFull: number | undefined;
   /** Shallowest depth of an area that contains the whole tile. */
   shallowest: number;
@@ -163,17 +163,30 @@ function qualityEdge(hits: Hit[]): boolean {
  */
 const BLUR_RATIO = 8;
 
-function analyse(all: Hit[], tileGround: number): Analysis {
-  let bandFull: number | undefined;
-  for (const h of all) {
-    if (h.item.f.role === "coverage" && h.full) {
-      bandFull = Math.max(bandFull ?? -Infinity, h.item.f.band);
-    }
-  }
+/**
+ * Highest usage band whose coverage holds the whole tile, by one polygon
+ * or by adjacent cells of the band meeting along a shared edge.
+ */
+function coveredBand(coverage: Hit[], rect: Rect): number | undefined {
+  const bands = [...new Set(coverage.map((h) => h.item.f.band))].sort((a, b) => b - a);
+  return bands.find((band) => {
+    const inBand = coverage.filter((h) => h.item.f.band === band);
+    return (
+      inBand.some((h) => h.full) ||
+      (inBand.length > 1 &&
+        areasCoverRect(
+          inBand.map((h) => h.item.f.geom),
+          rect
+        ))
+    );
+  });
+}
+
+function analyse(all: Hit[], rect: Rect, tileGround: number): Analysis {
+  const coverage = all.filter((h) => h.item.f.role === "coverage");
+  const bandFull = coveredBand(coverage, rect);
   const floor = bandFull ?? -Infinity;
-  const coverageEdge = all.some(
-    (h) => h.item.f.role === "coverage" && !h.full && h.item.f.band > floor
-  );
+  const coverageEdge = coverage.some((h) => h.item.f.band > floor);
   // Lower-band cells are only gap fillers: once a larger scale covers the tile they drop out.
   const hits = all.filter((h) => h.item.f.role !== "coverage" && h.item.f.band >= floor);
   const shallowest = minFullDepth(hits);
@@ -184,9 +197,8 @@ function analyse(all: Hit[], tileGround: number): Analysis {
   const sweptEdge = hits.some((h) => h.item.f.role === "swept" && !h.full);
   const needsSplit =
     bandFull === undefined || coverageEdge || depthEdge || sweptEdge || qualityEdge(hits);
-  const advisoryCell = all.find(
-    (h) => h.item.f.role === "coverage" && h.full && h.item.f.band === bandFull && h.item.f.advisory
-  )?.item.f.cellRef;
+  const advisoryCell = coverage.find((h) => h.item.f.band === bandFull && h.item.f.advisory)?.item.f
+    .cellRef;
   return { hits, bandFull, shallowest, coverageEdge, advisoryCell, needsSplit };
 }
 
@@ -334,7 +346,7 @@ function evaluate(
     return NO_DATA;
   }
   const tileGround = (rect.maxX - rect.minX) / groundToMercator(1, maxAbsLat(rect));
-  const a = analyse(all, tileGround);
+  const a = analyse(all, rect, tileGround);
   if (!a.needsSplit || z === opts.leafZoom) {
     const v = uniformValues(a, rect, opts);
     store.add(z, x, y, v, false);

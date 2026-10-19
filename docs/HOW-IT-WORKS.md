@@ -663,7 +663,9 @@ page says what is missing: no Signal K stream on the widget, or no shared routes
   disc 1 km across.
 - An index leaf that straddles two survey zones takes the worse zone's σ when the zones share
   their boundary vertex for vertex. A boundary split differently on each side, an overlap or a
-  gap leaves the leaf unassessed.
+  gap leaves the leaf unassessed. The same holds for two cells of one usage band meeting along
+  a shared edge: matched vertex for vertex, the leaf on the edge is covered; otherwise it reads
+  as no coverage.
 - Only unencrypted S-57 cells exported with `scripts/enc-to-geojson.sh` are read.
 - The look-ahead follows course and turn rate, not the route. In a winding fairway it sees the
   shore ahead before each bend and raises warn or alarm until the boat turns.
