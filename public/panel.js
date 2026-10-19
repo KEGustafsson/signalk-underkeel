@@ -25,11 +25,18 @@ function showUnknownStatus(why) {
 
 /** The poll and the notification can overlap: only the latest request may update the panel. */
 let statusRequest = 0;
+const STATUS_TIMEOUT_MS = 8000;
+/** Two missed polls; requests superseded before their timeout never report a failure. */
+const STATUS_MAX_AGE_MS = 20000;
+let statusAt = 0;
 
 async function refreshStatus() {
   const id = ++statusRequest;
   try {
-    const res = await fetch(`${UKC.API}/status`, { credentials: "same-origin" });
+    const res = await fetch(`${UKC.API}/status`, {
+      credentials: "same-origin",
+      signal: AbortSignal.timeout(STATUS_TIMEOUT_MS)
+    });
     if (id !== statusRequest) {
       return;
     }
@@ -41,6 +48,7 @@ async function refreshStatus() {
     if (id !== statusRequest) {
       return;
     }
+    statusAt = Date.now();
     const style = UKC.stateStyle(s.engine.state);
     const chip = document.getElementById("state");
     chip.textContent = style.label;
@@ -58,7 +66,9 @@ async function refreshStatus() {
     if (id !== statusRequest) {
       return;
     }
-    showUnknownStatus(err && err.message ? err.message : String(err));
+    showUnknownStatus(
+      err && err.name === "TimeoutError" ? "no answer from the plugin" : err && err.message ? err.message : String(err)
+    );
     console.warn("under-keel status", err);
   }
 }
@@ -140,6 +150,11 @@ document.getElementById("recheck").addEventListener("click", () => {
 await refreshStatus();
 await refreshRoutes();
 /** Notifications arrive only on change and the stream is optional, so the panel also polls. */
+setInterval(() => {
+  if (Date.now() - statusAt > STATUS_MAX_AGE_MS) {
+    showUnknownStatus("no status from the plugin for over 20 s");
+  }
+}, 1000);
 setInterval(() => {
   void refreshStatus();
   void refreshRoutes();

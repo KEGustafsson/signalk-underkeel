@@ -245,3 +245,5 @@ All notable changes to signalk-underkeel are documented here.
 - The runtime refreshes the UKC tiles when the water level moves over 1 cm, the applied
   water-level source or its degraded reason changes, the state enters or leaves `off` or
   `unknown`, and after a plugin restart. Tiles stayed classed for the conditions at fetch time.
+- The details panel shows Unknown when `/status` does not answer within 8 s or no answer has
+  arrived for 20 s. A request that hung left the chip on its last state, such as Normal.
