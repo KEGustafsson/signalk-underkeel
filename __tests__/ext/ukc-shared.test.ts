@@ -62,4 +62,22 @@ describe("extension display logic", () => {
     expect(UKC.routeEntries(checked, null)).toEqual(Object.entries(checked));
     expect(UKC.routeEntries(undefined, [])).toEqual([]);
   });
+
+  test("a value counts from its own timestamp, so a replayed old one is stale on arrival", () => {
+    const now = Date.parse("2026-10-19T12:00:00Z");
+    const ago = (s: number) => new Date(now - s * 1000).toISOString();
+    expect(UKC.freshFor(ago(20 * 60), undefined, now, 10000)).toBe(0);
+    expect(UKC.freshFor(ago(4), undefined, now, 10000)).toBe(6000);
+    expect(UKC.freshFor(ago(-30), undefined, now, 10000)).toBe(10000);
+    expect(UKC.freshFor(undefined, undefined, now, 10000)).toBe(0);
+    expect(UKC.freshFor("not a time", undefined, now, 10000)).toBe(0);
+  });
+
+  test("a timestamp newer than the last one seen is live even when the clocks disagree", () => {
+    const now = Date.parse("2026-10-19T12:00:00Z");
+    const serverTime = now - 60000;
+    const next = new Date(serverTime + 1000).toISOString();
+    expect(UKC.freshFor(next, serverTime, now, 10000)).toBe(10000);
+    expect(UKC.freshFor(new Date(serverTime).toISOString(), serverTime, now, 10000)).toBe(0);
+  });
 });

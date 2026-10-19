@@ -233,3 +233,6 @@ All notable changes to signalk-underkeel are documented here.
   "No route on the chart."
 - The runtime clears the stored route-check results when it starts. The host keeps extension
   state across sessions, so the panel listed results from an earlier session as current.
+- The status widget judges a value by its timestamp. Signal K replays its cached values on
+  every subscribe, so after a reconnect a normal state from a stalled plugin showed green for
+  up to 10 s. While stale, the widget shows no clearance or time to shoal under Unknown.

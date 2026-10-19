@@ -8,22 +8,24 @@ let unit = "m";
 /** The plugin publishes every second; a silent stream for this long is shown as unknown. */
 const STALE_MS = 10000;
 let staleTimer;
+/** Latest timestamp seen per path, epoch ms. */
+const seen = {};
 
-function armStale() {
+function armStale(ms) {
   clearTimeout(staleTimer);
   staleTimer = setTimeout(() => {
     view.stale = true;
     render();
-  }, STALE_MS);
+  }, ms);
 }
 
 function render() {
   const s = UKC.stateStyle(view.stale ? "unknown" : view.state);
   document.body.style.background = s.colour;
   document.getElementById("state").textContent = `UKC ${s.label}`;
-  const tts = UKC.timeToShoal(view.timeToShoal);
+  const tts = view.stale ? "" : UKC.timeToShoal(view.timeToShoal);
   document.getElementById("line").textContent =
-    `min ${UKC.depth(view.clearance, unit)}` + (tts ? ` · shoal ${tts}` : "");
+    `min ${UKC.depth(view.stale ? null : view.clearance, unit)}` + (tts ? ` · shoal ${tts}` : "");
   document.getElementById("reason").textContent = view.stale
     ? "no data from the under-keel plugin"
     : UKC.reason(view.message);
@@ -43,20 +45,30 @@ const KEYS = {
 if (!client.hasCapability("signalk.stream")) {
   view.message = "this chart host gives no Signal K stream";
 } else {
+  view.stale = true;
   await client.signalk.subscribe(
     [...Object.keys(KEYS), "notifications.navigation.underKeel"],
     (ev) => {
-      view.stale = false;
-      armStale();
+      // A notification is sent only when it changes, so its age says nothing about the plugin.
       if (ev.path === "notifications.navigation.underKeel") {
         view.message = ev.value && typeof ev.value === "object" ? ev.value.message : "";
-      } else {
-        view[KEYS[ev.path]] = ev.value;
+        render();
+        return;
       }
+      const left = UKC.freshFor(ev.timestamp, seen[ev.path], Date.now(), STALE_MS);
+      const t = Date.parse(ev.timestamp);
+      if (isFinite(t)) {
+        seen[ev.path] = Math.max(t, seen[ev.path] ?? t);
+      }
+      if (left === 0) {
+        return;
+      }
+      view[KEYS[ev.path]] = ev.value;
+      view.stale = false;
+      armStale(left);
       render();
     }
   );
-  armStale();
 }
 
 document.body.addEventListener("click", () => {

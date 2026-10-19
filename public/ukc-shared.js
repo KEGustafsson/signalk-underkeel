@@ -93,6 +93,24 @@
   }
 
   /**
+   * How long a Signal K value stays current, in ms from `now`; 0 when it is
+   * already stale or has no timestamp. Signal K replays its cached values on
+   * every subscribe, so a value counts from its own timestamp. One newer than
+   * `previous`, the last timestamp seen on the path, shows the stream is live
+   * even when the server's clock and this browser's disagree.
+   */
+  function freshFor(timestamp, previous, now, staleMs) {
+    const t = Date.parse(timestamp);
+    if (!isFinite(t)) {
+      return 0;
+    }
+    if (typeof previous === "number" && t > previous) {
+      return staleMs;
+    }
+    return Math.max(0, Math.min(staleMs, staleMs - (now - t)));
+  }
+
+  /**
    * The route results the panel lists: one per visible route, a route the
    * runtime has not answered for yet marked pending. Without the visible set
    * (a host that lists no routes) every result is listed.
@@ -118,7 +136,8 @@
     routeLine: routeLine,
     legFeatures: legFeatures,
     worstStatus: worstStatus,
-    routeEntries: routeEntries
+    routeEntries: routeEntries,
+    freshFor: freshFor
   };
   if (typeof module !== "undefined" && module.exports) {
     module.exports = api;
