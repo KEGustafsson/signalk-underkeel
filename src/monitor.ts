@@ -32,7 +32,12 @@ import { asNumber, INPUT_PATHS, NavInputs, sampleTime, selfValue } from "./nav-i
 
 type App = Pick<
   ServerAPI,
-  "subscriptionmanager" | "handleMessage" | "getSelfPath" | "setPluginStatus" | "error"
+  | "subscriptionmanager"
+  | "handleMessage"
+  | "getSelfPath"
+  | "setPluginStatus"
+  | "setPluginError"
+  | "error"
 >;
 
 export interface Clock {
@@ -370,6 +375,11 @@ export class Monitor {
     this.checkGrounding(r);
     const status =
       r.state === "normal" ? "Monitoring: normal" : `Monitoring: ${r.state} — ${r.reason}`;
+    if (this.indexReason !== undefined) {
+      // A status would replace the error the server shows for a failed index load.
+      this.app.setPluginError(this.indexReason);
+      return;
+    }
     // The WFS licence allows non-navigational use only; say so while it is on.
     this.app.setPluginStatus(
       this.config.wfs && r.reason !== WFS_NOTICE ? `${status} · ${WFS_NOTICE}` : status

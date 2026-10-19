@@ -132,3 +132,5 @@ All notable changes to signalk-underkeel are documented here.
 - A null or invalid navigation value from one `$source` clears the input only when that
   source set it. With two GNSS receivers, one without a fix sending a null position every
   second kept every tick `unknown` although the other had a good fix.
+- A failed chart-index load stays shown as the plugin error in the server's plugin list; the
+  first look-ahead tick replaced it with an ordinary status line.

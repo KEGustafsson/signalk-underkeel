@@ -120,4 +120,20 @@ describe("restart", () => {
     });
     plugin.stop();
   });
+
+  test("a failed index load stays reported as the plugin error while the monitor ticks", () => {
+    const f = fakeApp(dataDir);
+    const reports: [string, string][] = [];
+    const app = f.app as unknown as Record<string, unknown>;
+    app.setPluginStatus = (m: string) => reports.push(["status", m]);
+    app.setPluginError = (m: string) => reports.push(["error", m]);
+    const clock = fakeClock(T0);
+    const plugin = underkeel(f.app, clock);
+    plugin.start({ cellsDir: "/nonexistent/cells" }, () => undefined);
+    clock.advance(1000);
+    expect(reports.length).toBeGreaterThan(1);
+    expect(reports.every(([kind]) => kind === "error")).toBe(true);
+    expect(reports.at(-1)?.[1]).toMatch(/chart index failed/);
+    plugin.stop();
+  });
 });

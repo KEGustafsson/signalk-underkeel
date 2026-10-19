@@ -84,9 +84,6 @@ export = function underkeel(
         app.getDataDirPath(),
         wfs?.savedCell() ? [wfs.cellDir] : []
       );
-      if (load.reason) {
-        app.setPluginError(load.reason);
-      }
       const monitor = new Monitor(app, PLUGIN_ID, config, load.index, load.reason, clock, fetch);
       const acks = new AckStore(path.join(app.getDataDirPath(), "acks.json"));
       if (acks.error) {
