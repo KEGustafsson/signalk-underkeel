@@ -18,11 +18,19 @@ describe("published package", () => {
     ) as Packed[]
   )[0]?.files;
 
-  test("ships the cell export script the README tells users to run, executable", () => {
-    const script = packed?.find((f) => f.path === "scripts/enc-to-geojson.sh");
+  const script = packed?.find((f) => f.path === "scripts/enc-to-geojson.sh");
+
+  test("ships the cell export script the README tells users to run", () => {
     expect(script).toBeDefined();
-    expect((script?.mode ?? 0) & 0o111).not.toBe(0);
   });
+
+  // Windows has no execute bit: npm packs every file there as 0644.
+  (process.platform === "win32" ? test.skip : test)(
+    "packs the cell export script executable",
+    () => {
+      expect((script?.mode ?? 0) & 0o111).not.toBe(0);
+    }
+  );
 
   test("ships no other repository script", () => {
     const scripts = packed?.filter((f) => f.path.startsWith("scripts/")).map((f) => f.path);
