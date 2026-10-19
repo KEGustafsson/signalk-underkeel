@@ -582,6 +582,37 @@ describe("plugin lifecycle", () => {
     expect(lastValue(f.deltas, "navigation.underKeel.state")).toBe("unknown");
     plugin.stop();
   });
+  test("a null from one $source leaves another source's good position in place", () => {
+    const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 3.2 } } });
+    const clock = fakeClock(T0);
+    const plugin = underkeel(f.app, clock);
+    plugin.start({ cellsDir: FIXTURES, leafZoom: 18 }, () => undefined);
+    const nullFrom = (source: string) => ({
+      updates: [
+        {
+          $source: source as never,
+          timestamp: new Date(clock.now() + 500).toISOString() as never,
+          values: [{ path: "navigation.position" as never, value: null }]
+        }
+      ]
+    });
+    const states: unknown[] = [];
+    for (let k = 0; k < 4; k++) {
+      const d = navDelta(ROCK[0] - 300 / M_PER_DEG_LON, ROCK[1], 3, clock.now());
+      (d.updates[0] as { $source?: string }).$source = "gps.A";
+      f.send(d);
+      // A second receiver without a fix publishes a null position.
+      f.send(nullFrom("gps.B"));
+      clock.advance(1000);
+      states.push(lastValue(f.deltas, "navigation.underKeel.state"));
+    }
+    expect(states).toEqual(["warn", "warn", "warn", "warn"]);
+    // The source that gave the position can still clear it.
+    f.send(nullFrom("gps.A"));
+    clock.advance(1000);
+    expect(lastValue(f.deltas, "navigation.underKeel.state")).toBe("unknown");
+    plugin.stop();
+  });
 });
 
 describe("index loader", () => {

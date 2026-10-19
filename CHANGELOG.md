@@ -129,3 +129,6 @@ All notable changes to signalk-underkeel are documented here.
   as well; they kept their last values before.
 - A mooring-zone load still running from an earlier start no longer writes its zones or
   errors into the current start's status.
+- A null or invalid navigation value from one `$source` clears the input only when that
+  source set it. With two GNSS receivers, one without a fix sending a null position every
+  second kept every tick `unknown` although the other had a good fix.
