@@ -1,5 +1,12 @@
 import type { LonLat } from "../foundation/geo";
-import { EARTH_RADIUS, fromMercator, haversine, project, toMercator } from "../foundation/geo";
+import {
+  EARTH_RADIUS,
+  fromMercator,
+  haversine,
+  project,
+  toMercator,
+  wrapLon
+} from "../foundation/geo";
 import { geomBounds } from "../foundation/geometry";
 import type { VesselTerms, WaterLevel } from "../model/uncertainty";
 import { sigmaExtra, thresholdDepth } from "../model/uncertainty";
@@ -82,11 +89,6 @@ export interface RouteCheckResult {
 
 /** Long legs are checked in pieces about this long so the corridor hugs the line. */
 const SEGMENT_METRES = 1000;
-
-/** Longitude in [-180, 180). */
-function wrapLon(lon: number): number {
-  return ((((lon + 180) % 360) + 360) % 360) - 180;
-}
 
 /** b moved by whole turns of longitude to within 180° of a: the short way round. */
 function nearSide(a: LonLat, b: LonLat): LonLat {

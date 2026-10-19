@@ -219,6 +219,11 @@ export function offset(origin: LonLat, east: number, north: number): LonLat {
   return [lon, lat];
 }
 
+/** Longitude in [-180, 180). */
+export function wrapLon(lon: number): number {
+  return ((((lon + 180) % 360) + 360) % 360) - 180;
+}
+
 /** The point `distance` metres from `origin` along true bearing `bearing` (radians). */
 export function project(origin: LonLat, bearing: number, distance: number): LonLat {
   return offset(origin, distance * Math.sin(bearing), distance * Math.cos(bearing));

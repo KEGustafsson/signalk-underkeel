@@ -1,5 +1,5 @@
 import type { LonLat } from "../foundation/geo";
-import { project } from "../foundation/geo";
+import { project, wrapLon } from "../foundation/geo";
 import type { WaterLevel } from "../model/uncertainty";
 
 /**
@@ -113,7 +113,9 @@ export function reduce(raw: RawSounding, source: SoundingSource): Reduced {
   let position = raw.position as LonLat;
   if (offset) {
     const h = raw.heading as number;
-    position = project(project(position, h, source.forward), h + Math.PI / 2, source.starboard);
+    const p = project(project(position, h, source.forward), h + Math.PI / 2, source.starboard);
+    // Stored and exported, so canonical even when the lever arm crosses 180°.
+    position = [wrapLon(p[0]), p[1]];
   }
   const belowSurface =
     raw.depth + (source.path === "environment.depth.belowTransducer" ? source.transducerDepth : 0);

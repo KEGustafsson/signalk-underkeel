@@ -1,4 +1,6 @@
+import { splitLine, splitRing } from "../foundation/antimeridian";
 import type { LonLat } from "../foundation/geo";
+import { wrapLon } from "../foundation/geo";
 import { FLAGS } from "../spatial/node-store";
 import type { FootprintResult, LookaheadResult, Thresholds, WorstPoint } from "./lookahead";
 
@@ -203,6 +205,33 @@ function worstFeature(w: WorstPoint): EnvelopeFeature {
   };
 }
 
+const lonLat = (c: number[]): LonLat => [c[0] as number, c[1] as number];
+
+/**
+ * The feature in [-180, 180]. Footprints near the antimeridian run past it,
+ * so a line or ring crossing it is cut there into features that keep its
+ * properties.
+ */
+function canonical(f: EnvelopeFeature): EnvelopeFeature[] {
+  const g = f.geometry;
+  if (g.type === "Point") {
+    const [lon, lat] = lonLat(g.coordinates);
+    return [{ ...f, geometry: { type: "Point", coordinates: qp([wrapLon(lon), lat]) } }];
+  }
+  if (g.type === "LineString") {
+    return splitLine(g.coordinates.map(lonLat)).map((line) => ({
+      ...f,
+      geometry: { type: "LineString", coordinates: line.map(qp) }
+    }));
+  }
+  const outer = (g.coordinates[0] ?? []).slice(0, -1).map(lonLat);
+  return splitRing(outer).map((part) => {
+    const ring = part.map(qp);
+    ring.push(ring[0] as number[]);
+    return { ...f, geometry: { type: "Polygon", coordinates: [ring] } };
+  });
+}
+
 export function buildEnvelope(result: LookaheadResult, th: Thresholds): Envelope {
   const features: EnvelopeFeature[] = [];
   if (result.footprints.length > 1) {
@@ -217,7 +246,7 @@ export function buildEnvelope(result: LookaheadResult, th: Thresholds): Envelope
   if (result.worst) {
     features.push(worstFeature(result.worst));
   }
-  return { type: "FeatureCollection", features };
+  return { type: "FeatureCollection", features: features.flatMap(canonical) };
 }
 
 /** The highest rev any tracker in this process has issued. */

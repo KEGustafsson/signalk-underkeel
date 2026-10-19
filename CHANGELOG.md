@@ -68,6 +68,10 @@ All notable changes to signalk-underkeel are documented here.
   unassessed and not-for-navigation water adds none and stays `unverified`. A drying area 60 m
   off a leg or a footprint in CATZOC B or C water returned `ok` or `normal` with P = 0, and a
   poor survey anywhere in reach no longer widens the buffer for a well-surveyed rock.
+- `GET /envelope` and own soundings keep longitudes in [-180, 180]: near the antimeridian the
+  look-ahead track and segments ran past 180° and are now cut there into features with the same
+  properties (RFC 7946), and a transducer lever arm across 180° stored 180.00004° E, which the
+  living chart counted in the cell west of 180° instead of the one east of it.
 - Route legs take the water level at their own ends: with FMI, a leg more than 30 km from the
   forecast point falls back to chart datum and is never `ok`, instead of taking the level
   forecast at the vessel.
