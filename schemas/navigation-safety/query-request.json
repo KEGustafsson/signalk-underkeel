@@ -17,17 +17,20 @@
     },
     "bufferMetres": {
       "type": "number",
-      "minimum": 0
+      "minimum": 0,
+      "maximum": 2000
     },
     "draft": {
       "description": "metres; the vessel's configured draft when absent",
       "type": "number",
-      "exclusiveMinimum": 0
+      "minimum": 0.1,
+      "maximum": 30
     },
     "speed": {
       "description": "m/s, for squat; 0 when absent",
       "type": "number",
-      "minimum": 0
+      "minimum": 0,
+      "maximum": 30
     }
   }
 }

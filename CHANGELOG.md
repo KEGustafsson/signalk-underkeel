@@ -55,6 +55,10 @@ All notable changes to signalk-underkeel are documented here.
 
 - The navigation-safety contract schemas in `schemas/navigation-safety/` are licensed under
   Apache-2.0, so other plotters and providers can adopt the contract; the plugin stays EUPL-1.2.
+- The request schemas bound `sector` (1..90°), `ttl` (1 s..30 days), `notificationId` (200
+  characters), speeds, drafts, `bufferMetres`, `xteLimit` and `probability` as the plugin
+  does, so a request that validates is no longer refused for those fields; size budgets are
+  listed in `schemas/navigation-safety/README.md`.
 
 ### Fixed
 

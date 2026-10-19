@@ -22,6 +22,7 @@ const KEYWORDS = new Set([
   "minimum",
   "maximum",
   "exclusiveMinimum",
+  "maxLength",
   "pattern",
   "anyOf",
   "$ref"
@@ -96,6 +97,9 @@ export class Validator {
     }
     if (typeof v === "string" && typeof s.pattern === "string" && !new RegExp(s.pattern).test(v)) {
       errors.push(`${at}: ${JSON.stringify(v)} does not match ${s.pattern}`);
+    }
+    if (typeof v === "string" && typeof s.maxLength === "number" && v.length > s.maxLength) {
+      errors.push(`${at}: longer than ${s.maxLength} characters`);
     }
     if (Array.isArray(v)) {
       this.array(s, file, v, at, errors);
