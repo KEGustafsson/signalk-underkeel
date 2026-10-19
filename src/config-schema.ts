@@ -63,7 +63,7 @@ export const SCHEMA = {
           enum: ["none", "manual", "signalk-tide", "fmi"],
           default: "none",
           description:
-            "none: chart datum with σ 0.3 m; manual: the height below; signalk-tide: environment.tide.heightNow; fmi: Finnish Meteorological Institute forecast and tide gauges (needs internet)"
+            "none: chart datum with σ 0.3 m; manual: the height below; signalk-tide: environment.tide.heightNow, heightLow and timeLow; fmi: Finnish Meteorological Institute forecast and tide gauges (needs internet)"
         },
         height: { type: "number", title: "Manual height above chart datum (m)", default: 0 },
         sigma: {

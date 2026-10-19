@@ -29,7 +29,9 @@ Water-level sources, set under **Water level** in the plugin configuration:
 
 - `none`: chart datum, with a σ for the unknown tide;
 - `manual`: a fixed height above chart datum with its σ;
-- `signalk-tide`: `environment.tide.heightNow`, bounded ahead by `heightLow`;
+- `signalk-tide`: `environment.tide.heightNow` for 5 minutes after each reading, then the lower
+  of it and `heightLow` until 6 h past `timeLow` (6 h past the reading without `timeLow`), then
+  a fallback;
 - `fmi`: the Finnish Meteorological Institute sea-level forecast at the vessel, anchored to the
   nearest tide gauge. FMI reports above theoretical mean water and above N2000; each cell's
   S-57 vertical datum is mapped to one of them; the defaults cover the mean-water datums, and

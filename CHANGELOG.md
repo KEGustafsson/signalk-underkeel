@@ -102,3 +102,7 @@ All notable changes to signalk-underkeel are documented here.
   id, so one save could delete the other's staging directory or its backup of the last index.
 - The published package includes `scripts/enc-to-geojson.sh`, which the README and the
   configuration tell users to run; it was left out of `files`.
+- The `signalk-tide` source applies `heightNow` only for 5 minutes after the reading; after that
+  it takes the lower of `heightNow` and `heightLow` until 6 h past `environment.tide.timeLow`
+  (6 h past the reading without it), then falls back. It held `heightNow` for 30 minutes on a
+  falling tide and answered `heightLow` for any time past the next low water.

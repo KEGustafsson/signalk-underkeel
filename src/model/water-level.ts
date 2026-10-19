@@ -60,16 +60,28 @@ export function manualProvider(h: number, sigma: number): WaterLevelProvider {
   };
 }
 
+/** heightNow stands for the level only this long after it was read. */
+const TIDE_NOW_HOLD_MS = 5 * 60 * 1000;
+/**
+ * The next low water bounds the level until the flood after it has turned:
+ * about 6 h past timeLow on a semi-diurnal tide. Without timeLow the low may
+ * be due at once, so the bound ends 6 h after the reading.
+ */
+const TIDE_LOW_HOLD_MS = 6 * 3600 * 1000;
+
 /**
  * Reads `environment.tide.*` from whatever tide provider is installed in
  * Signal K. Only the current height and the next low water are published
- * there, so a level more than half an hour ahead takes the lower of the two.
+ * there: heightNow holds for a few minutes, then the tide may be falling,
+ * so the lower of heightNow and heightLow applies until six hours past the
+ * next low water, and nothing is known after that.
  */
 export class SignalKTideProvider implements WaterLevelProvider {
   readonly id = "signalk-tide";
   readonly reference = "chart";
   private now?: { h: number; at: number };
   private low?: number;
+  private timeLow?: number;
 
   constructor(private readonly sigma: number) {}
 
@@ -84,6 +96,11 @@ export class SignalKTideProvider implements WaterLevelProvider {
       this.low = h;
       return true;
     }
+    if (path === "environment.tide.timeLow") {
+      const t = typeof value === "string" ? Date.parse(value) : NaN;
+      this.timeLow = Number.isFinite(t) ? t : undefined;
+      return true;
+    }
     return false;
   }
 
@@ -91,9 +108,14 @@ export class SignalKTideProvider implements WaterLevelProvider {
     if (!this.now) {
       return undefined;
     }
-    const ahead = t - this.now.at > STALE_AFTER_MS && this.low !== undefined;
-    const h = ahead ? Math.min(this.now.h, this.low as number) : this.now.h;
-    return { h, sigma: this.sigma, source: "signalk-tide" };
+    if (t - this.now.at <= TIDE_NOW_HOLD_MS) {
+      return { h: this.now.h, sigma: this.sigma, source: "signalk-tide" };
+    }
+    const until = (this.timeLow ?? this.now.at) + TIDE_LOW_HOLD_MS;
+    if (this.low === undefined || t > until) {
+      return undefined;
+    }
+    return { h: Math.min(this.now.h, this.low), sigma: this.sigma, source: "signalk-tide" };
   }
 
   health(): ProviderHealth {

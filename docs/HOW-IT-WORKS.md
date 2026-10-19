@@ -442,12 +442,12 @@ It holds until SOG stays above 0.5 m/s for 10 s.
 
 ## 8. Water level
 
-| Source         | What it reads                                                                      | σ                                                         |
-| -------------- | ---------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| `none`         | chart datum (0 m)                                                                  | 0.3 m                                                     |
-| `manual`       | the height you enter above chart datum                                             | the σ you enter                                           |
-| `signalk-tide` | `environment.tide.heightNow`; beyond 30 min ahead the lower of it and `heightLow`  | the σ you enter                                           |
-| `fmi`          | Finnish Meteorological Institute sea-level forecast, anchored to the nearest gauge | grows with lead time and gauge distance, plus the datum σ |
+| Source         | What it reads                                                                                                                         | σ                                                         |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| `none`         | chart datum (0 m)                                                                                                                     | 0.3 m                                                     |
+| `manual`       | the height you enter above chart datum                                                                                                | the σ you enter                                           |
+| `signalk-tide` | `environment.tide.heightNow`; from 5 min after the reading the lower of it and `heightLow`, until 6 h past `timeLow` (or the reading) | the σ you enter                                           |
+| `fmi`          | Finnish Meteorological Institute sea-level forecast, anchored to the nearest gauge                                                    | grows with lead time and gauge distance, plus the datum σ |
 
 ```mermaid
 flowchart TD

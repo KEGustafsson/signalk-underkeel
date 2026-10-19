@@ -401,6 +401,11 @@ FMI series. **An unknown datum sets σ_wl = 0.5 m and flags the cell.**
 - The engine applies one level per tick. When the index holds cells on different datums,
   it takes the lowest level and the widest σ among them, which can only raise P(UKC < 0).
   Per-cell levels are a follow-up.
+- `signalk-tide` reads `heightNow`, `heightLow` and `timeLow`. `heightNow` applies for 5 min
+  after the reading; after that the tide may be falling, so the lower of `heightNow` and
+  `heightLow` applies until 6 h past `timeLow`, when the next flood has turned. Without
+  `timeLow` that bound ends 6 h after the reading, since the low may be due at once. Without
+  `heightLow`, or past the bound, there is no level and the engine falls back.
 - Route checks take the lowest level over each leg's ETA interval. FMI answers them with the
   forecast held for the vessel's position. A fallback level makes every `ok` leg
   `unverified`.

@@ -25,7 +25,11 @@ const FMI_REFETCH_METRES = 10000;
 /** A failed or moved-triggered FMI fetch is retried no sooner than this. */
 const FMI_RETRY_MS = 60000;
 
-export const TIDE_PATHS = ["environment.tide.heightNow", "environment.tide.heightLow"] as const;
+export const TIDE_PATHS = [
+  "environment.tide.heightNow",
+  "environment.tide.heightLow",
+  "environment.tide.timeLow"
+] as const;
 
 /** What `GET /status` reports about the water level. */
 export interface WaterLevelStatus {
