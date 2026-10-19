@@ -36,6 +36,7 @@ let shownRev = null;
 /** Bumped on each clear, so a reply that was in flight cannot bring the envelope back. */
 let generation = 0;
 let engineState;
+let lastRev;
 let watchdog;
 let fetching = false;
 /** A bump that arrives mid-fetch may be newer than the reply in flight: fetch again after it. */
@@ -88,6 +89,9 @@ async function refreshEnvelope() {
 
 onPath["navigation.underKeel.state"] = (state) => {
   const wasDown = engineState === undefined || isDown(engineState);
+  if (engineState === "off" && state !== "off") {
+    onRestart();
+  }
   engineState = state;
   if (isDown(state)) {
     clearEnvelope();
@@ -97,6 +101,10 @@ onPath["navigation.underKeel.state"] = (state) => {
 };
 
 onPath["navigation.underKeel.envelopeRev"] = (rev, left) => {
+  if (UKC.revJumped(lastRev, rev)) {
+    onRestart();
+  }
+  lastRev = rev;
   clearTimeout(watchdog);
   watchdog = setTimeout(clearEnvelope, left);
   if (isDown(engineState)) {
@@ -150,7 +158,13 @@ async function check(routeId) {
       results.set(
         routeId,
         res.ok
-          ? { name: route.name, rev: route.rev, legs: body.legs, checkedAt: body.checkedAt }
+          ? {
+              name: route.name,
+              rev: route.rev,
+              legs: body.legs,
+              checkedAt: body.checkedAt,
+              receivedAt: new Date().toISOString()
+            }
           : { name: route.name, rev: route.rev, legs: [], error: (body.errors || []).join("; ") }
       );
     }
@@ -185,6 +199,18 @@ async function checkAll() {
   }
 }
 
+/**
+ * A restarted plugin may run with a new draft or water-level source, and the
+ * tide moves on: results are only as current as their last check.
+ */
+const RECHECK_MS = 60000;
+
+function onRestart() {
+  if (has("routes")) {
+    void checkAll();
+  }
+}
+
 // The host persists extension state across sessions: results from an earlier one are not current.
 await publish();
 
@@ -211,6 +237,7 @@ if (has("routes")) {
   });
   await client.subscribe(["ukc.checkRoutes"], () => void checkAll());
   await checkAll();
+  setInterval(() => void checkAll(), RECHECK_MS);
 }
 
 if (has("signalk.stream")) {

@@ -63,6 +63,9 @@ async function refreshStatus() {
   }
 }
 
+/** The runtime re-checks each minute: three missed re-checks make a result out of date. */
+const ROUTE_MAX_AGE_MS = 180000;
+
 function renderRoutes(entries) {
   const el = document.getElementById("routes");
   if (!client.hasCapability("routes")) {
@@ -77,17 +80,21 @@ function renderRoutes(entries) {
     ...entries.map(([, r]) => {
       const box = document.createElement("div");
       const title = document.createElement("div");
-      const worst = UKC.worstStatus(r.legs);
+      const status = UKC.routeBadge(r, Date.now(), ROUTE_MAX_AGE_MS);
       title.append(`${r.name || "Unsaved route"}: `);
       const badge = document.createElement("b");
-      badge.className = r.error || r.pending ? "unverified" : worst;
-      badge.textContent = r.pending ? "not checked yet" : r.error ? "not checked" : worst;
+      badge.className = status.cls;
+      badge.textContent = status.text;
       title.append(badge);
       box.append(title);
       if (r.error || r.pending) {
         box.append(r.error || "");
         return box;
       }
+      const age = document.createElement("div");
+      age.className = "muted";
+      age.textContent = UKC.checkedAgo(r.receivedAt, Date.now());
+      box.append(age);
       const table = document.createElement("table");
       table.innerHTML = "<tr><th>Leg</th><th>Status</th><th>Min UKC</th><th>P(UKC&lt;0)</th></tr>";
       r.legs.forEach((leg) => {
@@ -133,4 +140,7 @@ document.getElementById("recheck").addEventListener("click", () => {
 await refreshStatus();
 await refreshRoutes();
 /** Notifications arrive only on change and the stream is optional, so the panel also polls. */
-setInterval(() => void refreshStatus(), 10000);
+setInterval(() => {
+  void refreshStatus();
+  void refreshRoutes();
+}, 10000);

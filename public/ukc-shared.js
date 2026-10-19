@@ -124,6 +124,45 @@
   }
 
   /**
+   * The badge of a route result. An ok older than `maxAgeMs` is out of date:
+   * the runtime re-checks every visible route each minute, so an old result
+   * means it stopped and the water level or draft may have changed since.
+   * The age counts from `receivedAt`, stamped by the runtime in this browser,
+   * because the server's `checkedAt` comes from a clock that may differ.
+   */
+  function routeBadge(r, now, maxAgeMs) {
+    if (r.pending) {
+      return { text: "not checked yet", cls: "unverified" };
+    }
+    if (r.error) {
+      return { text: "not checked", cls: "unverified" };
+    }
+    const at = Date.parse(r.receivedAt);
+    if (!isFinite(at) || now - at > maxAgeMs) {
+      return { text: "out of date", cls: "unverified" };
+    }
+    const worst = worstStatus(r.legs);
+    return { text: worst, cls: worst };
+  }
+
+  function checkedAgo(iso, now) {
+    const at = Date.parse(iso);
+    if (!isFinite(at)) {
+      return "";
+    }
+    const s = (now - at) / 1000;
+    if (s < 60) {
+      return "checked just now";
+    }
+    return s < 3600 ? "checked " + Math.round(s / 60) + " min ago" : "checked " + Math.round(s / 3600) + " h ago";
+  }
+
+  /** envelopeRev steps by one per change: any other step is a plugin restart or missed deltas. */
+  function revJumped(prev, next) {
+    return typeof prev === "number" && next !== prev && next !== prev + 1;
+  }
+
+  /**
    * The route results the panel lists: one per visible route, a route the
    * runtime has not answered for yet marked pending. Without the visible set
    * (a host that lists no routes) every result is listed.
@@ -151,7 +190,10 @@
     worstStatus: worstStatus,
     routeEntries: routeEntries,
     freshFor: freshFor,
-    freshness: freshness
+    freshness: freshness,
+    routeBadge: routeBadge,
+    checkedAgo: checkedAgo,
+    revJumped: revJumped
   };
   if (typeof module !== "undefined" && module.exports) {
     module.exports = api;

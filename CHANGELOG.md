@@ -239,3 +239,6 @@ All notable changes to signalk-underkeel are documented here.
 - The look-ahead overlay is withdrawn when the plugin goes quiet: after 10 s without an
   `envelopeRev` delta, when the state is `off` or `unknown`, and when the envelope fetch fails.
   Without a Signal K stream the runtime polls `/envelope` every 3 s; it fetched it once before.
+- Route checks are re-run every 60 s and after a plugin restart, not only after a route edit,
+  so an ok leg no longer stays ok after the tide falls, the draft changes or the water-level
+  source falls back. The panel shows the age of each result and reads "out of date" past 3 min.

@@ -92,4 +92,34 @@ describe("extension display logic", () => {
     expect(fresh("a", at(-70), now)).toBe(0);
     expect(fresh("a", at(-58), now)).toBe(10000);
   });
+
+  test("a route check reads as out of date once it is older than the re-check allows", () => {
+    const now = Date.parse("2026-10-19T12:00:00Z");
+    const at = (s: number) => new Date(now - s * 1000).toISOString();
+    const ok = [{ status: "ok" }];
+    const badge = (r: object) => UKC.routeBadge(r, now, 180000);
+    expect(badge({ legs: ok, receivedAt: at(30) })).toEqual({ text: "ok", cls: "ok" });
+    expect(badge({ legs: ok, receivedAt: at(600) })).toEqual({
+      text: "out of date",
+      cls: "unverified"
+    });
+    expect(badge({ legs: ok })).toEqual({ text: "out of date", cls: "unverified" });
+    expect(badge({ legs: [], pending: true })).toEqual({
+      text: "not checked yet",
+      cls: "unverified"
+    });
+    expect(badge({ legs: ok, error: "x" })).toEqual({ text: "not checked", cls: "unverified" });
+    expect(UKC.checkedAgo(at(20), now)).toBe("checked just now");
+    expect(UKC.checkedAgo(at(150), now)).toBe("checked 3 min ago");
+    expect(UKC.checkedAgo(at(3 * 3600), now)).toBe("checked 3 h ago");
+    expect(UKC.checkedAgo(undefined, now)).toBe("");
+  });
+
+  test("an envelopeRev that does not step by one means a restart or missed deltas", () => {
+    expect(UKC.revJumped(undefined, 7)).toBe(false);
+    expect(UKC.revJumped(7, 7)).toBe(false);
+    expect(UKC.revJumped(7, 8)).toBe(false);
+    expect(UKC.revJumped(7, 1)).toBe(true);
+    expect(UKC.revJumped(7, 1760000000000)).toBe(true);
+  });
 });
