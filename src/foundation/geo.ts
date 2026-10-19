@@ -121,6 +121,28 @@ export function extendRect(rect: Rect, x: number, y: number): void {
   }
 }
 
+/**
+ * Eastward shifts, in Mercator metres, that bring the parts of `reach`
+ * past ±180° back onto the world: 0 first, then one per side crossed.
+ * Footprints and buffers stay continuous across the antimeridian, so a
+ * query walks once per shift to see the tiles at the other end.
+ */
+export function worldShifts(reach: Rect): number[] {
+  const shifts = [0];
+  if (reach.maxX >= MERCATOR_HALF_WORLD) {
+    shifts.push(-2 * MERCATOR_HALF_WORLD);
+  }
+  if (reach.minX <= -MERCATOR_HALF_WORLD) {
+    shifts.push(2 * MERCATOR_HALF_WORLD);
+  }
+  return shifts;
+}
+
+/** A copy of `rect` moved `dx` east. */
+export function shiftRect(rect: Rect, dx: number): Rect {
+  return { minX: rect.minX + dx, minY: rect.minY, maxX: rect.maxX + dx, maxY: rect.maxY };
+}
+
 /** A copy of `rect` widened by `by` on every side. */
 export function expandRect(rect: Rect, by: number): Rect {
   return {
@@ -162,7 +184,8 @@ export function haversine(a: LonLat, b: LonLat): number {
 /**
  * A point `east`/`north` metres from `origin` in the local tangent plane.
  * Accurate to well under a metre over the few kilometres a look-ahead or a
- * route leg spans.
+ * route leg spans. The longitude is not wrapped: a ring built around one
+ * origin stays continuous across ±180°, and queries walk the far side too.
  */
 export function offset(origin: LonLat, east: number, north: number): LonLat {
   const lat = origin[1] + north / EARTH_RADIUS / DEG;

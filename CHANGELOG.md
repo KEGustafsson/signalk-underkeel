@@ -61,3 +61,6 @@ All notable changes to signalk-underkeel are documented here.
 - `navigation.underKeel.clearance` is published as `null` when the look-ahead reaches land,
   never `-Infinity`. In-process subscribers such as signalk-to-influxdb received the raw
   value and the database refused the write; no published number is now NaN or infinite.
+- Depth queries near the antimeridian also read the tiles at the other end of the world: a
+  footprint or position buffer reaching past ±180° used to miss a rock a few hundred metres
+  away on the other side, and a footprint drawn wholly past 180° returned no depth and no flag.
