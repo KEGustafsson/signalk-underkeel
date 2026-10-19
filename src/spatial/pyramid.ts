@@ -4,13 +4,15 @@ import {
   fromMercator,
   groundToMercator,
   maxAbsLat,
+  shiftRect,
   tileKey,
   tileRange,
   tileRect,
-  toMercator
+  toMercator,
+  worldShifts
 } from "../foundation/geo";
 import type { Geom } from "../foundation/geometry";
-import { geomBounds, geomRectDistance } from "../foundation/geometry";
+import { geomBounds, geomRectDistance, shiftGeom } from "../foundation/geometry";
 import type { NodeStore, NodeValues } from "./node-store";
 import { probabilityBelowZero } from "../foundation/stats";
 import { combine, EMPTY, FLAGS, NO_DATA } from "./node-store";
@@ -204,7 +206,9 @@ export function mercatorBuffer(bounds: Rect, metres: number): number {
 
 /**
  * Conservative minimum depth over `geom` widened by the ground buffer.
- * Tiles never built (outside the chart) count as NO_DATA.
+ * Tiles never built (outside the chart) count as NO_DATA. A footprint or
+ * buffer reaching past ±180° is also walked one world over, so the tiles
+ * at the other end of the world count too.
  */
 export function minDepthOver(store: NodeStore, geom: Geom, opts: QueryOptions = {}): DepthResult {
   const bounds = geomBounds(geom);
@@ -228,14 +232,19 @@ export function minDepthOver(store: NodeStore, geom: Geom, opts: QueryOptions = 
     cells: new Set(),
     visits: 0
   };
-  const range = tileRange(store.minZoom, expandRect(bounds, buffer));
-  for (let x = range.minX; x <= range.maxX; x++) {
-    for (let y = range.minY; y <= range.maxY; y++) {
-      visit(w, store.minZoom, x, y);
+  const reach = expandRect(bounds, buffer);
+  for (const shift of worldShifts(reach)) {
+    w.geom = shift === 0 ? geom : shiftGeom(geom, shift);
+    const shifted = shiftRect(reach, shift);
+    const range = tileRange(store.minZoom, shifted);
+    for (let x = range.minX; x <= range.maxX; x++) {
+      for (let y = range.minY; y <= range.maxY; y++) {
+        visit(w, store.minZoom, x, y);
+      }
     }
-  }
-  if (!opts.chartOnly) {
-    takeAdjustments(w, expandRect(bounds, buffer));
+    if (!opts.chartOnly) {
+      takeAdjustments(w, shifted);
+    }
   }
   const out: DepthResult = {
     ...w.result,

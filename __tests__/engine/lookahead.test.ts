@@ -71,7 +71,8 @@ describe("probabilistic look-ahead on the synthetic chart", () => {
     expect(e?.hazard).toMatchObject({ class: "UWTROC", lnam: "FI5-ROCK", depth: 3.5 });
     expect(e?.cell).toEqual({ name: "FI5SYNTH", edition: 3, update: 1 });
     expect(e?.flags).toContain("SWEPT");
-    expect(e?.sigmaCharted).toBeCloseTo(0.1, 6);
+    // The sweep guarantees 8 m, not the rock's 3.5 m: the rock keeps the A2 σ.
+    expect(e?.sigmaCharted).toBeCloseTo(0.54, 6);
   });
 
   test("a shallower keel passes over the rock", () => {
@@ -236,7 +237,7 @@ describe("probabilistic look-ahead on the synthetic chart", () => {
   test("the explanation names every term", () => {
     const r = evaluateLookahead(nav(westOfRock(40), FAIRWAY_LAT), ctx(DEEP_KEEL), index, NOW);
     expect(explain(r)).toMatch(
-      /^shoal ahead in \d+ s: charted 3\.5 m UWTROC FI5-ROCK \(±0\.1 m, SWEPT\) \+ 0 m water level \(chart-datum\) − draft 3\.2 m − squat 0\.14 m \+ heel 0 m − wave 0 m → μ = 0\.16 m, σ = 0\.3\d m, P = \d+ %$/
+      /^shoal ahead in \d+ s: charted 3\.5 m UWTROC FI5-ROCK \(±0\.54 m, SWEPT\) \+ 0 m water level \(chart-datum\) − draft 3\.2 m − squat 0\.14 m \+ heel 0 m − wave 0 m → μ = 0\.16 m, σ = 0\.6\d m, P = \d+ %$/
     );
     expect(explain(evaluateLookahead({}, ctx(DEEP_KEEL), index, NOW))).toBe("no position");
   });

@@ -246,6 +246,8 @@ signalk-underkeel/
 | `SOUNDG`                     | 3D multipoint                          | spot depths; burn in with position-uncertainty disc                             |
 | `UWTROC`, `WRECKS`, `OBSTRN` | `VALSOU`, `WATLEV`, `EXPSOU`, `QUASOU` | point hazards → R-tree, buffered                                                |
 | `LNDARE`, `COALNE`, `SLCONS` | —                                      | depth −∞ (hard obstacles)                                                       |
+| `PONTON`, `FLODOC`, `HULKES` | —                                      | depth −∞ (hard obstacles)                                                       |
+| `UNSARE`                     | —                                      | no depth: `NO_COVERAGE`, so legs are _unverified_ and look-ahead never _normal_ |
 | `M_QUAL`                     | `CATZOC`, `POSACC`, `SOUACC`           | survey quality zones                                                            |
 | `M_COVR`                     | `CATCOV`                               | coverage; no coverage means _unverified_, not _safe_                            |
 | DSID / `M_SDAT`, `M_VDAT`    | sounding / vertical datum              | water-level reduction (§4.5)                                                    |
@@ -330,7 +332,9 @@ These are treated as ~95 % bounds, so σ ≈ value / 2.
 
 Two overrides apply on top of the table:
 
-- **Swept areas.** `SWPARE` sets `sigmaD = 0.1 m` and caps `dMin` at the swept depth.
+- **Swept areas.** `SWPARE` caps `dMin` at the swept depth and sets `sigmaD = 0.1 m` where the
+  swept depth is the tile's `dMin`. A rock or sounding charted shallower inside the swept area
+  keeps the survey's σ, since the sweep guarantees only its own depth.
 - **Own soundings.** Where the living-chart posterior has enough samples, it replaces the
   table values (§4.11).
 
@@ -338,6 +342,8 @@ Two overrides apply on top of the table:
 assessed zones reaching it cover it together, which holds where they share the boundary vertex
 for vertex. It takes the worst σ of those zones. A boundary split differently on each side, an
 overlap or a gap leaves the leaf `UNASSESSED`.
+Coverage follows the same rule per usage band: a leaf on the shared edge of two `M_COVR`
+polygons of one band is covered when they match vertex for vertex, and `NO_COVERAGE` otherwise.
 
 ### 4.5 Water level
 
@@ -390,6 +396,8 @@ FMI series. **An unknown datum sets σ_wl = 0.5 m and flags the cell.**
   remains open.
 - Datum table: VERDAT 3, 19 and 26 → theoretical mean water, σ 0.1 m for the epoch
   difference. N2000 has no VERDAT code, so cells on it are mapped in the configuration.
+- A cell's datum is the DSID's (`DSPM_SDAT`, else `DSPM_VDAT`). `M_SDAT` / `M_VDAT` areas
+  on another VERDAT make the whole cell unknown (σ 0.5 m); a datum per area is a follow-up.
 - The engine applies one level per tick. When the index holds cells on different datums,
   it takes the lowest level and the widest σ among them, which can only raise P(UKC < 0).
   Per-cell levels are a follow-up.

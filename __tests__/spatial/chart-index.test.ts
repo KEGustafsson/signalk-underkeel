@@ -123,6 +123,27 @@ describe("index persistence", () => {
     }
   });
 
+  test("a save leaves another saver's staging and backup of the same process alone", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-threads-"));
+    try {
+      const target = path.join(dir, "index");
+      saveChartIndex(target, fixtureIndex());
+      // What a worker thread, which shares the process id, holds mid-save.
+      const staging = `${target}.tmp-${process.pid}`;
+      const backup = `${target}.old-${process.pid}`;
+      fs.mkdirSync(staging);
+      fs.cpSync(target, backup, { recursive: true });
+      saveChartIndex(target, fixtureIndex());
+      expect(fs.existsSync(staging)).toBe(true);
+      expect(loadChartIndex(backup).catalogue.cells).toHaveLength(2);
+      expect(fs.readdirSync(dir).sort()).toEqual(
+        ["index", path.basename(backup), path.basename(staging)].sort()
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("a crash between the renames is recovered from the moved-aside index", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-crash-"));
     try {

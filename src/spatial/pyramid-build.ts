@@ -121,7 +121,7 @@ function depthOf(f: ChartFeature): number | undefined {
 
 interface Analysis {
   hits: Hit[];
-  /** Highest usage band whose coverage contains the whole tile. */
+  /** Highest usage band whose coverage holds the whole tile. */
   bandFull: number | undefined;
   /** Shallowest depth of an area that contains the whole tile. */
   shallowest: number;
@@ -163,17 +163,30 @@ function qualityEdge(hits: Hit[]): boolean {
  */
 const BLUR_RATIO = 8;
 
-function analyse(all: Hit[], tileGround: number): Analysis {
-  let bandFull: number | undefined;
-  for (const h of all) {
-    if (h.item.f.role === "coverage" && h.full) {
-      bandFull = Math.max(bandFull ?? -Infinity, h.item.f.band);
-    }
-  }
+/**
+ * Highest usage band whose coverage holds the whole tile, by one polygon
+ * or by adjacent cells of the band meeting along a shared edge.
+ */
+function coveredBand(coverage: Hit[], rect: Rect): number | undefined {
+  const bands = [...new Set(coverage.map((h) => h.item.f.band))].sort((a, b) => b - a);
+  return bands.find((band) => {
+    const inBand = coverage.filter((h) => h.item.f.band === band);
+    return (
+      inBand.some((h) => h.full) ||
+      (inBand.length > 1 &&
+        areasCoverRect(
+          inBand.map((h) => h.item.f.geom),
+          rect
+        ))
+    );
+  });
+}
+
+function analyse(all: Hit[], rect: Rect, tileGround: number): Analysis {
+  const coverage = all.filter((h) => h.item.f.role === "coverage");
+  const bandFull = coveredBand(coverage, rect);
   const floor = bandFull ?? -Infinity;
-  const coverageEdge = all.some(
-    (h) => h.item.f.role === "coverage" && !h.full && h.item.f.band > floor
-  );
+  const coverageEdge = coverage.some((h) => h.item.f.band > floor);
   // Lower-band cells are only gap fillers: once a larger scale covers the tile they drop out.
   const hits = all.filter((h) => h.item.f.role !== "coverage" && h.item.f.band >= floor);
   const shallowest = minFullDepth(hits);
@@ -181,12 +194,13 @@ function analyse(all: Hit[], tileGround: number): Analysis {
     const d = depthOf(h.item.f);
     return !h.full && d !== undefined && d < shallowest && h.item.radius <= BLUR_RATIO * tileGround;
   });
-  const sweptEdge = hits.some((h) => h.item.f.role === "swept" && !h.full);
+  const areaEdge = hits.some(
+    (h) => (h.item.f.role === "swept" || h.item.f.role === "unsurveyed") && !h.full
+  );
   const needsSplit =
-    bandFull === undefined || coverageEdge || depthEdge || sweptEdge || qualityEdge(hits);
-  const advisoryCell = all.find(
-    (h) => h.item.f.role === "coverage" && h.full && h.item.f.band === bandFull && h.item.f.advisory
-  )?.item.f.cellRef;
+    bandFull === undefined || coverageEdge || depthEdge || areaEdge || qualityEdge(hits);
+  const advisoryCell = coverage.find((h) => h.item.f.band === bandFull && h.item.f.advisory)?.item.f
+    .cellRef;
   return { hits, bandFull, shallowest, coverageEdge, advisoryCell, needsSplit };
 }
 
@@ -271,17 +285,19 @@ function flagsOf(hits: Hit[], bandFull: number | undefined, assessed: boolean): 
   return assessed ? flags : flags | FLAGS.UNASSESSED;
 }
 
-/**
- * Conservative values for a tile from every feature that reaches it. A
- * leaf only partly inside coverage keeps the charted depth of its covered
- * part and carries NO_COVERAGE, so a rock there is not hidden by the gap
- * beside it; a tile with no depth feature at all is NO_DATA.
- */
 function isArea(h: Hit): boolean {
   const f = h.item.f;
   return f.role === "depth" && !f.hazard && f.geom.type === "polygon";
 }
 
+/**
+ * Conservative values for a tile from every feature that reaches it. A
+ * leaf only partly inside coverage, or partly in an unsurveyed area, keeps
+ * the charted depth of the rest and carries NO_COVERAGE, so a rock there
+ * is not hidden by the gap beside it. A tile inside an unsurveyed area, or
+ * one no depth area reaches, is NO_DATA: a sounding's burn disc does not
+ * make it water.
+ */
 function uniformValues(a: Analysis, rect: Rect, opts: BuildOptions): NodeValues {
   let dMin = Infinity;
   let cellRef = -1;
@@ -294,20 +310,29 @@ function uniformValues(a: Analysis, rect: Rect, opts: BuildOptions): NodeValues 
   }
   const assessed = assessedCover(a.hits, rect);
   const advisory = a.advisoryCell !== undefined || a.hits.some((h) => h.item.f.advisory);
-  const flags = flagsOf(a.hits, a.bandFull, assessed) | (advisory ? FLAGS.NOT_FOR_NAVIGATION : 0);
+  const unsurveyed = a.hits.filter((h) => h.item.f.role === "unsurveyed");
+  const flags =
+    flagsOf(a.hits, a.bandFull, assessed) |
+    (advisory ? FLAGS.NOT_FOR_NAVIGATION : 0) |
+    (unsurveyed.length > 0 ? FLAGS.NO_COVERAGE : 0);
+  const area = a.hits.some(isArea);
   // An advisory cell has no land objects: where no depth area reaches, the
-  // tile is land, since the gap may hold a skerry left out. A sounding's
-  // burn disc does not make it water.
-  if (a.advisoryCell !== undefined && !a.hits.some(isArea)) {
+  // tile is land, since the gap may hold a skerry left out.
+  if (a.advisoryCell !== undefined && !area) {
     return { dMin: -Infinity, sigmaD: 0, sigmaP: 0, flags, cellRef: a.advisoryCell };
   }
-  if (dMin === Infinity) {
+  if (!area || dMin === Infinity || unsurveyed.some((h) => h.full)) {
     return { ...NO_DATA, flags: flags | NO_DATA.flags };
   }
   const s = sigmas(a.hits, dMin, assessed, opts);
+  // The sweep guarantees its own depth only; a rock or sounding charted
+  // shallower inside it keeps the survey's σ.
+  const sweptDecides = a.hits.some(
+    (h) => h.full && h.item.f.role === "swept" && h.item.f.depth <= dMin
+  );
   return {
     dMin,
-    sigmaD: flags & FLAGS.SWEPT ? SWEPT_SIGMA_D : s.sigmaD,
+    sigmaD: sweptDecides ? SWEPT_SIGMA_D : s.sigmaD,
     sigmaP: s.sigmaP,
     flags,
     cellRef
@@ -329,7 +354,7 @@ function evaluate(
     return NO_DATA;
   }
   const tileGround = (rect.maxX - rect.minX) / groundToMercator(1, maxAbsLat(rect));
-  const a = analyse(all, tileGround);
+  const a = analyse(all, rect, tileGround);
   if (!a.needsSplit || z === opts.leafZoom) {
     const v = uniformValues(a, rect, opts);
     store.add(z, x, y, v, false);

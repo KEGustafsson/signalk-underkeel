@@ -16,6 +16,11 @@ export interface CellInfo {
   verticalDatum?: number;
   /** S-57 VERDAT code of the sounding datum, when known. */
   soundingDatum?: number;
+  /**
+   * VERDAT codes of M_SDAT / M_VDAT areas that differ from the DSID datum.
+   * Such a cell's depths are not all on one datum, so its datum is unknown.
+   */
+  datumAreas?: number[];
   /** Set for cells built from a non-ENC source, e.g. "traficom-wfs". */
   source?: string;
 }
@@ -40,6 +45,14 @@ function finiteOrUndefined(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+function codes(value: unknown): number[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const list = value.filter((v): v is number => finiteOrUndefined(v) !== undefined);
+  return list.length > 0 ? list : undefined;
+}
+
 function parseCell(raw: unknown, index: number): CellInfo {
   if (typeof raw !== "object" || raw === null) {
     throw new Error(`cells[${index}] is not an object`);
@@ -60,6 +73,7 @@ function parseCell(raw: unknown, index: number): CellInfo {
     band,
     verticalDatum: finiteOrUndefined(r.verticalDatum),
     soundingDatum: finiteOrUndefined(r.soundingDatum),
+    datumAreas: codes(r.datumAreas),
     source: typeof r.source === "string" ? r.source : undefined
   };
 }

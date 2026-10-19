@@ -61,3 +61,44 @@ All notable changes to signalk-underkeel are documented here.
 - `navigation.underKeel.clearance` is published as `null` when the look-ahead reaches land,
   never `-Infinity`. In-process subscribers such as signalk-to-influxdb received the raw
   value and the database refused the write; no published number is now NaN or infinite.
+- Depth queries near the antimeridian also read the tiles at the other end of the world: a
+  footprint or position buffer reaching past ±180° used to miss a rock a few hundred metres
+  away on the other side, and a footprint drawn wholly past 180° returned no depth and no flag.
+- A rock or sounding charted inside a swept area keeps its survey's depth σ. The swept σ of
+  0.1 m applied to every tile in the area, so a CATZOC C rock 4 m deep in an 8 m swept fairway
+  read P(UKC < 0) = 0.08 % instead of 19 % for a 3 m threshold.
+- A footprint on the shared edge of two adjacent cells of one usage band is covered. Each cell's
+  `M_COVR` alone held only part of the index tile on the edge, so the tile read `NO_COVERAGE`
+  and route legs along every seam came back unverified.
+- Position buffers, burn discs and footprint offsets reach their full distance on the WGS84
+  ellipsoid. They were sized on a sphere and fell short north–south below about 55° latitude,
+  by up to 0.7 % at the equator (a 100 m buffer reached 99.3 m).
+- Pontoons, floating docks and hulks (`PONTON`, `FLODOC`, `HULKES`) are read as land, and
+  unsurveyed areas (`UNSARE`) as having no depth, so a route leg there is unverified and the
+  look-ahead is never normal. `scripts/enc-to-geojson.sh` exports these layers. Before, such an
+  area inside a cell's coverage took the depth of any nearby sounding's burn disc; now any
+  covered place no depth area reaches has no depth.
+- The saved pyramid format is now version 2, and a saved index of an older version is rebuilt
+  at start when cells are configured, so an index built before the fixes above is not reused.
+- A rock, wreck or obstruction without `VALSOU` that covers and uncovers (`WATLEV` 4) or is
+  subject to inundation (`WATLEV` 6) counts as land, like `WATLEV` 1 and 2. It was taken as
+  0 m at chart datum, deeper than a hazard that dries at low water.
+- A cell directory that is a symbolic link is indexed; it was skipped without a word, at start
+  and in Traficom WFS rebuilds. Entries in the cells directory named like a cell that are not a
+  directory, such as an unexported `.000` file or a dangling link, are named in the index reason
+  in `/status`.
+- A saved index is rebuilt at start when a cell in the cells directory was added, removed or
+  given a new edition or update, with the cells named in the index reason. It was reused until
+  **Rebuild index at start** was ticked, so an added cell's rocks were missing from it.
+- `M_SDAT` and `M_VDAT` datum areas are read. A cell with an area on another `VERDAT` than its
+  `DSID` datum is matched as an unknown datum (σ 0.5 m), listed with `datumAreas` in the
+  `/status` datum mapping. Only the `DSID` datum was read, so such a cell's water level could
+  be applied on the wrong datum.
+- `scripts/enc-to-geojson.sh` exits non-zero when the source is unreadable, GDAL is missing or
+  cannot open the source, or the export has no `M_COVR`. Each of these ended in an empty or
+  unusable directory with exit status 0.
+- Saving the index names its staging and backup directories by process, thread and a random
+  suffix. A WFS rebuild in the worker thread and a save on the main thread shared the process
+  id, so one save could delete the other's staging directory or its backup of the last index.
+- The published package includes `scripts/enc-to-geojson.sh`, which the README and the
+  configuration tell users to run; it was left out of `files`.

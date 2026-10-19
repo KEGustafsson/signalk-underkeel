@@ -1,5 +1,7 @@
+import { randomBytes } from "crypto";
 import fs from "fs";
 import path from "path";
+import { threadId } from "worker_threads";
 import type { ReadCell } from "../ingest/cell-reader";
 import type { CellCatalogue } from "../ingest/cells";
 import { parseCatalogue } from "../ingest/cells";
@@ -8,7 +10,7 @@ import { HazardIndex } from "./hazards";
 import type { NodeStore } from "./node-store";
 import type { BuildOptions } from "./pyramid-build";
 import { buildPyramid } from "./pyramid-build";
-import { deserializePyramid, serializePyramid } from "./store";
+import { deserializePyramid, isCurrentPyramid, serializePyramid } from "./store";
 
 /** The queryable chart: provenance, the min-depth pyramid and the hazard tree. */
 export interface ChartIndex {
@@ -59,9 +61,11 @@ interface StoredHazard extends Omit<DepthFeature, "depth"> {
  * never leaves a catalogue from one build beside a pyramid from another.
  */
 export function saveChartIndex(dir: string, index: ChartIndex): void {
-  const staging = `${dir}.tmp-${process.pid}`;
-  const previous = `${dir}.old-${process.pid}`;
-  fs.rmSync(staging, { recursive: true, force: true });
+  // A worker thread shares the process id, so the id alone would let a WFS
+  // rebuild and a save on the main thread remove each other's directories.
+  const suffix = `${process.pid}-${threadId}-${randomBytes(4).toString("hex")}`;
+  const staging = `${dir}.tmp-${suffix}`;
+  const previous = `${dir}.old-${suffix}`;
   fs.mkdirSync(staging, { recursive: true });
   fs.writeFileSync(path.join(staging, FILES.cells), JSON.stringify(index.catalogue, null, 2));
   fs.writeFileSync(path.join(staging, FILES.pyramid), serializePyramid(index.pyramid));
@@ -72,7 +76,6 @@ export function saveChartIndex(dir: string, index: ChartIndex): void {
   fs.writeFileSync(path.join(staging, FILES.hazards), JSON.stringify(hazards));
   const hadIndex = fs.existsSync(dir);
   if (hadIndex) {
-    fs.rmSync(previous, { recursive: true, force: true });
     fs.renameSync(dir, previous);
   }
   fs.renameSync(staging, dir);
@@ -87,7 +90,7 @@ function isCompleteIndex(dir: string): boolean {
 
 /**
  * A crash between the two renames in saveChartIndex leaves `dir` absent and
- * the previous index at `<dir>.old-<pid>`. Moves the newest complete one
+ * the previous index at `<dir>.old-<suffix>`. Moves the newest complete one
  * back so that build is used again; returns whether it did.
  */
 export function recoverChartIndex(dir: string): boolean {
@@ -111,6 +114,17 @@ export function recoverChartIndex(dir: string): boolean {
   }
   fs.renameSync(newest, dir);
   return true;
+}
+
+/** Whether the saved index's pyramid was built under this version's rules; reads its header only. */
+export function savedIndexIsCurrent(dir: string): boolean {
+  const fd = fs.openSync(path.join(dir, FILES.pyramid), "r");
+  try {
+    const head = Buffer.alloc(512);
+    return isCurrentPyramid(head.subarray(0, fs.readSync(fd, head, 0, head.length, 0)));
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 /** Loads a saved index, first recovering one that a crash during save left moved aside. */

@@ -62,9 +62,11 @@ describe("web mercator", () => {
   });
 
   test("ground buffers grow toward the pole", () => {
-    expect(groundToMercator(100, 0)).toBeCloseTo(100, 6);
-    expect(groundToMercator(100, 60)).toBeCloseTo(200, 6);
-    expect(groundToMercator(100, -60)).toBeCloseTo(200, 6);
+    // 1/(1 − e²) covers the WGS84 meridian radius, shortest at the equator.
+    const stretch = 1.0067395;
+    expect(groundToMercator(100, 0)).toBeCloseTo(100 * stretch, 4);
+    expect(groundToMercator(100, 60)).toBeCloseTo(200 * stretch, 4);
+    expect(groundToMercator(100, -60)).toBeCloseTo(200 * stretch, 4);
   });
 
   test("maxAbsLat picks the poleward edge", () => {

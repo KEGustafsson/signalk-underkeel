@@ -81,7 +81,7 @@ describe("corridor route check on the synthetic chart", () => {
   });
 
   test("P between the threshold and 5× it is marginal, below it ok", () => {
-    const marginal = checkRoute(index, input(fairway, 2.8), NOW).legs[0];
+    const marginal = checkRoute(index, input(fairway, 2.2), NOW).legs[0];
     expect(marginal?.status).toBe("marginal");
     expect(marginal?.risk).toBeGreaterThanOrEqual(0.01);
     expect(marginal?.risk).toBeLessThan(0.05);
@@ -91,8 +91,8 @@ describe("corridor route check on the synthetic chart", () => {
   });
 
   test("a stricter threshold turns ok into marginal", () => {
-    const strict = checkRoute(index, input(fairway, 2.4, { probability: 1e-5 }), NOW).legs[0];
-    const loose = checkRoute(index, input(fairway, 2.4), NOW).legs[0];
+    const strict = checkRoute(index, input(fairway, 1.5, { probability: 1e-5 }), NOW).legs[0];
+    const loose = checkRoute(index, input(fairway, 1.5), NOW).legs[0];
     expect(loose?.status).toBe("ok");
     expect(["marginal", "fail"]).toContain(strict?.status);
   });

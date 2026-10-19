@@ -1,7 +1,7 @@
 import type { Rect } from "../foundation/geo";
-import { expandRect, rectsOverlap } from "../foundation/geo";
+import { expandRect, rectsOverlap, shiftRect, worldShifts } from "../foundation/geo";
 import type { Geom } from "../foundation/geometry";
-import { geomBounds, geomRectDistance } from "../foundation/geometry";
+import { geomBounds, geomRectDistance, shiftGeom } from "../foundation/geometry";
 import type { DepthFeature } from "../ingest/features";
 
 /**
@@ -94,18 +94,27 @@ export class HazardIndex {
   }
 
   /**
-   * Hazards within `buffer` Mercator metres of `geom`, shallowest first.
+   * Hazards within `buffer` Mercator metres of `geom`, shallowest first,
+   * across the antimeridian too.
    * Distance is measured to the hazard's bounding box: exact for points, a
    * lower bound for lines, so a nearby hazard is never dropped.
    */
   near(geom: Geom, buffer: number): HazardHit[] {
-    const hits: HazardHit[] = [];
-    for (const i of this.search(expandRect(geomBounds(geom), buffer))) {
-      const distance = geomRectDistance(geom, this.rects[i] as Rect, buffer);
-      if (distance <= buffer) {
-        hits.push({ feature: this.features[i] as DepthFeature, distance });
+    const best = new Map<number, number>();
+    const reach = expandRect(geomBounds(geom), buffer);
+    for (const shift of worldShifts(reach)) {
+      const g = shift === 0 ? geom : shiftGeom(geom, shift);
+      for (const i of this.search(shiftRect(reach, shift))) {
+        const distance = geomRectDistance(g, this.rects[i] as Rect, buffer);
+        if (distance <= buffer && distance < (best.get(i) ?? Infinity)) {
+          best.set(i, distance);
+        }
       }
     }
+    const hits = [...best].map(([i, distance]) => ({
+      feature: this.features[i] as DepthFeature,
+      distance
+    }));
     return hits.sort((a, b) => a.feature.depth - b.feature.depth || a.distance - b.distance);
   }
 }

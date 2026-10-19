@@ -613,6 +613,26 @@ describe("index loader", () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  test("rebuilds a saved index of an older pyramid version", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-old-"));
+    try {
+      const cfg = parseConfig({ cellsDir: FIXTURES, leafZoom: 16 });
+      expect(loadOrBuildIndex(cfg, dir).built).toBe(true);
+      const file = path.join(dir, "index", "pyramid.bin");
+      const buf = fs.readFileSync(file);
+      const nl = buf.indexOf(0x0a);
+      const header = JSON.parse(buf.subarray(0, nl).toString("utf8")) as { version: number };
+      const old = Buffer.from(JSON.stringify({ ...header, version: 1 }), "utf8");
+      fs.writeFileSync(file, Buffer.concat([old, buf.subarray(nl)]));
+      const again = loadOrBuildIndex(cfg, dir);
+      expect(again.built).toBe(true);
+      expect(again.index?.catalogue.cells).toHaveLength(2);
+      expect(loadOrBuildIndex(cfg, dir).built).toBe(false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("manifest and step", () => {

@@ -88,9 +88,11 @@ Signal K `design.draft.maximum`; length and beam fall back to `design.length.ove
 `design.beam`. Without a draft the engine stays `unknown`. The water level comes from the
 source picked under **Water level** (section 8).
 
-The index is built once, at the first start, and saved under the plugin data directory. Later
-starts load the saved index until **Rebuild index at start** is ticked, so it is ticked once
-after the cells change.
+The index is built at the first start and saved under the plugin data directory. Later starts
+load the saved index unless a cell directory was added or removed or its `DSID` edition or
+update changed; then the index is rebuilt and the index reason in `/status` names the cells.
+**Rebuild index at start** rebuilds it on every start. An index saved by an older plugin version
+whose index format differs is rebuilt too.
 
 The status line at the top of the plugin's page shows the engine state and its reason, for
 example `Monitoring: unknown — position stale`.
@@ -107,15 +109,20 @@ area exists.
 
 ### What is read
 
-| S-57 object                  | Used as                                                                    |
-| ---------------------------- | -------------------------------------------------------------------------- |
-| `M_COVR` (CATCOV 1)          | where the cell has data; outside every coverage is no data                 |
-| `M_QUAL` (`CATZOC`)          | survey quality, which sets the depth and position σ                        |
-| `DEPARE`, `DRGARE`           | area depth from `DRVAL1`; missing `DRVAL1` counts as 0 m                   |
-| `SWPARE`                     | guaranteed depth, σ 0.1 m                                                  |
-| `SOUNDG`                     | point depths                                                               |
-| `UWTROC`, `WRECKS`, `OBSTRN` | point hazards at `VALSOU`; without it, land when `WATLEV` 1 or 2, else 0 m |
-| `LNDARE`, `COALNE`, `SLCONS` | land                                                                       |
+| S-57 object                  | Used as                                                                          |
+| ---------------------------- | -------------------------------------------------------------------------------- |
+| `M_COVR` (CATCOV 1)          | where the cell has data; outside every coverage is no data                       |
+| `M_QUAL` (`CATZOC`)          | survey quality, which sets the depth and position σ                              |
+| `DEPARE`, `DRGARE`           | area depth from `DRVAL1`; missing `DRVAL1` counts as 0 m                         |
+| `SWPARE`                     | guaranteed depth, σ 0.1 m unless a shallower hazard inside sets the depth        |
+| `SOUNDG`                     | point depths                                                                     |
+| `UWTROC`, `WRECKS`, `OBSTRN` | point hazards at `VALSOU`; without it, land when `WATLEV` 1, 2, 4 or 6, else 0 m |
+| `LNDARE`, `COALNE`, `SLCONS` | land                                                                             |
+| `PONTON`, `FLODOC`, `HULKES` | land                                                                             |
+| `UNSARE`                     | no depth: read as a coverage gap, never as water                                 |
+
+Inside a cell's coverage, a place that no depth area, land or unsurveyed area reaches has no
+depth either; a sounding's burn disc does not make it water.
 
 Where cells of different usage bands overlap, the larger-scale cell wins and the smaller one
 only fills gaps.
@@ -453,7 +460,8 @@ flowchart TD
 FMI reports above theoretical mean water and above N2000. Each cell's S-57 vertical datum
 (`VERDAT`) is mapped to one of them: codes 3, 19 and 26 map to mean water by default, cells on
 N2000 need an entry under **Chart datum mappings**, and an unmapped datum is matched with
-σ 0.5 m. The plugin fetches FMI every 600 s by default, or after the vessel moves 10 km from the
+σ 0.5 m. A cell whose `M_SDAT` or `M_VDAT` areas use another `VERDAT` than its `DSID` is
+matched as unknown too, with those codes listed as `datumAreas`. The plugin fetches FMI every 600 s by default, or after the vessel moves 10 km from the
 forecast point; the 1 Hz loop never waits on the network.
 
 `GET /plugins/signalk-underkeel/v1/status` shows the source, the level applied, the source's
@@ -663,7 +671,9 @@ page says what is missing: no Signal K stream on the widget, or no shared routes
   disc 1 km across.
 - An index leaf that straddles two survey zones takes the worse zone's σ when the zones share
   their boundary vertex for vertex. A boundary split differently on each side, an overlap or a
-  gap leaves the leaf unassessed.
+  gap leaves the leaf unassessed. The same holds for two cells of one usage band meeting along
+  a shared edge: matched vertex for vertex, the leaf on the edge is covered; otherwise it reads
+  as no coverage.
 - Only unencrypted S-57 cells exported with `scripts/enc-to-geojson.sh` are read.
 - The look-ahead follows course and turn rate, not the route. In a winding fairway it sees the
   shore ahead before each bend and raises warn or alarm until the boat turns.

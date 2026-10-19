@@ -79,6 +79,57 @@ describe("S-57 GeoJSON ingest", () => {
   });
 });
 
+describe("datum areas", () => {
+  const area = (verdat: unknown) => ({
+    type: "FeatureCollection",
+    features: [
+      {
+        type: "Feature",
+        geometry: {
+          type: "Polygon",
+          coordinates: [
+            [
+              [22, 60],
+              [22.01, 60],
+              [22.01, 60.01],
+              [22, 60]
+            ]
+          ]
+        },
+        properties: { VERDAT: verdat }
+      }
+    ]
+  });
+
+  function withAreas(sdat: unknown, vdat: unknown) {
+    const dir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "datum-areas-")), "FI5SYNTH");
+    fs.cpSync(path.join(FIXTURES, "FI5SYNTH"), dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "M_SDAT.geojson"), JSON.stringify(area(sdat)));
+    fs.writeFileSync(path.join(dir, "M_VDAT.geojson"), JSON.stringify(area(vdat)));
+    try {
+      return readCellDirectory(dir, 0).info;
+    } finally {
+      fs.rmSync(path.dirname(dir), { recursive: true, force: true });
+    }
+  }
+
+  test("M_SDAT or M_VDAT areas on another VERDAT than the DSID are recorded", () => {
+    expect(withAreas(24, 13).datumAreas).toEqual([24]);
+    expect(withAreas("13", "3").datumAreas).toEqual([3]);
+  });
+
+  test("areas on the DSID datum leave the cell on that datum", () => {
+    expect(withAreas(13, 13).datumAreas).toBeUndefined();
+    expect(readCellDirectory(path.join(FIXTURES, "FI5SYNTH"), 0).info.datumAreas).toBeUndefined();
+  });
+
+  test("datum areas survive cells.json", () => {
+    const info = withAreas(24, 13);
+    const json = JSON.parse(JSON.stringify({ version: 1, cells: [info] })) as unknown;
+    expect(parseCatalogue(json).cells[0]?.datumAreas).toEqual([24]);
+  });
+});
+
 describe("hazard depth rules", () => {
   test("VALSOU wins, dry hazards are land, unknown depths are datum level", () => {
     expect(hazardDepth({ VALSOU: 2.1, WATLEV: 1 })).toBe(2.1);
@@ -87,6 +138,14 @@ describe("hazard depth rules", () => {
     expect(hazardDepth({ WATLEV: 2 })).toBe(-Infinity);
     expect(hazardDepth({ WATLEV: 3 })).toBe(0);
     expect(hazardDepth({})).toBe(0);
+  });
+
+  test("hazards that dry at low water without VALSOU are land, not datum level", () => {
+    expect(hazardDepth({ WATLEV: 4 })).toBe(-Infinity);
+    expect(hazardDepth({ WATLEV: "4" })).toBe(-Infinity);
+    expect(hazardDepth({ WATLEV: 6 })).toBe(-Infinity);
+    expect(hazardDepth({ WATLEV: 4, VALSOU: -0.4 })).toBe(-0.4);
+    expect(hazardDepth({ WATLEV: 5 })).toBe(0);
   });
 });
 

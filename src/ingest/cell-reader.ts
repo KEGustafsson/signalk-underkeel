@@ -9,7 +9,8 @@ import { WFS_SOURCE } from "./wfs";
 
 /**
  * Reads one exported ENC cell: a directory holding `<LAYER>.geojson` files
- * plus `DSID.geojson` (the dataset identification record) for provenance.
+ * plus `DSID.geojson` (the dataset identification record) and the datum
+ * areas `M_SDAT.geojson` / `M_VDAT.geojson` for provenance.
  * `scripts/enc-to-geojson.sh` produces this layout from a `.000` file.
  */
 
@@ -53,6 +54,28 @@ export function cellInfoFromDsid(
   };
 }
 
+/** VERDAT codes of the areas in `file` that are not `datum`. */
+function otherDatums(file: string, datum: number | undefined): number[] {
+  const areas = readCollection(file)?.features ?? [];
+  return areas
+    .map((f) => numeric(f.properties?.VERDAT))
+    .filter((v): v is number => v !== undefined && v !== datum);
+}
+
+/**
+ * Provenance of an exported cell from its DSID and datum areas, without
+ * reading its depth layers.
+ */
+export function readCellInfo(dir: string): ReturnType<typeof cellInfoFromDsid> {
+  const dsid = readCollection(path.join(dir, "DSID.geojson"));
+  const info = cellInfoFromDsid(dsid?.features[0]?.properties ?? {}, path.basename(dir));
+  const areas = new Set([
+    ...otherDatums(path.join(dir, "M_SDAT.geojson"), info.soundingDatum),
+    ...otherDatums(path.join(dir, "M_VDAT.geojson"), info.verticalDatum)
+  ]);
+  return areas.size > 0 ? { ...info, datumAreas: [...areas].sort((a, b) => a - b) } : info;
+}
+
 /**
  * A missing directory, or one without M_COVR coverage, is an error: such a
  * cell would enter the catalogue while contributing no data.
@@ -61,9 +84,7 @@ export function readCellDirectory(dir: string, cellRef: number, bandOverride?: n
   if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
     throw new Error(`cell directory ${dir} does not exist`);
   }
-  const fallbackName = path.basename(dir);
-  const dsid = readCollection(path.join(dir, "DSID.geojson"));
-  const partial = cellInfoFromDsid(dsid?.features[0]?.properties ?? {}, fallbackName);
+  const partial = readCellInfo(dir);
   const band = bandOverride ?? partial.band;
   if (band === undefined) {
     throw new Error(`cell ${partial.name}: usage band unknown; set it explicitly`);

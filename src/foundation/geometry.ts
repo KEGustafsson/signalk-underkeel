@@ -37,6 +37,24 @@ export function geomBounds(geom: Geom): Rect {
   return rect;
 }
 
+/** A copy of `geom` moved `dx` Mercator metres east. */
+export function shiftGeom(geom: Geom, dx: number): Geom {
+  const move = (p: XY): XY => [p[0] + dx, p[1]];
+  if (geom.type === "point") {
+    return { type: "point", p: move(geom.p) };
+  }
+  if (geom.type === "line") {
+    return { type: "line", coords: geom.coords.map(move) };
+  }
+  return {
+    type: "polygon",
+    polygons: geom.polygons.map((poly) => ({
+      outer: poly.outer.map(move),
+      holes: poly.holes.map((h) => h.map(move))
+    }))
+  };
+}
+
 /** Even-odd ray cast; a point exactly on an edge may fall either side. */
 export function pointInRing(p: XY, ring: Ring): boolean {
   return inRing(p[0], p[1], ring);

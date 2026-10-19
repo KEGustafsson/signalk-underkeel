@@ -2,15 +2,19 @@ import os from "os";
 import { NodeStore } from "./node-store";
 
 /**
- * On-disk pyramid format, version 1: a JSON header line, then one
- * little-endian column per node field. Loading rebuilds the tile maps in
- * memory; the index is built once and reloaded at every plugin start.
- * Columns are written in native byte order, so big-endian hosts are refused
- * rather than reading swapped values.
+ * On-disk pyramid format: a JSON header line, then one little-endian
+ * column per node field. Loading rebuilds the tile maps in memory; the
+ * index is built once and reloaded at every plugin start. Columns are
+ * written in native byte order, so big-endian hosts are refused rather
+ * than reading swapped values.
+ *
+ * The version also counts changes to how nodes are built from the chart
+ * (version 2: swept σ, coverage seams, skin-of-earth classes), so an index
+ * built under older rules is rebuilt rather than reused.
  */
 
 const MAGIC = "underkeel-pyramid";
-const VERSION = 1;
+export const PYRAMID_VERSION = 2;
 
 interface Header {
   magic: string;
@@ -64,7 +68,7 @@ function requireLittleEndian(): void {
   }
 }
 
-/** Every stored node, zoom by zoom, in the version-1 format. */
+/** Every stored node, zoom by zoom, in the current format. */
 export function serializePyramid(store: NodeStore): Buffer {
   requireLittleEndian();
   const cols = columnsOf(store.count);
@@ -86,7 +90,7 @@ export function serializePyramid(store: NodeStore): Buffer {
   }
   const header: Header = {
     magic: MAGIC,
-    version: VERSION,
+    version: PYRAMID_VERSION,
     minZoom: store.minZoom,
     leafZoom: store.leafZoom,
     count: n
@@ -100,7 +104,20 @@ export function serializePyramid(store: NodeStore): Buffer {
   return Buffer.concat([head, ...parts]);
 }
 
-/** Reads a version-1 file; refuses a foreign header or a truncated body. */
+/** Whether a pyramid file's header is this format and version. */
+export function isCurrentPyramid(head: Buffer): boolean {
+  const nl = head.indexOf(0x0a);
+  try {
+    const header = JSON.parse(
+      head.subarray(0, nl < 0 ? head.length : nl).toString("utf8")
+    ) as Header;
+    return header.magic === MAGIC && header.version === PYRAMID_VERSION;
+  } catch {
+    return false;
+  }
+}
+
+/** Reads a current-version file; refuses a foreign header or a truncated body. */
 export function deserializePyramid(buf: Buffer): NodeStore {
   requireLittleEndian();
   const nl = buf.indexOf(0x0a);
@@ -108,7 +125,7 @@ export function deserializePyramid(buf: Buffer): NodeStore {
     throw new Error("pyramid file has no header");
   }
   const header = JSON.parse(buf.subarray(0, nl).toString("utf8")) as Header;
-  if (header.magic !== MAGIC || header.version !== VERSION) {
+  if (header.magic !== MAGIC || header.version !== PYRAMID_VERSION) {
     throw new Error(`unsupported pyramid file ${header.magic} v${header.version}`);
   }
   const count = header.count;

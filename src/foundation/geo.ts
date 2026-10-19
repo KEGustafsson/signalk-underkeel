@@ -5,7 +5,7 @@
  * rectangles. Mercator stretches distances by 1/cos(lat); `groundToMercator`
  * converts a ground distance into Mercator metres at a latitude, and callers
  * pass the highest |lat| of the area they test so the result is never smaller
- * than the true buffer.
+ * than the true buffer on the WGS84 ellipsoid.
  */
 
 export const MERCATOR_RADIUS = 6378137;
@@ -52,13 +52,26 @@ export function maxAbsLat(rect: Rect): number {
   return Math.max(Math.abs(mercatorYToLat(rect.minY)), Math.abs(mercatorYToLat(rect.maxY)));
 }
 
+/** WGS84 first eccentricity squared. */
+const WGS84_E2 = (1 / 298.257223563) * (2 - 1 / 298.257223563);
+
 /**
- * Mercator metres that span `metres` on the ground at latitude `latDeg`.
- * Mercator scale grows with latitude, so using the highest latitude of a
- * region gives the largest (most conservative) buffer for that region.
+ * The ellipsoid's meridian radius falls to a(1 − e²) at the equator, so a
+ * ground metre north spans up to this many spherical Mercator metres per
+ * 1/cos(lat). East–west the prime vertical radius is never below a.
+ */
+const ELLIPSOID_STRETCH = 1 / (1 - WGS84_E2);
+
+/**
+ * Mercator metres that span at least `metres` on the ground at latitude
+ * `latDeg`, in every direction. Mercator scale grows with latitude, so
+ * using the highest latitude of a region gives the largest (most
+ * conservative) buffer for that region.
  */
 export function groundToMercator(metres: number, latDeg: number): number {
-  return metres / Math.cos(Math.min(Math.abs(latDeg), MAX_MERCATOR_LAT) * DEG);
+  return (
+    (metres * ELLIPSOID_STRETCH) / Math.cos(Math.min(Math.abs(latDeg), MAX_MERCATOR_LAT) * DEG)
+  );
 }
 
 const TILE_SIZES = Array.from({ length: 31 }, (_, z) => (2 * MERCATOR_HALF_WORLD) / 2 ** z);
@@ -121,6 +134,28 @@ export function extendRect(rect: Rect, x: number, y: number): void {
   }
 }
 
+/**
+ * Eastward shifts, in Mercator metres, that bring the parts of `reach`
+ * past ±180° back onto the world: 0 first, then one per side crossed.
+ * Footprints and buffers stay continuous across the antimeridian, so a
+ * query walks once per shift to see the tiles at the other end.
+ */
+export function worldShifts(reach: Rect): number[] {
+  const shifts = [0];
+  if (reach.maxX >= MERCATOR_HALF_WORLD) {
+    shifts.push(-2 * MERCATOR_HALF_WORLD);
+  }
+  if (reach.minX <= -MERCATOR_HALF_WORLD) {
+    shifts.push(2 * MERCATOR_HALF_WORLD);
+  }
+  return shifts;
+}
+
+/** A copy of `rect` moved `dx` east. */
+export function shiftRect(rect: Rect, dx: number): Rect {
+  return { minX: rect.minX + dx, minY: rect.minY, maxX: rect.maxX + dx, maxY: rect.maxY };
+}
+
 /** A copy of `rect` widened by `by` on every side. */
 export function expandRect(rect: Rect, by: number): Rect {
   return {
@@ -160,13 +195,20 @@ export function haversine(a: LonLat, b: LonLat): number {
 }
 
 /**
- * A point `east`/`north` metres from `origin` in the local tangent plane.
- * Accurate to well under a metre over the few kilometres a look-ahead or a
- * route leg spans.
+ * A point `east`/`north` metres from `origin` in the local tangent plane of
+ * the WGS84 ellipsoid, using its meridian and prime vertical radii at the
+ * origin. Accurate to a few centimetres over the few kilometres a
+ * look-ahead or a route leg spans; the mean-radius sphere fell short by up
+ * to 0.7 % north–south. The longitude is not wrapped: a ring built around
+ * one origin stays continuous across ±180°, and queries walk the far side too.
  */
 export function offset(origin: LonLat, east: number, north: number): LonLat {
-  const lat = origin[1] + north / EARTH_RADIUS / DEG;
-  const lon = origin[0] + east / (EARTH_RADIUS * Math.cos(origin[1] * DEG)) / DEG;
+  const phi = origin[1] * DEG;
+  const w = 1 - WGS84_E2 * Math.sin(phi) ** 2;
+  const meridian = (MERCATOR_RADIUS * (1 - WGS84_E2)) / w ** 1.5;
+  const primeVertical = MERCATOR_RADIUS / Math.sqrt(w);
+  const lat = origin[1] + north / meridian / DEG;
+  const lon = origin[0] + east / (primeVertical * Math.cos(phi)) / DEG;
   return [lon, lat];
 }
 

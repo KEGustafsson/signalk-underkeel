@@ -44,6 +44,10 @@ export const S57_LAYERS = [
   "LNDARE",
   "COALNE",
   "SLCONS",
+  "PONTON",
+  "FLODOC",
+  "HULKES",
+  "UNSARE",
   "M_QUAL",
   "M_COVR"
 ] as const;
@@ -158,10 +162,15 @@ function str(props: Record<string, unknown>, key: string): string | undefined {
 }
 
 /**
- * Depth of a point hazard. VALSOU wins. Without it, WATLEV 1 (partly
- * submerged) and 2 (always dry) stand above the water and count as land;
- * every other case has an unknown depth, which is taken as 0 m (at chart
- * datum) rather than the surrounding area's depth.
+ * WATLEV 1 (partly submerged at high water), 2 (always dry), 4 (covers and
+ * uncovers) and 6 (subject to inundation) all dry at some water level.
+ */
+const DRYING_WATLEV = new Set([1, 2, 4, 6]);
+
+/**
+ * Depth of a point hazard. VALSOU wins. Without it, a hazard that dries
+ * counts as land; every other case has an unknown depth, which is taken as
+ * 0 m (at chart datum) rather than the surrounding area's depth.
  */
 export function hazardDepth(props: Record<string, unknown>): number {
   const valsou = num(props, "VALSOU");
@@ -169,7 +178,7 @@ export function hazardDepth(props: Record<string, unknown>): number {
     return valsou;
   }
   const watlev = num(props, "WATLEV");
-  return watlev === 1 || watlev === 2 ? -Infinity : 0;
+  return watlev !== undefined && DRYING_WATLEV.has(watlev) ? -Infinity : 0;
 }
 
 function catzocOf(props: Record<string, unknown>): Catzoc {
@@ -182,6 +191,9 @@ function depthOf(layer: S57Layer, props: Record<string, unknown>, part: Part): n
     case "LNDARE":
     case "COALNE":
     case "SLCONS":
+    case "PONTON":
+    case "FLODOC":
+    case "HULKES":
       return -Infinity;
     case "SOUNDG":
       return num(props, "DEPTH") ?? part.z ?? 0;
@@ -218,6 +230,8 @@ function featureFor(
         : undefined;
     case "SWPARE":
       return isArea ? { ...base, role: "swept", depth: num(props, "DRVAL1") ?? 0 } : undefined;
+    case "UNSARE":
+      return isArea ? { ...base, role: "unsurveyed" } : undefined;
     case "DEPARE":
     case "DRGARE":
       if (!isArea) {

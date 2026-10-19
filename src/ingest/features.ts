@@ -2,7 +2,7 @@ import type { Geom } from "../foundation/geometry";
 
 /**
  * Chart features after ingest, in Web Mercator metres. Every source (S-57,
- * open data) is normalised to these four roles before the index is built.
+ * open data) is normalised to these roles before the index is built.
  */
 
 /** S-57 CATZOC codes: 1 A1, 2 A2, 3 B, 4 C, 5 D, 6 U (unassessed). */
@@ -52,4 +52,10 @@ export interface SweptFeature extends FeatureBase {
   depth: number;
 }
 
-export type ChartFeature = DepthFeature | CoverageFeature | QualityFeature | SweptFeature;
+/** UNSARE: inside the cell's coverage, but never surveyed, so it has no depth. */
+export interface UnsurveyedFeature extends FeatureBase {
+  role: "unsurveyed";
+}
+
+export type ChartFeature =
+  DepthFeature | CoverageFeature | QualityFeature | SweptFeature | UnsurveyedFeature;
