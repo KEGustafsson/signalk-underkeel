@@ -1,4 +1,10 @@
 import { buildEnvelope } from "../../src/engine/envelope";
+import type { RouteCheckInput } from "../../src/engine/route-check";
+import { checkRoute } from "../../src/engine/route-check";
+import { repairRoute } from "../../src/engine/route-repair";
+import type { LonLat } from "../../src/foundation/geo";
+import type { DepthFeature } from "../../src/ingest/features";
+import { DEFAULT_DYNAMICS } from "../../src/model/vessel";
 import type { NavState } from "../../src/engine/lookahead";
 import { DEFAULT_LOOKAHEAD, evaluateLookahead } from "../../src/engine/lookahead";
 import { reduce } from "../../src/livechart/soundings";
@@ -7,7 +13,7 @@ import { HazardIndex } from "../../src/spatial/hazards";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
 import { CHART_DATUM, ctx } from "../helpers/engine";
 import type { Box } from "../helpers/synthetic";
-import { basin } from "../helpers/synthetic";
+import { area, basin } from "../helpers/synthetic";
 
 /**
  * Positions the engine returns or stores are canonical WGS84, longitude in
@@ -19,10 +25,10 @@ const WEST: Box = [179.97, -16.9, 180, -16.8];
 const EAST: Box = [-180, -16.9, -179.97, -16.8];
 const NOW = 1_800_000_000_000;
 
-function chart(): ChartIndex {
+function chart(extra: DepthFeature[] = []): ChartIndex {
   return {
     catalogue: { version: 1, cells: [] },
-    pyramid: buildPyramid([...basin(WEST, 10), ...basin(EAST, 10, { cellRef: 1 })], {
+    pyramid: buildPyramid([...basin(WEST, 10), ...basin(EAST, 10, { cellRef: 1 }), ...extra], {
       minZoom: 10,
       leafZoom: 18
     }),
@@ -65,6 +71,49 @@ describe("positions across the antimeridian", () => {
       const xs = lons(f.geometry.coordinates);
       expect(Math.max(...xs) - Math.min(...xs)).toBeLessThan(1);
     }
+  });
+
+  const leg: LonLat[] = [
+    [179.99, -16.85],
+    [-179.99, -16.85]
+  ];
+  const route = (coordinates: LonLat[]): RouteCheckInput => ({
+    coordinates,
+    departure: NOW,
+    speeds: coordinates.slice(1).map(() => 3),
+    xteLimit: 20,
+    planningBuffer: 10,
+    vessel: { draft: 1.8, length: 12, beam: 4 },
+    dynamics: DEFAULT_DYNAMICS,
+    waterLevel: () => CHART_DATUM,
+    probability: 0.01
+  });
+
+  test("a leg across 180° between two charted cells is ok", () => {
+    const r = checkRoute(chart(), route(leg), NOW).legs[0];
+    expect(r?.status).toBe("ok");
+    expect(r?.flags).toEqual([]);
+  });
+
+  test("route repair across 180° finds a local detour with canonical waypoints", async () => {
+    const shoal = [
+      area([179.9985, -16.853, 180, -16.847], 1),
+      area([-180, -16.853, -179.9985, -16.847], 1, { cellRef: 1 })
+    ];
+    const index = chart(shoal);
+    expect(checkRoute(index, route(leg), NOW).legs[0]?.status).toBe("fail");
+    const {
+      repairs: [repair]
+    } = await repairRoute(index, route(leg));
+    expect(repair?.reason).toBeUndefined();
+    expect(repair?.waypoints.length).toBeGreaterThanOrEqual(1);
+    for (const [lon, lat] of repair?.waypoints ?? []) {
+      expect(canonical(lon)).toBe(true);
+      // A detour of a few hundred metres, not one round the world.
+      expect(180 - Math.abs(lon)).toBeLessThan(0.02);
+      expect(Math.abs(lat + 16.85)).toBeLessThan(0.02);
+    }
+    expect(repair?.legs.every((l) => l.status === "ok")).toBe(true);
   });
 
   test("a transducer forward of the antenna across 180° stores a canonical position", () => {

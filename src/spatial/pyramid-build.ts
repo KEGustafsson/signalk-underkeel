@@ -4,6 +4,7 @@ import {
   expandRect,
   extendRect,
   groundToMercator,
+  MERCATOR_HALF_WORLD,
   maxAbsLat,
   rectsOverlap,
   tileRange,
@@ -99,6 +100,25 @@ function prepare(features: ChartFeature[], opts: BuildOptions): Item[] {
   });
 }
 
+/** Containment is tested this far, in Mercator metres, inside the world's ±180° edge. */
+const WORLD_EDGE_INSET = 1e-3;
+
+/**
+ * The tile as containment sees it. Nothing lies past ±180°, so a cell whose
+ * edge runs along it holds a tile on that edge; read as is, the shared edge
+ * left every leaf there uncovered. A real gap past 180° is still found by
+ * queries, which walk the tiles at the other end of the world.
+ */
+function inWorld(rect: Rect): Rect {
+  const edge = MERCATOR_HALF_WORLD - WORLD_EDGE_INSET;
+  return {
+    minX: Math.max(rect.minX, -edge),
+    minY: rect.minY,
+    maxX: Math.min(rect.maxX, edge),
+    maxY: rect.maxY
+  };
+}
+
 function classify(items: Item[], rect: Rect): Hit[] {
   const scale = groundToMercator(1, maxAbsLat(rect));
   const hits: Hit[] = [];
@@ -110,7 +130,7 @@ function classify(items: Item[], rect: Rect): Hit[] {
     if (geomRectDistance(item.f.geom, rect, r) > r) {
       continue;
     }
-    hits.push({ item, full: item.radius === 0 && geomContainsRect(item.f.geom, rect) });
+    hits.push({ item, full: item.radius === 0 && geomContainsRect(item.f.geom, inWorld(rect)) });
   }
   return hits;
 }
@@ -176,7 +196,7 @@ function coveredBand(coverage: Hit[], rect: Rect): number | undefined {
       (inBand.length > 1 &&
         areasCoverRect(
           inBand.map((h) => h.item.f.geom),
-          rect
+          inWorld(rect)
         ))
     );
   });
@@ -237,7 +257,7 @@ function assessedCover(hits: Hit[], rect: Rect): boolean {
     zones.length > 0 &&
     areasCoverRect(
       zones.map((h) => h.item.f.geom),
-      rect
+      inWorld(rect)
     )
   );
 }

@@ -1,5 +1,5 @@
 import type { LonLat } from "../foundation/geo";
-import { EARTH_RADIUS } from "../foundation/geo";
+import { EARTH_RADIUS, wrapLon } from "../foundation/geo";
 import { sigmaExtra, thresholdDepth } from "../model/uncertainty";
 import { vesselTerms } from "../model/vessel";
 import type { ChartIndex } from "../spatial/chart-index";
@@ -61,17 +61,22 @@ interface Frame {
   toLonLat(x: number, y: number): LonLat;
 }
 
+/**
+ * Longitudes are taken the short way round from the origin, so a grid
+ * across 180° spans the leg and not the world, and points mapped back are
+ * canonical, since they are returned as waypoints.
+ */
 function frameAt(origin: LonLat): Frame {
   const k = Math.PI / 180;
   const cos = Math.cos(origin[1] * k);
   return {
     origin,
     toXY: (p) => [
-      (p[0] - origin[0]) * k * EARTH_RADIUS * cos,
+      wrapLon(p[0] - origin[0]) * k * EARTH_RADIUS * cos,
       (p[1] - origin[1]) * k * EARTH_RADIUS
     ],
     toLonLat: (x, y) => [
-      origin[0] + x / (k * EARTH_RADIUS * cos),
+      wrapLon(origin[0] + x / (k * EARTH_RADIUS * cos)),
       origin[1] + y / (k * EARTH_RADIUS)
     ]
   };
