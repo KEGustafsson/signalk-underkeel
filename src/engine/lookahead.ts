@@ -10,8 +10,7 @@ import { gnssSigma } from "../model/position";
 import type { DynamicsOptions, VesselModel } from "../model/vessel";
 import { vesselTerms } from "../model/vessel";
 import type { ChartIndex } from "../spatial/chart-index";
-import { WFS_NOTICE } from "../ingest/wfs";
-import { FLAGS, flagNames } from "../spatial/node-store";
+import { flagNames } from "../spatial/node-store";
 import type { RiskTile } from "../spatial/pyramid";
 import { footprintGeom, mercatorBuffer, minDepthOver } from "../spatial/pyramid";
 import { DEFAULT_BUILD } from "../spatial/pyramid-build";
@@ -21,6 +20,7 @@ import { escapeHeading } from "./escape";
 import type { Motion, Scoring } from "./fan";
 import { footprint } from "./fan";
 import { fanMembers } from "./trajectory";
+import { classify, degrade } from "./verdict";
 
 /**
  * Look-ahead (plan §4.7–§4.8): a CTRV fan of five tracks from COG, SOG and
@@ -233,74 +233,6 @@ function timesFor(m: Motion, vessel: VesselModel, opts: LookaheadOptions): numbe
   }
   times.push(m.horizon);
   return times;
-}
-
-interface Verdict {
-  state: UnderKeelState;
-  reason: string;
-  tts: number | null;
-}
-
-const inS = (t: number): string => `${t.toFixed(0)} s`;
-
-function classify(fps: FootprintResult[], opts: LookaheadOptions): Verdict {
-  const th = opts.thresholds;
-  const alarm = fps.find(
-    (f) =>
-      (f.t <= opts.alarmWithin && f.risk >= th.alarm) ||
-      (f.t <= opts.certainWithin && f.mean !== null && f.mean < 0)
-  );
-  const warn = fps.find((f) => f.risk >= th.warn);
-  const tts = warn ? warn.t : null;
-  if (alarm) {
-    const reason = alarm.t === 0 ? "shoal under the vessel" : `shoal ahead in ${inS(alarm.t)}`;
-    return { state: "alarm", reason, tts: tts ?? alarm.t };
-  }
-  if (warn && tts !== null && tts <= opts.warnWithin) {
-    // At a coverage edge the risk comes from the gap's unassessed σ, so say so.
-    const gap = ((warn.riskTile?.flags ?? 0) & FLAGS.NO_COVERAGE) !== 0;
-    const what = gap ? "no chart coverage" : "shoal";
-    return { state: "warn", reason: `${what} ahead in ${inS(tts)}`, tts };
-  }
-  const uncovered = fps.find((f) => f.uncovered);
-  if (uncovered) {
-    const where = uncovered.t === 0 ? "at the vessel" : `ahead in ${inS(uncovered.t)}`;
-    return { state: "warn", reason: `no chart coverage ${where}`, tts };
-  }
-  const alert = fps.find((f) => f.risk >= th.alert);
-  if (alert) {
-    return { state: "alert", reason: `shoal risk ahead in ${inS(alert.t)}`, tts };
-  }
-  return { state: "normal", reason: "", tts: null };
-}
-
-/**
- * A clear answer is downgraded when it rests on less than full input:
- * without course and speed only the vessel's own footprint is checked
- * (`unknown`), and a fallback water level is published as an alert.
- */
-function degrade(c: Verdict, m: Motion, wl: WaterLevel, fps: FootprintResult[]): Verdict {
-  if (c.state !== "normal") {
-    return c;
-  }
-  if (!m.known) {
-    return {
-      ...c,
-      state: "unknown",
-      reason: "course or speed stale: only the current position is checked"
-    };
-  }
-  if (wl.degraded) {
-    return { ...c, state: "alert", reason: wl.degraded };
-  }
-  // Depths from an advisory source lack rocks and survey quality: never normal.
-  if (fps.some((f) => f.flags & FLAGS.NOT_FOR_NAVIGATION)) {
-    return { ...c, state: "alert", reason: WFS_NOTICE };
-  }
-  if (!m.moving) {
-    return { ...c, reason: "low speed: only the current position is checked" };
-  }
-  return c;
 }
 
 function riskiest(fps: FootprintResult[]): FootprintResult | undefined {
