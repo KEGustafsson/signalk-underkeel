@@ -17,6 +17,23 @@ fi
 
 src=$1
 out=$2
+# Checked up front: in the loop below a failing ogrinfo reads as "layer
+# absent", so a missing GDAL or source would end in an empty export and exit 0.
+if [ ! -r "$src" ]; then
+  echo "$src: not a readable file" >&2
+  exit 1
+fi
+for tool in ogrinfo ogr2ogr; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "$tool not found; install GDAL" >&2
+    exit 1
+  fi
+done
+if ! ogrinfo -q -so "$src" >/dev/null; then
+  echo "GDAL cannot open $src" >&2
+  exit 1
+fi
+
 # The GeoJSON driver will not overwrite a file, and a layer dropped from a
 # new edition must not survive from an old export: start from an empty
 # directory every time.
@@ -34,3 +51,9 @@ for layer in DSID DEPARE DRGARE SWPARE SOUNDG UWTROC WRECKS OBSTRN LNDARE COALNE
     ogr2ogr -f GeoJSON -t_srs EPSG:4326 "$out/$layer.geojson" "$src" "$layer"
   fi
 done
+
+# Without coverage the cell reader refuses the directory; say so here instead.
+if [ ! -f "$out/M_COVR.geojson" ]; then
+  echo "$src has no M_COVR coverage layer; $out is not a usable cell" >&2
+  exit 1
+fi

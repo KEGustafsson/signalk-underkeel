@@ -94,3 +94,6 @@ All notable changes to signalk-underkeel are documented here.
   `DSID` datum is matched as an unknown datum (σ 0.5 m), listed with `datumAreas` in the
   `/status` datum mapping. Only the `DSID` datum was read, so such a cell's water level could
   be applied on the wrong datum.
+- `scripts/enc-to-geojson.sh` exits non-zero when the source is unreadable, GDAL is missing or
+  cannot open the source, or the export has no `M_COVR`. Each of these ended in an empty or
+  unusable directory with exit status 0.
