@@ -87,10 +87,10 @@ REST, base `/plugins/signalk-underkeel/v1`, open to readonly users:
 - `POST /query`: a GeoJSON Point or Polygon, with an optional buffer, draft and speed; returns
   the class, P(UKC < 0), the deciding hazard and the explanation, for cursor readouts.
 - `GET /acks`, `POST /acks`, `DELETE /acks/:id`: acknowledged passages. Inside one, with the
-  heading within ±20° and no less water or more draft than when acknowledged, warn and alarm
-  are published as alert with the reason "acknowledged passage". A fallback water level
-  honours none, and `POST /acks` answers 409 while the level is a fallback. Adding and
-  deleting need a readwrite user.
+  heading within ±20°, the water level at most 5 cm below and the draft no deeper than when
+  acknowledged, warn and alarm are published as alert with the reason "acknowledged passage".
+  A fallback water level honours none, and `POST /acks` answers 409 while the level is a
+  fallback. Adding and deleting need a readwrite user.
 - `GET /livechart/discrepancies` and `GET /livechart/csb.geojson`, with the living chart on
   (see above).
 - `GET /tiles/ukc/{z}/{x}/{y}.pbf`: Mapbox vector tiles from zoom 11, one `ukc` layer of cells
