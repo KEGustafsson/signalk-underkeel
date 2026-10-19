@@ -106,3 +106,5 @@ All notable changes to signalk-underkeel are documented here.
   it takes the lower of `heightNow` and `heightLow` until 6 h past `environment.tide.timeLow`
   (6 h past the reading without it), then falls back. It held `heightNow` for 30 minutes on a
   falling tide and answered `heightLow` for any time past the next low water.
+- A water-level fallback uses the source's last level when that is below chart datum, instead
+  of chart datum: in the Baltic the level is often negative, and a stale feed lowered P(UKC < 0).

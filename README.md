@@ -37,8 +37,8 @@ Water-level sources, set under **Water level** in the plugin configuration:
   S-57 vertical datum is mapped to one of them; the defaults cover the mean-water datums, and
   cells on N2000 need an entry. An unmapped datum widens σ.
 
-A source that stops updating falls back to chart datum with a wider σ, and the state carries
-the reason.
+A source that stops updating falls back to chart datum, or to its last level when that was
+below chart datum, with a wider σ, and the state carries the reason.
 
 **Living chart** (off by default): depth readings that pass a quality gate (good fix, HDOP
 under 2, small roll, a real water level) are reduced to chart datum and kept per ~76 m cell.

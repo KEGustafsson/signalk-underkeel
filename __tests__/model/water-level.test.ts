@@ -125,6 +125,29 @@ describe("water-level resolution", () => {
     });
   });
 
+  test("a stale feed below chart datum falls back to its last level, not to chart datum", () => {
+    const last = NOW + 10 * HOUR;
+    const stale = last + 31 * 60000;
+    expect(resolveWaterLevel(seriesProvider(last), n2000, undefined, stale, stale)).toEqual({
+      h: expect.closeTo(-0.4, 9) as number,
+      sigma: CHART_DATUM_SIGMA,
+      source: "fallback",
+      degraded: "water level from stub is 31 min old"
+    });
+  });
+
+  test("a time past the data falls back to the last level when that is below chart datum", () => {
+    const low: WaterLevelProvider = {
+      id: "low",
+      reference: "chart",
+      levelAt: (_p, t) => (t <= NOW ? { h: -0.25, sigma: 0.05, source: "low" } : undefined),
+      health: () => ({ ok: true, lastUpdate: NOW })
+    };
+    const wl = resolveWaterLevel(low, [], undefined, NOW + HOUR, NOW);
+    expect(wl).toMatchObject({ h: -0.25, sigma: CHART_DATUM_SIGMA, source: "fallback" });
+    expect(wl.degraded).toMatch(/no value/);
+  });
+
   test("an unhealthy or empty feed falls back with its message", () => {
     const down = resolveWaterLevel(seriesProvider(NOW, false), n2000, undefined, NOW, NOW);
     expect(down.degraded).toBe("water level from stub: feed down");
@@ -208,6 +231,18 @@ describe("Signal K tide provider", () => {
     p.record("environment.tide.heightLow", 0.5, NOW);
     expect(resolveWaterLevel(p, [], undefined, NOW + 5 * HOUR, NOW).h).toBe(0.5);
     expect(resolveWaterLevel(p, [], undefined, NOW + 7 * HOUR, NOW).degraded).toMatch(/no value/);
+  });
+
+  test("a stale negative reading falls back to that reading", () => {
+    const p = new SignalKTideProvider(0.1);
+    p.record("environment.tide.heightNow", -0.4, NOW);
+    const later = NOW + 40 * 60000;
+    expect(resolveWaterLevel(p, [], undefined, later, later)).toEqual({
+      h: -0.4,
+      sigma: CHART_DATUM_SIGMA,
+      source: "fallback",
+      degraded: "water level from signalk-tide is 40 min old"
+    });
   });
 
   test("a reading older than 30 minutes is stale", () => {

@@ -46,8 +46,13 @@ const MAX_INTERVAL_SAMPLES = 300;
 
 export const CHART_DATUM: WaterLevel = { h: 0, sigma: CHART_DATUM_SIGMA, source: "chart-datum" };
 
-function fallback(reason: string): WaterLevel {
-  return { h: 0, sigma: CHART_DATUM_SIGMA, source: "fallback", degraded: reason };
+/**
+ * Chart datum, or the last level the source gave when that was lower: Baltic
+ * levels are often below chart datum, and falling back to 0 would assume
+ * more water than was last seen.
+ */
+function fallback(reason: string, last: number): WaterLevel {
+  return { h: Math.min(0, last), sigma: CHART_DATUM_SIGMA, source: "fallback", degraded: reason };
 }
 
 /** A constant height above chart datum with a user-set σ. */
@@ -141,15 +146,16 @@ function unusable(p: WaterLevelProvider, now: number): string | undefined {
   return undefined;
 }
 
+/** The level at `t`, or why there is none. */
 function sampleAt(
   p: WaterLevelProvider,
   uses: readonly DatumUse[],
   position: LonLat | undefined,
   t: number
-): WaterLevel {
+): WaterLevel | string {
   if (p.reference === "chart") {
     const s = p.levelAt(position, t, "mw");
-    return s ? { ...s } : fallback(`water level from ${p.id}: no value for ${iso(t)}`);
+    return s ? { ...s } : `water level from ${p.id}: no value for ${iso(t)}`;
   }
   // Cells on different datums share one level: take the lowest and the
   // widest σ, which per invariant 2 can only raise P(UKC < 0).
@@ -158,7 +164,7 @@ function sampleAt(
   for (const use of uses) {
     const s = p.levelAt(position, t, use.series);
     if (!s) {
-      return fallback(`water level from ${p.id}: no ${use.series} value for ${iso(t)}`);
+      return `water level from ${p.id}: no ${use.series} value for ${iso(t)}`;
     }
     if (!use.known) {
       unknown.push(...use.cells);
@@ -169,12 +175,22 @@ function sampleAt(
       : { h: s.h, sigma, source: s.source };
   }
   if (!out) {
-    return fallback("no chart cells to relate the water level to");
+    return "no chart cells to relate the water level to";
   }
   if (unknown.length > 0) {
     out.note = `vertical datum unknown for ${unknown.join(", ")}`;
   }
   return out;
+}
+
+/**
+ * The level at the source's newest data, from wherever it was fetched, or 0
+ * when there is none.
+ */
+function lastLevel(p: WaterLevelProvider, uses: readonly DatumUse[], now: number): number {
+  const at = p.health(now).lastUpdate;
+  const wl = at === undefined ? undefined : sampleAt(p, uses, undefined, at);
+  return typeof wl === "object" ? wl.h : 0;
 }
 
 function iso(t: number): string {
@@ -183,8 +199,9 @@ function iso(t: number): string {
 
 /**
  * The level to apply at time `t`. No provider means chart datum; a
- * provider that is unhealthy or stale for more than 30 minutes falls back
- * to chart datum with σ 0.3 m and a `degraded` reason, never silently.
+ * provider that is unhealthy, stale for more than 30 minutes or without a
+ * value for `t` falls back to chart datum, or its last level when lower,
+ * with σ 0.3 m and a `degraded` reason, never silently.
  */
 export function resolveWaterLevel(
   p: WaterLevelProvider | undefined,
@@ -196,8 +213,8 @@ export function resolveWaterLevel(
   if (!p) {
     return CHART_DATUM;
   }
-  const reason = unusable(p, now);
-  return reason ? fallback(reason) : sampleAt(p, uses, position, t);
+  const wl = unusable(p, now) ?? sampleAt(p, uses, position, t);
+  return typeof wl === "string" ? fallback(wl, lastLevel(p, uses, now)) : wl;
 }
 
 /** The lowest level, with the widest σ, over [start, end]; any fallback wins. */

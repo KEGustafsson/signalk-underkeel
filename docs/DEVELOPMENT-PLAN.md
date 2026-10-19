@@ -379,7 +379,9 @@ mean water. `datum.ts` maps each cell's vertical datum (`M_VDAT` / `VERDAT`) to 
 FMI series. **An unknown datum sets σ_wl = 0.5 m and flags the cell.**
 
 **Fail-safe.** If the provider is stale for more than 30 minutes, the engine falls back to
-`h = 0` (chart datum) with σ = 0.3 m, and publishes the reason. It never stays silent.
+`h = min(0, last level)` with σ = 0.3 m, and publishes the reason. It never stays silent. The
+last level is the provider's at its newest data; Baltic levels are often below chart datum,
+and `h = 0` would then assume more water than was last observed.
 
 **As built (M3).**
 

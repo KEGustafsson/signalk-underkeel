@@ -453,7 +453,7 @@ It holds until SOG stays above 0.5 m/s for 10 s.
 flowchart TD
   S[configured source] --> F{data newer<br/>than 30 min?}
   F -- yes --> OK[use it, with its σ]
-  F -- no --> FB[chart datum, σ 0.3 m,<br/>marked as fallback]
+  F -- no --> FB[chart datum, or the last level<br/>when lower, σ 0.3 m,<br/>marked as fallback]
   FB --> AL[look-ahead: at least alert, with the reason<br/>overlay: nothing drawn as clear<br/>route check: no leg is ok]
 ```
 
