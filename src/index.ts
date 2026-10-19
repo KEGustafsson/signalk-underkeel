@@ -48,6 +48,8 @@ function stopPlugin(app: ServerAPI, clock: Clock, state: PluginState): void {
           { path: PATHS.risk as Path, value: null },
           { path: PATHS.timeToShoal as Path, value: null },
           { path: PATHS.escapeHeading as Path, value: null },
+          { path: PATHS.envelopeRev as Path, value: null },
+          { path: PATHS.waterLevel as Path, value: null },
           { path: PATHS.notification as Path, value: stoppedNotification() }
         ]
       }

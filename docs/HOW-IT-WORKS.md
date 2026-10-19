@@ -343,6 +343,9 @@ Published every second:
 Data Browser picture: the lowest UKC is then −∞, which JSON cannot carry. `state` and `risk`
 still say what is ahead.
 
+When the plugin stops it publishes `state` `off` and every other `navigation.underKeel` value as
+`null`, so no reading outlives the monitoring.
+
 The notification is sent only when its state or message changes. Its `data.explanation`
 carries each term of the sentence as a number, plus the deciding chart cell and its edition,
 and the named hazard when one set the depth. The `alarm` from the approach:

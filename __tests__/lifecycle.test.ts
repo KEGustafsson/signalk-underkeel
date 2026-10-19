@@ -2,8 +2,8 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import underkeel = require("../src/index");
-import { FIXTURES, ROCK } from "./helpers/fixture-index";
-import { fakeApp, fakeClock, fakeRouter, T0 } from "./helpers/plugin-harness";
+import { FIXTURES, M_PER_DEG_LON, ROCK } from "./helpers/fixture-index";
+import { fakeApp, fakeClock, fakeRouter, lastValue, navDelta, T0 } from "./helpers/plugin-harness";
 
 /** What the plugin answers and publishes once it is stopped or restarted. */
 
@@ -57,5 +57,22 @@ describe("after stop", () => {
       engine: { state: "off", reason: "plugin stopped" },
       index: { loaded: false }
     });
+  });
+
+  test("the water level and envelope rev are cleared, not left at their last values", () => {
+    const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 3.2 } } });
+    const clock = fakeClock(T0);
+    const plugin = underkeel(f.app, clock);
+    plugin.start(
+      { cellsDir: FIXTURES, leafZoom: 18, waterLevel: { source: "manual", height: 0.4 } },
+      () => undefined
+    );
+    f.send(navDelta(ROCK[0] - 75 / M_PER_DEG_LON, ROCK[1], 3, T0));
+    clock.advance(1000);
+    expect(lastValue(f.deltas, "navigation.underKeel.waterLevel")).toBe(0.4);
+    expect(lastValue(f.deltas, "navigation.underKeel.envelopeRev")).toEqual(expect.any(Number));
+    plugin.stop();
+    expect(lastValue(f.deltas, "navigation.underKeel.waterLevel")).toBeNull();
+    expect(lastValue(f.deltas, "navigation.underKeel.envelopeRev")).toBeNull();
   });
 });

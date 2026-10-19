@@ -125,3 +125,5 @@ All notable changes to signalk-underkeel are documented here.
   answering on the old index at chart datum, so a rock could read `clear` and a route `ok`.
 - The notification published when the plugin stops carries `data` with `engineState: "off"`
   and null values, as `schemas/navigation-safety/notification.json` requires.
+- Stopping the plugin publishes `navigation.underKeel.waterLevel` and `.envelopeRev` as `null`
+  as well; they kept their last values before.
