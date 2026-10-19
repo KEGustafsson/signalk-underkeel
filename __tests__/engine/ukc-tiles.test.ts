@@ -11,6 +11,7 @@ import type { TileCell } from "../../src/spatial/tile-walk";
 import { cellsInTile } from "../../src/spatial/tile-walk";
 import { fixtureIndex, ROCK } from "../helpers/fixture-index";
 import { area, basin, coverage, quality } from "../helpers/synthetic";
+import { uniform as evenly } from "../helpers/arbitraries";
 
 const TH: Thresholds = DEFAULT_LOOKAHEAD.thresholds;
 const EXTENT = 4096;
@@ -222,7 +223,7 @@ describe("UKC classes", () => {
         fc.integer({ min: 11, max: 17 }),
         fc.double({ min: 22.001, max: 22.037, noNaN: true }),
         fc.double({ min: 60.001, max: 60.019, noNaN: true }),
-        fc.double({ min: 1, max: 9, noNaN: true }),
+        evenly(1, 9),
         (z, lon, lat, threshold) => {
           const t = tileOf(z, [lon, lat]);
           const tr = tileRect(t.z, t.x, t.y);

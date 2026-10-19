@@ -10,20 +10,17 @@ import {
   tileSize,
   toMercator
 } from "../../src/foundation/geo";
+import { uniform } from "../helpers/arbitraries";
 
 describe("web mercator", () => {
   test("round-trips lon/lat", () => {
     fc.assert(
-      fc.property(
-        fc.double({ min: -179, max: 179, noNaN: true }),
-        fc.double({ min: -84, max: 84, noNaN: true }),
-        (lon, lat) => {
-          const [x, y] = toMercator(lon, lat);
-          const [lon2, lat2] = fromMercator(x, y);
-          expect(lon2).toBeCloseTo(lon, 9);
-          expect(lat2).toBeCloseTo(lat, 9);
-        }
-      )
+      fc.property(uniform(-179, 179), uniform(-84, 84), (lon, lat) => {
+        const [x, y] = toMercator(lon, lat);
+        const [lon2, lat2] = fromMercator(x, y);
+        expect(lon2).toBeCloseTo(lon, 9);
+        expect(lat2).toBeCloseTo(lat, 9);
+      })
     );
   });
 
@@ -31,8 +28,8 @@ describe("web mercator", () => {
     fc.assert(
       fc.property(
         fc.integer({ min: 0, max: 22 }),
-        fc.double({ min: -179, max: 179, noNaN: true }),
-        fc.double({ min: -84, max: 84, noNaN: true }),
+        uniform(-179, 179),
+        uniform(-84, 84),
         (z, lon, lat) => {
           const [x, y] = toMercator(lon, lat);
           const t = tileAt(z, x, y);
