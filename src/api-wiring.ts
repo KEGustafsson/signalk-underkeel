@@ -34,7 +34,7 @@ export interface PluginState {
 const NOT_STARTED: ApiReply = { status: 503, body: { errors: ["plugin not started"] } };
 
 export function apiFor(
-  app: Pick<ServerAPI, "resourcesApi">,
+  app: Pick<ServerAPI, "resourcesApi" | "error">,
   clock: Clock,
   s: PluginState
 ): ApiProvider {
@@ -67,7 +67,8 @@ export function apiFor(
       heading: () => m.heading(),
       waterLevel: () => m.waterLevel(),
       draft: () => m.vessel()?.draft,
-      now: () => clock.now()
+      now: () => clock.now(),
+      error: (message) => app.error(message)
     });
   };
   return {

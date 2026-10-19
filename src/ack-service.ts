@@ -21,6 +21,20 @@ export interface AckServiceDeps {
   waterLevel(): WaterLevel;
   draft(): number | undefined;
   now(): number;
+  /** Logs a failure the reply does not carry: the file path stays off the wire. */
+  error(message: string): void;
+}
+
+const NOT_SAVED: ApiReply = { status: 500, body: { errors: ["could not save acknowledgements"] } };
+
+/** Runs a store write; a save that throws is logged and answered 500. */
+function saving(deps: AckServiceDeps, write: () => ApiReply): ApiReply {
+  try {
+    return write();
+  } catch (err) {
+    deps.error(`acknowledgements not saved: ${(err as Error).message}`);
+    return NOT_SAVED;
+  }
 }
 
 export function listAcks(deps: AckServiceDeps): ApiReply {
@@ -60,12 +74,16 @@ export function addAck(body: unknown, deps: AckServiceDeps): ApiReply {
     waterLevel: level.h,
     draft
   };
-  deps.store.add(ack);
-  return { status: 201, body: ack };
+  return saving(deps, () => {
+    deps.store.add(ack);
+    return { status: 201, body: ack };
+  });
 }
 
 export function deleteAck(id: string, deps: AckServiceDeps): ApiReply {
-  return deps.store.remove(id)
-    ? { status: 204, body: undefined }
-    : { status: 404, body: { errors: [`no acknowledgement ${id}`] } };
+  return saving(deps, () =>
+    deps.store.remove(id)
+      ? { status: 204, body: undefined }
+      : { status: 404, body: { errors: [`no acknowledgement ${id}`] } }
+  );
 }

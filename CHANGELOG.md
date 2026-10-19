@@ -140,3 +140,7 @@ All notable changes to signalk-underkeel are documented here.
 - `POST /acks` checks its polygon like `POST /query`: the ring must be closed, have no holes and
   fit in 50 km without crossing ±180°. An unclosed ring lost a vertex, a hole was dropped so
   the acknowledgement covered it, and a ring across ±180° became a band around the world.
+- An acknowledgement that cannot be saved answers 500 `could not save acknowledgements` and is
+  logged to the server log. `DELETE /acks/:id` threw into express, which answered with an HTML
+  stack trace, and `POST /acks` answered 400 with the raw file-system error and its absolute
+  path. Other REST failures that are not a bad request body are a generic 500 as well.

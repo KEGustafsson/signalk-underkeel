@@ -341,6 +341,26 @@ describe("plugin lifecycle", () => {
     plugin.stop();
   });
 
+  test("an acknowledgement that cannot be saved answers 500 without the file path", async () => {
+    const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 3.2 } } });
+    const clock = fakeClock(T0);
+    const plugin = underkeel(f.app, clock);
+    const { router, post, del } = fakeRouter();
+    plugin.registerWithRouter?.(router as never);
+    plugin.start({ cellsDir: FIXTURES, leafZoom: 18 }, () => undefined);
+    f.send(navDelta(ROCK[0] - 300 / M_PER_DEG_LON, ROCK[1], 3, clock.now() + 1000));
+    clock.advance(1000);
+    const made = await post("/v1/acks", {});
+    expect(made.code).toBe(201);
+    // A directory where the temporary file goes makes every save throw.
+    fs.mkdirSync(path.join(dataDir, `acks.json.tmp-${process.pid}`));
+    const failed = { code: 500, body: { errors: ["could not save acknowledgements"] } };
+    expect(await post("/v1/acks", {})).toEqual(failed);
+    expect(await del("/v1/acks/:id", { id: (made.body as { id: string }).id })).toEqual(failed);
+    expect(f.errors.filter((e) => /acks\.json/.test(e))).toHaveLength(2);
+    plugin.stop();
+  });
+
   test("the grounding detector is off by default and writes notifications.grounding when on", () => {
     const run = (options: Record<string, unknown>) => {
       const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 1.8 } } });
