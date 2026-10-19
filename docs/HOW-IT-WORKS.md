@@ -339,7 +339,7 @@ Published every second:
 | `navigation.underKeel.clearanceSigma`        | m     | σ of that clearance, from the same footprint                                                               |
 | `navigation.underKeel.risk`                  | ratio | highest P(UKC < 0) over the horizon                                                                        |
 | `navigation.underKeel.timeToShoal`           | s     | seconds until P first reaches the warn level; null if it does not                                          |
-| `navigation.underKeel.escapeHeading`         | rad   | true heading to turn to, below; null in `normal`                                                           |
+| `navigation.underKeel.escapeHeading`         | rad   | true heading to turn to, below; null in `normal` or no way out                                             |
 | `navigation.underKeel.envelopeRev`           |       | increments when `GET /envelope` changes; starts at the start time in ms, so no rev repeats after a restart |
 | `navigation.underKeel.waterLevel`            | m     | water level applied above chart datum                                                                      |
 | `notifications.navigation.underKeel`         |       | state, message and the explanation of every term                                                           |
@@ -396,9 +396,11 @@ silencing.
 In `alert`, `warn` and `alarm` the plugin also looks for a way out. It tries headings in 5°
 steps out to 90° either side, smallest change first, each reached by a turn at the boat's
 maximum rate of turn (3°/s by default). The first heading that stays clear over the whole
-horizon wins; if none does, the one with the most time before shoal water. The result is
-published as `navigation.underKeel.escapeHeading`. It is searched at most every 3 s and held in
-between. The plugin only publishes it; it never steers.
+horizon wins; if none does, the one with the most time before shoal water. The footprint at
+the vessel is the same on every heading and is not counted. When every heading reaches shoal
+water at the same time, or within the first step, the escape heading is null: there is no
+heading to recommend. The result is published as `navigation.underKeel.escapeHeading`. It is
+searched at most every 3 s and held in between. The plugin only publishes it; it never steers.
 
 ### Position integrity
 

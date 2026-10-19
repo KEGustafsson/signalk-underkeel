@@ -15,7 +15,8 @@ publishes:
 - `navigation.underKeel.state`: `normal`, `alert`, `warn`, `alarm`, `unknown` or `off`;
 - `navigation.underKeel.clearance` and `.clearanceSigma` (predicted minimum UKC and its σ),
   `.risk` (highest P(UKC < 0) over the horizon), `.timeToShoal`, `.escapeHeading` (the
-  heading with the longest time to shoal, when not `normal`), `.envelopeRev` and
+  heading with the longest time to shoal, when not `normal`; null when no heading does better
+  than another), `.envelopeRev` and
   `.waterLevel` (the level applied above chart datum);
 - `notifications.navigation.underKeel`, with an explanation of every term behind the result;
 - `notifications.navigation.positionIntegrity` (`warn`) when GNSS leaves dead reckoning from

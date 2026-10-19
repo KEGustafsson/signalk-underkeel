@@ -190,3 +190,6 @@ All notable changes to signalk-underkeel are documented here.
   the vessel slowed.
 - After `unknown` or `off`, a held risk state is lowered by the usual 5 clear ticks; before, the
   first `normal` after the gap was published at once.
+- The escape heading no longer recommends holding course when the vessel's own footprint is
+  already over shoal water. The footprint at the vessel is common to every heading and is not
+  scored; when no heading does better, `escapeHeading` is null.

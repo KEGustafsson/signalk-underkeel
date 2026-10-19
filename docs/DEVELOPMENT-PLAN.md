@@ -506,7 +506,9 @@ both ends, still touch: a fast boat must not skip a rock between two samples.
 
 **Escape fan** (only in alert, warn or alarm). Evaluate headings at ±5° steps out to ±90°,
 using arcs limited by the boat's configured maximum turn rate. Publish the heading with the
-greatest TTS, breaking ties by the smallest heading change.
+greatest TTS, breaking ties by the smallest heading change. TTS counts from the first step
+after t = 0, since the footprint under the vessel is common to all headings; when every heading
+has the same TTS, or none is clear past the first step, publish null.
 
 **Integrity monitor** (`model/integrity.ts`).
 
@@ -585,18 +587,18 @@ fired, the notification holds until SOG stays above 0.5 m/s for 10 s.
 **Deltas.** These are published by the plugin, use plugin-scoped units in SI, and are
 proposed for the Signal K spec later.
 
-| Path                                         | Unit         | Meaning                                              |
-| -------------------------------------------- | ------------ | ---------------------------------------------------- |
-| `navigation.underKeel.state`                 | enum         | `normal \| alert \| warn \| alarm \| unknown \| off` |
-| `navigation.underKeel.clearance`             | m            | predicted min UKC (μ) over horizon                   |
-| `navigation.underKeel.clearanceSigma`        | m            | σ of the above                                       |
-| `navigation.underKeel.risk`                  | ratio        | max P(UKC < 0) over horizon                          |
-| `navigation.underKeel.timeToShoal`           | s            | null if none in horizon                              |
-| `navigation.underKeel.escapeHeading`         | rad          | true heading, null when normal                       |
-| `navigation.underKeel.envelopeRev`           | int          | bump → client fetches `/envelope`                    |
-| `navigation.underKeel.waterLevel`            | m            | applied level above chart datum                      |
-| `notifications.navigation.underKeel`         | notification | state + message + `data.explanation`                 |
-| `notifications.navigation.positionIntegrity` | notification | GNSS/DR divergence                                   |
+| Path                                         | Unit         | Meaning                                                |
+| -------------------------------------------- | ------------ | ------------------------------------------------------ |
+| `navigation.underKeel.state`                 | enum         | `normal \| alert \| warn \| alarm \| unknown \| off`   |
+| `navigation.underKeel.clearance`             | m            | predicted min UKC (μ) over horizon                     |
+| `navigation.underKeel.clearanceSigma`        | m            | σ of the above                                         |
+| `navigation.underKeel.risk`                  | ratio        | max P(UKC < 0) over horizon                            |
+| `navigation.underKeel.timeToShoal`           | s            | null if none in horizon                                |
+| `navigation.underKeel.escapeHeading`         | rad          | true heading, null when normal or no heading is better |
+| `navigation.underKeel.envelopeRev`           | int          | bump → client fetches `/envelope`                      |
+| `navigation.underKeel.waterLevel`            | m            | applied level above chart datum                        |
+| `notifications.navigation.underKeel`         | notification | state + message + `data.explanation`                   |
+| `notifications.navigation.positionIntegrity` | notification | GNSS/DR divergence                                     |
 
 This follows the "lightweight signal, then fetch the snapshot" pattern from the Plotter
 Extensions route API (`route.dirty` → `route.get`). Deltas stay small, and the GeoJSON is

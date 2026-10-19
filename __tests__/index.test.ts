@@ -87,8 +87,8 @@ describe("plugin lifecycle", () => {
     expect(fs.existsSync(path.join(dataDir, "index", "pyramid.bin"))).toBe(true);
     expect(lastValue(f.deltas, "navigation.underKeel.state")).toBe("unknown");
 
-    // 75 m west of the rock at 3 m/s: the rock is ~25 s ahead.
-    const lon = ROCK[0] - 75 / M_PER_DEG_LON;
+    // 90 m west of the rock at 3 m/s: the rock is ~30 s ahead, still room to turn away.
+    const lon = ROCK[0] - 90 / M_PER_DEG_LON;
     f.send(navDelta(lon, ROCK[1], 3, T0));
     clock.advance(1000);
     expect(lastValue(f.deltas, "navigation.underKeel.state")).toBe("alarm");

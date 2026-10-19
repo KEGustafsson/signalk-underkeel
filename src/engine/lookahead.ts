@@ -163,7 +163,7 @@ export interface LookaheadResult {
   risk: number | null;
   /** Seconds until P first reaches the warn level; null if it does not. */
   timeToShoal: number | null;
-  /** True heading with the longest time to shoal, radians; null when normal. */
+  /** True heading with the longest time to shoal, radians; null when normal or none is better. */
   escapeHeading: number | null;
   horizon: number;
   footprints: FootprintResult[];

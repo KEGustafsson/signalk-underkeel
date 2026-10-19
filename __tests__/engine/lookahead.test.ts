@@ -311,6 +311,29 @@ describe("probabilistic look-ahead on the synthetic chart", () => {
     expect(calm.escapeHeading).toBeNull();
   });
 
+  test("a rock under the bow never yields hold course as the escape", () => {
+    const rock: ChartIndex = {
+      catalogue: { version: 1, cells: [] },
+      pyramid: buildPyramid([...basin([22.0, 60.0, 22.04, 60.02], 10), point(22.02, 60.01, 1)], {
+        minZoom: 12,
+        leafZoom: 18
+      }),
+      hazards: new HazardIndex([])
+    };
+    for (const d of [5, 15, 30]) {
+      const r = evaluateLookahead(
+        nav(22.02 - d / M_PER_DEG_LON, 60.01),
+        { ...ctx(DEEP_KEEL), escape: true },
+        rock,
+        NOW
+      );
+      expect(r.state).toBe("alarm");
+      if (r.escapeHeading !== null) {
+        expect(Math.abs(r.escapeHeading - EAST)).toBeGreaterThanOrEqual((5 * Math.PI) / 180 - 1e-9);
+      }
+    }
+  });
+
   test("an escape heading never counts water off the chart as clear", () => {
     // A deep basin whose east edge is 200 m ahead; the vessel runs east near its north side.
     const edge: ChartIndex = {
