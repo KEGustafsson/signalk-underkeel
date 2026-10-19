@@ -4,7 +4,7 @@ import { buildPyramid } from "../../src/spatial/pyramid-build";
 import type { Box } from "../helpers/synthetic";
 import { toMercator } from "../../src/foundation/geo";
 import { probabilityBelowZero } from "../../src/foundation/stats";
-import type { DepthFeature } from "../../src/ingest/features";
+import type { DepthFeature, QualityFeature } from "../../src/ingest/features";
 import { area, basin, boxRing, coverage, land, point, quality, swept } from "../helpers/synthetic";
 
 const AREA: Box = [22.0, 60.0, 22.02, 60.01];
@@ -97,6 +97,54 @@ describe("min-depth pyramid", () => {
     const r = query(store, [22.005, 60.002, 22.006, 60.003]);
     expect(r.flags & FLAGS.UNASSESSED).toBeTruthy();
     expect(r.sigmaP).toBe(500);
+  });
+
+  describe("adjacent quality zones", () => {
+    const west: Box = [22.0, 60.0, 22.01, 60.01];
+    const east: Box = [22.01, 60.0, 22.02, 60.01];
+    const across: Box = [22.0099, 60.004, 22.0101, 60.0042];
+
+    test("a leaf across their shared edge is assessed with the worse CATZOC", () => {
+      const features = [coverage(AREA), area(AREA, 6), quality(west, 1), quality(east, 2)];
+      const r = query(buildPyramid(features, OPTS), across);
+      expect(r.flags & FLAGS.UNASSESSED).toBe(0);
+      expect(r.sigmaP).toBe(10); // A2: ±20 m
+    });
+
+    test("a diagonal shared edge is resolved too", () => {
+      const [sw, se, ne, nw] = boxRing(AREA).map(([lon, lat]) => toMercator(lon, lat));
+      const triangle = (outer: [number, number][]): QualityFeature => ({
+        ...quality(AREA, 2),
+        geom: { type: "polygon", polygons: [{ outer, holes: [] }] }
+      });
+      const features = [
+        coverage(AREA),
+        area(AREA, 6),
+        triangle([sw, se, nw] as [number, number][]),
+        triangle([se, ne, nw] as [number, number][])
+      ];
+      const r = query(buildPyramid(features, OPTS), [22.0099, 60.0049, 22.0101, 60.0051]);
+      expect(r.flags & FLAGS.UNASSESSED).toBe(0);
+      expect(r.sigmaP).toBe(10);
+    });
+
+    test("a gap between them stays UNASSESSED", () => {
+      const features = [
+        coverage(AREA),
+        area(AREA, 6),
+        quality([22.0, 60.0, 22.0099, 60.01], 1),
+        quality([22.0101, 60.0, 22.02, 60.01], 2)
+      ];
+      const r = query(buildPyramid(features, OPTS), [22.00999, 60.004, 22.01001, 60.0042]);
+      expect(r.flags & FLAGS.UNASSESSED).toBeTruthy();
+      expect(r.sigmaP).toBe(500);
+    });
+
+    test("an unassessed neighbour does not cover the leaf", () => {
+      const features = [coverage(AREA), area(AREA, 6), quality(west, 1), quality(east, 6)];
+      const r = query(buildPyramid(features, OPTS), across);
+      expect(r.flags & FLAGS.UNASSESSED).toBeTruthy();
+    });
   });
 
   test("dredged areas set DREDGED", () => {

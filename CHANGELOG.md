@@ -6,6 +6,9 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Added
 
+- Survey quality at zone boundaries: a leaf across the shared edge of two assessed `M_QUAL`
+  zones takes the worse zone's σ instead of the unassessed σ and flag, when the zones share
+  the edge vertex for vertex. Gaps, overlaps and differently split edges stay `UNASSESSED`.
 - Contract (M6): JSON Schemas of the navigation-safety contract in `schemas/navigation-safety/`,
   contract tests for this plugin and a stub second provider, and RFC drafts for the Signal K
   paths and the Plotter Extensions `services` section.

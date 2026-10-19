@@ -9,7 +9,12 @@ import {
   tileRange,
   tileRect
 } from "../foundation/geo";
-import { geomBounds, geomContainsRect, geomRectDistance } from "../foundation/geometry";
+import {
+  areasCoverRect,
+  geomBounds,
+  geomContainsRect,
+  geomRectDistance
+} from "../foundation/geometry";
 import type { ChartFeature, QualityFeature } from "../ingest/features";
 import type { NodeValues } from "./node-store";
 import { combine, EMPTY, FLAGS, NO_DATA, NodeStore } from "./node-store";
@@ -196,10 +201,41 @@ function forChildren(all: Hit[], a: Analysis): Item[] {
   return [...coverageItems, ...kept.map((h) => h.item)];
 }
 
-function sigmas(hits: Hit[], dMin: number, opts: BuildOptions): { sigmaP: number; sigmaD: number } {
+function isQuality(h: Hit): h is Hit & { item: { f: QualityFeature } } {
+  return h.item.f.role === "quality";
+}
+
+/**
+ * Whether assessed quality zones cover the whole tile. At a boundary
+ * between two zones neither contains the leaf, but together they do.
+ */
+function assessedCover(hits: Hit[], rect: Rect): boolean {
+  const zones = hits.filter(isQuality).filter((h) => h.item.f.catzoc !== 6);
+  if (zones.some((h) => h.full)) {
+    return true;
+  }
+  return (
+    zones.length > 0 &&
+    areasCoverRect(
+      zones.map((h) => h.item.f.geom),
+      rect
+    )
+  );
+}
+
+/**
+ * σ from the worst quality zone reaching the tile; where the zones do not
+ * cover the whole tile, the unassessed σ is taken too.
+ */
+function sigmas(
+  hits: Hit[],
+  dMin: number,
+  covered: boolean,
+  opts: BuildOptions
+): { sigmaP: number; sigmaD: number } {
   let sigmaP = 0;
   let sigmaD = 0;
-  let fullQuality = false;
+  let fullQuality = covered;
   for (const h of hits) {
     const f = h.item.f;
     if (f.role === "quality") {
@@ -217,17 +253,14 @@ function sigmas(hits: Hit[], dMin: number, opts: BuildOptions): { sigmaP: number
   return { sigmaP, sigmaD };
 }
 
-function flagsOf(hits: Hit[], bandFull: number | undefined): number {
+function flagsOf(hits: Hit[], bandFull: number | undefined, assessed: boolean): number {
   let flags = bandFull === undefined ? FLAGS.NO_COVERAGE : 0;
-  let assessed = false;
   for (const h of hits) {
     const f = h.item.f;
     if (f.role === "swept" && h.full) {
       flags |= FLAGS.SWEPT;
     } else if (f.role === "depth" && f.dredged && h.full) {
       flags |= FLAGS.DREDGED;
-    } else if (f.role === "quality" && h.full && f.catzoc !== 6) {
-      assessed = true;
     }
   }
   return assessed ? flags : flags | FLAGS.UNASSESSED;
@@ -239,7 +272,7 @@ function flagsOf(hits: Hit[], bandFull: number | undefined): number {
  * part and carries NO_COVERAGE, so a rock there is not hidden by the gap
  * beside it; a tile with no depth feature at all is NO_DATA.
  */
-function uniformValues(a: Analysis, opts: BuildOptions): NodeValues {
+function uniformValues(a: Analysis, rect: Rect, opts: BuildOptions): NodeValues {
   let dMin = Infinity;
   let cellRef = -1;
   for (const h of a.hits) {
@@ -249,11 +282,12 @@ function uniformValues(a: Analysis, opts: BuildOptions): NodeValues {
       cellRef = h.item.f.cellRef;
     }
   }
-  const flags = flagsOf(a.hits, a.bandFull);
+  const assessed = assessedCover(a.hits, rect);
+  const flags = flagsOf(a.hits, a.bandFull, assessed);
   if (dMin === Infinity) {
     return { ...NO_DATA, flags: flags | NO_DATA.flags };
   }
-  const s = sigmas(a.hits, dMin, opts);
+  const s = sigmas(a.hits, dMin, assessed, opts);
   return {
     dMin,
     sigmaD: flags & FLAGS.SWEPT ? SWEPT_SIGMA_D : s.sigmaD,
@@ -280,7 +314,7 @@ function evaluate(
   const tileGround = (rect.maxX - rect.minX) / groundToMercator(1, maxAbsLat(rect));
   const a = analyse(all, tileGround);
   if (!a.needsSplit || z === opts.leafZoom) {
-    const v = uniformValues(a, opts);
+    const v = uniformValues(a, rect, opts);
     store.add(z, x, y, v, false);
     return v;
   }

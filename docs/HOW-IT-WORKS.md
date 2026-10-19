@@ -592,8 +592,9 @@ as the notification. A plotter can use it for a cursor readout.
   leaf width of water along a shore is drawn as land or danger.
 - Burn discs are as wide as the survey's position uncertainty: a CATZOC C sounding blocks a
   disc 1 km across.
-- An index leaf that straddles two survey zones, neither of which covers it alone, is treated
-  as unassessed.
+- An index leaf that straddles two survey zones takes the worse zone's σ when the zones share
+  their boundary vertex for vertex. A boundary split differently on each side, an overlap or a
+  gap leaves the leaf unassessed.
 - Only unencrypted S-57 cells exported with `scripts/enc-to-geojson.sh` are read.
 - No released chart plotter is assumed to draw the envelope or the leg colours; the plugin
   serves them as GeoJSON and vector tiles.
