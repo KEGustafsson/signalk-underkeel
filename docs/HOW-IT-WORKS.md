@@ -88,10 +88,11 @@ Signal K `design.draft.maximum`; length and beam fall back to `design.length.ove
 `design.beam`. Without a draft the engine stays `unknown`. The water level comes from the
 source picked under **Water level** (section 8).
 
-The index is built once, at the first start, and saved under the plugin data directory. Later
-starts load the saved index until **Rebuild index at start** is ticked, so it is ticked once
-after the cells change. An index saved by an older plugin version whose index format differs
-is rebuilt at start.
+The index is built at the first start and saved under the plugin data directory. Later starts
+load the saved index unless a cell directory was added or removed or its `DSID` edition or
+update changed; then the index is rebuilt and the index reason in `/status` names the cells.
+**Rebuild index at start** rebuilds it on every start. An index saved by an older plugin version
+whose index format differs is rebuilt too.
 
 The status line at the top of the plugin's page shows the engine state and its reason, for
 example `Monitoring: unknown — position stale`.

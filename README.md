@@ -123,10 +123,10 @@ npm run verify:ci-local # everything CI gates, including coverage, format and bu
 ## Chart data
 
 Set **Exported ENC cells directory** in the plugin configuration; the index is built from it at
-the first start and saved under the plugin data directory. The saved index is used until
-**Rebuild index at start** is enabled, so enable it once after cells in that directory change. An
-index saved by an older plugin version whose index format differs is rebuilt at start. The
-index reads ENC cells that GDAL has exported to GeoJSON, one directory per cell:
+the first start and saved under the plugin data directory. Each start compares the saved index
+with the `DSID` of every cell directory (name, edition and update) and rebuilds it, with the
+reason in `/status`, when a cell was added, removed or updated. **Rebuild index at start**
+rebuilds it on every start. A cell directory may be a symbolic link. An index saved by an older plugin version whose index format differs is also rebuilt. The index reads ENC cells that GDAL has exported to GeoJSON, one directory per cell:
 
 ```sh
 scripts/enc-to-geojson.sh FI5ABCDE.000 data/cells/FI5ABCDE

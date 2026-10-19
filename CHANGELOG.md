@@ -87,3 +87,6 @@ All notable changes to signalk-underkeel are documented here.
   and in Traficom WFS rebuilds. Entries in the cells directory named like a cell that are not a
   directory, such as an unexported `.000` file or a dangling link, are named in the index reason
   in `/status`.
+- A saved index is rebuilt at start when a cell in the cells directory was added, removed or
+  given a new edition or update, with the cells named in the index reason. It was reused until
+  **Rebuild index at start** was ticked, so an added cell's rocks were missing from it.

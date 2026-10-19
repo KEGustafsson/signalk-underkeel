@@ -53,6 +53,12 @@ export function cellInfoFromDsid(
   };
 }
 
+/** Provenance of an exported cell from its DSID alone, without reading its layers. */
+export function readCellInfo(dir: string): ReturnType<typeof cellInfoFromDsid> {
+  const dsid = readCollection(path.join(dir, "DSID.geojson"));
+  return cellInfoFromDsid(dsid?.features[0]?.properties ?? {}, path.basename(dir));
+}
+
 /**
  * A missing directory, or one without M_COVR coverage, is an error: such a
  * cell would enter the catalogue while contributing no data.
@@ -61,9 +67,7 @@ export function readCellDirectory(dir: string, cellRef: number, bandOverride?: n
   if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
     throw new Error(`cell directory ${dir} does not exist`);
   }
-  const fallbackName = path.basename(dir);
-  const dsid = readCollection(path.join(dir, "DSID.geojson"));
-  const partial = cellInfoFromDsid(dsid?.features[0]?.properties ?? {}, fallbackName);
+  const partial = readCellInfo(dir);
   const band = bandOverride ?? partial.band;
   if (band === undefined) {
     throw new Error(`cell ${partial.name}: usage band unknown; set it explicitly`);

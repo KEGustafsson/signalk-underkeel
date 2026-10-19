@@ -71,3 +71,56 @@ describe("cell directories", () => {
     expect(r.reason).toMatch(/not found.*saved index/);
   });
 });
+
+describe("saved index against the cells directory", () => {
+  test("an unchanged cells directory loads the saved index without a reason", () => {
+    copyCell("FI4SYNTH");
+    expect(load().built).toBe(true);
+    const again = load();
+    expect(again.built).toBe(false);
+    expect(again.reason).toBeUndefined();
+  });
+
+  test("a cell added after the index was saved rebuilds it and says why", () => {
+    copyCell("FI4SYNTH");
+    expect(names(load())).toEqual(["FI4SYNTH"]);
+    copyCell("FI5SYNTH");
+    const r = load();
+    expect(r.built).toBe(true);
+    expect(names(r)).toEqual(["FI4SYNTH", "FI5SYNTH"]);
+    expect(r.reason).toMatch(/rebuilt.*added FI5SYNTH/);
+  });
+
+  test("a removed cell rebuilds the index without it", () => {
+    copyCell("FI4SYNTH");
+    copyCell("FI5SYNTH");
+    load();
+    fs.rmSync(path.join(cellsDir, "FI5SYNTH"), { recursive: true });
+    const r = load();
+    expect(r.built).toBe(true);
+    expect(names(r)).toEqual(["FI4SYNTH"]);
+    expect(r.reason).toMatch(/removed FI5SYNTH/);
+  });
+
+  test("a new edition or update of a cell rebuilds the index", () => {
+    copyCell("FI5SYNTH");
+    expect(load().index?.catalogue.cells[0]?.update).toBe(1);
+    const dsid = path.join(cellsDir, "FI5SYNTH", "DSID.geojson");
+    fs.writeFileSync(
+      dsid,
+      fs.readFileSync(dsid, "utf8").replace('"DSID_UPDN": "1"', '"DSID_UPDN": "2"')
+    );
+    const r = load();
+    expect(r.built).toBe(true);
+    expect(r.index?.catalogue.cells[0]?.update).toBe(2);
+    expect(r.reason).toMatch(/FI5SYNTH edition 3 update 2/);
+  });
+
+  test("Rebuild index at start still rebuilds an unchanged directory", () => {
+    copyCell("FI4SYNTH");
+    load();
+    const r = load({ rebuildIndex: true });
+    expect(r.built).toBe(true);
+    expect(r.reason).toBeUndefined();
+  });
+});
