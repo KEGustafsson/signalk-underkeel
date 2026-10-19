@@ -429,7 +429,8 @@ read-write access.
 
 Mooring zones work the same way without a heading or water-level condition. They are Signal K
 regions named in the settings, for example the home berth; inside one, `warn` and `alarm` are
-published as `alert` with the zone's name.
+published as `alert` with the zone's name. A hole in the region, such as water cut out around a
+rock, is not part of the zone: a footprint reaching into a hole is not suppressed.
 
 ### Grounding detector
 

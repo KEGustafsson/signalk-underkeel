@@ -171,10 +171,25 @@ describe("acknowledged passages", () => {
   });
 
   test("a mooring zone suppresses the same way and names the zone", () => {
-    const r = suppress(WARN, ctx({ acks: [], zones: [{ name: "home berth", polygon: PASSAGE }] }));
+    const zones = [{ name: "home berth", polygon: PASSAGE, holes: [] }];
+    const r = suppress(WARN, ctx({ acks: [], zones }));
     expect(r).toMatchObject({
       state: "alert",
       reason: "in mooring zone home berth: shoal ahead in 40 s"
     });
+  });
+
+  test("a footprint touching a hole cut out of a mooring zone is outside the zone", () => {
+    // The risky footprint is box(22.004, 60.002, 22.0042, 60.0021).
+    const zone = (hole: LonLat[]) => ({ name: "berth", polygon: PASSAGE, holes: [hole] });
+    const state = (hole: LonLat[]) => suppress(WARN, ctx({ acks: [], zones: [zone(hole)] })).state;
+    // The footprint inside the hole, the hole inside the footprint, the two crossing, the same.
+    expect(state(box(22.003, 60.001, 22.005, 60.003))).toBe("warn");
+    expect(state(box(22.0041, 60.00202, 22.0042, 60.00205))).toBe("warn");
+    expect(state(box(22.0041, 60.0015, 22.0045, 60.0025))).toBe("warn");
+    expect(state(box(22.004, 60.002, 22.0042, 60.0021))).toBe("warn");
+    // A hole elsewhere, or only sharing the footprint's edge, leaves it in the zone.
+    expect(state(box(22.008, 60.001, 22.009, 60.002))).toBe("alert");
+    expect(state(box(22.0042, 60.002, 22.005, 60.0021))).toBe("alert");
   });
 });

@@ -148,3 +148,6 @@ All notable changes to signalk-underkeel are documented here.
   `GET /envelope?rev=N` no longer answers 304 to a client holding a rev from the earlier run.
 - UKC tiles are sent with `Cache-Control: no-cache`, as the Plotter Extensions spec asks for
   tiles that change, so a browser revalidates them when the water level or draft changes.
+- Holes in a mooring-zone region are kept: a footprint reaching into a hole, such as water cut
+  out around a rock, is outside the zone and its alarm is no longer demoted to alert. Only the
+  outer ring was read before.

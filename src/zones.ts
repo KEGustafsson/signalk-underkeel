@@ -22,7 +22,7 @@ function ringOf(coords: unknown): LonLat[] | undefined {
   return ring.slice(0, -1);
 }
 
-/** The outer rings of a region resource's Polygon or MultiPolygon. */
+/** One zone per Polygon of a region resource's Polygon or MultiPolygon, holes kept. */
 export function zonesFromRegion(id: string, region: unknown): Zone[] {
   const r = region as {
     name?: unknown;
@@ -36,13 +36,17 @@ export function zonesFromRegion(id: string, region: unknown): Zone[] {
       : g?.type === "MultiPolygon"
         ? (g.coordinates as unknown[])
         : [];
-  const rings = (Array.isArray(polygons) ? polygons : []).map((p) =>
-    ringOf(Array.isArray(p) ? (p as unknown[])[0] : undefined)
+  const parsed = (Array.isArray(polygons) ? polygons : []).map((p) =>
+    Array.isArray(p) && p.length > 0 ? (p as unknown[]).map(ringOf) : [undefined]
   );
-  if (rings.length === 0 || rings.some((ring) => ring === undefined)) {
+  if (parsed.length === 0 || parsed.some((rings) => rings.some((r) => r === undefined))) {
     throw new Error(`region ${id} has no valid Polygon or MultiPolygon geometry`);
   }
-  return (rings as LonLat[][]).map((polygon) => ({ name, polygon }));
+  return (parsed as LonLat[][][]).map(([polygon, ...holes]) => ({
+    name,
+    polygon: polygon as LonLat[],
+    holes
+  }));
 }
 
 export async function loadZones(
