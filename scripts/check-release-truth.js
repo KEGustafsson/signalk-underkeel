@@ -2,13 +2,15 @@
 "use strict";
 
 // Release truth gate: the package that gets packed must match what the docs
-// and workflows say about it. Run by CI and by the publish workflow before
-// `npm pack`.
+// and workflows say about it. Run after `npm run build` by CI and by the
+// package workflow before `npm pack`. With --publish (prepublishOnly) the
+// changelog section must also carry a release date, not "Unreleased".
 
 const fs = require("fs");
 const path = require("path");
 
 const root = path.resolve(__dirname, "..");
+const publishing = process.argv.includes("--publish");
 const failures = [];
 
 function fail(message) {
@@ -36,15 +38,27 @@ if (typeof version !== "string" || !version) {
   fail("package.json is missing a valid version field");
 } else {
   const changelog = readText("CHANGELOG.md");
-  if (!changelog.includes(`## [${version}]`)) {
+  const heading = changelog.split("\n").find((line) => line.startsWith(`## [${version}]`));
+  if (heading === undefined) {
     fail(`CHANGELOG.md must contain a "## [${version}]" section for the package version.`);
+  } else if (publishing && !/^## \[[^\]]+\] - \d{4}-\d{2}-\d{2}$/.test(heading.trim())) {
+    fail(
+      `CHANGELOG.md "${heading.trim()}" must be dated "## [${version}] - YYYY-MM-DD" to publish.`
+    );
   }
 }
 
 const packageFiles = Array.isArray(packageJson.files) ? packageJson.files : [];
-for (const requiredFile of ["lib/", "CHANGELOG.md"]) {
+for (const requiredFile of ["lib/", "public/", "CHANGELOG.md"]) {
   if (!packageFiles.includes(requiredFile)) {
     fail(`package.json files must include "${requiredFile}".`);
+  }
+}
+
+// The plugin entry and the vendored Plotter Extensions client are build output.
+for (const builtPath of ["lib/index.js", "public/vendor/plotterext-bus/extension.js"]) {
+  if (!fs.existsSync(path.join(root, builtPath))) {
+    fail(`${builtPath} is missing: run npm run build first.`);
   }
 }
 
