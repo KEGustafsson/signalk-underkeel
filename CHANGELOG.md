@@ -73,3 +73,8 @@ All notable changes to signalk-underkeel are documented here.
 - Position buffers, burn discs and footprint offsets reach their full distance on the WGS84
   ellipsoid. They were sized on a sphere and fell short north–south below about 55° latitude,
   by up to 0.7 % at the equator (a 100 m buffer reached 99.3 m).
+- Pontoons, floating docks and hulks (`PONTON`, `FLODOC`, `HULKES`) are read as land, and
+  unsurveyed areas (`UNSARE`) as having no depth, so a route leg there is unverified and the
+  look-ahead is never normal. `scripts/enc-to-geojson.sh` exports these layers. Before, such an
+  area inside a cell's coverage took the depth of any nearby sounding's burn disc; now any
+  covered place no depth area reaches has no depth.

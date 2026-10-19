@@ -246,6 +246,8 @@ signalk-underkeel/
 | `SOUNDG`                     | 3D multipoint                          | spot depths; burn in with position-uncertainty disc                             |
 | `UWTROC`, `WRECKS`, `OBSTRN` | `VALSOU`, `WATLEV`, `EXPSOU`, `QUASOU` | point hazards → R-tree, buffered                                                |
 | `LNDARE`, `COALNE`, `SLCONS` | —                                      | depth −∞ (hard obstacles)                                                       |
+| `PONTON`, `FLODOC`, `HULKES` | —                                      | depth −∞ (hard obstacles)                                                       |
+| `UNSARE`                     | —                                      | no depth: `NO_COVERAGE`, so legs are _unverified_ and look-ahead never _normal_ |
 | `M_QUAL`                     | `CATZOC`, `POSACC`, `SOUACC`           | survey quality zones                                                            |
 | `M_COVR`                     | `CATCOV`                               | coverage; no coverage means _unverified_, not _safe_                            |
 | DSID / `M_SDAT`, `M_VDAT`    | sounding / vertical datum              | water-level reduction (§4.5)                                                    |

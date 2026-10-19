@@ -116,6 +116,11 @@ area exists.
 | `SOUNDG`                     | point depths                                                               |
 | `UWTROC`, `WRECKS`, `OBSTRN` | point hazards at `VALSOU`; without it, land when `WATLEV` 1 or 2, else 0 m |
 | `LNDARE`, `COALNE`, `SLCONS` | land                                                                       |
+| `PONTON`, `FLODOC`, `HULKES` | land                                                                       |
+| `UNSARE`                     | no depth: read as a coverage gap, never as water                           |
+
+Inside a cell's coverage, a place that no depth area, land or unsurveyed area reaches has no
+depth either; a sounding's burn disc does not make it water.
 
 Where cells of different usage bands overlap, the larger-scale cell wins and the smaller one
 only fills gaps.

@@ -28,7 +28,7 @@ mkdir -p "$out"
 
 export OGR_S57_OPTIONS="RETURN_PRIMITIVES=OFF,RETURN_LINKAGES=OFF,LNAM_REFS=ON,UPDATES=APPLY,SPLIT_MULTIPOINT=ON,ADD_SOUNDG_DEPTH=ON"
 
-for layer in DSID DEPARE DRGARE SWPARE SOUNDG UWTROC WRECKS OBSTRN LNDARE COALNE SLCONS M_QUAL M_COVR; do
+for layer in DSID DEPARE DRGARE SWPARE SOUNDG UWTROC WRECKS OBSTRN LNDARE COALNE SLCONS PONTON FLODOC HULKES UNSARE M_QUAL M_COVR M_SDAT M_VDAT; do
   # Layers absent from the cell make ogr2ogr fail; skip them.
   if ogrinfo -q -so "$src" "$layer" >/dev/null 2>&1; then
     ogr2ogr -f GeoJSON -t_srs EPSG:4326 "$out/$layer.geojson" "$src" "$layer"

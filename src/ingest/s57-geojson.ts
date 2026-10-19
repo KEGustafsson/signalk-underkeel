@@ -44,6 +44,10 @@ export const S57_LAYERS = [
   "LNDARE",
   "COALNE",
   "SLCONS",
+  "PONTON",
+  "FLODOC",
+  "HULKES",
+  "UNSARE",
   "M_QUAL",
   "M_COVR"
 ] as const;
@@ -182,6 +186,9 @@ function depthOf(layer: S57Layer, props: Record<string, unknown>, part: Part): n
     case "LNDARE":
     case "COALNE":
     case "SLCONS":
+    case "PONTON":
+    case "FLODOC":
+    case "HULKES":
       return -Infinity;
     case "SOUNDG":
       return num(props, "DEPTH") ?? part.z ?? 0;
@@ -218,6 +225,8 @@ function featureFor(
         : undefined;
     case "SWPARE":
       return isArea ? { ...base, role: "swept", depth: num(props, "DRVAL1") ?? 0 } : undefined;
+    case "UNSARE":
+      return isArea ? { ...base, role: "unsurveyed" } : undefined;
     case "DEPARE":
     case "DRGARE":
       if (!isArea) {
