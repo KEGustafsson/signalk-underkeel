@@ -138,6 +138,26 @@ describe("plugin lifecycle", () => {
     });
   });
 
+  test("over land the clearance is published as null, never a non-finite number", () => {
+    const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 1.9 } } });
+    const clock = fakeClock(T0);
+    const plugin = underkeel(f.app, clock);
+    plugin.start({ cellsDir: FIXTURES, leafZoom: 18 }, () => undefined);
+    // West of the fixture island (22.025–22.03 E, 60.013–60.016 N), heading onto it.
+    f.send(navDelta(22.022, 60.0145, 3, T0));
+    clock.advance(1000);
+    expect(lastValue(f.deltas, "navigation.underKeel.state")).toBe("alarm");
+    expect(lastValue(f.deltas, "navigation.underKeel.clearance")).toBeNull();
+    const published = f.deltas.flatMap((d) =>
+      (d.updates ?? []).flatMap((u) => ("values" in u ? u.values : []))
+    );
+    const nonFinite = published.filter(
+      (pv) => typeof pv.value === "number" && !Number.isFinite(pv.value)
+    );
+    expect(nonFinite).toEqual([]);
+    plugin.stop();
+  });
+
   test("applies the FMI level, and falls back with a reason when the feed goes stale", async () => {
     const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 1.5 } } });
     const clock = fakeClock(T0);

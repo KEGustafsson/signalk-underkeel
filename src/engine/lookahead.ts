@@ -459,7 +459,8 @@ export function evaluateLookahead(
   return {
     state: verdict.state,
     reason: verdict.reason,
-    clearance: shallowest ? shallowest.mean : null,
+    // Over land the mean is -Infinity: there is no clearance to report, and the state says why.
+    clearance: shallowest && Number.isFinite(shallowest.mean) ? shallowest.mean : null,
     clearanceSigma: shallowest ? shallowest.sigma : null,
     risk: fps.length > 0 ? Math.max(...fps.map((f) => f.risk)) : null,
     timeToShoal: verdict.tts,
