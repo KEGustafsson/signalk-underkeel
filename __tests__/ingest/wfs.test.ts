@@ -14,11 +14,11 @@ import {
 const TMP = path.join(__dirname, "..", "temp", "wfs-ingest");
 afterAll(() => fs.rmSync(TMP, { recursive: true, force: true }));
 
-function reply(features: unknown[]) {
+function reply(features: unknown[], extra: Record<string, unknown> = {}) {
   return {
     ok: true,
     status: 200,
-    text: () => Promise.resolve(JSON.stringify({ type: "FeatureCollection", features }))
+    text: () => Promise.resolve(JSON.stringify({ type: "FeatureCollection", features, ...extra }))
   };
 }
 
@@ -90,6 +90,9 @@ describe("Traficom WFS ingest", () => {
     const urls: string[] = [];
     const fetch: WfsFetch = (url) => {
       urls.push(url);
+      if (new URL(url).searchParams.get("startIndex") !== "0") {
+        return Promise.resolve(reply([]));
+      }
       if (url.includes("DepthArea_A")) {
         return Promise.resolve(reply([area]));
       }
@@ -126,12 +129,15 @@ describe("Traficom WFS ingest", () => {
     expect(depths).toEqual([3, 4.2]);
   });
 
-  test("pages are fetched until one comes back short", async () => {
+  test("pages are fetched until one comes back empty", async () => {
     const starts: string[] = [];
     const fetch: WfsFetch = (url) => {
       const start = new URL(url).searchParams.get("startIndex") as string;
       starts.push(start);
-      const n = url.includes("Sounding_P") && start === "0" ? WFS_LIMITS.pageSize : 1;
+      const pages = url.includes("Sounding_P")
+        ? { "0": WFS_LIMITS.pageSize, [String(WFS_LIMITS.pageSize)]: 1 }
+        : { "0": 1 };
+      const n = (pages as Record<string, number>)[start] ?? 0;
       return Promise.resolve(reply(Array.from({ length: n }, () => sounding)));
     };
     const counts = await downloadWfsCell({
@@ -143,6 +149,41 @@ describe("Traficom WFS ingest", () => {
     });
     expect(counts.soundings).toBe(WFS_LIMITS.pageSize + 1);
     expect(starts).toContain(String(WFS_LIMITS.pageSize));
+  });
+
+  test("a server that caps its pages below the asked count is read to the end", async () => {
+    // Pages of 3, as from a server whose own limit is below WFS_LIMITS.pageSize.
+    const read = async (matched: boolean): Promise<number> => {
+      const fetch: WfsFetch = (url) => {
+        const start = Number(new URL(url).searchParams.get("startIndex"));
+        const n = url.includes("Sounding_P") ? Math.max(0, Math.min(3, 7 - start)) : 0;
+        const features = Array.from({ length: n }, () => sounding);
+        return Promise.resolve(reply(features, matched ? { numberMatched: 7 } : {}));
+      };
+      const counts = await downloadWfsCell({
+        fetch,
+        url: "https://wfs.test/wfs",
+        bbox: [21.95, 59.95, 22.05, 60.05],
+        dir: path.join(TMP, `capped-${String(matched)}`),
+        now: new Date()
+      });
+      return counts.soundings;
+    };
+    expect(await read(true)).toBe(7);
+    expect(await read(false)).toBe(7);
+  });
+
+  test("a server that ignores startIndex is refused after maxPages pages", async () => {
+    const fetch: WfsFetch = () => Promise.resolve(reply([sounding]));
+    await expect(
+      downloadWfsCell({
+        fetch,
+        url: "https://wfs.test/wfs",
+        bbox: [21.95, 59.95, 22.05, 60.05],
+        dir: path.join(TMP, "endless"),
+        now: new Date()
+      })
+    ).rejects.toThrow(`more than ${WFS_LIMITS.maxPages} pages`);
   });
 
   test("an HTTP error or an oversize box fails and leaves the previous cell", async () => {

@@ -30,7 +30,9 @@ export const WFS_LIMITS = {
   maxLonSpan: 1.5,
   pageSize: 5000,
   /** A box that returns more features than this is refused. */
-  maxFeatures: 50_000
+  maxFeatures: 50_000,
+  /** A layer that takes more pages than this is refused, so a server that ignores startIndex stops. */
+  maxPages: 100
 } as const;
 
 export type WfsFetch = (
@@ -95,12 +97,18 @@ async function fetchLayer(
   signal?: AbortSignal
 ): Promise<WfsFeature[]> {
   const out: WfsFeature[] = [];
-  for (;;) {
+  // A server may return fewer features per page than asked, so a short page is not the end:
+  // read to numberMatched when the server reports it, else to an empty page.
+  for (let pages = 1; ; pages++) {
     const res = await fetch(pageUrl(base, typeName, b, out.length), { signal });
     if (!res.ok) {
       throw new Error(`${typeName}: HTTP ${res.status}`);
     }
-    const page = JSON.parse(await res.text()) as { type?: unknown; features?: unknown };
+    const page = JSON.parse(await res.text()) as {
+      type?: unknown;
+      features?: unknown;
+      numberMatched?: unknown;
+    };
     if (page.type !== "FeatureCollection" || !Array.isArray(page.features)) {
       throw new Error(`${typeName}: not a GeoJSON FeatureCollection`);
     }
@@ -110,8 +118,12 @@ async function fetchLayer(
         `${typeName}: more than ${WFS_LIMITS.maxFeatures} features; use a smaller box`
       );
     }
-    if (page.features.length < WFS_LIMITS.pageSize) {
+    const matched = num(page.numberMatched);
+    if (page.features.length === 0 || (matched !== undefined && out.length >= matched)) {
       return out;
+    }
+    if (pages >= WFS_LIMITS.maxPages) {
+      throw new Error(`${typeName}: more than ${WFS_LIMITS.maxPages} pages`);
     }
   }
 }

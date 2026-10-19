@@ -10,26 +10,28 @@ import { fakeApp, fakeClock, fakeRouter, lastValue, navDelta, T0 } from "./helpe
 
 /** One depth area over the whole test water, 10 m. */
 const fetch: FetchLike = (url) => {
-  const features = url.includes("DepthArea_A")
-    ? [
-        {
-          type: "Feature",
-          geometry: {
-            type: "Polygon",
-            coordinates: [
-              [
-                [21.5, 59.8],
-                [22.5, 59.8],
-                [22.5, 60.2],
-                [21.5, 60.2],
-                [21.5, 59.8]
+  const first = new URL(url).searchParams.get("startIndex") === "0";
+  const features =
+    first && url.includes("DepthArea_A")
+      ? [
+          {
+            type: "Feature",
+            geometry: {
+              type: "Polygon",
+              coordinates: [
+                [
+                  [21.5, 59.8],
+                  [22.5, 59.8],
+                  [22.5, 60.2],
+                  [21.5, 60.2],
+                  [21.5, 59.8]
+                ]
               ]
-            ]
-          },
-          properties: { DRVAL1: "10", IDENTIFIER: "FI 10" }
-        }
-      ]
-    : [];
+            },
+            properties: { DRVAL1: "10", IDENTIFIER: "FI 10" }
+          }
+        ]
+      : [];
   return Promise.resolve({
     ok: true,
     status: 200,
