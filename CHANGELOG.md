@@ -151,3 +151,6 @@ All notable changes to signalk-underkeel are documented here.
 - Holes in a mooring-zone region are kept: a footprint reaching into a hole, such as water cut
   out around a rock, is outside the zone and its alarm is no longer demoted to alert. Only the
   outer ring was read before.
+- The living-chart quality gate drops a sounding whose position was measured more than 2 s
+  from the depth. Any fresh position counted before, up to 10 s old: about 30 m at 6 kn on
+  76 m cells.

@@ -42,6 +42,7 @@ function raw(depth: number, at: number, extra: Partial<RawSounding> = {}): RawSo
     depth,
     at,
     position: SHOAL,
+    positionAt: at,
     heading: 0,
     hdop: 0.9,
     methodQuality: "GNSS Fix",
@@ -95,12 +96,17 @@ describe("sounding reduction", () => {
       [{ roll: 0.3 }, /roll/],
       [{ depth: 0.1 }, /out of range/],
       [{ depth: NaN }, /out of range/],
-      [{ waterLevel: { ...WL, degraded: "water level from fmi is 40 min old" } }, /water level/]
+      [{ waterLevel: { ...WL, degraded: "water level from fmi is 40 min old" } }, /water level/],
+      // 3 s at 6 kn is 9 m, an eighth of a 76 m cell; the position must be that recent.
+      [{ positionAt: T0 - 3000 }, /position 3000 ms from the sounding/],
+      [{ positionAt: T0 + 2500 }, /position 2500 ms from the sounding/],
+      [{ positionAt: undefined }, /position time unknown/]
     ];
     for (const [extra, why] of bad) {
       const r = reduce({ ...raw(4, T0), ...extra }, SURFACE);
       expect(r.ok ? "" : r.reason).toMatch(why);
     }
+    expect(reduce(raw(4, T0, { positionAt: T0 - 2000 }), SURFACE).ok).toBe(true);
     expect(reduce(raw(4, T0, { heading: undefined }), { ...SURFACE, forward: 2 })).toEqual({
       ok: false,
       reason: "no heading for the lever arm"

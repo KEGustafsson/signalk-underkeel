@@ -331,6 +331,7 @@ export function startLivechart(
       depth: typeof value === "number" ? value : NaN,
       at,
       ...monitor.fresh(),
+      positionAt: monitor.nav.position?.at,
       waterLevel: monitor.waterLevel()
     });
     if (clock.now() - savedAt >= SAVE_EVERY_MS) {

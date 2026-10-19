@@ -158,7 +158,8 @@ and keeps a running estimate of the depth in each cell of the index, about 76 m 
 60° N:
 
 1. **Quality gate.** A sounding counts only with a satellite fix, HDOP below 2, roll within
-   15°, a plausible depth and a measured, not fallback, water level.
+   15°, a plausible depth, a position measured within 2 s of the depth and a measured, not
+   fallback, water level.
 2. **Reduce to chart datum.** The water level at that moment is taken off the measured depth.
 3. **Update the cell.** The chart's depth and σ are the starting point; each sounding moves
    the estimate and narrows its σ.

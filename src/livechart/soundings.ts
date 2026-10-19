@@ -24,6 +24,8 @@ export interface RawSounding {
   at: number;
   /** GNSS antenna position. */
   position?: LonLat;
+  /** When the position was measured, epoch ms. */
+  positionAt?: number;
   /** True heading, radians. */
   heading?: number;
   hdop?: number;
@@ -58,10 +60,27 @@ const MAX_ROLL = (15 * Math.PI) / 180;
 /** Readings outside this range are sounder errors, not depths. */
 const MIN_DEPTH = 0.3;
 const MAX_DEPTH = 200;
+/**
+ * The position may be at most this far in time from the depth reading: at 6 kn a position
+ * 10 s old (the staleness limit) is 30 m off, a large part of a 76 m cell.
+ */
+const MAX_POSITION_SKEW_MS = 2000;
+
+function positionSkew(raw: RawSounding): string | undefined {
+  if (raw.positionAt === undefined) {
+    return "position time unknown";
+  }
+  const skew = Math.abs(raw.at - raw.positionAt);
+  return skew > MAX_POSITION_SKEW_MS ? `position ${skew} ms from the sounding` : undefined;
+}
 
 function gate(raw: RawSounding): string | undefined {
   if (raw.position === undefined) {
     return "no position";
+  }
+  const skew = positionSkew(raw);
+  if (skew) {
+    return skew;
   }
   if (raw.methodQuality === undefined || !GOOD_FIX.has(raw.methodQuality)) {
     return `fix quality ${raw.methodQuality ?? "unknown"}`;
