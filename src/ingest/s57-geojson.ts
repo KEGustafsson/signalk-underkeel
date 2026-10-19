@@ -29,6 +29,7 @@ export interface GeoJsonFeatureCollection {
 export interface LayerContext {
   cellRef: number;
   band: number;
+  advisory?: boolean;
 }
 
 /** Layers the index uses (plan §4.2). */

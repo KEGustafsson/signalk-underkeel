@@ -5,7 +5,6 @@ import type { PluginConfig } from "./config";
 import { parseConfig, SCHEMA } from "./config";
 import type { EngineStatus } from "./foundation/state";
 import { createStatus, PATHS } from "./foundation/state";
-import type { IndexLoad } from "./index-loader";
 import { loadOrBuildIndex } from "./index-loader";
 import type { Clock } from "./monitor";
 import { Monitor, SYSTEM_CLOCK } from "./monitor";
@@ -15,6 +14,9 @@ import type { PluginState } from "./api-wiring";
 import { apiFor } from "./api-wiring";
 import { loadZones } from "./zones";
 import { startLivechart } from "./livechart-service";
+import type { IndexBuilder } from "./wfs-service";
+import { workerBuilder } from "./wfs-service";
+import { startWfs } from "./wfs-wiring";
 import fs from "fs";
 import path from "path";
 
@@ -28,7 +30,8 @@ const VERSION = (
 export = function underkeel(
   app: ServerAPI,
   clock: Clock = SYSTEM_CLOCK,
-  fetch: FetchLike = globalThis.fetch
+  fetch: FetchLike = globalThis.fetch,
+  build: IndexBuilder = workerBuilder
 ): Plugin {
   const state: PluginState = {
     zoneErrors: [],
@@ -45,7 +48,12 @@ export = function underkeel(
 
     start(options: unknown): void {
       const config = parseConfig(options);
-      const load = loadOrBuildIndex(config, app.getDataDirPath());
+      const wfs = config.wfs && startWfs({ app, clock, state, config, fetch, build }, config.wfs);
+      const load = loadOrBuildIndex(
+        config,
+        app.getDataDirPath(),
+        wfs?.savedCell() ? [wfs.cellDir] : []
+      );
       if (load.reason) {
         app.setPluginError(load.reason);
       }
@@ -57,7 +65,8 @@ export = function underkeel(
       monitor.useAcks(acks);
       const livechart = startLivechart(app, clock, config, load.index, monitor);
       monitor.start();
-      Object.assign(state, { config, load, monitor, acks, livechart, zoneErrors: [] });
+      Object.assign(state, { config, load, monitor, acks, livechart, wfs, zoneErrors: [] });
+      wfs?.start();
       void loadZones(config.mooringZones, (id) => app.resourcesApi.getResource("regions", id)).then(
         ({ zones, errors }) => {
           monitor.setZones(zones);
@@ -69,6 +78,8 @@ export = function underkeel(
     },
 
     stop(): void {
+      state.wfs?.stop();
+      state.wfs = undefined;
       state.livechart?.save();
       state.livechart = undefined;
       state.monitor?.stop();

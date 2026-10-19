@@ -6,6 +6,9 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Added
 
+- Traficom WFS depths (off by default): depth areas and soundings for a box around the vessel,
+  re-downloaded as it moves and indexed in a worker thread, as a band-1 cell flagged
+  `NOT_FOR_NAVIGATION`; water it alone covers is never `normal`, `ok` or `clear`.
 - Survey quality at zone boundaries: a leaf across the shared edge of two assessed `M_QUAL`
   zones takes the worse zone's σ instead of the unassessed σ and flag, when the zones share
   the edge vertex for vertex. Gaps, overlaps and differently split edges stay `UNASSESSED`.

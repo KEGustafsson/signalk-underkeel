@@ -19,6 +19,7 @@ import type { WaterLevel } from "./model/uncertainty";
 import type { VesselModel } from "./model/vessel";
 import { resolveVessel } from "./model/vessel";
 import type { ChartIndex } from "./spatial/chart-index";
+import { WFS_NOTICE } from "./ingest/wfs";
 import type { WaterLevelStatus } from "./water-level-service";
 import { WaterLevelService } from "./water-level-service";
 import { ChangeNotifier, groundingNotification, integrityNotification } from "./notifications";
@@ -105,6 +106,8 @@ export class Monitor {
   vesselNotes: string[] = [];
   private timer: unknown;
   private readonly unsubscribes: Unsubscribes = [];
+  /** The server does not merge overlapping subscriptions: each would deliver a delta again. */
+  private readonly subscribed = new Set<string>();
   private readonly levels: WaterLevelService;
   private readonly integrity = new IntegrityMonitor();
   integrityResult?: IntegrityResult;
@@ -127,8 +130,8 @@ export class Monitor {
     private readonly app: App,
     private readonly pluginId: string,
     private readonly config: PluginConfig,
-    private readonly index: ChartIndex | undefined,
-    private readonly indexReason: string | undefined,
+    private index: ChartIndex | undefined,
+    private indexReason: string | undefined,
     private readonly clock: Clock = SYSTEM_CLOCK,
     fetch: FetchLike = globalThis.fetch
   ) {
@@ -142,24 +145,20 @@ export class Monitor {
     this.since = clock.now();
   }
 
+  /** Swaps in a rebuilt index; hysteresis, acks and subscriptions carry over. */
+  setIndex(index: ChartIndex): void {
+    this.index = index;
+    this.indexReason = undefined;
+    this.levels.setIndex(index);
+  }
+
   start(): void {
-    this.app.subscriptionmanager.subscribe(
-      {
-        context: "vessels.self" as never,
-        subscribe: [
-          ...INPUT_PATHS,
-          ...this.levels.paths(),
-          ...(this.grounding?.paths() ?? []),
-          ...this.watchers.flatMap((w) => [...w.paths])
-        ].map((path) => ({
-          path: path as Path,
-          policy: "instant"
-        }))
-      },
-      this.unsubscribes,
-      (err) => this.app.error(`subscription failed: ${String(err)}`),
-      (delta) => this.onDelta(delta)
-    );
+    this.subscribe([
+      ...INPUT_PATHS,
+      ...this.levels.paths(),
+      ...(this.grounding?.paths() ?? []),
+      ...this.watchers.flatMap((w) => [...w.paths])
+    ]);
     this.publishMeta();
     this.tick();
     this.timer = this.clock.setInterval(() => this.tick(), 1000);
@@ -173,6 +172,7 @@ export class Monitor {
     for (const u of this.unsubscribes.splice(0)) {
       u();
     }
+    this.subscribed.clear();
     this.levels.stop();
     // A raised integrity or grounding notification must not outlive the plugin.
     this.notifier.clear(PATHS.positionIntegrity, "UKC monitoring stopped");
@@ -262,9 +262,29 @@ export class Monitor {
     return fresh(this.nav.heading) ?? fresh(this.nav.cog);
   }
 
-  /** Also subscribes `paths` and hands their values to `fn`; call before start(). */
+  /** Also subscribes `paths` and hands their values to `fn`, before or after start(). */
   watch(paths: readonly string[], fn: (path: string, value: unknown, at: number) => void): void {
     this.watchers.push({ paths: new Set(paths), fn });
+    if (this.timer !== undefined) {
+      this.subscribe(paths);
+    }
+  }
+
+  private subscribe(paths: readonly string[]): void {
+    const fresh = [...new Set(paths)].filter((p) => !this.subscribed.has(p));
+    if (fresh.length === 0) {
+      return;
+    }
+    fresh.forEach((p) => this.subscribed.add(p));
+    this.app.subscriptionmanager.subscribe(
+      {
+        context: "vessels.self" as never,
+        subscribe: fresh.map((path) => ({ path: path as Path, policy: "instant" }))
+      },
+      this.unsubscribes,
+      (err) => this.app.error(`subscription failed: ${String(err)}`),
+      (delta) => this.onDelta(delta)
+    );
   }
 
   /** The navigation inputs that are still fresh, for living-chart samples. */
@@ -404,8 +424,11 @@ export class Monitor {
       this.notifier.send(PATHS.positionIntegrity, integrityNotification(this.integrityResult));
     }
     this.checkGrounding(r);
+    const status =
+      r.state === "normal" ? "Monitoring: normal" : `Monitoring: ${r.state} — ${r.reason}`;
+    // The WFS licence allows non-navigational use only; say so while it is on.
     this.app.setPluginStatus(
-      r.state === "normal" ? "Monitoring: normal" : `Monitoring: ${r.state} — ${r.reason}`
+      this.config.wfs && r.reason !== WFS_NOTICE ? `${status} · ${WFS_NOTICE}` : status
     );
   }
 

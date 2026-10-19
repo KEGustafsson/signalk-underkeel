@@ -6,7 +6,7 @@ import type { ChartIndex } from "../spatial/chart-index";
 import { FLAGS } from "../spatial/node-store";
 import { footprintGeom, minDepthOver } from "../spatial/pyramid";
 import type { LegResult, RouteCheckInput } from "./route-check";
-import { checkRoute } from "./route-check";
+import { checkRoute, UNCHECKED } from "./route-check";
 
 /**
  * Route repair (plan §4.11): for a leg that fails, Theta* over a local cost
@@ -152,7 +152,7 @@ export function repairLeg(
         bufferMetres: corridor + grid.cell / 2,
         risk
       });
-      const unchecked = (r.flags & (FLAGS.NO_COVERAGE | FLAGS.UNASSESSED | FLAGS.NO_DEPTH)) !== 0;
+      const unchecked = (r.flags & UNCHECKED) !== 0;
       grid.cost[i] =
         unchecked || r.maxRisk >= input.probability
           ? Infinity

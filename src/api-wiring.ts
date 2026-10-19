@@ -16,6 +16,7 @@ import type { RouteServiceDeps } from "./route-service";
 import { departureWindowReply, routeCheck, routeRepair } from "./route-service";
 import { statusReport } from "./status-report";
 import type { LivechartService } from "./livechart-service";
+import type { WfsService } from "./wfs-service";
 
 /** The REST handlers bound to the plugin's current state (plan §4.10). */
 
@@ -26,6 +27,7 @@ export interface PluginState {
   acks?: AckStore;
   zoneErrors: string[];
   livechart?: LivechartService;
+  wfs?: WfsService;
   stopped: EngineStatus;
 }
 
@@ -76,7 +78,8 @@ export function apiFor(
         stopped: s.stopped,
         now: clock.now(),
         zoneErrors: s.zoneErrors,
-        livechart: s.livechart
+        livechart: s.livechart,
+        wfs: s.wfs
       }),
     envelope: () =>
       s.monitor

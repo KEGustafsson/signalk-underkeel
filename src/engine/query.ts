@@ -53,7 +53,9 @@ function classFor(
   wl: WaterLevel,
   th: Thresholds
 ): FootprintClass {
-  const uncovered = (r.flags & (FLAGS.NO_COVERAGE | FLAGS.UNASSESSED)) !== 0 || charted === null;
+  const uncovered =
+    (r.flags & (FLAGS.NO_COVERAGE | FLAGS.UNASSESSED | FLAGS.NOT_FOR_NAVIGATION)) !== 0 ||
+    charted === null;
   const cls = classOf({ risk: r.maxRisk, uncovered, charted }, th);
   return wl.degraded && cls === "clear" ? "unverified" : cls;
 }

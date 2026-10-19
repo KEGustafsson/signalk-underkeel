@@ -127,6 +127,8 @@ interface Analysis {
   shallowest: number;
   /** A larger-scale cell's coverage boundary crosses the tile. */
   coverageEdge: boolean;
+  /** Catalogue index of the covering cell when it is advisory (Traficom WFS). */
+  advisoryCell: number | undefined;
   needsSplit: boolean;
 }
 
@@ -182,7 +184,10 @@ function analyse(all: Hit[], tileGround: number): Analysis {
   const sweptEdge = hits.some((h) => h.item.f.role === "swept" && !h.full);
   const needsSplit =
     bandFull === undefined || coverageEdge || depthEdge || sweptEdge || qualityEdge(hits);
-  return { hits, bandFull, shallowest, coverageEdge, needsSplit };
+  const advisoryCell = all.find(
+    (h) => h.item.f.role === "coverage" && h.full && h.item.f.band === bandFull && h.item.f.advisory
+  )?.item.f.cellRef;
+  return { hits, bandFull, shallowest, coverageEdge, advisoryCell, needsSplit };
 }
 
 /**
@@ -272,6 +277,11 @@ function flagsOf(hits: Hit[], bandFull: number | undefined, assessed: boolean): 
  * part and carries NO_COVERAGE, so a rock there is not hidden by the gap
  * beside it; a tile with no depth feature at all is NO_DATA.
  */
+function isArea(h: Hit): boolean {
+  const f = h.item.f;
+  return f.role === "depth" && !f.hazard && f.geom.type === "polygon";
+}
+
 function uniformValues(a: Analysis, rect: Rect, opts: BuildOptions): NodeValues {
   let dMin = Infinity;
   let cellRef = -1;
@@ -283,7 +293,14 @@ function uniformValues(a: Analysis, rect: Rect, opts: BuildOptions): NodeValues 
     }
   }
   const assessed = assessedCover(a.hits, rect);
-  const flags = flagsOf(a.hits, a.bandFull, assessed);
+  const advisory = a.advisoryCell !== undefined || a.hits.some((h) => h.item.f.advisory);
+  const flags = flagsOf(a.hits, a.bandFull, assessed) | (advisory ? FLAGS.NOT_FOR_NAVIGATION : 0);
+  // An advisory cell has no land objects: where no depth area reaches, the
+  // tile is land, since the gap may hold a skerry left out. A sounding's
+  // burn disc does not make it water.
+  if (a.advisoryCell !== undefined && !a.hits.some(isArea)) {
+    return { dMin: -Infinity, sigmaD: 0, sigmaP: 0, flags, cellRef: a.advisoryCell };
+  }
   if (dMin === Infinity) {
     return { ...NO_DATA, flags: flags | NO_DATA.flags };
   }

@@ -51,7 +51,7 @@ function createProvider(config: PluginConfig, fetch: FetchLike): WaterLevelProvi
 
 export class WaterLevelService {
   private readonly provider: WaterLevelProvider | undefined;
-  private readonly datums: DatumUse[];
+  private datums: DatumUse[];
   private lastFetch = -Infinity;
 
   constructor(
@@ -61,6 +61,11 @@ export class WaterLevelService {
   ) {
     this.provider = createProvider(config, fetch);
     this.datums = index ? datumUses(index.catalogue.cells, config.waterLevel.datums) : [];
+  }
+
+  /** Re-maps the cells' vertical datums after the index changes. */
+  setIndex(index: ChartIndex): void {
+    this.datums = datumUses(index.catalogue.cells, this.config.waterLevel.datums);
   }
 
   /** Signal K paths the source reads. */

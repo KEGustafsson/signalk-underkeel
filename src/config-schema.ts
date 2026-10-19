@@ -189,6 +189,35 @@ export const SCHEMA = {
         }
       }
     },
+    wfs: {
+      type: "object",
+      title: "Traficom WFS depths (not for navigational purposes)",
+      description:
+        "Downloads Traficom INSPIRE WFS depth areas and soundings around the vessel and fills gaps between ENC cells. Licensed for non-navigational use only; it has no rocks, wrecks or survey quality, so water it alone covers is never shown as clear and the look-ahead is never normal there. Needs internet.",
+      properties: {
+        enabled: { type: "boolean", title: "Enabled", default: false },
+        catzoc: {
+          type: "string",
+          title: "Survey quality to assume (the WFS states none)",
+          enum: ["A1", "A2", "B", "C", "D", "U"],
+          default: "B",
+          description:
+            "Sets each sounding's danger radius (2 × position σ: B 50 m, C 500 m, U 1000 m) and the depth σ. U is the most cautious and alarms almost everywhere in an archipelago."
+        },
+        radiusKm: {
+          type: "number",
+          title: "Box half-width around the vessel (km)",
+          default: 10,
+          minimum: 2,
+          maximum: 25
+        },
+        url: {
+          type: "string",
+          title: "WFS URL",
+          default: "https://julkinen.traficom.fi/inspirepalvelu/rajoitettu/wfs"
+        }
+      }
+    },
     routeCheck: {
       type: "object",
       title: "Route check",

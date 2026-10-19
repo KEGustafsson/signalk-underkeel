@@ -9,6 +9,7 @@ import { DEFAULT_DATUMS } from "./ingest/datum";
 import type { DynamicsOptions, VesselModel } from "./model/vessel";
 import { DEFAULT_DYNAMICS } from "./model/vessel";
 import { LIMITS } from "./api/route-request";
+import { DEFAULT_WFS_URL, WFS_LIMITS } from "./ingest/wfs";
 
 export { SCHEMA } from "./config-schema";
 
@@ -37,6 +38,8 @@ export interface PluginConfig {
   mooringZones: string[];
   /** Undefined when the detector is off. */
   groundingDetector?: GroundingOptions;
+  /** Undefined when the Traficom WFS depth source is off. */
+  wfs?: WfsConfig;
   routeCheck: {
     /** Planning speed when a request gives none, m/s. */
     speed: number;
@@ -45,6 +48,14 @@ export interface PluginConfig {
     /** A leg passes when P(UKC < 0) is below this. */
     probability: number;
   };
+}
+
+export interface WfsConfig {
+  url: string;
+  /** Half-width of the box downloaded around the vessel, km. */
+  radiusKm: number;
+  /** CATZOC assumed for WFS depths, 1–6; the WFS states none. */
+  catzoc: number;
 }
 
 export interface WaterLevelConfig {
@@ -187,6 +198,20 @@ function parseLivechart(l: Record<string, unknown>): LivechartConfig | undefined
   };
 }
 
+/** CATZOC letters as configured, to S-57 codes. */
+const CATZOC_CODES: Record<string, number> = { A1: 1, A2: 2, B: 3, C: 4, D: 5, U: 6 };
+
+function parseWfs(w: Record<string, unknown>): WfsConfig | undefined {
+  if (w.enabled !== true) {
+    return undefined;
+  }
+  return {
+    url: str(w.url) ?? DEFAULT_WFS_URL,
+    radiusKm: num(w.radiusKm, 10, WFS_LIMITS.minRadiusKm, WFS_LIMITS.maxRadiusKm),
+    catzoc: CATZOC_CODES[str(w.catzoc) ?? "B"] ?? 3
+  };
+}
+
 function parseGrounding(g: Record<string, unknown>): GroundingOptions | undefined {
   if (g.enabled !== true) {
     return undefined;
@@ -219,6 +244,7 @@ export function parseConfig(raw: unknown): PluginConfig {
       .map(str)
       .filter((id): id is string => id !== undefined),
     groundingDetector: parseGrounding(record(r.groundingDetector)),
+    wfs: parseWfs(record(r.wfs)),
     routeCheck: {
       speed: num(rc.speed, DEFAULT_ROUTE_CHECK.speed, LIMITS.minSpeed, LIMITS.maxSpeed),
       xteLimit: num(rc.xteLimit, DEFAULT_ROUTE_CHECK.xteLimit, 0, LIMITS.maxXte),

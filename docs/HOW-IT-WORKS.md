@@ -20,8 +20,9 @@ rationale; the [README](../README.md) lists the REST endpoints and the chart exp
 9. [The UKC overlay](#9-the-ukc-overlay)
 10. [Checking a route](#10-checking-a-route)
 11. [Asking about one spot](#11-asking-about-one-spot)
-12. [What the plugin never does](#12-what-the-plugin-never-does)
-13. [Known limits](#13-known-limits)
+12. [Traficom WFS depths (optional)](#12-traficom-wfs-depths-optional)
+13. [What the plugin never does](#13-what-the-plugin-never-does)
+14. [Known limits](#14-known-limits)
 
 ## 1. About the screenshots
 
@@ -571,7 +572,40 @@ The query endpoint answers the same question for one point or area at the curren
 using the draft in the request when one is given and the configured vessel draft otherwise: the class, P(UKC < 0), the deciding hazard, the explanation and the same sentence
 as the notification. A plotter can use it for a cursor readout.
 
-## 12. What the plugin never does
+## 12. Traficom WFS depths (optional)
+
+With **Traficom WFS depths** enabled, the plugin downloads Traficom's INSPIRE WFS depth areas
+and soundings for a box around the vessel and adds them to the index as one more cell. **The
+data is not for navigational purposes**: Traficom licenses it for non-navigational use only.
+
+```mermaid
+flowchart TD
+  P[vessel position, checked periodically] --> D{more than half the box radius<br/>from the box centre?}
+  D -- no --> KEEP[keep the current index]
+  D -- yes, and no download<br/>in the last minute or so --> W[download the box around the vessel<br/>DepthArea_A, DredgedArea_A, Sounding_P]
+  W --> B[rebuild the index in a worker thread:<br/>ENC cells first, then the WFS cell]
+  B --> S[swap the new index in;<br/>the look-ahead keeps running]
+  W -- fails --> E[keep the old index, report the error,<br/>retry after a longer back-off]
+```
+
+- **Box:** radius 10 km by default (2–25 km). With the default, a new box is fetched once the
+  vessel is 5 km from the centre, so at least 5 km of WFS data lies ahead.
+- **Priority:** the WFS cell is usage band 1, so any ENC cell wins where both cover.
+- **Land:** the WFS has no land objects. Water that no depth area reaches is land, so a gap in
+  the data never reads as open water.
+- **Survey quality:** the WFS has none. The plugin assumes the CATZOC set under **Survey quality
+  to assume** (default B). It sets each sounding's danger radius: B 50 m, C 500 m, U 1000 m.
+- **Rocks, wrecks and obstructions** are not in the WFS, so they are missing wherever it is the
+  only source.
+- **Never safe:** every index cell from the WFS carries `NOT_FOR_NAVIGATION`. Where the
+  look-ahead would otherwise say `normal`, it says `alert` with the reason "depths from the
+  Traficom WFS: not for navigational purposes; no rocks, wrecks or survey quality". Route legs
+  over it are `unverified`, and the overlay draws it `unverified`, never `clear`. Warnings and
+  alarms over WFS water are raised as usual.
+- **Status:** `GET /status` has a `wfs` section with the box, its fetch time, the feature counts
+  and the notice; the plugin status line repeats the notice while the source is on.
+
+## 13. What the plugin never does
 
 - It never reports `normal` on stale position, missing draft, missing index, missing chart
   coverage or a fallback water level. Each gives `unknown`, `off`, `warn` or `alert` with a
@@ -586,7 +620,7 @@ as the notification. A plotter can use it for a cursor readout.
 - A suggested repair never moves an existing route point and never routes through unchecked
   water.
 
-## 13. Known limits
+## 14. Known limits
 
 - The index resolves about 19 m at 60° N. A leaf that touches land counts as land, so up to one
   leaf width of water along a shore is drawn as land or danger.

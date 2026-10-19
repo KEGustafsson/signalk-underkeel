@@ -49,6 +49,14 @@ to alert inside them, with the zone named. **Grounding detector** (off by defaul
 stop in water as shallow as the keel raises `notifications.grounding`; it is the only part of
 the plugin that writes that path.
 
+**Traficom WFS depths** (off by default, needs internet): depth areas and soundings from
+Traficom's INSPIRE WFS for a box around the vessel, refreshed as the vessel moves, fill gaps
+between ENC cells. The data is **not for navigational purposes** (Traficom hydrographic data
+licence) and has no rocks, wrecks or survey quality: water it alone covers is never `normal` in
+the look-ahead (at most `alert`, with that notice), never `ok` in a route check and never
+`clear` on the overlay; water without a depth area counts as land. `GET /status` shows the box
+and the notice.
+
 REST, base `/plugins/signalk-underkeel/v1`, open to readonly users:
 
 - `GET /status`: engine state, chart index and cell editions, look-ahead summary, water-level

@@ -153,11 +153,15 @@ function checkCorridor(index: ChartIndex, a: LonLat, b: LonLat, r: number, s: Sc
 /** P at or above this fails a leg whatever the accepted probability. */
 const FAIL_RISK = 0.5;
 
+/** Flags that leave a corridor unchecked: such a leg is never `ok` (safety invariant 4). */
+export const UNCHECKED =
+  FLAGS.NO_COVERAGE | FLAGS.UNASSESSED | FLAGS.NO_DEPTH | FLAGS.NOT_FOR_NAVIGATION;
+
 function statusOf(risk: number, charted: number | null, flags: number, p: number): LegStatus {
   if (risk >= Math.min(5 * p, Math.max(p, FAIL_RISK))) {
     return "fail";
   }
-  if (charted === null || flags & (FLAGS.NO_COVERAGE | FLAGS.UNASSESSED | FLAGS.NO_DEPTH)) {
+  if (charted === null || flags & UNCHECKED) {
     return "unverified";
   }
   return risk >= p ? "marginal" : "ok";

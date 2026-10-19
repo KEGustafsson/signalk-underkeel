@@ -21,29 +21,55 @@ export interface FakeClock extends Clock {
 
 export function fakeClock(start: number): FakeClock {
   let now = start;
-  let fn: (() => void) | undefined;
+  const timers = new Map<number, () => void>();
+  let next = 1;
   return {
     now: () => now,
     setInterval: (f) => {
-      fn = f;
-      return 1;
+      timers.set(next, f);
+      return next++;
     },
-    clearInterval: () => {
-      fn = undefined;
+    clearInterval: (h) => {
+      timers.delete(h as number);
     },
     advance(ms: number) {
       now += ms;
-      fn?.();
+      [...timers.values()].forEach((f) => f());
     }
   };
+}
+
+/** Matches any of the Signal K paths, where `*` stands for any run of characters. */
+function pathPattern(paths: string[]): RegExp {
+  const one = (p: string) =>
+    p
+      .split("*")
+      .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
+      .join(".*");
+  return new RegExp(`^(?:${paths.map(one).join("|")})$`);
+}
+
+/** Delivers the delta's values that one subscription matches, as the server does per subscription. */
+function deliver(d: Delta, match: RegExp, cb: (d: Delta) => void): void {
+  const updates = d.updates.flatMap((u) => {
+    if (!("values" in u)) {
+      return [u];
+    }
+    const values = u.values.filter((v) => match.test(v.path));
+    return values.length > 0 ? [{ ...u, values }] : [];
+  });
+  if (updates.length > 0) {
+    cb({ ...d, updates } as Delta);
+  }
 }
 
 export function fakeApp(dataDir: string, self: Record<string, unknown> = {}) {
   const deltas: Partial<Delta>[] = [];
   const errors: string[] = [];
   const providers: unknown[] = [];
-  let onDelta: ((d: Delta) => void) | undefined;
+  const subscriptions: { match: RegExp; cb: (d: Delta) => void }[] = [];
   let unsubscribed = 0;
+  const subscribed: string[] = [];
   const app = {
     handleMessage: (_id: string, msg: Partial<Delta>) => deltas.push(msg),
     setPluginStatus: () => undefined,
@@ -54,13 +80,19 @@ export function fakeApp(dataDir: string, self: Record<string, unknown> = {}) {
     registerResourceProvider: (p: unknown) => providers.push(p),
     subscriptionmanager: {
       subscribe: (
-        _cmd: unknown,
+        cmd: { subscribe: { path: string }[] },
         unsubscribes: (() => void)[],
         _err: unknown,
         cb: (d: Delta) => void
       ) => {
-        onDelta = cb;
-        unsubscribes.push(() => unsubscribed++);
+        const paths = cmd.subscribe.map((s) => s.path);
+        subscribed.push(...paths);
+        const sub = { match: pathPattern(paths), cb };
+        subscriptions.push(sub);
+        unsubscribes.push(() => {
+          unsubscribed++;
+          subscriptions.splice(subscriptions.indexOf(sub), 1);
+        });
       }
     }
   } as unknown as ServerAPI;
@@ -69,7 +101,8 @@ export function fakeApp(dataDir: string, self: Record<string, unknown> = {}) {
     deltas,
     errors,
     providers,
-    send: (d: Delta) => onDelta?.(d),
+    send: (d: Delta) => subscriptions.forEach((s) => deliver(d, s.match, s.cb)),
+    subscribed,
     unsubscribed: () => unsubscribed
   };
 }

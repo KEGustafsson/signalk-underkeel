@@ -16,6 +16,8 @@ export interface CellInfo {
   verticalDatum?: number;
   /** S-57 VERDAT code of the sounding datum, when known. */
   soundingDatum?: number;
+  /** Set for cells built from a non-ENC source, e.g. "traficom-wfs". */
+  source?: string;
 }
 
 export interface CellCatalogue {
@@ -57,7 +59,8 @@ function parseCell(raw: unknown, index: number): CellInfo {
     issueDate: typeof r.issueDate === "string" ? r.issueDate : undefined,
     band,
     verticalDatum: finiteOrUndefined(r.verticalDatum),
-    soundingDatum: finiteOrUndefined(r.soundingDatum)
+    soundingDatum: finiteOrUndefined(r.soundingDatum),
+    source: typeof r.source === "string" ? r.source : undefined
   };
 }
 
