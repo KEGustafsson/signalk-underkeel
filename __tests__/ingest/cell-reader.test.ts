@@ -88,6 +88,14 @@ describe("hazard depth rules", () => {
     expect(hazardDepth({ WATLEV: 3 })).toBe(0);
     expect(hazardDepth({})).toBe(0);
   });
+
+  test("hazards that dry at low water without VALSOU are land, not datum level", () => {
+    expect(hazardDepth({ WATLEV: 4 })).toBe(-Infinity);
+    expect(hazardDepth({ WATLEV: "4" })).toBe(-Infinity);
+    expect(hazardDepth({ WATLEV: 6 })).toBe(-Infinity);
+    expect(hazardDepth({ WATLEV: 4, VALSOU: -0.4 })).toBe(-0.4);
+    expect(hazardDepth({ WATLEV: 5 })).toBe(0);
+  });
 });
 
 describe("layer parsing edge cases", () => {

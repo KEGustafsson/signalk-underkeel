@@ -108,17 +108,17 @@ area exists.
 
 ### What is read
 
-| S-57 object                  | Used as                                                                    |
-| ---------------------------- | -------------------------------------------------------------------------- |
-| `M_COVR` (CATCOV 1)          | where the cell has data; outside every coverage is no data                 |
-| `M_QUAL` (`CATZOC`)          | survey quality, which sets the depth and position σ                        |
-| `DEPARE`, `DRGARE`           | area depth from `DRVAL1`; missing `DRVAL1` counts as 0 m                   |
-| `SWPARE`                     | guaranteed depth, σ 0.1 m unless a shallower hazard inside sets the depth  |
-| `SOUNDG`                     | point depths                                                               |
-| `UWTROC`, `WRECKS`, `OBSTRN` | point hazards at `VALSOU`; without it, land when `WATLEV` 1 or 2, else 0 m |
-| `LNDARE`, `COALNE`, `SLCONS` | land                                                                       |
-| `PONTON`, `FLODOC`, `HULKES` | land                                                                       |
-| `UNSARE`                     | no depth: read as a coverage gap, never as water                           |
+| S-57 object                  | Used as                                                                          |
+| ---------------------------- | -------------------------------------------------------------------------------- |
+| `M_COVR` (CATCOV 1)          | where the cell has data; outside every coverage is no data                       |
+| `M_QUAL` (`CATZOC`)          | survey quality, which sets the depth and position σ                              |
+| `DEPARE`, `DRGARE`           | area depth from `DRVAL1`; missing `DRVAL1` counts as 0 m                         |
+| `SWPARE`                     | guaranteed depth, σ 0.1 m unless a shallower hazard inside sets the depth        |
+| `SOUNDG`                     | point depths                                                                     |
+| `UWTROC`, `WRECKS`, `OBSTRN` | point hazards at `VALSOU`; without it, land when `WATLEV` 1, 2, 4 or 6, else 0 m |
+| `LNDARE`, `COALNE`, `SLCONS` | land                                                                             |
+| `PONTON`, `FLODOC`, `HULKES` | land                                                                             |
+| `UNSARE`                     | no depth: read as a coverage gap, never as water                                 |
 
 Inside a cell's coverage, a place that no depth area, land or unsurveyed area reaches has no
 depth either; a sounding's burn disc does not make it water.
