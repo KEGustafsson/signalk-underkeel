@@ -142,4 +142,20 @@ describe("extension display logic", () => {
     );
     expect(UKC.waterSourceKey(status())).toBe("");
   });
+
+  test("the panel names the water level the engine applies, and why it is degraded", () => {
+    const applied = { h: 0, sigma: 0.3, source: "fallback", degraded: "FMI forecast unavailable" };
+    expect(UKC.statusLines({ waterLevel: { source: "fmi", applied }, wfs: null }, "m")).toEqual([
+      "Water level 0.0 m (fallback)",
+      "Water level degraded: FMI forecast unavailable"
+    ]);
+    const forecast = { h: 0.42, sigma: 0.1, source: "fmi:forecast" };
+    expect(
+      UKC.statusLines(
+        { waterLevel: { source: "fmi", applied: forecast }, wfs: { notice: "N" } },
+        "m"
+      )
+    ).toEqual(["Water level 0.4 m (fmi:forecast)", "N"]);
+    expect(UKC.statusLines({ waterLevel: null }, "m")).toEqual([]);
+  });
 });

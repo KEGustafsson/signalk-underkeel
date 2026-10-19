@@ -176,6 +176,22 @@
     return applied ? applied.source + "|" + (applied.degraded || "") : "";
   }
 
+  /** The panel's status notes from `GET /status`: the water level applied, its degradation, the WFS notice. */
+  function statusLines(status, unit) {
+    const parts = [];
+    const wl = status && status.waterLevel && status.waterLevel.applied;
+    if (wl) {
+      parts.push("Water level " + depth(wl.h, unit) + " (" + wl.source + ")");
+      if (wl.degraded) {
+        parts.push("Water level degraded: " + wl.degraded);
+      }
+    }
+    if (status && status.wfs && status.wfs.notice) {
+      parts.push(status.wfs.notice);
+    }
+    return parts;
+  }
+
   /**
    * The route results the panel lists: one per visible route, a route the
    * runtime has not answered for yet marked pending. Without the visible set
@@ -209,7 +225,8 @@
     checkedAgo: checkedAgo,
     revJumped: revJumped,
     levelMoved: levelMoved,
-    waterSourceKey: waterSourceKey
+    waterSourceKey: waterSourceKey,
+    statusLines: statusLines
   };
   if (typeof module !== "undefined" && module.exports) {
     module.exports = api;

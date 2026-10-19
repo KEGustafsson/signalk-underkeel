@@ -53,15 +53,7 @@ async function refreshStatus() {
     const chip = document.getElementById("state");
     chip.textContent = style.label;
     chip.style.background = style.colour;
-    const wl = s.waterLevel && s.waterLevel.applied;
-    const parts = [];
-    if (wl) {
-      parts.push(`Water level ${UKC.depth(wl.h, unit)} (${s.waterLevel.source})`);
-    }
-    if (s.wfs && s.wfs.notice) {
-      parts.push(s.wfs.notice);
-    }
-    text("source", parts.join(" · "));
+    text("source", UKC.statusLines(s, unit).join(" · "));
   } catch (err) {
     if (id !== statusRequest) {
       return;
