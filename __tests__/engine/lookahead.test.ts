@@ -341,6 +341,18 @@ describe("probabilistic look-ahead on the synthetic chart", () => {
     expect(cut.horizon).toBeLessThan((5 * 1852) / 0.3);
   });
 
+  test("squat uses the faster of SOG and STW, even with COG stale", () => {
+    const squatOf = (n: NavState) =>
+      evaluateLookahead(n, ctx(DEEP_KEEL), index, NOW).worst?.explanation.squat;
+    const base = nav(westOfRock(40), FAIRWAY_LAT, EAST, 2);
+    // Barrass with Cb 0.4: 4 m/s = 7.78 kn → 0.24 m; 2 m/s → 0.06 m.
+    expect(squatOf({ ...base, stw: { value: 4, at: NOW } })).toBeCloseTo(0.24, 2);
+    expect(squatOf(base)).toBeCloseTo(0.06, 2);
+    const noCog = { ...base, cog: { value: EAST, at: NOW - 60_000 } };
+    expect(squatOf(noCog)).toBeCloseTo(0.06, 2);
+    expect(squatOf({ ...noCog, sog: undefined, stw: { value: 4, at: NOW } })).toBeCloseTo(0.24, 2);
+  });
+
   test("a rock under the bow never yields hold course as the escape", () => {
     const rock: ChartIndex = {
       catalogue: { version: 1, cells: [] },

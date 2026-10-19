@@ -362,15 +362,16 @@ function scoringFor(
   nav: NavState,
   inputs: LookaheadInputs,
   vessel: VesselModel,
-  m: Motion,
   now: number,
   opts: LookaheadOptions
 ): Scoring {
   const fresh = <T>(x: Sample<T> | undefined): T | undefined =>
     stale(x, now, opts) ? undefined : x?.value;
+  // Squat follows speed through the water, and a stale COG does not stop the hull sinking.
+  const squatSpeed = Math.max(fresh(nav.sog) ?? 0, fresh(nav.stw) ?? 0);
   const terms = vesselTerms(
     vessel,
-    { speed: m.sog, roll: rollOf(nav, now, opts), waveHeight: nav.waveHeight?.value },
+    { speed: squatSpeed, roll: rollOf(nav, now, opts), waveHeight: nav.waveHeight?.value },
     inputs.dynamics
   );
   const wl = inputs.waterLevel;
@@ -407,7 +408,7 @@ export function evaluateLookahead(
   }
   const m = motionOf(nav, now, opts);
   const wl = inputs.waterLevel;
-  const s = scoringFor(nav, inputs, vessel, m, now, opts);
+  const s = scoringFor(nav, inputs, vessel, now, opts);
   const origin = nav.position.value;
   const times = timesFor(m, vessel, opts);
   const tracks = fanMembers(

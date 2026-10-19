@@ -274,7 +274,8 @@ Below 18 kn the horizon always reaches 555.6 m ahead, so slowing down does not s
 envelope. The same distance takes longer, though: 154 s at 7 kn, 270 s at 4 kn. Warn and alarm
 count seconds to the shoal, so at lower speed they come closer to it.
 
-The look-ahead uses the current speed for squat and the roll of the last 10 s for heel. A `fin`
+The look-ahead uses the higher of speed over ground and speed through water for squat, even
+when the course is stale, and the roll of the last 10 s for heel. A `fin`
 keel is lifted only by the least roll in that window, since a boat rolling through upright has
 its full draft at the bottom of each roll; a `table` keel takes the largest draft change over
 the rolls seen. Roll older than 10 s or above 60° counts as no roll: no lift for a `fin` keel,
