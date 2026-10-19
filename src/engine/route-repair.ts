@@ -1,5 +1,5 @@
 import type { LonLat } from "../foundation/geo";
-import { EARTH_RADIUS, offset } from "../foundation/geo";
+import { EARTH_RADIUS } from "../foundation/geo";
 import { sigmaExtra, thresholdDepth } from "../model/uncertainty";
 import { vesselTerms } from "../model/vessel";
 import type { ChartIndex } from "../spatial/chart-index";
@@ -50,7 +50,11 @@ export interface LegRepair {
   reason?: string;
 }
 
-/** Local east/north metres around an origin; exact enough over a leg's window. */
+/**
+ * Local east/north metres around an origin; exact enough over a leg's
+ * window. Both directions use the same sphere, so a cell centre maps back
+ * to the cell it came from.
+ */
 interface Frame {
   origin: LonLat;
   toXY(p: LonLat): [number, number];
@@ -66,7 +70,10 @@ function frameAt(origin: LonLat): Frame {
       (p[0] - origin[0]) * k * EARTH_RADIUS * cos,
       (p[1] - origin[1]) * k * EARTH_RADIUS
     ],
-    toLonLat: (x, y) => offset(origin, x, y)
+    toLonLat: (x, y) => [
+      origin[0] + x / (k * EARTH_RADIUS * cos),
+      origin[1] + y / (k * EARTH_RADIUS)
+    ]
   };
 }
 
