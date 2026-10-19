@@ -137,3 +137,6 @@ All notable changes to signalk-underkeel are documented here.
 - Acknowledged passages are not honoured while the water level is a fallback, and `POST /acks`
   answers 409 then. A stale tide feed fell back to 0 m, which compared as more water than an
   acknowledgement made at −0.4 m and turned a warn into "acknowledged passage".
+- `POST /acks` checks its polygon like `POST /query`: the ring must be closed, have no holes and
+  fit in 50 km without crossing ±180°. An unclosed ring lost a vertex, a hole was dropped so
+  the acknowledgement covered it, and a ring across ±180° became a band around the world.

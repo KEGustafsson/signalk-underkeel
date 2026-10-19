@@ -732,7 +732,8 @@ Acknowledgements are kept per vessel and exported as Signal K **notes**, so they
 the chart and can be deleted there.
 
 **As built (M4).** `POST /acks` takes an optional GeoJSON Polygon (default: the hull of the
-current look-ahead footprints), `sector` in degrees (default 20), `ttl` in seconds and
+current look-ahead footprints), checked like a `/query` polygon: a closed ring, no holes, at
+most 50 km across and not across ±180°; `sector` in degrees (default 20), `ttl` in seconds and
 `notificationId`; heading, water level and draft are taken from the plugin's current state.
 `GET /acks` is readonly; `POST` and `DELETE /acks/:id` need readwrite. They are stored in
 `acks.json` in the plugin data directory, so no database dependency is added; export as

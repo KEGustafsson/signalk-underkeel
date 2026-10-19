@@ -46,7 +46,7 @@ function withinSpan(ring: LonLat[]): boolean {
 }
 
 /** The closed outer ring of a GeoJSON Polygon, without the repeated closing position. */
-function parsePolygon(rings: unknown[], errors: string[]): LonLat[] | undefined {
+export function parsePolygon(rings: unknown[], errors: string[]): LonLat[] | undefined {
   if (rings.length > 1) {
     // A hole would be queried as part of the polygon.
     errors.push("polygon holes are not supported");

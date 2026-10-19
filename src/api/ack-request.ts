@@ -1,4 +1,5 @@
 import type { LonLat } from "../foundation/geo";
+import { parsePolygon } from "./query-request";
 import type { Parsed } from "./route-request";
 
 /**
@@ -7,7 +8,6 @@ import type { Parsed } from "./route-request";
  */
 
 export const ACK_LIMITS = {
-  maxPoints: 500,
   minSector: 1,
   maxSector: 90,
   maxTtl: 30 * 86400
@@ -27,24 +27,14 @@ function inRange(v: unknown, min: number, max: number): v is number {
   return typeof v === "number" && Number.isFinite(v) && v >= min && v <= max;
 }
 
-function parsePolygon(g: unknown, errors: string[]): LonLat[] | undefined {
+/** The same checks as a `/query` polygon: an unchecked ring would suppress warnings outside it. */
+function parseAckPolygon(g: unknown, errors: string[]): LonLat[] | undefined {
   const geom = g as { type?: unknown; coordinates?: unknown } | null;
-  const outer =
-    geom?.type === "Polygon" && Array.isArray(geom.coordinates) ? geom.coordinates[0] : undefined;
-  if (!Array.isArray(outer) || outer.length < 4 || outer.length > ACK_LIMITS.maxPoints) {
-    errors.push(`polygon must be a GeoJSON Polygon with 4..${ACK_LIMITS.maxPoints} positions`);
+  if (geom?.type !== "Polygon" || !Array.isArray(geom.coordinates)) {
+    errors.push("polygon must be a GeoJSON Polygon");
     return undefined;
   }
-  const ring: LonLat[] = [];
-  for (const p of outer as unknown[]) {
-    const [lon, lat] = Array.isArray(p) ? (p as unknown[]) : [];
-    if (!inRange(lon, -180, 180) || !inRange(lat, -85, 85)) {
-      errors.push("polygon positions must be [lon, lat] within ±180 / ±85");
-      return undefined;
-    }
-    ring.push([lon, lat]);
-  }
-  return ring.slice(0, -1);
+  return parsePolygon(geom.coordinates as unknown[], errors);
 }
 
 export function parseAckRequest(body: unknown): Parsed<AckRequest> {
@@ -52,7 +42,7 @@ export function parseAckRequest(body: unknown): Parsed<AckRequest> {
   const errors: string[] = [];
   const out: AckRequest = {};
   if (b.polygon !== undefined) {
-    out.polygon = parsePolygon(b.polygon, errors);
+    out.polygon = parseAckPolygon(b.polygon, errors);
   }
   if (b.sector !== undefined) {
     if (inRange(b.sector, ACK_LIMITS.minSector, ACK_LIMITS.maxSector)) {
