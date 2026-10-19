@@ -8,9 +8,12 @@ const has = (c) => client.hasCapability(c);
 // ---- look-ahead envelope: refetched whenever the plugin bumps envelopeRev ----
 let envelopeRev = 0;
 let fetching = false;
+/** A bump that arrives mid-fetch may be newer than the reply in flight: fetch again after it. */
+let refreshQueued = false;
 
 async function refreshEnvelope() {
   if (fetching) {
+    refreshQueued = true;
     return;
   }
   fetching = true;
@@ -26,6 +29,10 @@ async function refreshEnvelope() {
     console.warn("under-keel envelope", err);
   } finally {
     fetching = false;
+    if (refreshQueued) {
+      refreshQueued = false;
+      void refreshEnvelope();
+    }
   }
 }
 
@@ -124,6 +131,16 @@ if (has("routes")) {
       results.delete(params.routeId);
       void publish();
     } else if (params && params.routeId) {
+      // The old legs describe the old geometry: drop them until the check comes back.
+      nextSeq(params.routeId);
+      const prev = results.get(params.routeId);
+      results.set(params.routeId, {
+        name: prev && prev.name,
+        rev: prev && prev.rev,
+        legs: [],
+        error: "checking the edited route"
+      });
+      void publish();
       schedule(params.routeId);
     }
   });

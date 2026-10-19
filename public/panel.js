@@ -15,10 +15,19 @@ function text(id, value) {
   document.getElementById(id).textContent = value;
 }
 
+function showUnknownStatus(why) {
+  const style = UKC.stateStyle("unknown");
+  const chip = document.getElementById("state");
+  chip.textContent = style.label;
+  chip.style.background = style.colour;
+  text("source", `Under-keel status unavailable: ${why}`);
+}
+
 async function refreshStatus() {
   try {
     const res = await fetch(`${UKC.API}/status`, { credentials: "same-origin" });
     if (!res.ok) {
+      showUnknownStatus(`HTTP ${res.status}`);
       return;
     }
     const s = await res.json();
@@ -36,6 +45,7 @@ async function refreshStatus() {
     }
     text("source", parts.join(" · "));
   } catch (err) {
+    showUnknownStatus(err && err.message ? err.message : String(err));
     console.warn("under-keel status", err);
   }
 }
@@ -109,3 +119,5 @@ document.getElementById("recheck").addEventListener("click", () => {
 });
 await refreshStatus();
 await refreshRoutes();
+/** Notifications arrive only on change and the stream is optional, so the panel also polls. */
+setInterval(() => void refreshStatus(), 10000);
