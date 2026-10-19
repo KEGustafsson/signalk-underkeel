@@ -715,7 +715,9 @@ corridor around it has P at or above the accept threshold, or touches `NO_COVERA
 `UNASSESSED` or `NO_DEPTH`: a repair must not route through water it cannot check. Costs are
 evaluated lazily as Theta* expands. Simplification replaces a span with its chord whenever the
 chord passes the corridor check, so no simplification makes a leg fail; a path that still fails
-is reported with a reason and no waypoints. Both `/route-repair` and `/departure-window` take
+is reported with a reason and no waypoints. Legs are repaired in route order, each checked at
+the arrival time the detours before it give, and the response's `route` is the whole route with
+every suggested waypoint inserted, checked again. Both `/route-repair` and `/departure-window` take
 the `/route-check` body; the window adds `horizon` (default 48 h, at most 7 days) and `step`
 (default 15 min, at least 5 min, at most 1000 departures). Each leg takes the lowest level from
 its arrival until one step after it leaves, so a sampled `ok` departure also holds for every

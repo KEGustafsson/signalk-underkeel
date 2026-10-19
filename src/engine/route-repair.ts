@@ -7,7 +7,7 @@ import { FLAGS } from "../spatial/node-store";
 import { minDepthWithChartPosition } from "../spatial/chart-position";
 import { footprintGeom } from "../spatial/pyramid";
 import type { LegResult, RouteCheckInput } from "./route-check";
-import { checkRoute, UNCHECKED } from "./route-check";
+import { checkLeg, checkRoute, UNCHECKED } from "./route-check";
 
 /**
  * Route repair (plan §4.11): for a leg that fails, Theta* over a local cost
@@ -389,31 +389,54 @@ export function simplify(points: LonLat[], passes: (pts: LonLat[]) => boolean): 
   return keep(0, points.length - 1);
 }
 
+export interface RouteRepair {
+  repairs: LegRepair[];
+  /**
+   * The route with every suggested waypoint inserted, checked as a whole:
+   * a detour delays the legs after it, so they are checked at their new times.
+   */
+  route: { coordinates: LonLat[]; legs: LegResult[] };
+}
+
 /**
- * Repairs the failing or marginal legs of a checked route, the first
- * `maxLegs` of them; the rest get a reason. `pause` runs after each leg so
- * a caller on the event loop can let other work in between.
+ * Repairs the failing or marginal legs of a route in order, the first
+ * `maxLegs` of them; the rest get a reason. Each leg is checked at the time
+ * the repairs before it bring the boat there, so a leg a detour makes late
+ * is repaired or reported as it is then. `pause` runs after each searched
+ * leg so a caller on the event loop can let other work in between.
  */
 export async function repairRoute(
   index: ChartIndex,
   input: RouteCheckInput,
-  legs: LegResult[],
   opts: RepairOptions = DEFAULT_REPAIR,
   pause: () => Promise<void> = () => Promise.resolve()
-): Promise<LegRepair[]> {
-  const out: LegRepair[] = [];
-  for (const l of legs.filter((l) => l.status === "fail" || l.status === "marginal")) {
-    if (out.length >= opts.maxLegs) {
-      out.push({
-        index: l.index,
+): Promise<RouteRepair> {
+  const repairs: LegRepair[] = [];
+  const coordinates: LonLat[] = [input.coordinates[0] as LonLat];
+  const speeds: number[] = [];
+  let searched = 0;
+  let t = input.departure;
+  for (let i = 0; i + 1 < input.coordinates.length; i++) {
+    const { leg } = checkLeg(index, input, i, t);
+    let repair: LegRepair | undefined;
+    if ((leg.status === "fail" || leg.status === "marginal") && searched >= opts.maxLegs) {
+      repairs.push({
+        index: i,
         waypoints: [],
         legs: [],
         reason: `not searched: at most ${opts.maxLegs} legs are repaired per request`
       });
-      continue;
+    } else if (leg.status === "fail" || leg.status === "marginal") {
+      searched += 1;
+      repair = repairLeg(index, input, leg, opts);
+      repairs.push(repair);
+      await pause();
     }
-    out.push(repairLeg(index, input, l, opts));
-    await pause();
+    const waypoints = repair?.waypoints ?? [];
+    coordinates.push(...waypoints, leg.to);
+    speeds.push(...[...waypoints, leg.to].map(() => input.speeds[i] as number));
+    t = Date.parse((waypoints.length > 0 ? repair?.legs.at(-1) : leg)?.eta.end as string);
   }
-  return out;
+  const legs = checkRoute(index, { ...input, coordinates, speeds }, input.departure).legs;
+  return { repairs, route: { coordinates, legs } };
 }

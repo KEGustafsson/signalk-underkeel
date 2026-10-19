@@ -71,6 +71,9 @@ All notable changes to signalk-underkeel are documented here.
 - Departure window: each leg takes the lowest water level until one step after it is sailed,
   so a coarse step no longer reports a window across a low water it did not sample (a 12 h
   step over a semidiurnal tide returned a 24 h window in which a +6 h departure failed).
+- Route repair checks each leg at the time the detours before it bring the boat there, and
+  returns the whole repaired route re-checked as `route`. A detour delays the later legs, which
+  were reported with their old status although a falling tide could make them fail.
 - `navigation.underKeel.clearance` is published as `null` when the look-ahead reaches land,
   never `-Infinity`. In-process subscribers such as signalk-to-influxdb received the raw
   value and the database refused the write; no published number is now NaN or infinite.

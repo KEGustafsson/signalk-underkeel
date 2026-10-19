@@ -573,7 +573,9 @@ and hazard, the explanation, and the response lists the cell editions used.
    check, so the result has as few turns as it can.
 
 The answer lists the waypoints to insert into each failing leg and the legs they make, checked
-like any route. It never moves an existing point. When no path is found, the leg says why and
+like any route. Legs are repaired in order, each checked at the time the detours before it bring
+the boat there, and the answer also holds the whole route with every waypoint inserted, checked
+again, so a leg a detour makes late shows its status at the new time. It never moves an existing point. When no path is found, the leg says why and
 gets no waypoints. One request repairs a bounded number of legs, and any further ones are
 listed as not searched; the limits are in [plan §4.11](DEVELOPMENT-PLAN.md). A plotter shows
 the answer as a suggestion; the skipper decides whether to use it.

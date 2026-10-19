@@ -53,7 +53,9 @@ describe("route repair", () => {
   test("a leg through the shoal gets waypoints around it, and the new legs pass", async () => {
     const checked = checkRoute(index, input(LEG), NOW);
     expect(checked.legs[0]?.status).toBe("fail");
-    const [repair, ...rest] = await repairRoute(index, input(LEG), checked.legs);
+    const {
+      repairs: [repair, ...rest]
+    } = await repairRoute(index, input(LEG));
     expect(rest).toEqual([]);
     expect(repair?.reason).toBeUndefined();
     expect(repair?.waypoints.length).toBeGreaterThanOrEqual(1);
@@ -73,18 +75,19 @@ describe("route repair", () => {
       [22.05, 60.005]
     ];
     const checked = checkRoute(index, input(clear), NOW);
-    expect(await repairRoute(index, input(clear), checked.legs)).toEqual([]);
+    const { repairs, route } = await repairRoute(index, input(clear));
+    expect(repairs).toEqual([]);
+    expect(route.coordinates).toEqual(clear);
+    expect(route.legs).toEqual(checked.legs);
   });
 
   test("legs past the per-request limit are listed with a reason, not searched", async () => {
     // The same failing leg there and back three times: six failing legs.
     const zigzag: LonLat[] = [LEG[0], LEG[1], LEG[0], LEG[1], LEG[0], LEG[1], LEG[0]] as LonLat[];
-    const checked = checkRoute(index, input(zigzag), NOW);
     let pauses = 0;
-    const repairs = await repairRoute(
+    const { repairs } = await repairRoute(
       index,
       input(zigzag),
-      checked.legs,
       { ...DEFAULT_REPAIR, maxLegs: 2 },
       () => {
         pauses += 1;
@@ -124,10 +127,49 @@ describe("route repair", () => {
         { minZoom: 12, leafZoom: 18 }
       )
     };
-    const checked = checkRoute(b, input(LEG), NOW);
-    const [repair] = await repairRoute(b, input(LEG), checked.legs);
+    const {
+      repairs: [repair]
+    } = await repairRoute(b, input(LEG));
     expect(repair?.reason).toBeUndefined();
     expect(repair?.legs.every((l) => l.status === "ok")).toBe(true);
+  });
+
+  test("a repair that delays the later legs re-checks them at their new times", async () => {
+    // A drying shoal across leg 0, and a bank on leg 1 passable only until the water falls,
+    // 20 s after the original arrival at its end: the detour round the shoal makes leg 1 late.
+    const tidal: ChartIndex = {
+      ...index,
+      pyramid: buildPyramid(
+        [
+          ...basin([22.0, 60.0, 22.07, 60.04], 10),
+          area([22.027, 60.012, 22.033, 60.018], -1),
+          area([22.045, 60.019, 22.055, 60.021], 1.5)
+        ],
+        { minZoom: 12, leafZoom: 18 }
+      )
+    };
+    const route: LonLat[] = [LEG[0] as LonLat, LEG[1] as LonLat, [22.05, 60.025]];
+    const onTime = checkRoute(tidal, input(route), NOW).legs;
+    const drop = Date.parse(onTime[1]?.eta.end as string) + 20_000;
+    const falling = input(route, {
+      waterLevel: (_s, e) => ({ h: e < drop ? 1.5 : 0, sigma: 0.05, source: "manual" })
+    });
+    expect(checkRoute(tidal, falling, NOW).legs.map((l) => l.status)).toEqual(["fail", "ok"]);
+    const { repairs, route: repaired } = await repairRoute(tidal, falling);
+    expect(repairs[0]?.waypoints.length).toBeGreaterThan(0);
+    // Leg 1, sailed later, is looked at again rather than reported as it was.
+    expect(repairs.map((r) => r.index)).toContain(1);
+    const recheck = checkRoute(
+      tidal,
+      {
+        ...falling,
+        coordinates: repaired.coordinates,
+        speeds: repaired.coordinates.slice(1).map(() => 3)
+      },
+      NOW
+    );
+    expect(repaired.legs.map((l) => l.status)).toEqual(recheck.legs.map((l) => l.status));
+    expect(repaired.legs.map((l) => l.eta)).toEqual(recheck.legs.map((l) => l.eta));
   });
 
   test("simplification keeps a point only where the chord would fail", () => {

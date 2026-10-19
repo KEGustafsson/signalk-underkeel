@@ -111,15 +111,9 @@ export async function routeRepair(body: unknown, deps: RouteServiceDeps): Promis
   if (isReply(p)) {
     return p;
   }
-  const checked = checkRoute(p.index, p.input, deps.now());
-  const repairs = await repairRoute(
-    p.index,
-    p.input,
-    checked.legs,
-    DEFAULT_REPAIR,
-    yieldToEventLoop
-  );
-  return { status: 200, body: { checkedAt: checked.checkedAt, repairs } };
+  const checkedAt = new Date(deps.now()).toISOString();
+  const { repairs, route } = await repairRoute(p.index, p.input, DEFAULT_REPAIR, yieldToEventLoop);
+  return { status: 200, body: { checkedAt, repairs, route } };
 }
 
 /** `POST /departure-window`: departures over the horizon in which every leg is ok. */

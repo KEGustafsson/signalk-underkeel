@@ -71,7 +71,8 @@ REST, base `/plugins/signalk-underkeel/v1`, open to readonly users:
   coverage, unassessed survey or a fallback water level; never folded into `ok`), with P(UKC < 0),
   its explanation and the cell editions used.
 - `POST /route-repair`: the same body; for each failing or marginal leg, waypoints to insert
-  that route around the shoal and pass the same check. Existing points are never moved.
+  that route around the shoal and pass the same check, and the whole route with them inserted,
+  re-checked at the times the detours give its later legs. Existing points are never moved.
 - `POST /departure-window`: the same body plus `horizon` and `step` (seconds); the departure
   intervals in which every leg is `ok` at the forecast water level.
 - Both bound the work one request may cost; the limits are in
