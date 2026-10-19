@@ -326,18 +326,18 @@ The thresholds and time windows are set under **Look-ahead**:
 
 Published every second:
 
-| Path                                         | Unit  | Meaning                                                           |
-| -------------------------------------------- | ----- | ----------------------------------------------------------------- |
-| `navigation.underKeel.state`                 |       | `normal`, `alert`, `warn`, `alarm`, `unknown`, `off`              |
-| `navigation.underKeel.clearance`             | m     | lowest mean UKC over the horizon                                  |
-| `navigation.underKeel.clearanceSigma`        | m     | σ of that clearance, from the same footprint                      |
-| `navigation.underKeel.risk`                  | ratio | highest P(UKC < 0) over the horizon                               |
-| `navigation.underKeel.timeToShoal`           | s     | seconds until P first reaches the warn level; null if it does not |
-| `navigation.underKeel.escapeHeading`         | rad   | true heading to turn to, below; null in `normal`                  |
-| `navigation.underKeel.envelopeRev`           |       | increments when `GET /envelope` changes                           |
-| `navigation.underKeel.waterLevel`            | m     | water level applied above chart datum                             |
-| `notifications.navigation.underKeel`         |       | state, message and the explanation of every term                  |
-| `notifications.navigation.positionIntegrity` |       | GNSS fix doubtful, below                                          |
+| Path                                         | Unit  | Meaning                                                                                                    |
+| -------------------------------------------- | ----- | ---------------------------------------------------------------------------------------------------------- |
+| `navigation.underKeel.state`                 |       | `normal`, `alert`, `warn`, `alarm`, `unknown`, `off`                                                       |
+| `navigation.underKeel.clearance`             | m     | lowest mean UKC over the horizon                                                                           |
+| `navigation.underKeel.clearanceSigma`        | m     | σ of that clearance, from the same footprint                                                               |
+| `navigation.underKeel.risk`                  | ratio | highest P(UKC < 0) over the horizon                                                                        |
+| `navigation.underKeel.timeToShoal`           | s     | seconds until P first reaches the warn level; null if it does not                                          |
+| `navigation.underKeel.escapeHeading`         | rad   | true heading to turn to, below; null in `normal`                                                           |
+| `navigation.underKeel.envelopeRev`           |       | increments when `GET /envelope` changes; starts at the start time in ms, so no rev repeats after a restart |
+| `navigation.underKeel.waterLevel`            | m     | water level applied above chart datum                                                                      |
+| `notifications.navigation.underKeel`         |       | state, message and the explanation of every term                                                           |
+| `notifications.navigation.positionIntegrity` |       | GNSS fix doubtful, below                                                                                   |
 
 `clearance` is `null` when nothing is charted, and also when a footprint reaches land, as in the
 Data Browser picture: the lowest UKC is then −∞, which JSON cannot carry. `state` and `risk`

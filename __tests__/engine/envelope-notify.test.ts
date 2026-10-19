@@ -86,12 +86,22 @@ describe("envelope", () => {
 
   test("rev bumps only when the envelope changes", () => {
     const tracker = new EnvelopeTracker();
+    const start = tracker.rev;
     expect(tracker.update(buildEnvelope(at(22.005, 60.01), TH))).toBe(true);
-    expect(tracker.rev).toBe(1);
+    expect(tracker.rev).toBe(start + 1);
     expect(tracker.update(buildEnvelope(at(22.005, 60.01), TH))).toBe(false);
-    expect(tracker.rev).toBe(1);
+    expect(tracker.rev).toBe(start + 1);
     expect(tracker.update(buildEnvelope(at(22.006, 60.01), TH))).toBe(true);
-    expect(tracker.rev).toBe(2);
+    expect(tracker.rev).toBe(start + 2);
+  });
+
+  test("a new tracker starts above every rev issued before it", () => {
+    const old = new EnvelopeTracker();
+    old.update(buildEnvelope(at(22.005, 60.01), TH));
+    const next = new EnvelopeTracker();
+    expect(next.rev).toBeGreaterThan(old.rev);
+    expect(next.rev).toBeGreaterThanOrEqual(Date.now() - 1000);
+    expect(Number.isSafeInteger(next.rev)).toBe(true);
   });
 });
 

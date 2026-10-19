@@ -207,9 +207,22 @@ export function buildEnvelope(result: LookaheadResult, th: Thresholds): Envelope
   return { type: "FeatureCollection", features };
 }
 
-/** Holds the latest envelope and bumps `rev` only when its content changes. */
+/** The highest rev any tracker in this process has issued. */
+let issued = 0;
+
+function firstRev(): number {
+  issued = Math.max(Date.now(), issued + 1);
+  return issued;
+}
+
+/**
+ * Holds the latest envelope and bumps `rev` only when its content changes. `rev` starts at the
+ * wall-clock ms of creation (and above any rev issued before in this process), so a client
+ * holding a rev from before a restart never gets 304 for content it has not seen. It stays an
+ * integer well below 2^53.
+ */
 export class EnvelopeTracker {
-  rev = 0;
+  rev = firstRev();
   envelope: Envelope = { type: "FeatureCollection", features: [] };
   private key = JSON.stringify(this.envelope);
 
@@ -221,6 +234,7 @@ export class EnvelopeTracker {
     this.key = key;
     this.envelope = next;
     this.rev++;
+    issued = Math.max(issued, this.rev);
     return true;
   }
 }

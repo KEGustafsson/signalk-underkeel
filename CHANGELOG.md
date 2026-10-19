@@ -144,3 +144,5 @@ All notable changes to signalk-underkeel are documented here.
   logged to the server log. `DELETE /acks/:id` threw into express, which answered with an HTML
   stack trace, and `POST /acks` answered 400 with the raw file-system error and its absolute
   path. Other REST failures that are not a bad request body are a generic 500 as well.
+- The envelope `rev` starts at the plugin's start time in ms instead of 0, so after a restart
+  `GET /envelope?rev=N` no longer answers 304 to a client holding a rev from the earlier run.

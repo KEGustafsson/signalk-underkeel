@@ -136,4 +136,26 @@ describe("restart", () => {
     expect(reports.at(-1)?.[1]).toMatch(/chart index failed/);
     plugin.stop();
   });
+
+  test("an envelope rev from before a restart is never answered 304", () => {
+    const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 3.2 } } });
+    const clock = fakeClock(T0);
+    const plugin = underkeel(f.app, clock);
+    const { router, call } = fakeRouter();
+    plugin.registerWithRouter?.(router as never);
+    const run = (lon: number) => {
+      plugin.start({ cellsDir: FIXTURES, leafZoom: 18 }, () => undefined);
+      f.send(navDelta(lon, ROCK[1], 3, clock.now()));
+      clock.advance(1000);
+      return lastValue(f.deltas, "navigation.underKeel.envelopeRev") as number;
+    };
+    const before = run(ROCK[0] - 75 / M_PER_DEG_LON);
+    plugin.stop();
+    const after = run(ROCK[0] - 300 / M_PER_DEG_LON);
+    expect(Number.isSafeInteger(after)).toBe(true);
+    expect(after).not.toBe(before);
+    expect(call("/v1/envelope", { rev: String(before) }).code).toBe(200);
+    expect(call("/v1/envelope", { rev: String(after) }).code).toBe(304);
+    plugin.stop();
+  });
 });
