@@ -10,7 +10,7 @@ import { HazardIndex } from "../../src/spatial/hazards";
 import { FLAGS } from "../../src/spatial/node-store";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
 import { BANK, fixtureIndex, ROCK } from "../helpers/fixture-index";
-import { area, basin, coverage, point } from "../helpers/synthetic";
+import { area, basin, coverage, point, quality } from "../helpers/synthetic";
 import { CHART_DATUM } from "../helpers/engine";
 import { DEFAULT_DYNAMICS } from "../../src/model/vessel";
 
@@ -123,12 +123,14 @@ describe("corridor route check on the synthetic chart", () => {
   });
 
   test("a leg into the coverage gap is unverified, never ok", () => {
+    // Starts just inside the gap, more than 1 km from the bank: the gap's edge tiles are
+    // unassessed, so their position uncertainty reaches that far.
     const r = checkRoute(
       index,
       input(
         [
-          [22.03, 60.005],
-          [22.045, 60.005]
+          [22.042, 60.0],
+          [22.05, 60.0]
         ],
         1.0
       ),
@@ -350,5 +352,37 @@ describe("long legs", () => {
     const leg = checkRoute(index, input([a, b], 1.8, { xteLimit: 30 }), NOW).legs[0];
     expect(leg?.status).toBe("fail");
     expect(leg?.charted).toBe(-2);
+  });
+});
+
+describe("chart position uncertainty", () => {
+  // 60 m north of the leg: outside its ±30 m corridor, inside it once CATZOC B (±50 m) or
+  // C (±500 m) position accuracy is added.
+  const north = 60 / 111195;
+  test.each([
+    [3, "B"],
+    [4, "C"]
+  ] as const)("a drying area 60 m off the leg under CATZOC %s (%s) fails it", (catzoc) => {
+    const box = [22.0, 60.0, 22.06, 60.03] as const;
+    const index: ChartIndex = {
+      catalogue: { version: 1, cells: [] },
+      pyramid: buildPyramid(
+        [
+          coverage(box),
+          quality(box, catzoc),
+          area(box, 15),
+          area([22.028, 60.015 + north, 22.032, 60.016 + north], -1)
+        ],
+        { minZoom: 12, leafZoom: 20 }
+      ),
+      hazards: new HazardIndex([])
+    };
+    const leg: LonLat[] = [
+      [22.01, 60.015],
+      [22.05, 60.015]
+    ];
+    const r = checkRoute(index, input(leg, 1.8), NOW).legs[0];
+    expect(r?.status).toBe("fail");
+    expect(r?.charted).toBe(-1);
   });
 });

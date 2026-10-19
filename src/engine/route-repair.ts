@@ -4,7 +4,8 @@ import { sigmaExtra, thresholdDepth } from "../model/uncertainty";
 import { vesselTerms } from "../model/vessel";
 import type { ChartIndex } from "../spatial/chart-index";
 import { FLAGS } from "../spatial/node-store";
-import { footprintGeom, minDepthOver } from "../spatial/pyramid";
+import { minDepthWithChartPosition } from "../spatial/chart-position";
+import { footprintGeom } from "../spatial/pyramid";
 import type { LegResult, RouteCheckInput } from "./route-check";
 import { checkRoute, UNCHECKED } from "./route-check";
 
@@ -148,7 +149,8 @@ export function repairLeg(
       grid.known[i] = 1;
       const cx = grid.x0 + ((i % grid.nx) + 0.5) * grid.cell;
       const cy = grid.y0 + (Math.floor(i / grid.nx) + 0.5) * grid.cell;
-      const r = minDepthOver(index.pyramid, footprintGeom([grid.frame.toLonLat(cx, cy)]), {
+      const at = footprintGeom([grid.frame.toLonLat(cx, cy)]);
+      const { result: r } = minDepthWithChartPosition(index.pyramid, at, {
         bufferMetres: corridor + grid.cell / 2,
         risk
       });

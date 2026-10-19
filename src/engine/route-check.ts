@@ -8,7 +8,8 @@ import { vesselTerms } from "../model/vessel";
 import type { ChartIndex } from "../spatial/chart-index";
 import { FLAGS, flagNames } from "../spatial/node-store";
 import type { DepthResult, RiskTile } from "../spatial/pyramid";
-import { footprintGeom, mercatorBuffer, minDepthOver } from "../spatial/pyramid";
+import { footprintGeom, mercatorBuffer } from "../spatial/pyramid";
+import { minDepthWithChartPosition } from "../spatial/chart-position";
 import type { Explanation } from "./explain";
 import { explainTile } from "./explain";
 
@@ -167,6 +168,8 @@ export function legCorridors(a: LonLat, b: LonLat, r: number): LonLat[][] {
 interface LegDepth {
   result: DepthResult;
   ring: LonLat[];
+  /** Chart position buffer the ring was queried with, metres. */
+  bufferMetres: number;
 }
 
 /** Depths deeper than the UKC-zero depth plus this are reported as a lower bound. */
@@ -183,7 +186,7 @@ function checkCorridor(index: ChartIndex, a: LonLat, b: LonLat, r: number, s: Sc
   let covered = Infinity;
   const cells = new Set<number>();
   for (const ring of legCorridors(a, b, r)) {
-    const result = minDepthOver(index.pyramid, footprintGeom(ring), {
+    const { result, bufferMetres } = minDepthWithChartPosition(index.pyramid, footprintGeom(ring), {
       clearAbove: s.threshold + CLEARANCE_RESOLUTION,
       risk: { threshold: s.threshold, sigmaExtra: s.sigmaExtra }
     });
@@ -191,7 +194,7 @@ function checkCorridor(index: ChartIndex, a: LonLat, b: LonLat, r: number, s: Sc
     covered = Math.min(covered, result.coveredDMin);
     result.cellRefs.forEach((c) => cells.add(c));
     if (best === undefined || result.maxRisk > best.result.maxRisk) {
-      best = { result, ring };
+      best = { result, ring, bufferMetres };
     }
   }
   const leg = best as LegDepth;
@@ -233,7 +236,13 @@ export function checkLeg(
   const wl = input.waterLevel(start, end);
   const terms = vesselTerms(input.vessel, { speed, waveHeight: input.waveHeight }, input.dynamics);
   const s = { threshold: thresholdDepth(terms, wl), sigmaExtra: sigmaExtra(terms, wl) };
-  const { result, ring } = checkCorridor(index, from, to, input.xteLimit + input.planningBuffer, s);
+  const { result, ring, bufferMetres } = checkCorridor(
+    index,
+    from,
+    to,
+    input.xteLimit + input.planningBuffer,
+    s
+  );
   const covered = result.coveredDMin;
   const land = covered === -Infinity;
   const charted = covered === Infinity || land ? null : covered;
@@ -242,7 +251,7 @@ export function checkLeg(
     flags.push("LAND");
   }
   const tile = result.riskTile;
-  const why = tile ? explainTile(index, tile, ring, terms, wl) : undefined;
+  const why = tile ? explainTile(index, tile, ring, terms, wl, bufferMetres) : undefined;
   let status: LegStatus = land
     ? "fail"
     : statusOf(result.maxRisk, charted, result.flags, input.probability);

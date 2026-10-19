@@ -529,7 +529,7 @@ each leg at the time the boat would be on it. The request fields are listed in t
 ```mermaid
 flowchart TD
   R[route] --> L[for each leg]
-  L --> C[corridor = leg ± cross-track limit 30 m<br/>+ position buffer 10 m]
+  L --> C[corridor = leg ± cross-track limit 30 m<br/>+ position buffer 10 m<br/>+ 2 × chart σP]
   C --> W[lowest water level between<br/>arrival at the leg's start and end]
   W --> Q["highest P(UKC &lt; 0) in the corridor<br/>with squat at the leg's speed"]
   Q --> F{"corridor touches land, or<br/>P ≥ 5 × accepted P<br/>(at most 50 %, at least accepted P)?"}

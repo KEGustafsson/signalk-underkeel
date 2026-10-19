@@ -62,6 +62,9 @@ All notable changes to signalk-underkeel are documented here.
   the great circle where that strays more than 10 m from it. Pieces were stepped on a fixed
   flat-earth bearing, which drifted 75 m off the drawn line on a 78 km leg at 60° N and left a
   12.9 km last piece on a 485 km leg.
+- Route check, route repair and `POST /query` widen their buffer by 2·σP of the surveys they
+  reach (at most 1 km), since depth areas and lines are not widened when the index is built.
+  A drying area 60 m off a leg in CATZOC B or C water returned `ok` with P = 0.
 - `navigation.underKeel.clearance` is published as `null` when the look-ahead reaches land,
   never `-Infinity`. In-process subscribers such as signalk-to-influxdb received the raw
   value and the database refused the write; no published number is now NaN or infinite.

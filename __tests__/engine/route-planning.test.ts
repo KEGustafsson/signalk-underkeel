@@ -9,7 +9,7 @@ import type { ChartIndex } from "../../src/spatial/chart-index";
 import { HazardIndex } from "../../src/spatial/hazards";
 import { footprintGeom, minDepthOver } from "../../src/spatial/pyramid";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
-import { area, basin } from "../helpers/synthetic";
+import { area, basin, coverage, quality } from "../helpers/synthetic";
 
 const NOW = Date.parse("2026-10-18T07:00:00Z");
 const HOUR = 3600_000;
@@ -112,6 +112,22 @@ describe("route repair", () => {
     const repair = repairLeg(wall, input(LEG), checked.legs[0] as never);
     expect(repair.waypoints).toEqual([]);
     expect(repair.reason).toBe("no passable path in the search window");
+  });
+
+  test("the search keeps the chart's position uncertainty clear of the shoal", async () => {
+    // CATZOC B: depth areas may lie 50 m from where they are drawn.
+    const box = [22.0, 60.0, 22.06, 60.03] as const;
+    const b: ChartIndex = {
+      ...index,
+      pyramid: buildPyramid(
+        [coverage(box), quality(box, 3), area(box, 10), area([22.027, 60.012, 22.033, 60.018], 1)],
+        { minZoom: 12, leafZoom: 18 }
+      )
+    };
+    const checked = checkRoute(b, input(LEG), NOW);
+    const [repair] = await repairRoute(b, input(LEG), checked.legs);
+    expect(repair?.reason).toBeUndefined();
+    expect(repair?.legs.every((l) => l.status === "ok")).toBe(true);
   });
 
   test("simplification keeps a point only where the chord would fail", () => {

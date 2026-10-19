@@ -161,7 +161,7 @@ describe("Traficom WFS depths are advisory", () => {
     expect(r.state).toBe("alarm");
   });
 
-  test("a route leg over WFS water is unverified, never ok", () => {
+  test("a route leg over WFS water is never ok", () => {
     const r = checkRoute(
       index,
       {
@@ -180,8 +180,10 @@ describe("Traficom WFS depths are advisory", () => {
       },
       NOW
     );
-    expect(r.legs[0]?.status).toBe("unverified");
-    expect(r.legs[0]?.flags).toContain("NOT_FOR_NAVIGATION");
+    // WFS water has no survey quality, so its features may lie up to 1 km off: that reaches
+    // the water the WFS leaves out, which counts as land.
+    expect(r.legs[0]?.status).toBe("fail");
+    expect(r.legs[0]?.flags).toEqual(expect.arrayContaining(["NOT_FOR_NAVIGATION", "LAND"]));
   });
 
   test("the overlay never draws WFS water as clear", () => {

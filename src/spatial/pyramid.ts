@@ -46,6 +46,12 @@ export interface DepthResult extends NodeValues {
   /** With `risk` set: the highest per-tile P(UKC < 0) over charted tiles, else 0. */
   maxRisk: number;
   riskTile?: RiskTile;
+  /**
+   * The widest σP of the tiles taken at their own resolution. `sigmaP`
+   * also holds split tiles the walk stopped at, whose children's widest
+   * σP may come from a survey the footprint does not reach.
+   */
+  surveySigmaP: number;
 }
 
 export interface QueryOptions {
@@ -89,6 +95,7 @@ interface Walk {
   risk?: { threshold: number; sigmaExtra: number };
   maxRisk: number;
   riskTile?: { v: NodeValues; z: number; x: number; y: number; risk: number };
+  surveySigmaP: number;
 }
 
 function take(w: Walk, v: NodeValues, z: number, x: number, y: number): void {
@@ -153,8 +160,12 @@ function visit(w: Walk, z: number, x: number, y: number): void {
     return;
   }
   const v = w.store.values(i);
-  if (!w.store.isSplit(i) || canStop(w, v)) {
+  const split = w.store.isSplit(i);
+  if (!split || canStop(w, v)) {
     take(w, v, z, x, y);
+    if (!split) {
+      w.surveySigmaP = Math.max(w.surveySigmaP, v.sigmaP);
+    }
     return;
   }
   visit(w, z + 1, 2 * x, 2 * y);
@@ -227,6 +238,7 @@ export function minDepthOver(store: NodeStore, geom: Geom, opts: QueryOptions = 
     clearAbove,
     risk: opts.risk,
     maxRisk: 0,
+    surveySigmaP: 0,
     result: EMPTY,
     coveredDMin: Infinity,
     cells: new Set(),
@@ -251,7 +263,8 @@ export function minDepthOver(store: NodeStore, geom: Geom, opts: QueryOptions = 
     coveredDMin: w.coveredDMin,
     cellRefs: [...w.cells].sort((a, b) => a - b),
     visits: w.visits,
-    maxRisk: w.maxRisk
+    maxRisk: w.maxRisk,
+    surveySigmaP: w.surveySigmaP
   };
   if (w.riskTile) {
     const t = w.riskTile;

@@ -65,7 +65,8 @@ REST, base `/plugins/signalk-underkeel/v1`, open to readonly users:
   source health and datum mapping.
 - `GET /envelope?rev=`: the look-ahead as GeoJSON; 304 when the client already has that rev.
 - `POST /route-check`: a route as a GeoJSON LineString or `/resources/routes/<id>`; each leg is
-  checked over a corridor of the cross-track limit plus a planning buffer at the lowest water
+  checked over a corridor of the cross-track limit plus a planning buffer, widened by twice the
+  chart's position σ of the surveys it reaches (at most 1 km), at the lowest water
   level expected while on it, and returned as `ok`, `marginal`, `fail` or `unverified` (no
   coverage, unassessed survey or a fallback water level; never folded into `ok`), with P(UKC < 0),
   its explanation and the cell editions used.

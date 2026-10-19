@@ -302,6 +302,16 @@ splitting every tile down to the leaf zoom.
 
 Expected cost is about 50 to 300 cell visits per look-ahead footprint.
 
+**Chart position in the query buffer.** Depth areas and lines are not burned, so a route
+check, a repair cost cell and `POST /query` widen their buffer by `k·σP` (k = 2, at most
+1000 m) of the surveys the footprint reaches, and repeat the query until that σP stops
+growing (`spatial/chart-position.ts`). σP is taken from tiles at their own resolution, not
+from split tiles the walk stopped at early, whose children's σP may come from a survey the
+footprint does not reach. A point hazard is counted twice this way, burned and buffered,
+which errs on the shallow side. An unassessed survey (σP 500 m) widens the buffer by 1 km,
+so a leg into a coverage gap or over WFS water near land can `fail` where it was
+`unverified`; neither is ever `ok`.
+
 **Storage.**
 
 - `pyramid.bin`: a JSON header line, then one typed column per node field (depth, σ, flags,

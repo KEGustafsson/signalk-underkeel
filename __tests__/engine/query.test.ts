@@ -5,6 +5,9 @@ import { DEFAULT_DYNAMICS, vesselTerms } from "../../src/model/vessel";
 import { parseQueryRequest } from "../../src/api/query-request";
 import { CHART_DATUM } from "../helpers/engine";
 import { BANK, fixtureIndex, ROCK } from "../helpers/fixture-index";
+import { HazardIndex } from "../../src/spatial/hazards";
+import { buildPyramid } from "../../src/spatial/pyramid-build";
+import { area, coverage, quality } from "../helpers/synthetic";
 
 const index = fixtureIndex();
 
@@ -136,5 +139,34 @@ describe("query request validation", () => {
     const open = box(22, 60, 22.3, 60.2);
     open.geometry.coordinates[0]?.pop();
     expect(bad(open)).toEqual(["polygon outer ring must be closed"]);
+  });
+});
+
+describe("chart position uncertainty", () => {
+  test("a drying area 40 m away under CATZOC B (±50 m) is in reach of a point query", () => {
+    const box = [22.0, 60.0, 22.06, 60.03] as const;
+    const north = 40 / 111195;
+    const charted = {
+      catalogue: { version: 1, cells: [] },
+      pyramid: buildPyramid(
+        [
+          coverage(box),
+          quality(box, 3),
+          area(box, 15),
+          area([22.028, 60.015 + north, 22.032, 60.016 + north], -1)
+        ],
+        { minZoom: 12, leafZoom: 20 }
+      ),
+      hazards: new HazardIndex([])
+    };
+    const r = queryUkc(charted, {
+      ring: [[22.03, 60.015]],
+      bufferMetres: 0,
+      terms: vesselTerms({ draft: 1.8, length: 12, beam: 4 }, { speed: 0 }, DEFAULT_DYNAMICS),
+      waterLevel: CHART_DATUM,
+      thresholds: DEFAULT_LOOKAHEAD.thresholds
+    });
+    expect(r.charted).toBe(-1);
+    expect(r.class).toBe("danger");
   });
 });
