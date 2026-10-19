@@ -8,7 +8,7 @@ import {
   nearestStation,
   parseSimpleFeatures
 } from "../../src/model/fmi";
-import { resolveWaterLevel } from "../../src/model/water-level";
+import { lowestWaterLevel, resolveWaterLevel } from "../../src/model/water-level";
 
 const NOW = Date.parse("2026-10-18T07:00:00Z");
 const HOUR = 3600 * 1000;
@@ -199,6 +199,20 @@ describe("FMI provider", () => {
     const wl = resolveWaterLevel(p, uses, HELSINKI, NOW, NOW);
     expect(wl.sigma).toBeGreaterThanOrEqual(0.5);
     expect(wl.note).toBe("vertical datum unknown for OLD");
+  });
+
+  test("the lowest level over an interval includes the forecast minimum between samples", async () => {
+    const trough = simple([
+      [NOW - HOUR, "SeaLevel", -10],
+      [NOW, "SeaLevel", -10],
+      [NOW + HOUR, "SeaLevel", -40],
+      [NOW + 2 * HOUR, "SeaLevel", -10]
+    ]);
+    const p = new FmiProvider(fakeFetch(() => ({ status: 200, body: trough })));
+    await p.update(HELSINKI, NOW);
+    const uses = datumUses([{ name: "A", edition: 1, update: 0, band: 5, soundingDatum: 26 }]);
+    const wl = lowestWaterLevel(p, uses, HELSINKI, NOW + 5 * 60000, NOW + 115 * 60000, NOW);
+    expect(wl.h).toBeCloseTo(-0.4, 9);
   });
 
   test("after abort no request is made", async () => {

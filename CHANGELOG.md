@@ -111,3 +111,6 @@ All notable changes to signalk-underkeel are documented here.
 - FMI is refetched once the held forecast is 25 minutes old, and retried each minute until a
   fetch succeeds. With a 30-minute interval the level was a fallback for a few seconds every
   30 minutes, and one failed refetch made it a fallback for a whole interval.
+- The lowest water level over a leg's ETA interval is also sampled at every FMI forecast point
+  inside it. Samples every 10 minutes from the start could miss a forecast trough by up to
+  half a sample step of its slope (−0.375 m for a −0.40 m trough at 30 cm/h).

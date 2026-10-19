@@ -32,6 +32,11 @@ export interface WaterLevelProvider {
   readonly reference: "chart" | "series";
   levelAt(position: LonLat | undefined, t: number, series: LevelSeries): LevelSample | undefined;
   health(now: number): ProviderHealth;
+  /**
+   * Times in [start, end] where the level can turn, e.g. forecast points;
+   * an interval minimum is sampled there as well as on a fixed step.
+   */
+  knots?(start: number, end: number): number[];
 }
 
 /** With no usable water level the engine works at chart datum with this σ. */
@@ -227,15 +232,17 @@ export function lowestWaterLevel(
   now: number
 ): WaterLevel {
   const step = Math.max(INTERVAL_STEP_MS, (end - start) / MAX_INTERVAL_SAMPLES);
-  let out = resolveWaterLevel(p, uses, position, start, now);
-  for (let t = start + step; out.degraded === undefined; t += step) {
-    const wl = resolveWaterLevel(p, uses, position, Math.min(t, end), now);
-    out = wl.degraded
-      ? wl
-      : { ...out, h: Math.min(out.h, wl.h), sigma: Math.max(out.sigma, wl.sigma) };
-    if (t >= end) {
-      break;
-    }
+  const times = [start, end, ...(p?.knots?.(start, end) ?? [])];
+  for (let t = start + step; t < end; t += step) {
+    times.push(t);
   }
-  return out;
+  let out: WaterLevel | undefined;
+  for (const t of times.sort((a, b) => a - b)) {
+    const wl = resolveWaterLevel(p, uses, position, t, now);
+    if (wl.degraded !== undefined) {
+      return wl;
+    }
+    out = out ? { ...out, h: Math.min(out.h, wl.h), sigma: Math.max(out.sigma, wl.sigma) } : wl;
+  }
+  return out as WaterLevel;
 }

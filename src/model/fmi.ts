@@ -286,6 +286,13 @@ export class FmiProvider implements WaterLevelProvider {
     return { h: forecastNow, sigma, source: "fmi:forecast" };
   }
 
+  /** The forecast points in [start, end], where the interpolated level turns. */
+  knots(start: number, end: number): number[] {
+    const fc = this.forecast;
+    const times = fc ? [...fc.series.mw, ...fc.series.n2000].map(([t]) => t) : [];
+    return [...new Set(times.filter((t) => t >= start && t <= end))];
+  }
+
   health(): ProviderHealth {
     if (!this.forecast) {
       return { ok: false, message: this.error ?? "no forecast fetched yet" };
