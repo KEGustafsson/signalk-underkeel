@@ -123,3 +123,5 @@ All notable changes to signalk-underkeel are documented here.
 - After the plugin is stopped every REST route answers 503 `plugin not started`. Before,
   `/query`, `/route-check`, `/route-repair`, `/departure-window` and the UKC tiles kept
   answering on the old index at chart datum, so a rock could read `clear` and a route `ok`.
+- The notification published when the plugin stops carries `data` with `engineState: "off"`
+  and null values, as `schemas/navigation-safety/notification.json` requires.

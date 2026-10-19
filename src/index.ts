@@ -13,6 +13,7 @@ import type { FetchLike } from "./model/fmi";
 import { AckStore } from "./ack-store";
 import type { PluginState } from "./api-wiring";
 import { apiFor } from "./api-wiring";
+import { stoppedNotification } from "./notifications";
 import { loadZones } from "./zones";
 import { startLivechart } from "./livechart-service";
 import type { IndexBuilder } from "./wfs-service";
@@ -47,10 +48,7 @@ function stopPlugin(app: ServerAPI, clock: Clock, state: PluginState): void {
           { path: PATHS.risk as Path, value: null },
           { path: PATHS.timeToShoal as Path, value: null },
           { path: PATHS.escapeHeading as Path, value: null },
-          {
-            path: PATHS.notification as Path,
-            value: { state: "normal", method: [], message: "UKC monitoring stopped" } as never
-          }
+          { path: PATHS.notification as Path, value: stoppedNotification() }
         ]
       }
     ]

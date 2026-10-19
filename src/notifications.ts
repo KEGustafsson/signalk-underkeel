@@ -1,5 +1,6 @@
 import type { Path, ServerAPI } from "@signalk/server-api";
 import type { GroundingCheck } from "./engine/grounding-detect";
+import type { UnderKeelNotification } from "./engine/notify";
 import type { IntegrityResult } from "./model/integrity";
 
 /** Notification values the plugin publishes beside the look-ahead's own. */
@@ -30,6 +31,22 @@ export function groundingNotification(g: GroundingCheck): NotificationValue {
         message: `Grounding detected: ${g.reasons.join("; ")}`
       }
     : { state: "normal", method: [], message: "Grounding alarm cleared: under way again" };
+}
+
+/** The look-ahead notification once the plugin stops: nothing is monitored, so nothing is raised. */
+export function stoppedNotification(): UnderKeelNotification {
+  return {
+    state: "normal",
+    method: [],
+    message: "UKC monitoring stopped",
+    data: {
+      engineState: "off",
+      clearance: null,
+      clearanceSigma: null,
+      risk: null,
+      timeToShoal: null
+    }
+  };
 }
 
 /** Publishes a notification path only when its state or message changes. */
