@@ -69,7 +69,7 @@ const PASSAGES: Passage[] = [
     start: [22.012, 60.0145],
     cog: Math.PI,
     sog: 2.5,
-    seconds: 400,
+    seconds: 1000,
     hazard: BANK,
     vessel: { draft: 1.9, length: 10, beam: 3.5 }
   }

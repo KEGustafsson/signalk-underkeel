@@ -30,7 +30,9 @@ describe("S-57 GeoJSON ingest", () => {
   test("maps object classes to roles", () => {
     const f = cell.features;
     expect(byClass(f, "M_COVR")[0]?.role).toBe("coverage");
-    expect(byClass(f, "M_QUAL").map((q) => (q.role === "quality" ? q.catzoc : 0))).toEqual([2, 4]);
+    expect(byClass(f, "M_QUAL").map((q) => (q.role === "quality" ? q.catzoc : 0))).toEqual([
+      2, 3, 4
+    ]);
     expect(byClass(f, "SWPARE")[0]).toMatchObject({ role: "swept", depth: 8 });
     expect(byClass(f, "DEPARE").map((d) => (d.role === "depth" ? d.depth : NaN))).toEqual([10, 2]);
     expect(byClass(f, "LNDARE")[0]).toMatchObject({ role: "depth", depth: -Infinity });

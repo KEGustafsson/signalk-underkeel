@@ -54,7 +54,7 @@ describe("synthetic ENC scenario (plan §7)", () => {
   });
 
   test("the CATZOC C bank is shallow with C sigmas", () => {
-    const r = at(index, [22.0115, 60.004, 22.0125, 60.005]);
+    const r = at(index, [22.0115, 59.989, 22.0125, 59.99]);
     expect(r.dMin).toBe(1.8); // the shoal sounding on the bank, burned within k·σP
     expect(r.sigmaP).toBe(250);
   });
