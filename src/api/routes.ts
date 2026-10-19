@@ -91,11 +91,15 @@ function readwrite(router: RouterLike): Registrar {
   return router.access ? router.access("readwrite") : router;
 }
 
-/** Any other failure is ours; its message may name files on the server, so it stays off the wire. */
-function fail(res: Response, err: unknown): void {
+/**
+ * Any other failure is ours; its message may name files on the server, so it
+ * stays off the wire and goes to the server log instead.
+ */
+function fail(res: Response, err: unknown, log: (message: string) => void): void {
   if (err instanceof BodyError) {
     res.status(400).json({ errors: [err.message] });
   } else {
+    log(`REST handler failed: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
     res.status(500).json({ errors: ["internal error"] });
   }
 }
@@ -115,7 +119,11 @@ function send(res: Response, reply: ApiReply): void {
  * /envelope?rev=N` answers 304 when the client already holds rev N, so
  * clients can poll on the `envelopeRev` delta without refetching.
  */
-export function registerRoutes(router: RouterLike, api: ApiProvider): void {
+export function registerRoutes(
+  router: RouterLike,
+  api: ApiProvider,
+  log: (message: string) => void = console.error
+): void {
   const r = readonly(router);
   r.get(`${API_BASE}/status`, (_req: Request, res: Response) => {
     res.json(api.status());
@@ -133,7 +141,7 @@ export function registerRoutes(router: RouterLike, api: ApiProvider): void {
     readJsonBody(req)
       .then((body) => api.routeCheck(body))
       .then((reply) => res.status(reply.status).json(reply.body))
-      .catch((err: unknown) => fail(res, err));
+      .catch((err: unknown) => fail(res, err, log));
   });
   for (const [route, handler] of [
     ["route-repair", api.routeRepair],
@@ -143,7 +151,7 @@ export function registerRoutes(router: RouterLike, api: ApiProvider): void {
       readJsonBody(req)
         .then((body) => handler(body))
         .then((reply) => send(res, reply))
-        .catch((err: unknown) => fail(res, err));
+        .catch((err: unknown) => fail(res, err, log));
     });
   }
   r.post(`${API_BASE}/query`, (req: Request, res: Response) => {
@@ -152,7 +160,7 @@ export function registerRoutes(router: RouterLike, api: ApiProvider): void {
         const reply = api.query(body);
         res.status(reply.status).json(reply.body);
       })
-      .catch((err: unknown) => fail(res, err));
+      .catch((err: unknown) => fail(res, err, log));
   });
   r.get(`${API_BASE}/tiles/ukc/:z/:x/:file`, (req: Request, res: Response) => {
     const p = (req.params ?? {}) as Record<string, string | undefined>;
@@ -180,7 +188,7 @@ export function registerRoutes(router: RouterLike, api: ApiProvider): void {
   w.post(`${API_BASE}/acks`, (req: Request, res: Response) => {
     readJsonBody(req)
       .then((body) => send(res, api.addAck(body)))
-      .catch((err: unknown) => fail(res, err));
+      .catch((err: unknown) => fail(res, err, log));
   });
   w.delete(`${API_BASE}/acks/:id`, (req: Request, res: Response) => {
     send(res, api.deleteAck(String((req.params as Record<string, unknown> | undefined)?.id ?? "")));

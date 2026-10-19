@@ -114,7 +114,7 @@ export = function underkeel(
     },
 
     registerWithRouter(router: PluginRouter): void {
-      registerRoutes(router, apiFor(app, clock, state));
+      registerRoutes(router, apiFor(app, clock, state), (message) => app.error(message));
     }
   };
 };
