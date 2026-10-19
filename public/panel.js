@@ -23,14 +23,24 @@ function showUnknownStatus(why) {
   text("source", `Under-keel status unavailable: ${why}`);
 }
 
+/** The poll and the notification can overlap: only the latest request may update the panel. */
+let statusRequest = 0;
+
 async function refreshStatus() {
+  const id = ++statusRequest;
   try {
     const res = await fetch(`${UKC.API}/status`, { credentials: "same-origin" });
+    if (id !== statusRequest) {
+      return;
+    }
     if (!res.ok) {
       showUnknownStatus(`HTTP ${res.status}`);
       return;
     }
     const s = await res.json();
+    if (id !== statusRequest) {
+      return;
+    }
     const style = UKC.stateStyle(s.engine.state);
     const chip = document.getElementById("state");
     chip.textContent = style.label;
@@ -45,6 +55,9 @@ async function refreshStatus() {
     }
     text("source", parts.join(" · "));
   } catch (err) {
+    if (id !== statusRequest) {
+      return;
+    }
     showUnknownStatus(err && err.message ? err.message : String(err));
     console.warn("under-keel status", err);
   }
