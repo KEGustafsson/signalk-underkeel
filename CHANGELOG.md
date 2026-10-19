@@ -193,3 +193,9 @@ All notable changes to signalk-underkeel are documented here.
 - The escape heading no longer recommends holding course when the vessel's own footprint is
   already over shoal water. The footprint at the vessel is common to every heading and is not
   scored; when no heading does better, `escapeHeading` is null.
+- Heel no longer trusts one roll sample. A fin keel is lifted only by the least roll of the last
+  10 s, and roll above 60° counts as no roll; before, a roll past 90° made a deeper draft
+  safer, and a boat rolling on alternate ticks never reached alarm.
+- A `table` heel model without a fresh roll applies the table's largest draft change instead of
+  its smallest, and takes the largest change over the rolls seen; route checks, which have no
+  roll, use the largest change too.

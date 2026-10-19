@@ -2,6 +2,8 @@ import type { LonLat } from "../foundation/geo";
 import { project, tileSize } from "../foundation/geo";
 import { geomBounds } from "../foundation/geometry";
 import type { UnderKeelState } from "../foundation/state";
+import type { RollRange } from "../model/allowances";
+import { RollWindow } from "../model/allowances";
 import type { VesselTerms, WaterLevel } from "../model/uncertainty";
 import { sigmaExtra, thresholdDepth } from "../model/uncertainty";
 import { gnssSigma } from "../model/position";
@@ -54,6 +56,8 @@ export interface NavState {
   methodQuality?: Sample<string>;
   /** Roll, radians. */
   roll?: Sample<number>;
+  /** Recent roll samples; each evaluation adds `roll` to it. Without it only `roll` counts. */
+  rolls?: RollWindow;
   /** Significant wave height, metres. */
   waveHeight?: Sample<number>;
 }
@@ -390,6 +394,22 @@ function shallowestOf(fps: FootprintResult[]): FootprintResult | undefined {
   return best;
 }
 
+/** The |roll| range heel may use; undefined when roll is stale or not published. */
+function rollOf(nav: NavState, now: number, opts: LookaheadOptions): RollRange | undefined {
+  if (stale(nav.roll, now, opts)) {
+    return undefined;
+  }
+  const r = nav.roll as Sample<number>;
+  const window = nav.rolls ?? new RollWindow();
+  window.record(r.value, r.at);
+  return window.range(now);
+}
+
+/** A navigation state that keeps the roll window across evaluations. */
+export function navState(): NavState {
+  return { rolls: new RollWindow() };
+}
+
 function scoringFor(
   nav: NavState,
   inputs: LookaheadInputs,
@@ -402,7 +422,7 @@ function scoringFor(
     stale(x, now, opts) ? undefined : x?.value;
   const terms = vesselTerms(
     vessel,
-    { speed: m.sog, roll: fresh(nav.roll), waveHeight: nav.waveHeight?.value },
+    { speed: m.sog, roll: rollOf(nav, now, opts), waveHeight: nav.waveHeight?.value },
     inputs.dynamics
   );
   const wl = inputs.waterLevel;

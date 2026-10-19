@@ -441,6 +441,10 @@ with plugin configuration overriding.
 | Wave allowance `W` | `c·Hs`                                                 | Hs from `environment.water.waves.significantHeight` or weather provider; c ≈ 0.3–0.5 (config), σ = 50 % of W   |
 | Transducer offset  | `environment.depth.transducerToKeel`                   | for the living chart                                                                                           |
 
+Heel uses the range of absolute roll over the last 10 s: a fin keel takes the least roll, a
+table its largest change over the range. Roll above 60° or stale is no roll, which gives a fin
+keel no lift and a table its largest change.
+
 ### 4.7 Risk model (core math)
 
 For a footprint `F` at time `t`:

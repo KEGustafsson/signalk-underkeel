@@ -1,5 +1,6 @@
 import type { ServerAPI } from "@signalk/server-api";
 import type { NavState, Sample } from "./engine/lookahead";
+import { navState } from "./engine/lookahead";
 import type { LonLat } from "./foundation/geo";
 
 /** Reading the subscribed navigation paths into the look-ahead's NavState. */
@@ -59,7 +60,7 @@ export function selfValue(app: Pick<ServerAPI, "getSelfPath">, path: string): un
  * must not wipe the other's position every second.
  */
 export class NavInputs {
-  readonly nav: NavState = {};
+  readonly nav: NavState = navState();
   private readonly sources = new Map<keyof NavState, string | undefined>();
 
   /** Returns false when `path` is not a navigation input. */

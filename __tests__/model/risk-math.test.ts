@@ -1,6 +1,6 @@
 import fc from "fast-check";
 import { normalCdf, probabilityBelowZero } from "../../src/foundation/stats";
-import { heel, squat, waveAllowance } from "../../src/model/allowances";
+import { MAX_ROLL, RollWindow, heel, squat, waveAllowance } from "../../src/model/allowances";
 import { sigmaExtra, thresholdDepth, ukcAt } from "../../src/model/uncertainty";
 import { DEFAULT_DYNAMICS, vesselTerms } from "../../src/model/vessel";
 import { explain, sentence } from "../../src/engine/explain";
@@ -54,9 +54,12 @@ describe("dynamic draft terms", () => {
 
   test("heel models", () => {
     const deg = (d: number) => (d * Math.PI) / 180;
-    expect(heel(deg(20), 2, { kind: "none" }).value).toBe(0);
-    expect(heel(deg(60), 2, { kind: "fin" }).value).toBeCloseTo(-1, 9);
-    expect(heel(-deg(60), 2, { kind: "fin" }).value).toBeCloseTo(-1, 9);
+    const at = (d: number) => ({ least: deg(d), most: deg(d) });
+    expect(heel(at(20), 2, { kind: "none" }).value).toBe(0);
+    expect(heel(at(60), 2, { kind: "fin" }).value).toBeCloseTo(-1, 9);
+    // A fin keel lifts only as far as the least roll in the window allows.
+    expect(heel({ least: deg(0), most: deg(40) }, 2, { kind: "fin" }).value).toBe(0);
+    expect(heel(undefined, 2, { kind: "fin" }).value).toBe(0);
     const table = {
       kind: "table" as const,
       points: [
@@ -64,10 +67,43 @@ describe("dynamic draft terms", () => {
         { heel: 0, delta: 0 }
       ]
     };
-    expect(heel(deg(10), 1, table).value).toBeCloseTo(0.05, 9);
-    expect(heel(deg(40), 1, table).value).toBeCloseTo(0.1, 9);
-    expect(heel(0, 1, table).value).toBe(0);
+    expect(heel(at(10), 1, table).value).toBeCloseTo(0.05, 9);
+    expect(heel(at(40), 1, table).value).toBeCloseTo(0.1, 9);
+    expect(heel(at(0), 1, table).value).toBe(0);
     expect(heel(undefined, 1, { kind: "table", points: [] }).value).toBe(0);
+    // A keel that digs in most at mid heel: the deepest point over the range counts.
+    const peak = {
+      kind: "table" as const,
+      points: [
+        { heel: 0, delta: 0 },
+        { heel: deg(15), delta: 0.3 },
+        { heel: deg(30), delta: 0.1 }
+      ]
+    };
+    expect(heel({ least: deg(5), most: deg(25) }, 1, peak).value).toBeCloseTo(0.3, 9);
+    expect(heel({ least: deg(0), most: deg(10) }, 1, peak).value).toBeCloseTo(0.2, 9);
+    // Without roll the largest change in the table applies.
+    expect(heel(undefined, 1, peak).value).toBeCloseTo(0.3, 9);
+  });
+
+  test("the roll window keeps the least roll of 10 s and refuses impossible rolls", () => {
+    const T = 1_800_000_000_000;
+    const w = new RollWindow();
+    expect(w.range(T)).toBeUndefined();
+    for (let k = 0; k < 10; k++) {
+      w.record(k % 2 === 0 ? 0.7 : -0.05, T + k * 1000);
+    }
+    expect(w.range(T + 9000)).toEqual({ least: 0.05, most: 0.7 });
+    w.record(0.6, T + 15_000);
+    w.record(0.6, T + 15_000);
+    expect(w.range(T + 15_000)).toEqual({ least: 0.05, most: 0.7 });
+    expect(w.range(T + 25_000)).toBeUndefined();
+    const wild = new RollWindow();
+    wild.record(0.3, T);
+    wild.record(MAX_ROLL + 0.01, T + 1000);
+    expect(wild.range(T + 1000)).toBeUndefined();
+    wild.record(0.3, T + 11_000);
+    expect(wild.range(T + 11_000)).toEqual({ least: 0.3, most: 0.3 });
   });
 
   test("wave allowance", () => {

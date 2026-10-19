@@ -2,8 +2,10 @@ import type { NavState } from "../../src/engine/lookahead";
 import {
   DEFAULT_LOOKAHEAD,
   describe as explain,
-  evaluateLookahead
+  evaluateLookahead,
+  navState
 } from "../../src/engine/lookahead";
+import { Hysteresis } from "../../src/engine/hysteresis";
 import type { VesselModel } from "../../src/model/vessel";
 import type { ChartIndex } from "../../src/spatial/chart-index";
 import { HazardIndex } from "../../src/spatial/hazards";
@@ -352,5 +354,47 @@ describe("probabilistic look-ahead on the synthetic chart", () => {
     const turn = (r.escapeHeading as number) - EAST;
     expect(turn).toBeGreaterThan(0);
     expect(turn).toBeLessThanOrEqual(Math.PI / 2 + 1e-9);
+  });
+});
+
+describe("heel from roll", () => {
+  // A 2.5 m bank everywhere: a 2.4 m fin keel is only clear when heeled.
+  const bank: ChartIndex = {
+    catalogue: { version: 1, cells: [] },
+    pyramid: buildPyramid(basin([22.0, 60.0, 22.04, 60.02], 2.5), { minZoom: 12, leafZoom: 18 }),
+    hazards: new HazardIndex([])
+  };
+  const fin = { heel: { kind: "fin" as const } };
+  const rolled = (roll: number, at = NOW): NavState => ({
+    ...nav(22.02, 60.01),
+    roll: { value: roll, at }
+  });
+
+  test("a roll beyond 60° never lifts the keel", () => {
+    for (const draft of [2.4, 4, 8]) {
+      const v = { ...DEEP_KEEL, draft };
+      const upright = evaluateLookahead(nav(22.02, 60.01), ctx(v, CHART_DATUM, fin), bank, NOW);
+      for (const roll of [1.2, 3, -3]) {
+        const r = evaluateLookahead(rolled(roll), ctx(v, CHART_DATUM, fin), bank, NOW);
+        expect(r.state).toBe("alarm");
+        expect(r.risk).toBe(upright.risk);
+      }
+    }
+  });
+
+  test("a boat rolling through upright is scored at its least roll", () => {
+    const n = navState();
+    const h = new Hysteresis(DEFAULT_LOOKAHEAD);
+    const v = { ...DEEP_KEEL, draft: 2.4 };
+    const published = [];
+    for (let tick = 0; tick < 6; tick++) {
+      const now = NOW + tick * 1000;
+      const at = { ...rolled(tick % 2 === 0 ? 0.7 : 0.05, now), rolls: n.rolls };
+      for (const k of ["position", "cog", "sog", "heading"] as const) {
+        (at[k] as { at: number }).at = now;
+      }
+      published.push(h.next(evaluateLookahead(at, ctx(v, CHART_DATUM, fin), bank, now)).state);
+    }
+    expect(published.slice(2)).toEqual(["alarm", "alarm", "alarm", "alarm"]);
   });
 });
