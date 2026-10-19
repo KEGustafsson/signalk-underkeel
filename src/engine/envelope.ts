@@ -1,4 +1,5 @@
 import type { LonLat } from "../foundation/geo";
+import { FLAGS } from "../spatial/node-store";
 import type { FootprintResult, LookaheadResult, Thresholds, WorstPoint } from "./lookahead";
 
 /**
@@ -30,22 +31,31 @@ const cm = (v: number | null): number | null => (v === null ? null : Math.round(
 
 export type FootprintClass = "clear" | "caution" | "danger" | "unverified";
 
+/** Survey quality or source a depth cannot be called clear on. */
+const UNVERIFIED_FLAGS = FLAGS.NO_COVERAGE | FLAGS.UNASSESSED | FLAGS.NOT_FOR_NAVIGATION;
+
 /**
  * Colour class of a footprint (plan §5.4: green, amber, red by P). A
  * charted danger outranks missing coverage, since the danger is known
- * either way; otherwise any gap makes the footprint unverified.
+ * either way; otherwise any gap, an unassessed survey or an advisory
+ * source makes the footprint unverified, and against a fallback water
+ * level (`degraded`) nothing is clear.
  */
 export function classOf(
-  f: Pick<FootprintResult, "risk" | "uncovered" | "charted">,
-  th: Thresholds
+  f: Pick<FootprintResult, "risk" | "uncovered" | "charted"> & { flags?: number },
+  th: Thresholds,
+  degraded = false
 ): FootprintClass {
   if (f.risk >= th.warn) {
     return "danger";
   }
-  if (f.uncovered || f.charted === null) {
+  if (f.uncovered || f.charted === null || ((f.flags ?? 0) & UNVERIFIED_FLAGS) !== 0) {
     return "unverified";
   }
-  return f.risk >= th.alert ? "caution" : "clear";
+  if (f.risk >= th.alert) {
+    return "caution";
+  }
+  return degraded ? "unverified" : "clear";
 }
 
 /** At most this many vertices on the drawn track line. */
@@ -148,7 +158,8 @@ function segmentFeature(
   run: FootprintResult[],
   all: FootprintResult[],
   start: number,
-  th: Thresholds
+  th: Thresholds,
+  degraded: boolean
 ): EnvelopeFeature {
   const first = run[0] as FootprintResult;
   const last = run[run.length - 1] as FootprintResult;
@@ -161,7 +172,7 @@ function segmentFeature(
     geometry: { type: "Polygon", coordinates: [ring] },
     properties: {
       kind: "segment",
-      class: classOf(first, th),
+      class: classOf(first, th, degraded),
       from: first.t,
       to: last.t,
       minUkc: minMean !== null && Number.isFinite(minMean) ? cm(minMean) : null,
@@ -170,11 +181,12 @@ function segmentFeature(
   };
 }
 
-function runs(fps: FootprintResult[], th: Thresholds): FootprintResult[][] {
+function runs(fps: FootprintResult[], th: Thresholds, degraded: boolean): FootprintResult[][] {
   const out: FootprintResult[][] = [];
   for (const f of fps) {
     const current = out[out.length - 1];
-    if (current && classOf(current[0] as FootprintResult, th) === classOf(f, th)) {
+    const cls = (x: FootprintResult) => classOf(x, th, degraded);
+    if (current && cls(current[0] as FootprintResult) === cls(f)) {
       current.push(f);
     } else {
       out.push([f]);
@@ -196,9 +208,10 @@ export function buildEnvelope(result: LookaheadResult, th: Thresholds): Envelope
   if (result.footprints.length > 1) {
     features.push(trackFeature(result));
   }
+  const degraded = result.waterLevel?.degraded !== undefined;
   let start = 0;
-  for (const run of runs(result.footprints, th)) {
-    features.push(segmentFeature(run, result.footprints, start, th));
+  for (const run of runs(result.footprints, th, degraded)) {
+    features.push(segmentFeature(run, result.footprints, start, th, degraded));
     start += run.length;
   }
   if (result.worst) {

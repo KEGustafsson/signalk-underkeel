@@ -204,3 +204,6 @@ All notable changes to signalk-underkeel are documented here.
   A 10 NM distance at 0.3 m/s took about 20 000 footprints and 10 s per 1 Hz tick.
 - Squat uses the higher of SOG and STW, and is applied when COG is stale; before, it used SOG
   only and was 0 whenever course or speed was stale.
+- The look-ahead envelope draws water from an advisory (WFS) source, with unassessed survey
+  quality or against a fallback water level as `unverified`, never `clear`, as the README
+  states; before, those footprints were green while the state was `alert`.

@@ -2,6 +2,7 @@ import { buildEnvelope, classOf, EnvelopeTracker } from "../../src/engine/envelo
 import type { LookaheadResult } from "../../src/engine/lookahead";
 import { DEFAULT_LOOKAHEAD, evaluateLookahead } from "../../src/engine/lookahead";
 import { notificationFor } from "../../src/engine/notify";
+import { FLAGS } from "../../src/spatial/node-store";
 import { ctx } from "../helpers/engine";
 import { fixtureIndex, M_PER_DEG_LON, ROCK } from "../helpers/fixture-index";
 
@@ -74,6 +75,23 @@ describe("envelope", () => {
     expect(classOf({ risk: 0.05, uncovered: false, charted: 5 }, TH)).toBe("danger");
     expect(classOf({ risk: 0.02, uncovered: false, charted: 5 }, TH)).toBe("caution");
     expect(classOf({ risk: 0, uncovered: false, charted: 5 }, TH)).toBe("clear");
+  });
+
+  test("advisory, unassessed or fallback-level water is never drawn clear", () => {
+    const calm = at(22.003, 60.01, 1);
+    const classes = (r: LookaheadResult) =>
+      buildEnvelope(r, TH)
+        .features.filter((f) => f.properties.kind === "segment")
+        .map((f) => f.properties.class);
+    expect(classes(calm)).toContain("clear");
+    for (const flag of [FLAGS.NOT_FOR_NAVIGATION, FLAGS.UNASSESSED]) {
+      const flagged = calm.footprints.map((f) => ({ ...f, flags: f.flags | flag }));
+      expect(classes({ ...calm, footprints: flagged })).not.toContain("clear");
+    }
+    const fallback = { h: 0, sigma: 0.3, source: "chart-datum", degraded: "water level stale" };
+    expect(classes({ ...calm, waterLevel: fallback })).not.toContain("clear");
+    expect(classOf({ risk: 0, uncovered: false, charted: 5 }, TH, true)).toBe("unverified");
+    expect(classOf({ risk: 0.1, uncovered: false, charted: 5 }, TH, true)).toBe("danger");
   });
 
   test("land and no-coverage values are null, never Infinity", () => {
