@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import type { PluginConfig } from "./config";
 import { readCellDirectory } from "./ingest/cell-reader";
+import { usageBandFromName } from "./ingest/cells";
 import { WFS_SOURCE } from "./ingest/wfs";
 import type { ChartIndex } from "./spatial/chart-index";
 import {
@@ -32,15 +33,60 @@ function exists(dir: string): boolean {
   return fs.existsSync(path.join(dir, "pyramid.bin"));
 }
 
-export function cellDirectories(cellsDir: string | undefined): string[] {
-  if (!cellsDir) {
-    return [];
+interface CellScan {
+  dirs: string[];
+  /** Entries named like a cell that are not a directory or a link to one. */
+  skipped: string[];
+}
+
+function isDirectory(p: string): boolean {
+  try {
+    return fs.statSync(p).isDirectory();
+  } catch {
+    return false;
   }
-  return fs
-    .readdirSync(cellsDir, { withFileTypes: true })
-    .filter((e) => e.isDirectory())
-    .map((e) => path.join(cellsDir, e.name))
-    .sort();
+}
+
+/** A dangling link or a file such as `FI5ABCDE.000` is most likely a cell the user expects read. */
+function looksLikeCell(e: fs.Dirent): boolean {
+  return e.isSymbolicLink() || (!e.name.startsWith(".") && usageBandFromName(e.name) !== undefined);
+}
+
+function scanCells(cellsDir: string | undefined): CellScan {
+  const scan: CellScan = { dirs: [], skipped: [] };
+  if (!cellsDir) {
+    return scan;
+  }
+  for (const e of fs.readdirSync(cellsDir, { withFileTypes: true })) {
+    const full = path.join(cellsDir, e.name);
+    if (e.isDirectory() || (e.isSymbolicLink() && isDirectory(full))) {
+      scan.dirs.push(full);
+    } else if (looksLikeCell(e)) {
+      scan.skipped.push(e.name);
+    }
+  }
+  scan.dirs.sort();
+  scan.skipped.sort();
+  return scan;
+}
+
+export function cellDirectories(cellsDir: string | undefined): string[] {
+  return scanCells(cellsDir).dirs;
+}
+
+function skippedNote(cellsDir: string | undefined, scan: CellScan): string[] {
+  return scan.skipped.length === 0
+    ? []
+    : [
+        `skipped ${scan.skipped.join(", ")} in ${cellsDir ?? "cellsDir"}: not a cell directory; ` +
+          "export each .000 with scripts/enc-to-geojson.sh"
+      ];
+}
+
+/** Several notes become one reason; a failure reason comes first. */
+function withNotes(load: IndexLoad, notes: string[]): IndexLoad {
+  const reason = [load.reason, ...notes].filter((r) => r !== undefined).join("; ");
+  return reason === "" ? load : { ...load, reason };
 }
 
 /**
@@ -58,17 +104,35 @@ export function loadOrBuildIndex(
   try {
     const saved = exists(indexDir);
     const { stale, mismatch } = savedMatches(cfg, indexDir, saved, extraDirs);
+    // An unmounted or moved cells directory says nothing about the saved index's cells.
+    if (saved && cfg.cellsDir && !fs.existsSync(cfg.cellsDir)) {
+      return loadSaved(cfg, indexDir, stale, [`${cfg.cellsDir} not found; using the saved index`]);
+    }
+    const scan = scanCells(cfg.cellsDir);
+    const notes = skippedNote(cfg.cellsDir, scan);
     const sources = Boolean(cfg.cellsDir) || extraDirs.length > 0;
     if (sources && (cfg.rebuildIndex || mismatch || !saved)) {
-      return build(cfg, indexDir, [...cellDirectories(cfg.cellsDir), ...extraDirs]);
+      return withNotes(build(cfg, indexDir, [...scan.dirs, ...extraDirs]), notes);
     }
-    if (stale || !saved) {
-      return { indexDir, built: false, reason: missingReason(cfg, indexDir, stale) };
+    if (!saved) {
+      return { indexDir, built: false, reason: missingReason(cfg, indexDir, false) };
     }
-    return { index: loadChartIndex(indexDir), indexDir, built: false };
+    return loadSaved(cfg, indexDir, stale, notes);
   } catch (err) {
     return { indexDir, built: false, reason: `chart index failed: ${(err as Error).message}` };
   }
+}
+
+function loadSaved(
+  cfg: PluginConfig,
+  indexDir: string,
+  stale: boolean,
+  notes: string[]
+): IndexLoad {
+  if (stale) {
+    return { indexDir, built: false, reason: missingReason(cfg, indexDir, true) };
+  }
+  return withNotes({ index: loadChartIndex(indexDir), indexDir, built: false }, notes);
 }
 
 function build(cfg: PluginConfig, indexDir: string, dirs: string[]): IndexLoad {

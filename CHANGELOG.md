@@ -83,3 +83,7 @@ All notable changes to signalk-underkeel are documented here.
 - A rock, wreck or obstruction without `VALSOU` that covers and uncovers (`WATLEV` 4) or is
   subject to inundation (`WATLEV` 6) counts as land, like `WATLEV` 1 and 2. It was taken as
   0 m at chart datum, deeper than a hazard that dries at low water.
+- A cell directory that is a symbolic link is indexed; it was skipped without a word, at start
+  and in Traficom WFS rebuilds. Entries in the cells directory named like a cell that are not a
+  directory, such as an unexported `.000` file or a dangling link, are named in the index reason
+  in `/status`.
