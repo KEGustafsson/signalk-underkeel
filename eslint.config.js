@@ -22,7 +22,7 @@ const layerBoundaries = LAYERS.slice(0, -1).map((layer, i) => ({
 
 module.exports = [
   {
-    ignores: ["public/**", "coverage/**", "lib/**", "fixtures/**"]
+    ignores: ["public/vendor/**", "coverage/**", "lib/**", "fixtures/**"]
   },
   js.configs.recommended,
   {
@@ -65,6 +65,22 @@ module.exports = [
     files: ["__tests__/benchmarks/**/*.{js,ts}", "scripts/**/*.js"],
     rules: {
       "no-console": "off"
+    }
+  },
+  // ── Extension pages ─────────────────────────────────────────────────────
+  // The pages are ES modules in the browser; ukc-shared.js is a plain script
+  // the pages load with <script> and the tests require().
+  {
+    files: ["public/**/*.js"],
+    languageOptions: {
+      globals: { ...globals.browser }
+    }
+  },
+  {
+    files: ["public/ukc-shared.js"],
+    languageOptions: {
+      sourceType: "script",
+      globals: { ...globals.commonjs }
     }
   },
   // ── TypeScript sources ──────────────────────────────────────────────────

@@ -4,9 +4,9 @@
   "use strict";
 
   /** Plugin REST base; the pages are same-origin with the Signal K server. */
-  var API = "/plugins/signalk-underkeel/v1";
+  const API = "/plugins/signalk-underkeel/v1";
 
-  var STATES = {
+  const STATES = {
     normal: { label: "Normal", colour: "#1a9850" },
     alert: { label: "Alert", colour: "#d4a000" },
     warn: { label: "Warning", colour: "#e66101" },
@@ -39,13 +39,13 @@
     if (typeof message !== "string") {
       return "";
     }
-    var i = message.indexOf(": ");
+    const i = message.indexOf(": ");
     return i < 0 ? message : message.slice(0, i);
   }
 
   /** A host route's points as a GeoJSON LineString, or null with fewer than two. */
   function routeLine(points) {
-    var coords = (points || [])
+    const coords = (points || [])
       .map(function (p) {
         return p && p.position ? [p.position[0], p.position[1]] : null;
       })
@@ -79,20 +79,20 @@
    * legs: nothing on it has been checked.
    */
   function worstStatus(legs) {
-    var rank = { ok: 0, marginal: 1, unverified: 2, fail: 3 };
-    var known = function (s) {
+    const rank = { ok: 0, marginal: 1, unverified: 2, fail: 3 };
+    const known = function (s) {
       return Object.prototype.hasOwnProperty.call(rank, s) ? s : "unverified";
     };
     if (!legs || legs.length === 0) {
       return "unverified";
     }
     return legs.reduce(function (worst, leg) {
-      var s = known(leg.status);
+      const s = known(leg.status);
       return rank[s] > rank[worst] ? s : worst;
     }, "ok");
   }
 
-  var api = {
+  const api = {
     API: API,
     stateStyle: stateStyle,
     depth: depth,
