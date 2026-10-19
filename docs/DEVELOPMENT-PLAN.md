@@ -631,7 +631,7 @@ admin or readwrite token.
     ]
   },
   "routeRef": "/resources/routes/<id>", // optional alternative to geometry
-  "departure": "2026-10-18T07:00:00Z", // optional; default now
+  "departure": "2026-10-18T07:00:00Z", // optional; default now; within a year of now
   "speed": { "default": 3.1 }, // m/s, or per-leg array
   "xteLimit": 30, // m; default from course settings
   "probability": 0.01, // accept threshold

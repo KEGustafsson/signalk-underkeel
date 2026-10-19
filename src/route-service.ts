@@ -59,7 +59,7 @@ async function prepare(
   body: unknown,
   deps: RouteServiceDeps
 ): Promise<{ index: ChartIndex; input: RouteCheckInput } | ApiReply> {
-  const parsed = parseRouteRequest(body);
+  const parsed = parseRouteRequest(body, deps.now());
   if (!parsed.ok) {
     return { status: 400, body: { errors: parsed.errors } };
   }

@@ -22,13 +22,16 @@ const LINE = {
 
 describe("route-check request validation", () => {
   test("accepts inline geometry with options", () => {
-    const r = parseRouteRequest({
-      route: LINE,
-      departure: "2026-10-18T07:00:00Z",
-      speed: { default: 3.1 },
-      xteLimit: 25,
-      vessel: { draft: 1.9 }
-    });
+    const r = parseRouteRequest(
+      {
+        route: LINE,
+        departure: "2026-10-18T07:00:00Z",
+        speed: { default: 3.1 },
+        xteLimit: 25,
+        vessel: { draft: 1.9 }
+      },
+      Date.parse("2026-10-18T06:00:00Z")
+    );
     expect(r).toEqual({
       ok: true,
       value: {
@@ -102,6 +105,26 @@ describe("route-check request validation", () => {
     expect(parseRouteRequest({ route: { type: "LineString", coordinates: ok } }).ok).toBe(true);
     const geometry = { type: "LineString", coordinates };
     expect(routeResourceCoordinates({ feature: { geometry } })).toBeUndefined();
+  });
+
+  test("a departure more than a year from now is refused with a reason", async () => {
+    const now = Date.parse("2026-10-18T07:00:00Z");
+    for (const departure of [
+      "+275760-09-13T00:00:00.000Z",
+      "2028-01-01T00:00:00Z",
+      "2025-01-01T00:00:00Z"
+    ]) {
+      const r = parseRouteRequest({ route: LINE, departure }, now);
+      expect(r.ok ? "" : r.errors.join("; ")).toBe("departure must be within a year of now");
+    }
+    expect(parseRouteRequest({ route: LINE, departure: "2027-04-01T00:00:00Z" }, now).ok).toBe(
+      true
+    );
+    const far = await routeCheck({ route: LINE, departure: "+275760-09-13T00:00:00.000Z" }, deps());
+    expect(far).toEqual({
+      status: 400,
+      body: { errors: ["departure must be within a year of now"] }
+    });
   });
 
   test("too many points are refused", () => {

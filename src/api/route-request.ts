@@ -23,7 +23,9 @@ export const LIMITS = {
   minDraft: 0.01,
   maxDraft: 30,
   minProbability: 1e-6,
-  maxProbability: 0.5
+  maxProbability: 0.5,
+  /** Departure at most this far from now, ms; no water-level forecast reaches further. */
+  maxDepartureOffsetMs: 366 * 86_400_000
 } as const;
 
 export interface RouteRequest {
@@ -103,7 +105,7 @@ function parseSpeed(raw: unknown, errors: string[]): number | number[] | undefin
   return undefined;
 }
 
-function parseDeparture(raw: unknown, errors: string[]): number | undefined {
+function parseDeparture(raw: unknown, now: number, errors: string[]): number | undefined {
   if (raw === undefined) {
     return undefined;
   }
@@ -112,10 +114,14 @@ function parseDeparture(raw: unknown, errors: string[]): number | undefined {
     errors.push("departure must be an ISO 8601 time");
     return undefined;
   }
+  if (Math.abs(t - now) > LIMITS.maxDepartureOffsetMs) {
+    errors.push("departure must be within a year of now");
+    return undefined;
+  }
   return t;
 }
 
-export function parseRouteRequest(body: unknown): Parsed<RouteRequest> {
+export function parseRouteRequest(body: unknown, now: number = Date.now()): Parsed<RouteRequest> {
   const errors: string[] = [];
   const b = (typeof body === "object" && body !== null ? body : {}) as Record<string, unknown>;
   const req: RouteRequest = {};
@@ -126,7 +132,7 @@ export function parseRouteRequest(body: unknown): Parsed<RouteRequest> {
   } else {
     errors.push("give route (GeoJSON LineString) or routeRef (/resources/routes/<id>)");
   }
-  req.departure = parseDeparture(b.departure, errors);
+  req.departure = parseDeparture(b.departure, now, errors);
   req.speed = parseSpeed(b.speed, errors);
   if (b.xteLimit !== undefined) {
     if (inRange(b.xteLimit, 0, LIMITS.maxXte)) {

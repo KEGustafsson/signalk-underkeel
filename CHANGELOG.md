@@ -79,6 +79,8 @@ All notable changes to signalk-underkeel are documented here.
   departures × corridor area (1600 km²) instead of departures × length; `POST /query` is refused
   above 25 km² of box and buffer. A 1000-point, 490 km route at xteLimit 2000 blocked the
   server for 2.8 s, and a 500-vertex query with a 2 km buffer for about 1 s.
+- A route request's `departure` must be within a year of now; a far-future time such as
+  `+275760-09-13T00:00:00.000Z` parsed and then failed with a `RangeError` message.
 - `navigation.underKeel.clearance` is published as `null` when the look-ahead reaches land,
   never `-Infinity`. In-process subscribers such as signalk-to-influxdb received the raw
   value and the database refused the write; no published number is now NaN or infinite.
