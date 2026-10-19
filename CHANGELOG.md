@@ -76,8 +76,8 @@ All notable changes to signalk-underkeel are documented here.
   properties (RFC 7946), and a transducer lever arm across 180° stored 180.00004° E, which the
   living chart counted in the cell west of 180° instead of the one east of it.
 - Route legs take the water level at their own ends: with FMI, a leg more than 30 km from the
-  forecast point falls back to chart datum and is never `ok`, instead of taking the level
-  forecast at the vessel.
+  forecast point gets the fallback level (chart datum, or the last level when lower) and is
+  never `ok`, instead of taking the level forecast at the vessel.
 - Departure window: each leg takes the lowest water level until one step after it is sailed,
   so a coarse step no longer reports a window across a low water it did not sample (a 12 h
   step over a semidiurnal tide returned a 24 h window in which a +6 h departure failed).

@@ -441,9 +441,9 @@ no more than 5 cm lower and the draft no deeper, `warn` and `alarm` are publishe
 with the reason "acknowledged passage". They are never published as `normal`. A negative mean
 UKC within 30 s is never suppressed: an acknowledgement covers an uncertain chart, not a charted
 depth shallower than the keel. While the water level is a fallback (a stale or missing feed) no
-acknowledgement applies and `POST /acks` answers 409: the fallback is chart datum, not a
-measured level to compare with the acknowledged one. `GET /acks` lists them; `POST` and `DELETE /acks/:id` need
-read-write access.
+acknowledgement applies and `POST /acks` answers 409: whatever its value, the fallback is a
+guess, not a measured level to compare with the acknowledged one. `GET /acks` lists them;
+`POST` and `DELETE /acks/:id` need read-write access.
 
 Mooring zones work the same way without a heading or water-level condition. They are Signal K
 regions named in the settings, for example the home berth; inside one, `warn` and `alarm` are
