@@ -38,3 +38,6 @@ __tests__/temp/
 data/
 *.000
 *.fgb
+
+# Vendored browser client, copied by scripts/vendor-bus.js
+public/vendor/

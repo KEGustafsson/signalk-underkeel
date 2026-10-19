@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Under-keel status</title>
+    <style>
+      html, body { margin: 0; height: 100%; font: 13px/1.25 system-ui, sans-serif; }
+      body { box-sizing: border-box; padding: 6px 8px; cursor: pointer; color: #fff; background: #808080; }
+      #state { font-size: 18px; font-weight: 700; letter-spacing: 0.02em; }
+      #line { margin-top: 2px; }
+      #reason { margin-top: 2px; font-size: 11px; opacity: 0.9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      #advisory { margin-top: 2px; font-size: 10px; opacity: 0.8; }
+    </style>
+    <script src="ukc-shared.js"></script>
+    <script type="module" src="widget.js"></script>
+  </head>
+  <body title="Advisory only: always use an official chart">
+    <div id="state">UKC —</div>
+    <div id="line"></div>
+    <div id="reason"></div>
+    <div id="advisory">Advisory · not ECDIS</div>
+  </body>
+</html>

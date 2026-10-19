@@ -5,6 +5,7 @@
   "main": "lib/index.js",
   "files": [
     "lib/",
+    "public/",
     "CHANGELOG.md"
   ],
   "keywords": [
@@ -18,7 +19,7 @@
   "signalk-plugin-enabled-by-default": false,
   "scripts": {
     "clean:lib": "node -e \"const fs=require('fs');if(fs.existsSync('lib'))fs.rmSync('lib',{recursive:true,force:true});\"",
-    "build": "npm run clean:lib && tsc",
+    "build": "npm run clean:lib && tsc && node scripts/vendor-bus.js",
     "check:ts": "tsc --noEmit",
     "check:release-docs": "node scripts/check-release-truth.js",
     "verify": "npm run check:ts && npm run lint && npm test",
@@ -49,6 +50,7 @@
     "jest": "^30.5.2",
     "lint-staged": "^17.6.0",
     "prettier": "^3.9.10",
+    "signalk-plotterext-bus": "^0.21.0",
     "ts-jest": "^29.4.15",
     "typescript": "^6.0.3"
   },

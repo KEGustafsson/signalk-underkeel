@@ -1,0 +1,30 @@
+{
+  "version": 8,
+  "id": "underkeel-routecheck",
+  "name": "Under-keel route check",
+  "sources": {
+    "legs": { "type": "geojson", "data": { "type": "FeatureCollection", "features": [] } }
+  },
+  "layers": [
+    {
+      "id": "legs",
+      "type": "line",
+      "source": "legs",
+      "paint": {
+        "line-color": [
+          "match",
+          ["get", "status"],
+          "ok",
+          "#1a9850",
+          "marginal",
+          "#fdae61",
+          "fail",
+          "#d7301f",
+          "#807dba"
+        ],
+        "line-width": 7,
+        "line-opacity": 0.75
+      }
+    }
+  ]
+}

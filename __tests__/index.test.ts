@@ -606,15 +606,18 @@ describe("manifest and step", () => {
       statePath: "navigation.underKeel",
       notificationPath: "notifications.navigation.underKeel"
     });
-    expect(m?.optional).toEqual(["overlays.data", "x-freeboard.services.navigationSafety"]);
-    expect(m?.overlays).toEqual([
-      expect.objectContaining({
-        id: "ukc",
-        type: "data",
-        minZoom: 11,
-        style: "/plugins/signalk-underkeel/v1/ukc-style.json"
-      })
+    // Nothing is required, so a host without any of these still offers the overlays it can draw.
+    expect(m?.requires).toEqual([]);
+    expect(m?.optional).toEqual(
+      expect.arrayContaining(["overlays.data", "background.iframe", "routes", "signalk.stream"])
+    );
+    expect(m?.overlays.map((o) => [o.id, o.style])).toEqual([
+      ["ukc", "/plugins/signalk-underkeel/v1/ukc-style.json"],
+      ["lookahead", "/plotterext/signalk-underkeel/lookahead-style.json"],
+      ["routecheck", "/plotterext/signalk-underkeel/routecheck-style.json"]
     ]);
+    expect(m?.background.map((b) => b.url)).toEqual(["/plotterext/signalk-underkeel/runtime.html"]);
+    expect(m?.buttons[0]?.action).toEqual({ type: "togglePanel", panel: "details" });
   });
 
   test("a fast boat gets a shorter step so footprints still overlap", () => {

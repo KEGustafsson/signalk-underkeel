@@ -1,0 +1,33 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Under-keel details</title>
+    <style>
+      body { margin: 0; padding: 10px 12px; font: 14px/1.4 system-ui, sans-serif; }
+      h2 { font-size: 15px; margin: 14px 0 6px; }
+      .advisory { font-size: 12px; padding: 6px 8px; background: #fff3cd; border-radius: 4px; }
+      #state { display: inline-block; padding: 2px 8px; border-radius: 4px; color: #fff; font-weight: 700; }
+      #message { margin-top: 6px; }
+      table { border-collapse: collapse; width: 100%; font-size: 13px; }
+      td, th { text-align: left; padding: 3px 4px; border-bottom: 1px solid #ddd; }
+      .ok { color: #1a9850; } .marginal { color: #b35806; } .fail { color: #d7301f; } .unverified { color: #6a51a3; }
+      button { margin-top: 8px; }
+      .muted { color: #666; font-size: 12px; }
+    </style>
+    <script src="ukc-shared.js"></script>
+    <script type="module" src="panel.js"></script>
+  </head>
+  <body>
+    <div class="advisory">
+      Advisory only: not ECDIS. Always carry and use an official nautical chart, paper or ENC.
+    </div>
+    <h2>Look-ahead</h2>
+    <span id="state">—</span>
+    <div id="message"></div>
+    <div id="source" class="muted"></div>
+    <h2>Route check</h2>
+    <div id="routes" class="muted">No route on the chart.</div>
+    <button id="recheck" type="button">Check routes again</button>
+  </body>
+</html>

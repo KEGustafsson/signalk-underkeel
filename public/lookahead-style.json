@@ -1,0 +1,56 @@
+{
+  "version": 8,
+  "id": "underkeel-lookahead",
+  "name": "Under-keel look-ahead",
+  "sources": {
+    "envelope": { "type": "geojson", "data": { "type": "FeatureCollection", "features": [] } }
+  },
+  "layers": [
+    {
+      "id": "segments",
+      "type": "fill",
+      "source": "envelope",
+      "filter": ["==", ["get", "kind"], "segment"],
+      "paint": {
+        "fill-color": [
+          "match",
+          ["get", "class"],
+          "clear",
+          "#41ab5d",
+          "caution",
+          "#fdae61",
+          "danger",
+          "#d7301f",
+          "#9e9ac8"
+        ],
+        "fill-opacity": 0.45
+      }
+    },
+    {
+      "id": "outline",
+      "type": "line",
+      "source": "envelope",
+      "filter": ["==", ["get", "kind"], "segment"],
+      "paint": { "line-color": "#202020", "line-width": 1 }
+    },
+    {
+      "id": "track",
+      "type": "line",
+      "source": "envelope",
+      "filter": ["==", ["get", "kind"], "track"],
+      "paint": { "line-color": "#202020", "line-width": 1.5, "line-dasharray": [2, 2] }
+    },
+    {
+      "id": "worst",
+      "type": "circle",
+      "source": "envelope",
+      "filter": ["==", ["get", "kind"], "worst"],
+      "paint": {
+        "circle-radius": 6,
+        "circle-color": "#ffffff",
+        "circle-stroke-color": "#d7301f",
+        "circle-stroke-width": 3
+      }
+    }
+  ]
+}

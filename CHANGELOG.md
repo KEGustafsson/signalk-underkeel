@@ -6,6 +6,9 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Added
 
+- Freeboard UI as Plotter Extensions contributions, served from `/plotterext/signalk-underkeel/`:
+  a background runtime, look-ahead and route-check data overlays, a status widget, a details
+  panel and a toolbar button. Freeboard core is unchanged.
 - Traficom WFS depths (off by default): depth areas and soundings for a box around the vessel,
   re-downloaded as it moves and indexed in a worker thread, as a band-1 cell flagged
   `NOT_FOR_NAVIGATION`; water it alone covers is never `normal`, `ok` or `clear`.

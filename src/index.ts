@@ -1,4 +1,5 @@
 import type { Path, Plugin, PluginRouter, ServerAPI } from "@signalk/server-api";
+import { mountAssets } from "./api/assets";
 import { manifestProvider, PLUGIN_ID } from "./api/manifest";
 import { registerRoutes } from "./api/routes";
 import type { PluginConfig } from "./config";
@@ -74,6 +75,7 @@ export = function underkeel(
           errors.forEach((e) => app.error(e));
         }
       );
+      mountAssets(app);
       app.registerResourceProvider(manifestProvider(VERSION));
     },
 

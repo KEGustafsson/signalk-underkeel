@@ -85,7 +85,14 @@ REST, base `/plugins/signalk-underkeel/v1`, open to readonly users:
   classed `clear`, `caution`, `danger`, `unverified` or `land` for the current draft and water
   level. `GET /ukc-style.json` is a MapLibre style for them.
 
-The plugin also registers a `plotterExtensions` resource declaring the UKC data overlay and the
+The plugin also registers a `plotterExtensions` resource. A chart plotter with the Plotter
+Extensions API, such as Freeboard-SK, shows it with no change of its own:
+
+- the look-ahead envelope, route-check leg colours and UKC tiles as data overlays;
+- a status widget with the state, minimum clearance and time to shoal;
+- a details panel with the route-check legs, opened from a toolbar button.
+
+The pages are served from `/plotterext/signalk-underkeel/`. The resource also declares the
 experimental `navigationSafety` service.
 
 ## Documentation map
