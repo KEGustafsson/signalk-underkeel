@@ -90,7 +90,8 @@ REST, base `/plugins/signalk-underkeel/v1`, open to readonly users:
   (see above).
 - `GET /tiles/ukc/{z}/{x}/{y}.pbf`: Mapbox vector tiles from zoom 11, one `ukc` layer of cells
   classed `clear`, `caution`, `danger`, `unverified` or `land` for the current draft and water
-  level, sent with `Cache-Control: no-cache` because they change with both.
+  level, sent with `Cache-Control: no-cache` because they change with both. A cell takes the
+  worst class of any cell within twice its assessed survey's position σ, as a route check does.
   `GET /ukc-style.json` is a MapLibre style for them.
 
 The plugin also registers a `plotterExtensions` resource. A chart plotter with the Plotter

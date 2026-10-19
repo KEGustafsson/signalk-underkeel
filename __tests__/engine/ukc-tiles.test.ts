@@ -10,7 +10,7 @@ import { buildPyramid } from "../../src/spatial/pyramid-build";
 import type { TileCell } from "../../src/spatial/tile-walk";
 import { cellsInTile } from "../../src/spatial/tile-walk";
 import { fixtureIndex, ROCK } from "../helpers/fixture-index";
-import { basin } from "../helpers/synthetic";
+import { area, basin, coverage, quality } from "../helpers/synthetic";
 
 const TH: Thresholds = DEFAULT_LOOKAHEAD.thresholds;
 const EXTENT = 4096;
@@ -157,6 +157,62 @@ describe("UKC classes", () => {
     expect(rects.some((r) => r.class === "unverified")).toBe(true);
   });
 
+  test.each([
+    [3, "B"],
+    [4, "C"]
+  ] as const)(
+    "water 60 m from a drying area under CATZOC %s (%s) is never drawn clear",
+    (catzoc) => {
+      // The patch may lie 50 m (B) or 500 m (C) from where it is drawn.
+      const box = [22.0, 60.0, 22.06, 60.03] as const;
+      const north = 60 / 111195;
+      const store = buildPyramid(
+        [
+          coverage(box),
+          quality(box, catzoc),
+          area(box, 15),
+          area([22.028, 60.015 + north, 22.032, 60.016 + north], -1)
+        ],
+        { minZoom: 12, leafZoom: 20 }
+      );
+      const at: [number, number] = [22.03, 60.015];
+      const t = tileOf(14, at);
+      const tr = tileRect(t.z, t.x, t.y);
+      const [mx, my] = toMercator(at[0], at[1]);
+      const px = ((mx - tr.minX) / (tr.maxX - tr.minX)) * EXTENT;
+      const py = ((tr.maxY - my) / (tr.maxY - tr.minY)) * EXTENT;
+      const rects = ukcTile(store, t.z, t.x, t.y, EXTENT, input(1.8));
+      const under = rects.filter((r) => r.x0 <= px && px <= r.x1 && r.y0 <= py && py <= r.y1);
+      expect(under.length).toBeGreaterThan(0);
+      expect(under.every((r) => r.class === "danger")).toBe(true);
+      // Far from the patch the water stays clear.
+      expect(rects.some((r) => r.class === "clear")).toBe(true);
+    }
+  );
+
+  test("an A1 survey keeps water 60 m from the same patch clear", () => {
+    const box = [22.0, 60.0, 22.06, 60.03] as const;
+    const north = 60 / 111195;
+    const store = buildPyramid(
+      [
+        coverage(box),
+        quality(box, 1),
+        area(box, 15),
+        area([22.028, 60.015 + north, 22.032, 60.016 + north], -1)
+      ],
+      { minZoom: 12, leafZoom: 20 }
+    );
+    const t = tileOf(14, [22.03, 60.015]);
+    const tr = tileRect(t.z, t.x, t.y);
+    const [mx, my] = toMercator(22.03, 60.015);
+    const px = ((mx - tr.minX) / (tr.maxX - tr.minX)) * EXTENT;
+    const py = ((tr.maxY - my) / (tr.maxY - tr.minY)) * EXTENT;
+    const under = ukcTile(store, t.z, t.x, t.y, EXTENT, input(1.8)).filter(
+      (r) => r.x0 < px && px < r.x1 && r.y0 < py && py < r.y1
+    );
+    expect(under.map((r) => r.class)).toEqual(["clear"]);
+  });
+
   test("no point is riskier than the class drawn over it", () => {
     const store = fixtureIndex().pyramid;
     // Land is not drawn: it counts as danger only over a point that is itself land.
@@ -175,7 +231,9 @@ describe("UKC classes", () => {
           const px = ((mx - tr.minX) / (tr.maxX - tr.minX)) * EXTENT;
           const py = ((tr.maxY - my) / (tr.maxY - tr.minY)) * EXTENT;
           const under = rects.filter((r) => r.x0 <= px && px <= r.x1 && r.y0 <= py && py <= r.y1);
+          // As a route check or POST /query reads the point, chart position included.
           const at = minDepthOver(store, footprintGeom([fromMercator(mx, my)]), {
+            chartReachK: 2,
             risk: { threshold, sigmaExtra: 0.3 }
           });
           const onLand = at.coveredDMin === -Infinity;

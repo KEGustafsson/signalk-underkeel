@@ -1,4 +1,13 @@
-import type { NodeStore } from "./node-store";
+import type { Rect } from "../foundation/geo";
+import {
+  expandRect,
+  groundToMercator,
+  maxAbsLat,
+  rectGap,
+  tileRange,
+  tileRect
+} from "../foundation/geo";
+import type { NodeStore, NodeValues } from "./node-store";
 import { FLAGS } from "./node-store";
 
 /**
@@ -63,6 +72,56 @@ export function surveySigmaP(store: NodeStore): SurveySigmaP {
   const sigma = { node, max };
   cache.set(store, { count: store.count, sigma });
   return sigma;
+}
+
+/** A pyramid cell whose chart reach extends beyond it. */
+export interface Reacher {
+  rect: Rect;
+  values: NodeValues;
+  /** The values bound finer cells (a split node cut at `maxZoom`). */
+  bound: boolean;
+  /** k·σP of its assessed survey, in Mercator metres at the poleward edge of the reach. */
+  reach: number;
+}
+
+/**
+ * The cells, no finer than `maxZoom`, whose chart reach k·σP touches
+ * `rect`, for drawing what a query anywhere in `rect` would count. A split
+ * node at `maxZoom` stands for its subtree with its bound and its widest
+ * assessed σP; a subtree with no assessed survey reaches nothing.
+ */
+export function reachersOf(store: NodeStore, rect: Rect, k: number, maxZoom: number): Reacher[] {
+  const sigma = surveySigmaP(store);
+  const ground = chartReach(k, sigma.max);
+  if (ground <= 0) {
+    return [];
+  }
+  const first = groundToMercator(ground, maxAbsLat(rect));
+  const perMetre = groundToMercator(1, maxAbsLat(expandRect(rect, first)));
+  const out: Reacher[] = [];
+  const visit = (z: number, x: number, y: number): void => {
+    const i = store.find(z, x, y);
+    const reach = i < 0 ? 0 : perMetre * chartReach(k, sigma.node[i] as number);
+    const r = tileRect(z, x, y);
+    if (reach <= 0 || rectGap(r, rect) > reach) {
+      return;
+    }
+    const split = store.isSplit(i);
+    if (!split || z >= maxZoom) {
+      out.push({ rect: r, values: store.values(i), bound: split, reach });
+      return;
+    }
+    for (const [dx, dy] of CHILDREN) {
+      visit(z + 1, 2 * x + dx, 2 * y + dy);
+    }
+  };
+  const range = tileRange(store.minZoom, expandRect(rect, perMetre * ground));
+  for (let x = range.minX; x <= range.maxX; x++) {
+    for (let y = range.minY; y <= range.maxY; y++) {
+      visit(store.minZoom, x, y);
+    }
+  }
+  return out;
 }
 
 const CHILDREN = [

@@ -68,6 +68,9 @@ All notable changes to signalk-underkeel are documented here.
   unassessed and not-for-navigation water adds none and stays `unverified`. A drying area 60 m
   off a leg or a footprint in CATZOC B or C water returned `ok` or `normal` with P = 0, and a
   poor survey anywhere in reach no longer widens the buffer for a well-surveyed rock.
+- UKC tiles draw each cell at least as bad as any cell within 2·σP of its assessed survey, the
+  reach a route check counts: water 60 m from a drying area in CATZOC B or C water was drawn
+  `clear` while a route check there failed.
 - `GET /envelope` and own soundings keep longitudes in [-180, 180]: near the antimeridian the
   look-ahead track and segments ran past 180° and are now cut there into features with the same
   properties (RFC 7946), and a transducer lever arm across 180° stored 180.00004° E, which the

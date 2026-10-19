@@ -509,6 +509,11 @@ one layer `ukc`, every index cell classed for the current draft and water level 
 | `clear`      | green  | everything else; never drawn while the water level is a fallback |
 | `land`       | none   | left to the chart                                                |
 
+A cell is also drawn at least as bad as any cell whose chart position error reaches it: 2 × σP
+of that cell's assessed survey, 50 m at CATZOC B and 500 m at C, the reach a route check and
+`POST /query` count. Water 60 m from a drying area in B water is therefore `danger`, not
+`clear`; unassessed and Traficom WFS water adds no reach and is `unverified` anyway.
+
 The style draws `clear` at 25 % opacity and the other classes at 55 %, so over the chart's blue
 water `danger` looks purple-red and `caution` looks grey-tan.
 

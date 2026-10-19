@@ -303,8 +303,8 @@ splitting every tile down to the leaf zoom.
 Expected cost is about 50 to 300 cell visits per look-ahead footprint.
 
 **Chart position in the query.** Depth areas and lines are not burned, so the look-ahead
-(k = k_p), a route check, a repair cost cell and `POST /query` (k = 2) count each tile within
-the query buffer plus `k·σP` of that tile's own survey, at most 1000 m
+(k = k_p), a route check, a repair cost cell, `POST /query` and the UKC tiles (k = 2) count
+each tile within the query buffer plus `k·σP` of that tile's own survey, at most 1000 m
 (`spatial/chart-position.ts`). A drying area drawn 60 m off a footprint in CATZOC B water
 (σP 25 m) is therefore in reach, while an A1 rock beside it is not widened by C water
 elsewhere in the query. A split tile prunes its subtree by the widest σP of the assessed leaves
