@@ -51,6 +51,11 @@ All notable changes to signalk-underkeel are documented here.
   min-depth pyramid with a fast-check conservativeness property test, hazard R-tree, and
   on-disk index format.
 
+### Changed
+
+- The navigation-safety contract schemas in `schemas/navigation-safety/` are licensed under
+  Apache-2.0, so other plotters and providers can adopt the contract; the plugin stays EUPL-1.2.
+
 ### Fixed
 
 - `navigation.underKeel.clearance` is published as `null` when the look-ahead reaches land,
