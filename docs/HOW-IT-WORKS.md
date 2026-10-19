@@ -90,7 +90,8 @@ source picked under **Water level** (section 8).
 
 The index is built once, at the first start, and saved under the plugin data directory. Later
 starts load the saved index until **Rebuild index at start** is ticked, so it is ticked once
-after the cells change.
+after the cells change. An index saved by an older plugin version whose index format differs
+is rebuilt at start.
 
 The status line at the top of the plugin's page shows the engine state and its reason, for
 example `Monitoring: unknown — position stale`.

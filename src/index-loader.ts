@@ -8,7 +8,8 @@ import {
   buildChartIndex,
   loadChartIndex,
   recoverChartIndex,
-  saveChartIndex
+  saveChartIndex,
+  savedIndexIsCurrent
 } from "./spatial/chart-index";
 
 /**
@@ -92,8 +93,9 @@ function missingReason(cfg: PluginConfig, indexDir: string, stale: boolean): str
 }
 
 /**
- * `stale`: the saved index holds WFS depths and the source is off. `mismatch`: that, or the
- * source is on and the saved index lacks its cell. Either way the saved index is not used as is.
+ * `stale`: the saved index holds WFS depths and the source is off. `mismatch`: that, the
+ * source is on and the saved index lacks its cell, or the index was built under an older
+ * pyramid version. Either way the saved index is not used as is.
  */
 function savedMatches(
   cfg: PluginConfig,
@@ -103,7 +105,8 @@ function savedMatches(
 ): { stale: boolean; mismatch: boolean } {
   const holds = saved && holdsWfs(indexDir);
   const stale = holds && !cfg.wfs;
-  return { stale, mismatch: stale || (saved && extraDirs.length > 0 && !holds) };
+  const outdated = saved && !savedIndexIsCurrent(indexDir);
+  return { stale, mismatch: stale || outdated || (saved && extraDirs.length > 0 && !holds) };
 }
 
 function holdsWfs(indexDir: string): boolean {

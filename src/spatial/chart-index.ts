@@ -8,7 +8,7 @@ import { HazardIndex } from "./hazards";
 import type { NodeStore } from "./node-store";
 import type { BuildOptions } from "./pyramid-build";
 import { buildPyramid } from "./pyramid-build";
-import { deserializePyramid, serializePyramid } from "./store";
+import { deserializePyramid, isCurrentPyramid, serializePyramid } from "./store";
 
 /** The queryable chart: provenance, the min-depth pyramid and the hazard tree. */
 export interface ChartIndex {
@@ -111,6 +111,17 @@ export function recoverChartIndex(dir: string): boolean {
   }
   fs.renameSync(newest, dir);
   return true;
+}
+
+/** Whether the saved index's pyramid was built under this version's rules; reads its header only. */
+export function savedIndexIsCurrent(dir: string): boolean {
+  const fd = fs.openSync(path.join(dir, FILES.pyramid), "r");
+  try {
+    const head = Buffer.alloc(512);
+    return isCurrentPyramid(head.subarray(0, fs.readSync(fd, head, 0, head.length, 0)));
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 /** Loads a saved index, first recovering one that a crash during save left moved aside. */

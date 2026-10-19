@@ -78,3 +78,5 @@ All notable changes to signalk-underkeel are documented here.
   look-ahead is never normal. `scripts/enc-to-geojson.sh` exports these layers. Before, such an
   area inside a cell's coverage took the depth of any nearby sounding's burn disc; now any
   covered place no depth area reaches has no depth.
+- The saved pyramid format is now version 2, and a saved index of an older version is rebuilt
+  at start when cells are configured, so an index built before the fixes above is not reused.
