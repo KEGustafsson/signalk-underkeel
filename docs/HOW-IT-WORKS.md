@@ -541,7 +541,9 @@ flowchart TD
   M -- no --> OK[ok]
 ```
 
-A fallback water level then turns an `ok` leg into `unverified`. The route in the picture runs
+The corridor follows the leg as the chart draws it, the rhumb line, and on a long leg also
+the great circle a course computer may steer instead. A fallback water level then turns an `ok`
+leg into `unverified`. The route in the picture runs
 from east to west at 2.5 m/s:
 
 | Leg | Status       | P(UKC < 0) | Shallowest charted | Why                                              |

@@ -1,5 +1,5 @@
 import type { LonLat } from "../foundation/geo";
-import { EARTH_RADIUS, haversine, project } from "../foundation/geo";
+import { EARTH_RADIUS, fromMercator, haversine, project, toMercator } from "../foundation/geo";
 import { geomBounds } from "../foundation/geometry";
 import type { VesselTerms, WaterLevel } from "../model/uncertainty";
 import { sigmaExtra, thresholdDepth } from "../model/uncertainty";
@@ -76,7 +76,7 @@ export interface RouteCheckResult {
   legs: LegResult[];
 }
 
-/** Long legs are checked in pieces this long so the corridor hugs the line. */
+/** Long legs are checked in pieces about this long so the corridor hugs the line. */
 const SEGMENT_METRES = 1000;
 
 /** True bearing from a to b in the local tangent plane, radians. */
@@ -104,15 +104,64 @@ export function corridorRing(a: LonLat, b: LonLat, r: number): LonLat[] {
   ];
 }
 
-function pieces(a: LonLat, b: LonLat, length: number): [LonLat, LonLat][] {
-  const n = Math.max(1, Math.ceil(length / SEGMENT_METRES));
-  const brg = bearing(a, b);
-  const points: LonLat[] = [a];
-  for (let i = 1; i < n; i++) {
-    points.push(project(a, brg, (length * i) / n));
+/** The point `t` of the way along the rhumb line a→b, the line drawn straight on the chart. */
+function alongRhumb(a: LonLat, b: LonLat, t: number): LonLat {
+  const [ax, ay] = toMercator(a[0], a[1]);
+  const [bx, by] = toMercator(b[0], b[1]);
+  return fromMercator(ax + (bx - ax) * t, ay + (by - ay) * t);
+}
+
+function unitVector(p: LonLat): [number, number, number] {
+  const k = Math.PI / 180;
+  const c = Math.cos(p[1] * k);
+  return [c * Math.cos(p[0] * k), c * Math.sin(p[0] * k), Math.sin(p[1] * k)];
+}
+
+/** The point `t` of the way along the great circle a→b, the line a navigator steering it follows. */
+function alongGreatCircle(a: LonLat, b: LonLat, t: number): LonLat {
+  const va = unitVector(a);
+  const vb = unitVector(b);
+  const omega = Math.acos(Math.min(1, va[0] * vb[0] + va[1] * vb[1] + va[2] * vb[2]));
+  if (omega === 0) {
+    return a;
   }
-  points.push(b);
-  return points.slice(1).map((p, i) => [points[i] as LonLat, p]);
+  const wa = Math.sin((1 - t) * omega) / Math.sin(omega);
+  const wb = Math.sin(t * omega) / Math.sin(omega);
+  const [x, y, z] = va.map((c, i) => wa * c + wb * (vb[i] as number)) as [number, number, number];
+  const deg = 180 / Math.PI;
+  return [Math.atan2(y, x) * deg, Math.atan2(z, Math.hypot(x, y)) * deg];
+}
+
+/** Upper bound of the gap between a leg's rhumb line and its great circle, metres. */
+function greatCircleOffset(a: LonLat, b: LonLat): number {
+  let gap = 0;
+  for (let i = 1; i < 8; i++) {
+    gap = Math.max(gap, haversine(alongRhumb(a, b, i / 8), alongGreatCircle(a, b, i / 8)));
+  }
+  return gap;
+}
+
+/** Below this gap the rhumb corridor is widened by it; above, the great circle gets its own. */
+const GREAT_CIRCLE_TOLERANCE = 10;
+
+/**
+ * Corridor rings that together contain every point within `r` of both the
+ * rhumb line a→b, as a chart plotter draws the leg, and its great circle,
+ * as a course computer may steer it. Each line is split into pieces of
+ * about SEGMENT_METRES at equal fractions, so the last piece ends on b.
+ */
+export function legCorridors(a: LonLat, b: LonLat, r: number): LonLat[][] {
+  const n = Math.max(1, Math.ceil(haversine(a, b) / SEGMENT_METRES));
+  const gap = greatCircleOffset(a, b);
+  const apart = gap > GREAT_CIRCLE_TOLERANCE;
+  const lines = apart ? [alongRhumb, alongGreatCircle] : [alongRhumb];
+  const width = apart ? r : r + gap;
+  return lines.flatMap((along) => {
+    const points = Array.from({ length: n + 1 }, (_, i) =>
+      i === 0 ? a : i === n ? b : along(a, b, i / n)
+    );
+    return points.slice(1).map((q, i) => corridorRing(points[i] as LonLat, q, width));
+  });
 }
 
 interface LegDepth {
@@ -133,8 +182,7 @@ function checkCorridor(index: ChartIndex, a: LonLat, b: LonLat, r: number, s: Sc
   let flags = 0;
   let covered = Infinity;
   const cells = new Set<number>();
-  for (const [p, q] of pieces(a, b, haversine(a, b))) {
-    const ring = corridorRing(p, q, r);
+  for (const ring of legCorridors(a, b, r)) {
     const result = minDepthOver(index.pyramid, footprintGeom(ring), {
       clearAbove: s.threshold + CLEARANCE_RESOLUTION,
       risk: { threshold: s.threshold, sigmaExtra: s.sigmaExtra }
