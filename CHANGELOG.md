@@ -127,3 +127,5 @@ All notable changes to signalk-underkeel are documented here.
   and null values, as `schemas/navigation-safety/notification.json` requires.
 - Stopping the plugin publishes `navigation.underKeel.waterLevel` and `.envelopeRev` as `null`
   as well; they kept their last values before.
+- A mooring-zone load still running from an earlier start no longer writes its zones or
+  errors into the current start's status.

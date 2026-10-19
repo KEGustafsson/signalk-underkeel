@@ -76,3 +76,48 @@ describe("after stop", () => {
     expect(lastValue(f.deltas, "navigation.underKeel.envelopeRev")).toBeNull();
   });
 });
+
+describe("restart", () => {
+  let dataDir: string;
+  beforeEach(() => {
+    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-lifecycle-"));
+  });
+  afterEach(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+
+  test("a zone load from the previous start does not report into the current one", async () => {
+    const f = fakeApp(dataDir);
+    let release = () => undefined as void;
+    const gate = new Promise<void>((r) => (release = r));
+    const square = [
+      [
+        [0, 0],
+        [1, 0],
+        [1, 1],
+        [0, 0]
+      ]
+    ];
+    (f.app as unknown as { resourcesApi: unknown }).resourcesApi = {
+      getResource: async (_type: string, id: string) => {
+        if (id === "old") {
+          await gate;
+          throw new Error("not found");
+        }
+        return { name: id, feature: { geometry: { type: "Polygon", coordinates: square } } };
+      }
+    };
+    const plugin = underkeel(f.app, fakeClock(T0));
+    const { router, call } = fakeRouter();
+    plugin.registerWithRouter?.(router as never);
+    const flush = () => new Promise((r) => setImmediate(r));
+    plugin.start({ mooringZones: ["old"] }, () => undefined);
+    plugin.stop();
+    plugin.start({ mooringZones: ["new"] }, () => undefined);
+    await flush();
+    release();
+    await flush();
+    expect(call("/v1/status").body).toMatchObject({
+      mooringZones: { loaded: ["new"], errors: [] }
+    });
+    plugin.stop();
+  });
+});

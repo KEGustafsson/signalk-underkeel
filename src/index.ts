@@ -99,6 +99,10 @@ export = function underkeel(
       wfs?.start();
       void loadZones(config.mooringZones, (id) => app.resourcesApi.getResource("regions", id)).then(
         ({ zones, errors }) => {
+          // A slow load from an earlier start must not report into this one.
+          if (state.monitor !== monitor) {
+            return;
+          }
           monitor.setZones(zones);
           state.zoneErrors = errors;
           errors.forEach((e) => app.error(e));
