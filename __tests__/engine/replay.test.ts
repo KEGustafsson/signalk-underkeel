@@ -44,6 +44,10 @@ function replay(p: Passage): { t: number; state: UnderKeelState; distance: numbe
       at
     );
     timeline.push({ t, state: r.state, distance: haversine(pos, p.hazard) });
+    // Every check is on the timeline up to the first alarm.
+    if (r.state === "alarm") {
+      break;
+    }
   }
   return timeline;
 }

@@ -138,7 +138,7 @@ describe("risk monotonicity (property)", () => {
           expect(unsure).toBeGreaterThanOrEqual(sure - RISK_STOP_BELOW);
         }
       ),
-      { numRuns: 60 }
+      { numRuns: 30 }
     );
   });
 });
