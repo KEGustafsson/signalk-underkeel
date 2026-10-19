@@ -106,6 +106,8 @@ export class Monitor {
   vesselNotes: string[] = [];
   private timer: unknown;
   private readonly unsubscribes: Unsubscribes = [];
+  /** The server does not merge overlapping subscriptions: each would deliver a delta again. */
+  private readonly subscribed = new Set<string>();
   private readonly levels: WaterLevelService;
   private readonly integrity = new IntegrityMonitor();
   integrityResult?: IntegrityResult;
@@ -170,6 +172,7 @@ export class Monitor {
     for (const u of this.unsubscribes.splice(0)) {
       u();
     }
+    this.subscribed.clear();
     this.levels.stop();
     // A raised integrity or grounding notification must not outlive the plugin.
     this.notifier.clear(PATHS.positionIntegrity, "UKC monitoring stopped");
@@ -268,10 +271,15 @@ export class Monitor {
   }
 
   private subscribe(paths: readonly string[]): void {
+    const fresh = [...new Set(paths)].filter((p) => !this.subscribed.has(p));
+    if (fresh.length === 0) {
+      return;
+    }
+    fresh.forEach((p) => this.subscribed.add(p));
     this.app.subscriptionmanager.subscribe(
       {
         context: "vessels.self" as never,
-        subscribe: paths.map((path) => ({ path: path as Path, policy: "instant" }))
+        subscribe: fresh.map((path) => ({ path: path as Path, policy: "instant" }))
       },
       this.unsubscribes,
       (err) => this.app.error(`subscription failed: ${String(err)}`),

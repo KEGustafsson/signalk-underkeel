@@ -39,11 +39,35 @@ export function fakeClock(start: number): FakeClock {
   };
 }
 
+/** Matches any of the Signal K paths, where `*` stands for any run of characters. */
+function pathPattern(paths: string[]): RegExp {
+  const one = (p: string) =>
+    p
+      .split("*")
+      .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
+      .join(".*");
+  return new RegExp(`^(?:${paths.map(one).join("|")})$`);
+}
+
+/** Delivers the delta's values that one subscription matches, as the server does per subscription. */
+function deliver(d: Delta, match: RegExp, cb: (d: Delta) => void): void {
+  const updates = d.updates.flatMap((u) => {
+    if (!("values" in u)) {
+      return [u];
+    }
+    const values = u.values.filter((v) => match.test(v.path));
+    return values.length > 0 ? [{ ...u, values }] : [];
+  });
+  if (updates.length > 0) {
+    cb({ ...d, updates } as Delta);
+  }
+}
+
 export function fakeApp(dataDir: string, self: Record<string, unknown> = {}) {
   const deltas: Partial<Delta>[] = [];
   const errors: string[] = [];
   const providers: unknown[] = [];
-  let onDelta: ((d: Delta) => void) | undefined;
+  const subscriptions: { match: RegExp; cb: (d: Delta) => void }[] = [];
   let unsubscribed = 0;
   const subscribed: string[] = [];
   const app = {
@@ -61,8 +85,9 @@ export function fakeApp(dataDir: string, self: Record<string, unknown> = {}) {
         _err: unknown,
         cb: (d: Delta) => void
       ) => {
-        subscribed.push(...cmd.subscribe.map((s) => s.path));
-        onDelta = cb;
+        const paths = cmd.subscribe.map((s) => s.path);
+        subscribed.push(...paths);
+        subscriptions.push({ match: pathPattern(paths), cb });
         unsubscribes.push(() => unsubscribed++);
       }
     }
@@ -72,7 +97,7 @@ export function fakeApp(dataDir: string, self: Record<string, unknown> = {}) {
     deltas,
     errors,
     providers,
-    send: (d: Delta) => onDelta?.(d),
+    send: (d: Delta) => subscriptions.forEach((s) => deliver(d, s.match, s.cb)),
     subscribed,
     unsubscribed: () => unsubscribed
   };

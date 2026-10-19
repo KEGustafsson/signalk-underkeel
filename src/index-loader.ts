@@ -91,7 +91,10 @@ function missingReason(cfg: PluginConfig, indexDir: string, stale: boolean): str
     : `no chart index in ${indexDir}; set cellsDir`;
 }
 
-/** Whether a saved index holds the plugin's own cells exactly when they are in use. */
+/**
+ * `stale`: the saved index holds WFS depths and the source is off. `mismatch`: that, or the
+ * source is on and the saved index lacks its cell. Either way the saved index is not used as is.
+ */
 function savedMatches(
   cfg: PluginConfig,
   indexDir: string,

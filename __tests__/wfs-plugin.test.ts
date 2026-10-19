@@ -114,6 +114,45 @@ describe("plugin with the Traficom WFS source", () => {
     plugin.stop();
   });
 
+  test("a depth path the grounding detector already has is not subscribed again", async () => {
+    const clock = fakeClock(T0);
+    const h = fakeApp(dataDir);
+    const plugin = underkeel(h.app, clock, fetch, build);
+    plugin.start(
+      {
+        vessel: { draft: 2 },
+        wfs: { enabled: true, radiusKm: 3 },
+        livechart: { enabled: true },
+        groundingDetector: { enabled: true }
+      },
+      () => undefined
+    );
+    h.send(navDelta(22.0, 60.0, 0, clock.now()));
+    clock.advance(10_000);
+    for (let i = 0; i < 5; i++) {
+      await settle();
+    }
+    expect(h.subscribed.filter((p) => p === "environment.depth.belowSurface")).toHaveLength(1);
+    h.send({
+      updates: [
+        {
+          timestamp: new Date(clock.now()).toISOString(),
+          values: [{ path: "environment.depth.belowSurface", value: 8 }]
+        }
+      ]
+    } as never);
+    const { router, call } = fakeRouter();
+    plugin.registerWithRouter?.(router as never);
+    const lc = (
+      call("/v1/status").body as {
+        livechart: { accepted: number; rejected: Record<string, number> };
+      }
+    ).livechart;
+    const seen = Object.values(lc.rejected).reduce((a, b) => a + b, lc.accepted);
+    expect(seen).toBe(1);
+    plugin.stop();
+  });
+
   test("turned back on, the source's saved box is indexed again at start", async () => {
     const clock = fakeClock(T0);
     const cells = (h: ReturnType<typeof fakeApp>, plugin: ReturnType<typeof underkeel>) => {
