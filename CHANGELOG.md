@@ -50,3 +50,9 @@ All notable changes to signalk-underkeel are documented here.
 - Chart index library: S-57 GeoJSON ingest with cell provenance, CATZOC → σ table,
   min-depth pyramid with a fast-check conservativeness property test, hazard R-tree, and
   on-disk index format.
+
+### Fixed
+
+- `navigation.underKeel.clearance` is published as `null` when the look-ahead reaches land,
+  never `-Infinity`. In-process subscribers such as signalk-to-influxdb received the raw
+  value and the database refused the write; no published number is now NaN or infinite.

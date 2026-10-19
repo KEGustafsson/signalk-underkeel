@@ -222,6 +222,8 @@ describe("probabilistic look-ahead on the synthetic chart", () => {
     expect(r.state).toBe("alarm");
     expect(r.worst?.explanation.charted).toBeNull();
     expect(r.worst?.explanation.risk).toBe(1);
+    // -Infinity would not survive JSON and breaks database writers subscribed in-process.
+    expect(r.clearance).toBeNull();
   });
 
   test("the horizon follows max(minHorizon, distance / SOG)", () => {

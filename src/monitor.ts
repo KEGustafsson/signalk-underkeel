@@ -11,7 +11,7 @@ import { evaluateLookahead } from "./engine/lookahead";
 import type { UnderKeelNotification } from "./engine/notify";
 import { notificationFor } from "./engine/notify";
 import type { LonLat } from "./foundation/geo";
-import { PATHS } from "./foundation/state";
+import { PATHS, publishable } from "./foundation/state";
 import type { FetchLike } from "./model/fmi";
 import type { IntegrityResult } from "./model/integrity";
 import { IntegrityMonitor } from "./model/integrity";
@@ -408,13 +408,13 @@ export class Monitor {
         {
           values: [
             { path: PATHS.state as Path, value: r.state },
-            { path: PATHS.clearance as Path, value: r.clearance },
-            { path: PATHS.clearanceSigma as Path, value: r.clearanceSigma },
-            { path: PATHS.risk as Path, value: r.risk },
-            { path: PATHS.timeToShoal as Path, value: r.timeToShoal },
-            { path: PATHS.escapeHeading as Path, value: r.escapeHeading },
+            { path: PATHS.clearance as Path, value: publishable(r.clearance) },
+            { path: PATHS.clearanceSigma as Path, value: publishable(r.clearanceSigma) },
+            { path: PATHS.risk as Path, value: publishable(r.risk) },
+            { path: PATHS.timeToShoal as Path, value: publishable(r.timeToShoal) },
+            { path: PATHS.escapeHeading as Path, value: publishable(r.escapeHeading) },
             { path: PATHS.envelopeRev as Path, value: this.envelope.rev },
-            { path: PATHS.waterLevel as Path, value: this.waterLevel().h }
+            { path: PATHS.waterLevel as Path, value: publishable(this.waterLevel().h) }
           ]
         }
       ]

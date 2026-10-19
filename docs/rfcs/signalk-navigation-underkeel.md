@@ -14,7 +14,7 @@ clearance and a separate notification.
 | Path                                  | Units | Meaning                                                       |
 | ------------------------------------- | ----- | ------------------------------------------------------------- |
 | `navigation.underKeel.state`          | —     | `normal`, `alert`, `warn`, `alarm`, `unknown` or `off`        |
-| `navigation.underKeel.clearance`      | m     | predicted minimum mean under-keel clearance over horizon      |
+| `navigation.underKeel.clearance`      | m     | predicted minimum mean UKC over horizon; null over land       |
 | `navigation.underKeel.clearanceSigma` | m     | 1σ of `clearance`                                             |
 | `navigation.underKeel.risk`           | ratio | highest P(UKC < 0) over the horizon                           |
 | `navigation.underKeel.timeToShoal`    | s     | seconds until P reaches the warn level; null when none        |

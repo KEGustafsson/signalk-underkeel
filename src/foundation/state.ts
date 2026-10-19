@@ -17,6 +17,14 @@ export const PATHS = {
   grounding: "notifications.grounding"
 } as const;
 
+/**
+ * A number as published on a Signal K path: null, never NaN or ±Infinity. In-process
+ * subscribers (a database writer, say) get the delta unserialised, so it must survive JSON.
+ */
+export function publishable(v: number | null): number | null {
+  return v !== null && Number.isFinite(v) ? v : null;
+}
+
 export interface EngineStatus {
   state: UnderKeelState;
   /** Why the engine is in this state; always set when state is not "normal". */
