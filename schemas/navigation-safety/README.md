@@ -28,7 +28,7 @@ signalk-underkeel's limits of that kind:
 
 | Request                                     | Limit                                                             |
 | ------------------------------------------- | ----------------------------------------------------------------- |
-| `route` (route-check, route-repair, window) | 2..1000 positions, at most 500 km, no leg across ±180°            |
+| `route` (route-check, route-repair, window) | 2..1000 positions, at most 500 km                                 |
 | `route` (route-check, route-repair, window) | route km × corridor width ≤ 200 km²                               |
 | `departure`                                 | within a year of now                                              |
 | `POST /departure-window`                    | `horizon` ≤ 7 days, at most 1000 departures                       |
