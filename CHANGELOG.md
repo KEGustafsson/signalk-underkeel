@@ -117,3 +117,6 @@ All notable changes to signalk-underkeel are documented here.
 - A Traficom WFS page that has not arrived within 120 s fails the download with that reason in
   `GET /status`, and the download is retried as after any failure. A stalled server left the
   download busy for good, with no error.
+- A WFS index build aborted by plugin stop no longer overlaps the next build: the next worker
+  starts only after the aborted one has exited, so two workers never save into the index
+  directory at once. Stop still returns at once.

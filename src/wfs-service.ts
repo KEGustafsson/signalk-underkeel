@@ -20,18 +20,34 @@ import { loadChartIndex } from "./spatial/chart-index";
 
 export type IndexBuilder = (job: BuildJob, signal: AbortSignal) => Promise<ChartIndex>;
 
-/** Builds in a worker thread from the compiled `lib/spatial/build-worker.js`. */
-export const workerBuilder: IndexBuilder = (job, signal) =>
-  new Promise((resolve, reject) => {
+/** Settles once every worker aborted so far has exited. */
+let exits: Promise<unknown> = Promise.resolve();
+
+/**
+ * Builds in a worker thread from the compiled `lib/spatial/build-worker.js`.
+ * An aborted worker runs, and may still be saving into the index directory,
+ * until terminate() resolves, so its build rejects only then and the next
+ * build starts only then; stop() itself returns at once.
+ */
+export const workerBuilder: IndexBuilder = async (job, signal) => {
+  await exits;
+  if (signal.aborted) {
+    throw new Error("aborted");
+  }
+  return new Promise((resolve, reject) => {
     const worker = new Worker(path.join(__dirname, "spatial", "build-worker.js"), {
       workerData: job
     });
     const abort = (): void => {
-      void worker.terminate();
-      reject(new Error("aborted"));
+      const exit = worker.terminate().catch(() => undefined);
+      exits = Promise.all([exits, exit]);
+      void exit.then(() => reject(new Error("aborted")));
     };
     signal.addEventListener("abort", abort, { once: true });
     worker.once("message", (m: { ok: boolean; error?: string }) => {
+      if (signal.aborted) {
+        return;
+      }
       signal.removeEventListener("abort", abort);
       void worker.terminate();
       if (m.ok) {
@@ -41,10 +57,14 @@ export const workerBuilder: IndexBuilder = (job, signal) =>
       }
     });
     worker.once("error", (err) => {
+      if (signal.aborted) {
+        return;
+      }
       signal.removeEventListener("abort", abort);
       reject(err);
     });
   });
+};
 
 /** The box in use, as saved in `<data dir>/wfs/box.json`. */
 export interface WfsBox {
