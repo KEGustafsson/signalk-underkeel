@@ -461,8 +461,10 @@ FMI reports above theoretical mean water and above N2000. Each cell's S-57 verti
 (`VERDAT`) is mapped to one of them: codes 3, 19 and 26 map to mean water by default, cells on
 N2000 need an entry under **Chart datum mappings**, and an unmapped datum is matched with
 σ 0.5 m. A cell whose `M_SDAT` or `M_VDAT` areas use another `VERDAT` than its `DSID` is
-matched as unknown too, with those codes listed as `datumAreas`. The plugin fetches FMI every 600 s by default, or after the vessel moves 10 km from the
-forecast point; the 1 Hz loop never waits on the network.
+matched as unknown too, with those codes listed as `datumAreas`. The plugin fetches FMI every
+600 s by default, after the vessel moves 10 km from the forecast point, and each minute from
+when the held forecast is 25 minutes old until a fetch succeeds; the 1 Hz loop never waits on
+the network.
 
 `GET /plugins/signalk-underkeel/v1/status` shows the source, the level applied, the source's
 health and the datum mapping per cell.

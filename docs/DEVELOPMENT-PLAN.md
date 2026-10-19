@@ -386,8 +386,10 @@ and `h = 0` would then assume more water than was last observed.
 **As built (M3).**
 
 - `levelAt` is synchronous and answers from data the provider already holds; FMI refreshes
-  itself every 10 minutes (configurable) and when the vessel moves 10 km from the forecast
-  point. The 1 Hz loop never waits on the network.
+  itself every 10 minutes (configurable), when the vessel moves 10 km from the forecast
+  point, and once the held forecast is 25 minutes old, retrying each minute until a fetch
+  succeeds, so neither a 30-minute interval nor one failed request lets it go stale. The
+  1 Hz loop never waits on the network.
 - FMI stored queries, checked against `opendata.fmi.fi` on 2026-10-17:
   `fmi::forecast::sealevel::point::simple` (SeaLevel, SeaLevelN2000; centimetres, hourly
   for 48 h) and `fmi::observations::mareograph::instant::simple` (WATLEV,

@@ -108,3 +108,6 @@ All notable changes to signalk-underkeel are documented here.
   falling tide and answered `heightLow` for any time past the next low water.
 - A water-level fallback uses the source's last level when that is below chart datum, instead
   of chart datum: in the Baltic the level is often negative, and a stale feed lowered P(UKC < 0).
+- FMI is refetched once the held forecast is 25 minutes old, and retried each minute until a
+  fetch succeeds. With a 30-minute interval the level was a fallback for a few seconds every
+  30 minutes, and one failed refetch made it a fallback for a whole interval.
