@@ -29,7 +29,7 @@ async function refreshStatus() {
     const wl = s.waterLevel && s.waterLevel.applied;
     const parts = [];
     if (wl) {
-      parts.push(`Water level ${UKC.depth(wl.h, unit)} (${wl.source})`);
+      parts.push(`Water level ${UKC.depth(wl.h, unit)} (${s.waterLevel.source})`);
     }
     if (s.wfs && s.wfs.notice) {
       parts.push(s.wfs.notice);
@@ -58,7 +58,7 @@ function renderRoutes(routeCheck) {
       const worst = UKC.worstStatus(r.legs);
       title.append(`${r.name || "Unsaved route"}: `);
       const badge = document.createElement("b");
-      badge.className = worst;
+      badge.className = r.error ? "unverified" : worst;
       badge.textContent = r.error ? "not checked" : worst;
       title.append(badge);
       box.append(title);

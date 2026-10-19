@@ -41,6 +41,14 @@ void refreshEnvelope();
 // ---- route check: every visible route, again after each edit ----
 const results = new Map();
 const timers = new Map();
+/** Latest check per route: a reply to an older check, or to a hidden route, is dropped. */
+const seq = new Map();
+
+function nextSeq(routeId) {
+  const n = (seq.get(routeId) || 0) + 1;
+  seq.set(routeId, n);
+  return n;
+}
 
 async function publish() {
   const features = [...results].flatMap(([id, r]) => UKC.legFeatures(id, r.legs));
@@ -53,9 +61,14 @@ async function publish() {
 }
 
 async function check(routeId) {
+  const n = nextSeq(routeId);
+  const current = () => seq.get(routeId) === n;
   try {
     const route = await client.call("route.get", { routeId });
     const line = UKC.routeLine(route.points);
+    if (!current()) {
+      return;
+    }
     if (!line) {
       results.delete(routeId);
     } else {
@@ -66,6 +79,9 @@ async function check(routeId) {
         body: JSON.stringify({ route: line })
       });
       const body = await res.json();
+      if (!current()) {
+        return;
+      }
       results.set(
         routeId,
         res.ok
@@ -74,7 +90,16 @@ async function check(routeId) {
       );
     }
   } catch (err) {
-    results.delete(routeId);
+    if (!current()) {
+      return;
+    }
+    const prev = results.get(routeId);
+    results.set(routeId, {
+      name: prev && prev.name,
+      rev: prev && prev.rev,
+      legs: [],
+      error: `route check failed: ${err && err.message ? err.message : String(err)}`
+    });
     console.warn("under-keel route check", err);
   }
   await publish();
@@ -94,6 +119,8 @@ async function checkAll() {
 if (has("routes")) {
   await client.subscribe(["route.**"], (name, params) => {
     if (name === "route.hidden") {
+      clearTimeout(timers.get(params.routeId));
+      nextSeq(params.routeId);
       results.delete(params.routeId);
       void publish();
     } else if (params && params.routeId) {

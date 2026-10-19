@@ -73,11 +73,22 @@
     });
   }
 
-  /** Worst leg status of a route: fail > unverified > marginal > ok. */
+  /**
+   * Worst leg status of a route: fail > unverified > marginal > ok. A status
+   * this page does not know counts as unverified, and so does a route with no
+   * legs: nothing on it has been checked.
+   */
   function worstStatus(legs) {
     var rank = { ok: 0, marginal: 1, unverified: 2, fail: 3 };
-    return (legs || []).reduce(function (worst, leg) {
-      return (rank[leg.status] || 0) > (rank[worst] || 0) ? leg.status : worst;
+    var known = function (s) {
+      return Object.prototype.hasOwnProperty.call(rank, s) ? s : "unverified";
+    };
+    if (!legs || legs.length === 0) {
+      return "unverified";
+    }
+    return legs.reduce(function (worst, leg) {
+      var s = known(leg.status);
+      return rank[s] > rank[worst] ? s : worst;
     }, "ok");
   }
 

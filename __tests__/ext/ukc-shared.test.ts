@@ -40,6 +40,16 @@ describe("extension display logic", () => {
     expect(f.map((x: { id: string }) => x.id)).toEqual(["r1:0", "r1:1"]);
     expect(f[1].properties.status).toBe("fail");
     expect(UKC.worstStatus(legs)).toBe("fail");
-    expect(UKC.worstStatus([])).toBe("ok");
+  });
+
+  test("a route is never ok unless every leg is known to be ok", () => {
+    const leg = (status?: string) => ({ status });
+    expect(UKC.worstStatus([leg("ok"), leg("ok")])).toBe("ok");
+    expect(UKC.worstStatus([leg("ok"), leg("marginal")])).toBe("marginal");
+    expect(UKC.worstStatus([leg("ok"), leg("someday")])).toBe("unverified");
+    expect(UKC.worstStatus([leg("ok"), leg()])).toBe("unverified");
+    expect(UKC.worstStatus([leg("someday"), leg("fail")])).toBe("fail");
+    expect(UKC.worstStatus([])).toBe("unverified");
+    expect(UKC.worstStatus(undefined)).toBe("unverified");
   });
 });
