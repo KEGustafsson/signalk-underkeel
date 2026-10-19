@@ -12,11 +12,14 @@ export const QUERY_LIMITS = {
   maxBuffer: 2000,
   maxDraft: 30,
   maxSpeed: 30,
+  /** Polygon bounding-box diagonal, metres. */
+  maxPolygonMetres: 50_000,
   /**
-   * Polygon bounding-box diagonal, metres. The query walks every pyramid
-   * tile under the box on the event loop, so this bounds its cost.
+   * Bounding box widened by the buffer, km². The query walks every pyramid
+   * tile under it on the event loop, testing each against every vertex, so
+   * this bounds its cost: a 500-vertex ring over 25 km² takes about 60 ms.
    */
-  maxPolygonMetres: 50_000
+  maxAreaKm2: 25
 } as const;
 
 export interface QueryRequest {
@@ -43,6 +46,18 @@ function withinSpan(ring: LonLat[]): boolean {
   const sw: LonLat = [Math.min(...lons), Math.min(...lats)];
   const ne: LonLat = [Math.max(...lons), Math.max(...lats)];
   return ne[0] - sw[0] <= 180 && haversine(sw, ne) <= QUERY_LIMITS.maxPolygonMetres;
+}
+
+/** Ground area of the ring's bounding box widened by `buffer` metres on every side, km². */
+function areaKm2(ring: LonLat[], buffer: number): number {
+  const lons = ring.map((p) => p[0]);
+  const lats = ring.map((p) => p[1]);
+  const [w, e, s, n] = [Math.min(...lons), Math.max(...lons), Math.min(...lats), Math.max(...lats)];
+  // The box is widest at its edge nearest the equator.
+  const wide = s > 0 ? s : n < 0 ? n : 0;
+  const width = haversine([w, wide], [e, wide]);
+  const height = haversine([w, s], [w, n]);
+  return ((width + 2 * buffer) * (height + 2 * buffer)) / 1e6;
 }
 
 /** The closed outer ring of a GeoJSON Polygon, without the repeated closing position. */
@@ -111,5 +126,8 @@ export function parseQueryRequest(body: unknown): Parsed<QueryRequest> {
   optional("bufferMetres", 0, QUERY_LIMITS.maxBuffer);
   optional("draft", 0.1, QUERY_LIMITS.maxDraft);
   optional("speed", 0, QUERY_LIMITS.maxSpeed);
+  if (errors.length === 0 && areaKm2(out.ring, out.bufferMetres ?? 0) > QUERY_LIMITS.maxAreaKm2) {
+    errors.push(`geometry and buffer must fit in ${QUERY_LIMITS.maxAreaKm2} km²`);
+  }
   return errors.length > 0 ? { ok: false, errors } : { ok: true, value: out };
 }

@@ -7,7 +7,7 @@ import { FLAGS } from "../spatial/node-store";
 import { minDepthWithChartPosition } from "../spatial/chart-position";
 import { footprintGeom } from "../spatial/pyramid";
 import type { LegResult, RouteCheckInput } from "./route-check";
-import { checkLeg, checkRoute, UNCHECKED } from "./route-check";
+import { checkLeg, checkRoute, checkRouteYielding, UNCHECKED } from "./route-check";
 
 /**
  * Route repair (plan §4.11): for a leg that fails, Theta* over a local cost
@@ -444,6 +444,7 @@ export async function repairRoute(
     speeds.push(...[...waypoints, leg.to].map(() => input.speeds[i] as number));
     t = Date.parse((waypoints.length > 0 ? repair?.legs.at(-1) : leg)?.eta.end as string);
   }
-  const legs = checkRoute(index, { ...input, coordinates, speeds }, input.departure).legs;
+  const repaired = { ...input, coordinates, speeds };
+  const { legs } = await checkRouteYielding(index, repaired, input.departure, pause);
   return { repairs, route: { coordinates, legs } };
 }

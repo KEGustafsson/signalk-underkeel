@@ -127,7 +127,15 @@ describe("query request validation", () => {
     });
     expect(bad(box(-180, -85, 180, 85))).toEqual(["polygon must fit in a box 50 km across"]);
     expect(bad(box(-179.9, 60, 179.9, 60.01))).toEqual(["polygon must fit in a box 50 km across"]);
-    expect(bad(box(22, 60, 22.3, 60.2))).toEqual([]);
+    expect(bad(box(22, 60, 22.05, 60.02))).toEqual([]);
+    // About 17 × 22 km: inside the 50 km box, but too much area for one query.
+    expect(bad(box(22, 60, 22.3, 60.2))).toEqual(["geometry and buffer must fit in 25 km²"]);
+    expect(bad({ geometry: { type: "Point", coordinates: [22, 60] }, bufferMetres: 2000 })).toEqual(
+      []
+    );
+    expect(bad({ ...box(22, 60, 22.05, 60.02), bufferMetres: 2000 })).toEqual([
+      "geometry and buffer must fit in 25 km²"
+    ]);
     const holed = box(22, 60, 22.3, 60.2);
     holed.geometry.coordinates.push([
       [22.1, 60.1],

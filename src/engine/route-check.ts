@@ -196,7 +196,25 @@ interface Scoring {
   sigmaExtra: number;
 }
 
-function checkCorridor(index: ChartIndex, a: LonLat, b: LonLat, r: number, s: Scoring): LegDepth {
+/** A check split at its corridor queries, so a caller can let other work in between them. */
+type Steps<T> = Generator<void, T, void>;
+
+function drain<T>(steps: Steps<T>): T {
+  for (;;) {
+    const r = steps.next();
+    if (r.done) {
+      return r.value;
+    }
+  }
+}
+
+function* corridorSteps(
+  index: ChartIndex,
+  a: LonLat,
+  b: LonLat,
+  r: number,
+  s: Scoring
+): Steps<LegDepth> {
   let best: LegDepth | undefined;
   let flags = 0;
   let covered = Infinity;
@@ -212,6 +230,7 @@ function checkCorridor(index: ChartIndex, a: LonLat, b: LonLat, r: number, s: Sc
     if (best === undefined || result.maxRisk > best.result.maxRisk) {
       best = { result, ring, bufferMetres };
     }
+    yield;
   }
   const leg = best as LegDepth;
   return { ...leg, result: { ...leg.result, flags, coveredDMin: covered, cellRefs: [...cells] } };
@@ -238,12 +257,26 @@ function finiteOrNull(v: number): number | null {
   return Number.isFinite(v) ? Math.round(v * 100) / 100 : null;
 }
 
+interface CheckedLeg {
+  leg: LegResult;
+  cellRefs: number[];
+}
+
 export function checkLeg(
   index: ChartIndex,
   input: RouteCheckInput,
   i: number,
   start: number
-): { leg: LegResult; cellRefs: number[] } {
+): CheckedLeg {
+  return drain(legSteps(index, input, i, start));
+}
+
+function* legSteps(
+  index: ChartIndex,
+  input: RouteCheckInput,
+  i: number,
+  start: number
+): Steps<CheckedLeg> {
   const from = input.coordinates[i] as LonLat;
   const to = input.coordinates[i + 1] as LonLat;
   const length = haversine(from, to);
@@ -252,7 +285,7 @@ export function checkLeg(
   const wl = input.waterLevel(start, end, [from, to]);
   const terms = vesselTerms(input.vessel, { speed, waveHeight: input.waveHeight }, input.dynamics);
   const s = { threshold: thresholdDepth(terms, wl), sigmaExtra: sigmaExtra(terms, wl) };
-  const { result, ring, bufferMetres } = checkCorridor(
+  const { result, ring, bufferMetres } = yield* corridorSteps(
     index,
     from,
     to,
@@ -301,11 +334,36 @@ export function checkRoute(
   input: RouteCheckInput,
   now: number
 ): RouteCheckResult {
+  return drain(routeSteps(index, input, now));
+}
+
+/** `checkRoute` that awaits `pause` after each corridor query. */
+export async function checkRouteYielding(
+  index: ChartIndex,
+  input: RouteCheckInput,
+  now: number,
+  pause: () => Promise<void>
+): Promise<RouteCheckResult> {
+  const steps = routeSteps(index, input, now);
+  for (;;) {
+    const r = steps.next();
+    if (r.done) {
+      return r.value;
+    }
+    await pause();
+  }
+}
+
+function* routeSteps(
+  index: ChartIndex,
+  input: RouteCheckInput,
+  now: number
+): Steps<RouteCheckResult> {
   const legs: LegResult[] = [];
   const cells = new Set<number>();
   let t = input.departure;
   for (let i = 0; i + 1 < input.coordinates.length; i++) {
-    const { leg, cellRefs } = checkLeg(index, input, i, t);
+    const { leg, cellRefs } = yield* legSteps(index, input, i, t);
     t = Date.parse(leg.eta.end);
     legs.push(leg);
     cellRefs.forEach((c) => cells.add(c));

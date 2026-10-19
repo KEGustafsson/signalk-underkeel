@@ -723,11 +723,17 @@ the `/route-check` body; the window adds `horizon` (default 48 h, at most 7 days
 its arrival until one step after it leaves, so a sampled `ok` departure also holds for every
 departure until the next sample and a coarse step cannot skip a low water. Leg results are reused across
 departures for the same water level rounded down to the centimetre (σ rounded up). One request
-repairs at most 10 legs, and the rest are listed with a reason; a window is refused when its
-departures times the route length exceed 20 000 km or its departures times legs exceed 20 000,
-since a leg check costs a corridor query however short the leg is. Both yield to the event loop after each leg
-or departure, so look-ahead ticks keep running during a long request. Measured under Jest on the
-synthetic archipelago: 52 ms per repaired leg.
+repairs at most 10 legs, and the rest are listed with a reason. A corridor query costs about
+its area, so a route check, repair or window is refused when the route's length times its
+corridor width (2 × (xteLimit + planning buffer)) exceeds 200 km², and a window when its
+departures times that area exceed 1600 km² or its departures times legs exceed 20 000, since a
+leg check costs a corridor query however short the leg is. All three yield to the event loop
+after each corridor query (the route check and the repaired route's re-check), each leg check
+or each departure, so look-ahead ticks keep running during a long request. On a laptop a
+corridor over 3000 shoals costs 1–3.5 ms per km². `POST /query` is refused when its bounding
+box widened by the buffer exceeds 25 km²: a 500-vertex ring tests every tile against every
+vertex, about 60 ms at that size. Measured under Jest on the synthetic archipelago: 52 ms per
+repaired leg.
 
 ### 4.12 Acknowledged passages
 

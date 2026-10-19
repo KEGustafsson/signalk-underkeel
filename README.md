@@ -75,7 +75,8 @@ REST, base `/plugins/signalk-underkeel/v1`, open to readonly users:
   re-checked at the times the detours give its later legs. Existing points are never moved.
 - `POST /departure-window`: the same body plus `horizon` and `step` (seconds); the departure
   intervals in which every leg is `ok` at the forecast water level.
-- Both bound the work one request may cost; the limits are in
+- All three, and `POST /query`, bound the work one request may cost (route length times
+  corridor width at most 200 km², a query box with its buffer at most 25 km²); the limits are in
   [plan §4.11](docs/DEVELOPMENT-PLAN.md).
 - `POST /query`: a GeoJSON Point or Polygon, with an optional buffer, draft and speed; returns
   the class, P(UKC < 0), the deciding hazard and the explanation, for cursor readouts.

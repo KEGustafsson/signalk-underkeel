@@ -483,7 +483,7 @@ describe("plugin lifecycle", () => {
       step: 300
     });
     expect(tooMuch.code).toBe(400);
-    expect((tooMuch.body as { errors: string[] }).errors[0]).toMatch(/departures × route length/);
+    expect((tooMuch.body as { errors: string[] }).errors[0]).toMatch(/departures × corridor area/);
     // 200 legs of 5 m are short, but 193 departures still make 38 600 leg checks.
     const zigzag = {
       type: "LineString",

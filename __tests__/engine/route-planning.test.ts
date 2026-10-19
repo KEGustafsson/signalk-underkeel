@@ -100,7 +100,8 @@ describe("route repair", () => {
       expect(r).toMatchObject({ waypoints: [], legs: [] });
       expect(r.reason).toBe("not searched: at most 2 legs are repaired per request");
     }
-    expect(pauses).toBe(2);
+    // After each searched leg, and after each corridor query of the repaired route's re-check.
+    expect(pauses).toBeGreaterThan(2);
   });
 
   test("a shoal that closes the whole search window is reported, not routed through", () => {

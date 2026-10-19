@@ -74,6 +74,11 @@ All notable changes to signalk-underkeel are documented here.
 - Route repair checks each leg at the time the detours before it bring the boat there, and
   returns the whole repaired route re-checked as `route`. A detour delays the later legs, which
   were reported with their old status although a falling tide could make them fail.
+- Route checks yield to the event loop after each corridor query and are refused above 200 km²
+  of corridor (route length × 2 × (xteLimit + planning buffer)); the departure window budgets
+  departures × corridor area (1600 km²) instead of departures × length; `POST /query` is refused
+  above 25 km² of box and buffer. A 1000-point, 490 km route at xteLimit 2000 blocked the
+  server for 2.8 s, and a 500-vertex query with a 2 km buffer for about 1 s.
 - `navigation.underKeel.clearance` is published as `null` when the look-ahead reaches land,
   never `-Infinity`. In-process subscribers such as signalk-to-influxdb received the raw
   value and the database refused the write; no published number is now NaN or infinite.

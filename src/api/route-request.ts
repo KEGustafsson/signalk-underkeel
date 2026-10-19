@@ -9,11 +9,14 @@ import { haversine } from "../foundation/geo";
 
 export const LIMITS = {
   maxPoints: 1000,
-  /**
-   * Total route length, metres. The check runs one corridor query per
-   * kilometre on the event loop, so this bounds what one request costs.
-   */
+  /** Total route length, metres. */
   maxRouteMetres: 500_000,
+  /**
+   * Route length times corridor width, km². A corridor query costs about
+   * its area, so this bounds what one check costs: 500 km at the default
+   * ±40 m is 40 km², and a ±2 km corridor fits a route of 50 km.
+   */
+  maxCorridorKm2: 200,
   minSpeed: 0.1,
   maxSpeed: 30,
   maxXte: 2000,
@@ -66,19 +69,15 @@ function parseCoordinates(route: unknown, errors: string[]): LonLat[] | undefine
     }
     out.push([lon, lat]);
   }
-  let total = 0;
   for (let i = 1; i < out.length; i++) {
-    const a = out[i - 1] as LonLat;
-    const b = out[i] as LonLat;
     // The chart index has no longitude wrap: a leg across ±180° would be
     // checked over a corridor spanning the globe.
-    if (Math.abs(b[0] - a[0]) > 180) {
+    if (Math.abs((out[i] as LonLat)[0] - (out[i - 1] as LonLat)[0]) > 180) {
       errors.push("route legs must not cross the ±180° meridian");
       return undefined;
     }
-    total += haversine(a, b);
   }
-  if (total > LIMITS.maxRouteMetres) {
+  if (routeMetres(out) > LIMITS.maxRouteMetres) {
     errors.push(`route must be at most ${LIMITS.maxRouteMetres / 1000} km long`);
     return undefined;
   }
@@ -170,6 +169,29 @@ export function routeResourceCoordinates(resource: unknown): LonLat[] | undefine
   return errors.length === 0 ? coords : undefined;
 }
 
+function routeMetres(coordinates: readonly LonLat[]): number {
+  let metres = 0;
+  for (let i = 1; i < coordinates.length; i++) {
+    metres += haversine(coordinates[i - 1] as LonLat, coordinates[i] as LonLat);
+  }
+  return metres;
+}
+
+/** Ground area the corridors of a route sweep, km², for a corridor `halfWidth` metres to each side. */
+export function corridorKm2(coordinates: readonly LonLat[], halfWidth: number): number {
+  return (routeMetres(coordinates) * 2 * halfWidth) / 1e6;
+}
+
+/** Why checking this route over this corridor is too much work for one request, if it is. */
+export function corridorBudgetError(
+  coordinates: readonly LonLat[],
+  halfWidth: number
+): string | undefined {
+  return corridorKm2(coordinates, halfWidth) > LIMITS.maxCorridorKm2
+    ? `route length × corridor width must be at most ${LIMITS.maxCorridorKm2} km²: use a shorter route or a smaller xteLimit`
+    : undefined;
+}
+
 export const WINDOW_LIMITS = {
   defaultHorizon: 48 * 3600,
   maxHorizon: 7 * 86400,
@@ -177,11 +199,11 @@ export const WINDOW_LIMITS = {
   minStep: 5 * 60,
   maxSteps: 1000,
   /**
-   * Departures times route length, km. Each departure can re-check the whole
-   * route, so this bounds what one request costs: the default 48 h every
-   * 15 min fits a route of about 100 km.
+   * Departures times the route's corridor area, km². Each departure can
+   * re-check the whole route, so this bounds what one request costs: the
+   * default 48 h every 15 min fits a route of about 100 km at ±40 m.
    */
-  maxDepartureKm: 20_000,
+  maxDepartureKm2: 1600,
   /**
    * Departures times legs. A leg check costs a corridor query however short
    * the leg is, so a route of many short legs is bounded here instead.
@@ -218,16 +240,13 @@ export function parseWindowOptions(body: unknown): Parsed<{ horizon: number; ste
 /** Why a departure window over this route is too much work for one request, if it is. */
 export function windowBudgetError(
   coordinates: readonly LonLat[],
-  window: { horizon: number; step: number }
+  window: { horizon: number; step: number },
+  halfWidth: number
 ): string | undefined {
-  let metres = 0;
-  for (let i = 1; i < coordinates.length; i++) {
-    metres += haversine(coordinates[i - 1] as LonLat, coordinates[i] as LonLat);
-  }
   const departures = departuresOf(window.horizon, window.step);
   const advice = "use a longer step or a shorter horizon";
-  if (departures * (metres / 1000) > WINDOW_LIMITS.maxDepartureKm) {
-    return `departures × route length must be at most ${WINDOW_LIMITS.maxDepartureKm} km: ${advice}`;
+  if (departures * corridorKm2(coordinates, halfWidth) > WINDOW_LIMITS.maxDepartureKm2) {
+    return `departures × corridor area must be at most ${WINDOW_LIMITS.maxDepartureKm2} km²: ${advice}`;
   }
   if (departures * (coordinates.length - 1) > WINDOW_LIMITS.maxLegChecks) {
     return `departures × legs must be at most ${WINDOW_LIMITS.maxLegChecks}: ${advice}`;

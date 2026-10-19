@@ -156,6 +156,33 @@ describe("route-check service", () => {
     expect(none.status).toBe(200);
   });
 
+  test("a corridor too wide for the route's length is refused before any work", async () => {
+    // About 61 km at ±2010 m is 245 km² of corridor; at the default ±40 m it is 5 km².
+    const long = {
+      type: "LineString",
+      coordinates: [
+        [22.004, 60.01],
+        [22.004, 60.56]
+      ]
+    };
+    const wide = await routeCheck({ route: long, xteLimit: 2000 }, deps());
+    expect(wide.status).toBe(400);
+    expect((wide.body as { errors: string[] }).errors[0]).toMatch(
+      /route length × corridor width must be at most 200 km²/
+    );
+    expect((await routeCheck({ route: long }, deps())).status).toBe(200);
+  });
+
+  test("other work runs between the corridor queries of a check", async () => {
+    let ran = false;
+    setImmediate(() => {
+      ran = true;
+    });
+    const r = await routeCheck({ route: LINE }, deps());
+    expect(r.status).toBe(200);
+    expect(ran).toBe(true);
+  });
+
   test("resolves a route reference", async () => {
     expect((await routeCheck({ routeRef: "/resources/routes/known" }, deps())).status).toBe(200);
     expect((await routeCheck({ routeRef: "/resources/routes/missing" }, deps())).status).toBe(404);

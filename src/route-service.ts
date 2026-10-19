@@ -1,5 +1,6 @@
 import type { ApiReply } from "./api/routes";
 import {
+  corridorBudgetError,
   parseRouteRequest,
   parseWindowOptions,
   routeResourceCoordinates,
@@ -9,7 +10,7 @@ import {
 import type { PluginConfig } from "./config";
 import { departureWindow } from "./engine/departure-window";
 import type { RouteCheckInput } from "./engine/route-check";
-import { checkRoute } from "./engine/route-check";
+import { checkRouteYielding } from "./engine/route-check";
 import { DEFAULT_REPAIR, repairRoute } from "./engine/route-repair";
 import type { LonLat } from "./foundation/geo";
 import type { WaterLevel } from "./model/uncertainty";
@@ -78,14 +79,20 @@ async function prepare(
   if (typeof speeds === "string") {
     return { status: 400, body: { errors: [speeds] } };
   }
+  const xteLimit = req.xteLimit ?? deps.config.routeCheck.xteLimit;
+  const planningBuffer = deps.config.lookahead.positionBuffer;
+  const budget = corridorBudgetError(coords, xteLimit + planningBuffer);
+  if (budget) {
+    return { status: 400, body: { errors: [budget] } };
+  }
   return {
     index: deps.index,
     input: {
       coordinates: coords,
       departure: req.departure ?? deps.now(),
       speeds,
-      xteLimit: req.xteLimit ?? deps.config.routeCheck.xteLimit,
-      planningBuffer: deps.config.lookahead.positionBuffer,
+      xteLimit,
+      planningBuffer,
       vessel,
       dynamics: deps.config.dynamics,
       waterLevel: deps.waterLevel,
@@ -102,7 +109,11 @@ const yieldToEventLoop = (): Promise<void> => new Promise((resolve) => setImmedi
 
 export async function routeCheck(body: unknown, deps: RouteServiceDeps): Promise<ApiReply> {
   const p = await prepare(body, deps);
-  return isReply(p) ? p : { status: 200, body: checkRoute(p.index, p.input, deps.now()) };
+  if (isReply(p)) {
+    return p;
+  }
+  const result = await checkRouteYielding(p.index, p.input, deps.now(), yieldToEventLoop);
+  return { status: 200, body: result };
 }
 
 /** `POST /route-repair`: suggested waypoints for each failing or marginal leg. */
@@ -129,7 +140,11 @@ export async function departureWindowReply(
   if (isReply(p)) {
     return p;
   }
-  const budget = windowBudgetError(p.input.coordinates, opts.value);
+  const budget = windowBudgetError(
+    p.input.coordinates,
+    opts.value,
+    p.input.xteLimit + p.input.planningBuffer
+  );
   if (budget) {
     return { status: 400, body: { errors: [budget] } };
   }

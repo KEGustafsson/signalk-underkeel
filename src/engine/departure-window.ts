@@ -41,7 +41,7 @@ function rounded(wl: WaterLevel): WaterLevel {
   };
 }
 
-/** `pause` runs after each departure so a caller on the event loop can let other work in. */
+/** `pause` runs after each leg check and each departure so a caller on the event loop can let other work in. */
 export async function departureWindow(
   index: ChartIndex,
   input: Omit<RouteCheckInput, "departure">,
@@ -69,6 +69,7 @@ export async function departureWindow(
         const fixed = { ...input, departure: t, waterLevel: () => wl };
         status = checkLeg(index, fixed, i, start).leg.status;
         memo.set(key, status);
+        await pause();
       }
       if (RANK[status] > RANK[worst]) {
         worst = status;
