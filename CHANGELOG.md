@@ -120,3 +120,6 @@ All notable changes to signalk-underkeel are documented here.
 - A WFS index build aborted by plugin stop no longer overlaps the next build: the next worker
   starts only after the aborted one has exited, so two workers never save into the index
   directory at once. Stop still returns at once.
+- After the plugin is stopped every REST route answers 503 `plugin not started`. Before,
+  `/query`, `/route-check`, `/route-repair`, `/departure-window` and the UKC tiles kept
+  answering on the old index at chart datum, so a rock could read `clear` and a route `ok`.

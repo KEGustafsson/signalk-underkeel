@@ -28,6 +28,35 @@ const VERSION = (
   }
 ).version;
 
+function stopPlugin(app: ServerAPI, clock: Clock, state: PluginState): void {
+  state.wfs?.stop();
+  state.wfs = undefined;
+  state.livechart?.save();
+  state.livechart = undefined;
+  state.monitor?.stop();
+  // Without these the REST handlers would keep answering on the old index at chart datum.
+  Object.assign(state, { monitor: undefined, load: undefined, config: undefined, acks: undefined });
+  state.stopped = createStatus("off", "plugin stopped", new Date(clock.now()));
+  app.handleMessage(PLUGIN_ID, {
+    updates: [
+      {
+        values: [
+          { path: PATHS.state as Path, value: "off" },
+          { path: PATHS.clearance as Path, value: null },
+          { path: PATHS.clearanceSigma as Path, value: null },
+          { path: PATHS.risk as Path, value: null },
+          { path: PATHS.timeToShoal as Path, value: null },
+          { path: PATHS.escapeHeading as Path, value: null },
+          {
+            path: PATHS.notification as Path,
+            value: { state: "normal", method: [], message: "UKC monitoring stopped" } as never
+          }
+        ]
+      }
+    ]
+  });
+}
+
 export = function underkeel(
   app: ServerAPI,
   clock: Clock = SYSTEM_CLOCK,
@@ -80,31 +109,7 @@ export = function underkeel(
     },
 
     stop(): void {
-      state.wfs?.stop();
-      state.wfs = undefined;
-      state.livechart?.save();
-      state.livechart = undefined;
-      state.monitor?.stop();
-      state.monitor = undefined;
-      state.stopped = createStatus("off", "plugin stopped", new Date(clock.now()));
-      app.handleMessage(PLUGIN_ID, {
-        updates: [
-          {
-            values: [
-              { path: PATHS.state as Path, value: "off" },
-              { path: PATHS.clearance as Path, value: null },
-              { path: PATHS.clearanceSigma as Path, value: null },
-              { path: PATHS.risk as Path, value: null },
-              { path: PATHS.timeToShoal as Path, value: null },
-              { path: PATHS.escapeHeading as Path, value: null },
-              {
-                path: PATHS.notification as Path,
-                value: { state: "normal", method: [], message: "UKC monitoring stopped" } as never
-              }
-            ]
-          }
-        ]
-      });
+      stopPlugin(app, clock, state);
     },
 
     registerWithRouter(router: PluginRouter): void {
