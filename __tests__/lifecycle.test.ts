@@ -2,6 +2,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import underkeel = require("../src/index");
+import { LivechartService } from "../src/livechart-service";
 import { FIXTURES, M_PER_DEG_LON, ROCK } from "./helpers/fixture-index";
 import { fakeApp, fakeClock, fakeRouter, lastValue, navDelta, T0 } from "./helpers/plugin-harness";
 
@@ -13,6 +14,28 @@ describe("after stop", () => {
     dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-lifecycle-"));
   });
   afterEach(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+
+  test("a living-chart save that throws still stops the plugin and is reported", async () => {
+    const save = jest.spyOn(LivechartService.prototype, "save").mockImplementation(() => {
+      throw new Error("disk gone");
+    });
+    try {
+      const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 2.0 } } });
+      const plugin = underkeel(f.app, fakeClock(T0));
+      const { router, post } = fakeRouter();
+      plugin.registerWithRouter?.(router as never);
+      plugin.start(
+        { cellsDir: FIXTURES, leafZoom: 18, livechart: { enabled: true } },
+        () => undefined
+      );
+      plugin.stop();
+      expect(f.errors).toContain("living chart not saved on stop: disk gone");
+      const q = { geometry: { type: "Point", coordinates: ROCK } };
+      expect((await post("/v1/query", q)).code).toBe(503);
+    } finally {
+      save.mockRestore();
+    }
+  });
 
   test("every REST handler answers 503 instead of using the old index at chart datum", async () => {
     const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 2.0 } } });

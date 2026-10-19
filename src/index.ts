@@ -32,7 +32,12 @@ const VERSION = (
 function stopPlugin(app: ServerAPI, clock: Clock, state: PluginState): void {
   state.wfs?.stop();
   state.wfs = undefined;
-  state.livechart?.save();
+  // A save that throws must not leave the monitor running or REST answering on the old index.
+  try {
+    state.livechart?.save();
+  } catch (err) {
+    app.error(`living chart not saved on stop: ${(err as Error).message}`);
+  }
   state.livechart = undefined;
   state.monitor?.stop();
   // Without these the REST handlers would keep answering on the old index at chart datum.
