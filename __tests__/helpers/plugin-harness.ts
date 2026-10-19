@@ -87,8 +87,12 @@ export function fakeApp(dataDir: string, self: Record<string, unknown> = {}) {
       ) => {
         const paths = cmd.subscribe.map((s) => s.path);
         subscribed.push(...paths);
-        subscriptions.push({ match: pathPattern(paths), cb });
-        unsubscribes.push(() => unsubscribed++);
+        const sub = { match: pathPattern(paths), cb };
+        subscriptions.push(sub);
+        unsubscribes.push(() => {
+          unsubscribed++;
+          subscriptions.splice(subscriptions.indexOf(sub), 1);
+        });
       }
     }
   } as unknown as ServerAPI;
