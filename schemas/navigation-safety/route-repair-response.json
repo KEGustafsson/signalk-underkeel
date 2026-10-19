@@ -3,19 +3,55 @@
   "$id": "route-repair-response.json",
   "title": "POST /route-repair response: waypoints to insert per failing leg; a suggestion",
   "type": "object",
-  "required": ["checkedAt", "repairs"],
+  "required": ["checkedAt", "repairs", "route"],
   "properties": {
-    "checkedAt": { "$ref": "defs.json#/$defs/isoTime" },
+    "checkedAt": {
+      "$ref": "defs.json#/$defs/isoTime"
+    },
     "repairs": {
       "type": "array",
       "items": {
         "type": "object",
         "required": ["index", "waypoints", "legs"],
         "properties": {
-          "index": { "type": "integer", "minimum": 0 },
-          "waypoints": { "type": "array", "items": { "$ref": "defs.json#/$defs/lonLat" } },
-          "legs": { "type": "array", "items": { "$ref": "defs.json#/$defs/leg" } },
-          "reason": { "type": "string" }
+          "index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "waypoints": {
+            "type": "array",
+            "items": {
+              "$ref": "defs.json#/$defs/lonLat"
+            }
+          },
+          "legs": {
+            "type": "array",
+            "items": {
+              "$ref": "defs.json#/$defs/leg"
+            }
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "route": {
+      "description": "The route with every suggested waypoint inserted, re-checked at the times its repairs delay it to",
+      "type": "object",
+      "required": ["coordinates", "legs"],
+      "properties": {
+        "coordinates": {
+          "type": "array",
+          "items": {
+            "$ref": "defs.json#/$defs/lonLat"
+          }
+        },
+        "legs": {
+          "type": "array",
+          "items": {
+            "$ref": "defs.json#/$defs/leg"
+          }
         }
       }
     }
