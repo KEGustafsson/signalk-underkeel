@@ -64,3 +64,6 @@ All notable changes to signalk-underkeel are documented here.
 - Depth queries near the antimeridian also read the tiles at the other end of the world: a
   footprint or position buffer reaching past ±180° used to miss a rock a few hundred metres
   away on the other side, and a footprint drawn wholly past 180° returned no depth and no flag.
+- A rock or sounding charted inside a swept area keeps its survey's depth σ. The swept σ of
+  0.1 m applied to every tile in the area, so a CATZOC C rock 4 m deep in an 8 m swept fairway
+  read P(UKC < 0) = 0.08 % instead of 19 % for a 3 m threshold.

@@ -112,7 +112,7 @@ area exists.
 | `M_COVR` (CATCOV 1)          | where the cell has data; outside every coverage is no data                 |
 | `M_QUAL` (`CATZOC`)          | survey quality, which sets the depth and position σ                        |
 | `DEPARE`, `DRGARE`           | area depth from `DRVAL1`; missing `DRVAL1` counts as 0 m                   |
-| `SWPARE`                     | guaranteed depth, σ 0.1 m                                                  |
+| `SWPARE`                     | guaranteed depth, σ 0.1 m unless a shallower hazard inside sets the depth  |
 | `SOUNDG`                     | point depths                                                               |
 | `UWTROC`, `WRECKS`, `OBSTRN` | point hazards at `VALSOU`; without it, land when `WATLEV` 1 or 2, else 0 m |
 | `LNDARE`, `COALNE`, `SLCONS` | land                                                                       |

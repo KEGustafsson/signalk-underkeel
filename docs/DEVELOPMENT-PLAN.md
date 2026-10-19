@@ -330,7 +330,9 @@ These are treated as ~95 % bounds, so σ ≈ value / 2.
 
 Two overrides apply on top of the table:
 
-- **Swept areas.** `SWPARE` sets `sigmaD = 0.1 m` and caps `dMin` at the swept depth.
+- **Swept areas.** `SWPARE` caps `dMin` at the swept depth and sets `sigmaD = 0.1 m` where the
+  swept depth is the tile's `dMin`. A rock or sounding charted shallower inside the swept area
+  keeps the survey's σ, since the sweep guarantees only its own depth.
 - **Own soundings.** Where the living-chart posterior has enough samples, it replaces the
   table values (§4.11).
 

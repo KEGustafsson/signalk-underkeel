@@ -305,9 +305,14 @@ function uniformValues(a: Analysis, rect: Rect, opts: BuildOptions): NodeValues 
     return { ...NO_DATA, flags: flags | NO_DATA.flags };
   }
   const s = sigmas(a.hits, dMin, assessed, opts);
+  // The sweep guarantees its own depth only; a rock or sounding charted
+  // shallower inside it keeps the survey's σ.
+  const sweptDecides = a.hits.some(
+    (h) => h.full && h.item.f.role === "swept" && h.item.f.depth <= dMin
+  );
   return {
     dMin,
-    sigmaD: flags & FLAGS.SWEPT ? SWEPT_SIGMA_D : s.sigmaD,
+    sigmaD: sweptDecides ? SWEPT_SIGMA_D : s.sigmaD,
     sigmaP: s.sigmaP,
     flags,
     cellRef
