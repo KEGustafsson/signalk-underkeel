@@ -151,23 +151,12 @@ export class Monitor {
   }
 
   start(): void {
-    this.app.subscriptionmanager.subscribe(
-      {
-        context: "vessels.self" as never,
-        subscribe: [
-          ...INPUT_PATHS,
-          ...this.levels.paths(),
-          ...(this.grounding?.paths() ?? []),
-          ...this.watchers.flatMap((w) => [...w.paths])
-        ].map((path) => ({
-          path: path as Path,
-          policy: "instant"
-        }))
-      },
-      this.unsubscribes,
-      (err) => this.app.error(`subscription failed: ${String(err)}`),
-      (delta) => this.onDelta(delta)
-    );
+    this.subscribe([
+      ...INPUT_PATHS,
+      ...this.levels.paths(),
+      ...(this.grounding?.paths() ?? []),
+      ...this.watchers.flatMap((w) => [...w.paths])
+    ]);
     this.publishMeta();
     this.tick();
     this.timer = this.clock.setInterval(() => this.tick(), 1000);
@@ -270,9 +259,24 @@ export class Monitor {
     return fresh(this.nav.heading) ?? fresh(this.nav.cog);
   }
 
-  /** Also subscribes `paths` and hands their values to `fn`; call before start(). */
+  /** Also subscribes `paths` and hands their values to `fn`, before or after start(). */
   watch(paths: readonly string[], fn: (path: string, value: unknown, at: number) => void): void {
     this.watchers.push({ paths: new Set(paths), fn });
+    if (this.timer !== undefined) {
+      this.subscribe(paths);
+    }
+  }
+
+  private subscribe(paths: readonly string[]): void {
+    this.app.subscriptionmanager.subscribe(
+      {
+        context: "vessels.self" as never,
+        subscribe: paths.map((path) => ({ path: path as Path, policy: "instant" }))
+      },
+      this.unsubscribes,
+      (err) => this.app.error(`subscription failed: ${String(err)}`),
+      (delta) => this.onDelta(delta)
+    );
   }
 
   /** The navigation inputs that are still fresh, for living-chart samples. */

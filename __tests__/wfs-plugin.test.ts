@@ -91,6 +91,28 @@ describe("plugin with the Traficom WFS source", () => {
     plugin.stop();
   });
 
+  test("a living chart started with the first WFS index subscribes its depth path", async () => {
+    const clock = fakeClock(T0);
+    const h = fakeApp(dataDir);
+    const plugin = underkeel(h.app, clock, fetch, build);
+    plugin.start(
+      {
+        vessel: { draft: 2 },
+        wfs: { enabled: true, radiusKm: 3 },
+        livechart: { enabled: true }
+      },
+      () => undefined
+    );
+    expect(h.subscribed).not.toContain("environment.depth.belowSurface");
+    h.send(navDelta(22.0, 60.0, 0, clock.now()));
+    clock.advance(10_000);
+    for (let i = 0; i < 5; i++) {
+      await settle();
+    }
+    expect(h.subscribed).toContain("environment.depth.belowSurface");
+    plugin.stop();
+  });
+
   test("with the source turned off, a saved index holding the WFS cell is not used", async () => {
     const clock = fakeClock(T0);
     const h = fakeApp(dataDir);

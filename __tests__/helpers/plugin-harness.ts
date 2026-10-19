@@ -45,6 +45,7 @@ export function fakeApp(dataDir: string, self: Record<string, unknown> = {}) {
   const providers: unknown[] = [];
   let onDelta: ((d: Delta) => void) | undefined;
   let unsubscribed = 0;
+  const subscribed: string[] = [];
   const app = {
     handleMessage: (_id: string, msg: Partial<Delta>) => deltas.push(msg),
     setPluginStatus: () => undefined,
@@ -55,11 +56,12 @@ export function fakeApp(dataDir: string, self: Record<string, unknown> = {}) {
     registerResourceProvider: (p: unknown) => providers.push(p),
     subscriptionmanager: {
       subscribe: (
-        _cmd: unknown,
+        cmd: { subscribe: { path: string }[] },
         unsubscribes: (() => void)[],
         _err: unknown,
         cb: (d: Delta) => void
       ) => {
+        subscribed.push(...cmd.subscribe.map((s) => s.path));
         onDelta = cb;
         unsubscribes.push(() => unsubscribed++);
       }
@@ -71,6 +73,7 @@ export function fakeApp(dataDir: string, self: Record<string, unknown> = {}) {
     errors,
     providers,
     send: (d: Delta) => onDelta?.(d),
+    subscribed,
     unsubscribed: () => unsubscribed
   };
 }
