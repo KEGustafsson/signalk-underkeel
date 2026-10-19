@@ -114,3 +114,6 @@ All notable changes to signalk-underkeel are documented here.
 - The lowest water level over a leg's ETA interval is also sampled at every FMI forecast point
   inside it. Samples every 10 minutes from the start could miss a forecast trough by up to
   half a sample step of its slope (−0.375 m for a −0.40 m trough at 30 cm/h).
+- A Traficom WFS page that has not arrived within 120 s fails the download with that reason in
+  `GET /status`, and the download is retried as after any failure. A stalled server left the
+  download busy for good, with no error.

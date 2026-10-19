@@ -32,7 +32,9 @@ export const WFS_LIMITS = {
   /** A box that returns more features than this is refused. */
   maxFeatures: 50_000,
   /** A layer that takes more pages than this is refused, so a server that ignores startIndex stops. */
-  maxPages: 100
+  maxPages: 100,
+  /** A page that has not fully arrived after this fails the download, so a stalled server ends it. */
+  pageTimeoutMs: 120_000
 } as const;
 
 export type WfsFetch = (
@@ -100,11 +102,12 @@ async function fetchLayer(
   // A server may return fewer features per page than asked, so a short page is not the end:
   // read to numberMatched when the server reports it, else to an empty page.
   for (let pages = 1; ; pages++) {
-    const res = await fetch(pageUrl(base, typeName, b, out.length), { signal });
-    if (!res.ok) {
-      throw new Error(`${typeName}: HTTP ${res.status}`);
-    }
-    const page = JSON.parse(await res.text()) as {
+    const page = (await fetchPage(
+      fetch,
+      pageUrl(base, typeName, b, out.length),
+      typeName,
+      signal
+    )) as {
       type?: unknown;
       features?: unknown;
       numberMatched?: unknown;
@@ -125,6 +128,29 @@ async function fetchLayer(
     if (pages >= WFS_LIMITS.maxPages) {
       throw new Error(`${typeName}: more than ${WFS_LIMITS.maxPages} pages`);
     }
+  }
+}
+
+async function fetchPage(
+  fetch: WfsFetch,
+  url: string,
+  typeName: string,
+  signal?: AbortSignal
+): Promise<unknown> {
+  const timeout = AbortSignal.timeout(WFS_LIMITS.pageTimeoutMs);
+  try {
+    const res = await fetch(url, { signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
+    if (!res.ok) {
+      throw new Error(`${typeName}: HTTP ${res.status}`);
+    }
+    return JSON.parse(await res.text());
+  } catch (err) {
+    if (timeout.aborted && !signal?.aborted) {
+      throw new Error(`${typeName}: no response within ${WFS_LIMITS.pageTimeoutMs / 1000} s`, {
+        cause: err
+      });
+    }
+    throw err;
   }
 }
 

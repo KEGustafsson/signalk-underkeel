@@ -120,6 +120,34 @@ describe("WFS box around the vessel", () => {
     expect(h.indexes).toHaveLength(0);
   });
 
+  test("a stalled server ends the download with a timeout error in the status", async () => {
+    const timeout = jest
+      .spyOn(AbortSignal, "timeout")
+      .mockImplementation(() => AbortSignal.abort(new DOMException("timed out", "TimeoutError")));
+    const stalled: WfsFetch = (_url, init) =>
+      new Promise((_resolve, reject) => {
+        const signal = init?.signal;
+        if (signal?.aborted) {
+          reject(signal.reason as Error);
+        }
+        signal?.addEventListener("abort", () => reject(signal.reason as Error));
+      });
+    try {
+      const h = harness(stalled);
+      h.t.pos = [22.08, 60.07];
+      await h.service.check();
+      expect(h.service.status()).toMatchObject({
+        busy: false,
+        lastError: "rajoitettu:DepthArea_A: no response within 120 s"
+      });
+      expect(h.errors).toEqual([
+        "Traficom WFS depths: rajoitettu:DepthArea_A: no response within 120 s"
+      ]);
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+
   test("after a restart the saved box is reused while the vessel stays inside it", async () => {
     const first = harness();
     first.t.pos = [22.08, 60.07];
