@@ -20,6 +20,7 @@ import type { LonLat } from "../../src/foundation/geo";
 import { FLAGS } from "../../src/spatial/node-store";
 import { footprintGeom, minDepthOver } from "../../src/spatial/pyramid";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
+import { fraction, uniform } from "../helpers/arbitraries";
 import { basin } from "../helpers/synthetic";
 
 const T0 = 1_800_000_000_000;
@@ -503,21 +504,10 @@ describe("safety invariant 5", () => {
     fc.assert(
       fc.property(
         fc.array(
-          fc.tuple(
-            fc.double({ min: 0, max: 1, noNaN: true }),
-            fc.double({ min: 0, max: 1, noNaN: true }),
-            fc.double({ min: 0.5, max: 25, noNaN: true }),
-            fc.integer({ min: 0, max: 7200 })
-          ),
+          fc.tuple(fraction, fraction, uniform(0.5, 25), fc.integer({ min: 0, max: 7200 })),
           { maxLength: 60 }
         ),
-        fc.array(
-          fc.tuple(
-            fc.double({ min: 0, max: 1, noNaN: true }),
-            fc.double({ min: 0, max: 1, noNaN: true })
-          ),
-          { minLength: 1, maxLength: 8 }
-        ),
+        fc.array(fc.tuple(fraction, fraction), { minLength: 1, maxLength: 8 }),
         (soundings, probes) => {
           const pyramid = store();
           const at = (u: number, v: number): LonLat => [22.04 + u * 0.02, 60.04 + v * 0.01];
