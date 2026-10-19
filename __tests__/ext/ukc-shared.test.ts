@@ -122,4 +122,24 @@ describe("extension display logic", () => {
     expect(UKC.revJumped(7, 1)).toBe(true);
     expect(UKC.revJumped(7, 1760000000000)).toBe(true);
   });
+
+  test("the water level has moved when it changes by more than the step or appears or goes", () => {
+    expect(UKC.levelMoved(0.3, 0.305, 0.01)).toBe(false);
+    expect(UKC.levelMoved(0.3, 0.32, 0.01)).toBe(true);
+    expect(UKC.levelMoved(0.3, 0.28, 0.01)).toBe(true);
+    expect(UKC.levelMoved(0.3, null, 0.01)).toBe(true);
+    expect(UKC.levelMoved(null, 0, 0.01)).toBe(true);
+    expect(UKC.levelMoved(null, null, 0.01)).toBe(false);
+  });
+
+  test("the applied water level is keyed by its source and degraded reason", () => {
+    const status = (applied?: object) => ({
+      waterLevel: applied ? { source: "fmi", applied } : null
+    });
+    expect(UKC.waterSourceKey(status({ h: 0.4, source: "fmi:forecast" }))).toBe("fmi:forecast|");
+    expect(UKC.waterSourceKey(status({ h: 0, source: "fallback", degraded: "FMI down" }))).toBe(
+      "fallback|FMI down"
+    );
+    expect(UKC.waterSourceKey(status())).toBe("");
+  });
 });

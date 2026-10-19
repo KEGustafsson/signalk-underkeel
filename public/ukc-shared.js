@@ -162,6 +162,20 @@
     return typeof prev === "number" && next !== prev && next !== prev + 1;
   }
 
+  /** Whether a water level (metres, or null for none) differs from `prev` by more than `step`. */
+  function levelMoved(prev, next, step) {
+    if (typeof prev === "number" && typeof next === "number") {
+      return Math.abs(next - prev) > step;
+    }
+    return prev !== next;
+  }
+
+  /** The applied water level's source and degraded reason from `GET /status`; "" without one. */
+  function waterSourceKey(status) {
+    const applied = status && status.waterLevel && status.waterLevel.applied;
+    return applied ? applied.source + "|" + (applied.degraded || "") : "";
+  }
+
   /**
    * The route results the panel lists: one per visible route, a route the
    * runtime has not answered for yet marked pending. Without the visible set
@@ -193,7 +207,9 @@
     freshness: freshness,
     routeBadge: routeBadge,
     checkedAgo: checkedAgo,
-    revJumped: revJumped
+    revJumped: revJumped,
+    levelMoved: levelMoved,
+    waterSourceKey: waterSourceKey
   };
   if (typeof module !== "undefined" && module.exports) {
     module.exports = api;

@@ -242,3 +242,6 @@ All notable changes to signalk-underkeel are documented here.
 - Route checks are re-run every 60 s and after a plugin restart, not only after a route edit,
   so an ok leg no longer stays ok after the tide falls, the draft changes or the water-level
   source falls back. The panel shows the age of each result and reads "out of date" past 3 min.
+- The runtime refreshes the UKC tiles when the water level moves over 1 cm, the applied
+  water-level source or its degraded reason changes, the state enters or leaves `off` or
+  `unknown`, and after a plugin restart. Tiles stayed classed for the conditions at fetch time.

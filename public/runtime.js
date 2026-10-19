@@ -1,4 +1,4 @@
-// Background runtime: keeps the look-ahead and route-check overlays current.
+// Background runtime: keeps the look-ahead, route-check and UKC overlays current.
 import { connectExtension } from "./vendor/plotterext-bus/extension.js";
 
 const UKC = globalThis.UKC;
@@ -91,6 +91,8 @@ onPath["navigation.underKeel.state"] = (state) => {
   const wasDown = engineState === undefined || isDown(engineState);
   if (engineState === "off" && state !== "off") {
     onRestart();
+  } else if (engineState !== undefined && isDown(engineState) !== isDown(state)) {
+    refreshTiles();
   }
   engineState = state;
   if (isDown(state)) {
@@ -113,6 +115,57 @@ onPath["navigation.underKeel.envelopeRev"] = (rev, left) => {
     void refreshEnvelope();
   }
 };
+
+// ---- UKC tiles: classed at fetch time, so fetched again when what classed them changes ----
+const LEVEL_STEP_M = 0.01;
+const WATER_SOURCE_EVERY_MS = 60000;
+let levelSeen = false;
+let tileLevel;
+let tileWaterSource;
+
+function refreshTiles() {
+  if (!has("overlays.data")) {
+    return;
+  }
+  client
+    .call("overlay.refresh", { overlayId: "ukc", source: "ukc" })
+    .catch((err) => console.warn("under-keel ukc tiles", err));
+}
+
+onPath["navigation.underKeel.waterLevel"] = (h) => {
+  if (!levelSeen) {
+    levelSeen = true;
+    tileLevel = h;
+  } else if (UKC.levelMoved(tileLevel, h, LEVEL_STEP_M)) {
+    tileLevel = h;
+    refreshTiles();
+  }
+};
+
+/** A fallback can keep the same height while it marks clear water unverified; only /status shows it. */
+async function checkWaterSource() {
+  try {
+    const res = await fetch(`${UKC.API}/status`, {
+      credentials: "same-origin",
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
+    });
+    if (!res.ok) {
+      return;
+    }
+    const key = UKC.waterSourceKey(await res.json());
+    if (tileWaterSource !== undefined && key !== tileWaterSource) {
+      refreshTiles();
+    }
+    tileWaterSource = key;
+  } catch (err) {
+    console.warn("under-keel status", err);
+  }
+}
+
+if (has("overlays.data")) {
+  void checkWaterSource();
+  setInterval(() => void checkWaterSource(), WATER_SOURCE_EVERY_MS);
+}
 
 // ---- route check: every visible route, again after each edit ----
 const results = new Map();
@@ -206,6 +259,7 @@ async function checkAll() {
 const RECHECK_MS = 60000;
 
 function onRestart() {
+  refreshTiles();
   if (has("routes")) {
     void checkAll();
   }
