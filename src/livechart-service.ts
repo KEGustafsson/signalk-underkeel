@@ -66,13 +66,26 @@ export class LivechartService {
     this.load();
   }
 
-  /** Moves the confirmed discrepancies onto a rebuilt index with the same leaf zoom. */
+  /**
+   * Moves the living chart onto a rebuilt index with the same leaf zoom, as load() does for
+   * a saved state: each cell is rebased onto the new chart prior and judged again.
+   */
   rebind(store: NodeStore): void {
-    for (const [key, v] of this.store.adjustments) {
-      store.adjustments.set(key, v);
+    for (const [key, c] of this.posteriors.cells) {
+      const rebased = rebasePrior(c, chartPrior(store, c.z, c.x, c.y));
+      this.posteriors.cells.set(key, rebased);
+      const v = this.store.adjustments.get(key);
+      if (v) {
+        store.adjustments.set(key, { ...v, cellRef: rebased.cellRef });
+      }
     }
     this.store = store;
     this.posteriors.rebind(store);
+    for (const c of this.posteriors.cells.values()) {
+      if (isDiscrepancy(c)) {
+        this.adjust(c);
+      }
+    }
   }
 
   get path(): string {
