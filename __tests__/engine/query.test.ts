@@ -155,7 +155,7 @@ describe("chart position uncertainty", () => {
     const box = [22.0, 60.0, 22.06, 60.03] as const;
     const north = 40 / 111195;
     const charted = {
-      catalogue: { version: 1, cells: [] },
+      catalogue: { version: 1 as const, cells: [] },
       pyramid: buildPyramid(
         [
           coverage(box),

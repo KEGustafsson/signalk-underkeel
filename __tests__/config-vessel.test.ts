@@ -20,8 +20,9 @@ describe("plugin configuration", () => {
     const c = parseConfig({ lookahead: { distance: 10 * 1852, minHorizon: 3600 } });
     expect(c.lookahead.distance).toBe(5 * 1852);
     expect(c.lookahead.minHorizon).toBe(600);
-    const props = (SCHEMA.properties as Record<string, { properties: Record<string, unknown> }>)
-      .lookahead?.properties;
+    const props = (
+      SCHEMA.properties as unknown as Record<string, { properties: Record<string, unknown> }>
+    ).lookahead?.properties;
     expect(props?.distance).toMatchObject({ minimum: 0, maximum: 5 * 1852 });
     expect(props?.minHorizon).toMatchObject({ minimum: 0, maximum: 600 });
   });

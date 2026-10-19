@@ -6,6 +6,7 @@ import { fromMercator, haversine, project, toMercator } from "../../src/foundati
 import type { LonLat } from "../../src/foundation/geo";
 import { pointInPolygon, pointSegmentDistance } from "../../src/foundation/geometry";
 import type { ChartIndex } from "../../src/spatial/chart-index";
+import type { Catzoc } from "../../src/ingest/features";
 import { HazardIndex } from "../../src/spatial/hazards";
 import { FLAGS } from "../../src/spatial/node-store";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
@@ -375,10 +376,10 @@ describe("chart position uncertainty", () => {
   // 60 m north of the leg: outside its ±30 m corridor, inside it once CATZOC B (±50 m) or
   // C (±500 m) position accuracy is added.
   const north = 60 / 111195;
-  test.each([
+  test.each<[Catzoc, string]>([
     [3, "B"],
     [4, "C"]
-  ] as const)("a drying area 60 m off the leg under CATZOC %s (%s) fails it", (catzoc) => {
+  ])("a drying area 60 m off the leg under CATZOC %s (%s) fails it", (catzoc) => {
     const box = [22.0, 60.0, 22.06, 60.03] as const;
     const index: ChartIndex = {
       catalogue: { version: 1, cells: [] },
