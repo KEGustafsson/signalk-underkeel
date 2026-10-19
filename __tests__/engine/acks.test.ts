@@ -61,12 +61,14 @@ const ACK: Ack = {
   draft: 1.8
 };
 
+const LEVEL = { h: 0.2, sigma: 0.05, source: "manual" };
+
 function ctx(over: Partial<SuppressionContext> = {}): SuppressionContext {
   return {
     acks: [ACK],
     zones: [],
     heading: EAST,
-    waterLevel: 0.2,
+    waterLevel: LEVEL,
     draft: 1.8,
     now: NOW,
     thresholds: DEFAULT_LOOKAHEAD.thresholds,
@@ -86,7 +88,7 @@ describe("acknowledged passages", () => {
   test("each condition of plan §4.12 must hold", () => {
     const cases: Partial<SuppressionContext>[] = [
       { heading: EAST + (25 * Math.PI) / 180 },
-      { waterLevel: 0.2 - ACK_LEVEL_TOLERANCE - 0.01 },
+      { waterLevel: { ...LEVEL, h: 0.2 - ACK_LEVEL_TOLERANCE - 0.01 } },
       { draft: 1.9 },
       { now: NOW, acks: [{ ...ACK, expires: new Date(NOW - 1).toISOString() }] },
       { acks: [{ ...ACK, polygon: box(22.0, 60.0, 22.003, 60.005) }] }
@@ -94,12 +96,18 @@ describe("acknowledged passages", () => {
     for (const c of cases) {
       expect(suppress(WARN, ctx(c)).state).toBe("warn");
     }
-    expect(suppress(WARN, ctx({ waterLevel: 0.2 - ACK_LEVEL_TOLERANCE + 0.01 })).state).toBe(
-      "alert"
-    );
+    expect(
+      suppress(WARN, ctx({ waterLevel: { ...LEVEL, h: 0.2 - ACK_LEVEL_TOLERANCE + 0.01 } })).state
+    ).toBe("alert");
     expect(suppress(WARN, ctx({ heading: EAST - (19 * Math.PI) / 180, draft: 1.5 })).state).toBe(
       "alert"
     );
+  });
+
+  test("a fallback water level never honours an acknowledgement", () => {
+    // The chart-datum fallback is 0 m with a reason; even at the acknowledged level it is a guess.
+    const fallback = { h: 0.2, sigma: 0.3, source: "fallback", degraded: "tide feed stale" };
+    expect(suppress(WARN, ctx({ waterLevel: fallback })).state).toBe("warn");
   });
 
   test("the heading sector wraps through north", () => {

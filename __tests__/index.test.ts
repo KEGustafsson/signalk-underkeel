@@ -299,6 +299,48 @@ describe("plugin lifecycle", () => {
     plugin.stop();
   });
 
+  test("an acknowledgement is neither made nor honoured on a fallback water level", async () => {
+    const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 3.0 } } });
+    const clock = fakeClock(T0);
+    const plugin = underkeel(f.app, clock);
+    const { router, post } = fakeRouter();
+    plugin.registerWithRouter?.(router as never);
+    plugin.start(
+      { cellsDir: FIXTURES, leafZoom: 18, waterLevel: { source: "signalk-tide", sigma: 0.05 } },
+      () => undefined
+    );
+    const lon = ROCK[0] - 300 / M_PER_DEG_LON;
+    const tick = (tide: boolean) => {
+      const d = navDelta(lon, ROCK[1], 3, clock.now() + 1000);
+      if (tide) {
+        d.updates[0]?.values.push({ path: "environment.tide.heightNow" as never, value: -0.4 });
+      }
+      f.send(d);
+      clock.advance(1000);
+      return lastValue(f.deltas, "navigation.underKeel.state");
+    };
+    // No tide received yet: the level is the chart-datum fallback.
+    expect(tick(false)).toBe("warn");
+    const refused = await post("/v1/acks", {});
+    expect(refused.code).toBe(409);
+    expect((refused.body as { errors: string[] }).errors[0]).toMatch(/water level degraded/);
+
+    tick(true);
+    expect(tick(true)).toBe("warn");
+    const made = await post("/v1/acks", {});
+    expect(made.code).toBe(201);
+    expect((made.body as { waterLevel: number }).waterLevel).toBe(-0.4);
+    expect(tick(true)).toBe("alert");
+
+    // The tide feed goes stale: the 0 m fallback is above the acknowledged -0.4 m, but a guess.
+    clock.advance(31 * 60_000);
+    tick(false);
+    expect(tick(false)).toBe("warn");
+    const n = lastValue(f.deltas, "notifications.navigation.underKeel") as { message: string };
+    expect(n.message).not.toMatch(/acknowledged passage/);
+    plugin.stop();
+  });
+
   test("the grounding detector is off by default and writes notifications.grounding when on", () => {
     const run = (options: Record<string, unknown>) => {
       const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 1.8 } } });

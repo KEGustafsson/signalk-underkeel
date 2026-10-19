@@ -1,4 +1,5 @@
 import type { LonLat } from "../foundation/geo";
+import type { WaterLevel } from "../model/uncertainty";
 import type { LookaheadResult, Thresholds } from "./lookahead";
 
 /**
@@ -37,7 +38,8 @@ export interface SuppressionContext {
   zones: readonly Zone[];
   /** Current true heading, radians. */
   heading: number;
-  waterLevel: number;
+  /** A degraded (fallback) level covers no acknowledgement: it is not a measured level. */
+  waterLevel: WaterLevel;
   draft: number;
   now: number;
   thresholds: Thresholds;
@@ -169,7 +171,8 @@ export function ackCovers(ack: Ack, rings: LonLat[][], ctx: SuppressionContext):
   return (
     (ack.expires === undefined || Date.parse(ack.expires) > ctx.now) &&
     angleBetween(ctx.heading, ack.heading) <= ack.sector &&
-    ctx.waterLevel >= ack.waterLevel - ACK_LEVEL_TOLERANCE &&
+    ctx.waterLevel.degraded === undefined &&
+    ctx.waterLevel.h >= ack.waterLevel - ACK_LEVEL_TOLERANCE &&
     ctx.draft <= ack.draft &&
     within(rings, ack.polygon)
   );

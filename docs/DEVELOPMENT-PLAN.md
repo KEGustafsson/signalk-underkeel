@@ -721,7 +721,8 @@ On acknowledge, Freeboard POSTs to `/acks` with:
 
 - the footprint lies inside the acknowledged polygon;
 - the heading is inside the sector;
-- the current water level is at least `h_ack − 0.05`;
+- the current water level is at least `h_ack − 0.05` and is not a fallback (a fallback level
+  neither honours nor records an acknowledgement);
 - the current draft is no deeper than `T_ack`.
 
 Suppression is published as `state: alert` with the message "acknowledged passage". It is

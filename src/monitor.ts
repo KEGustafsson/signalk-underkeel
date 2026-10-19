@@ -194,7 +194,7 @@ export class Monitor {
       acks: this.acks?.list(this.clock.now()) ?? [],
       zones: this.zones,
       heading,
-      waterLevel: this.waterLevel().h,
+      waterLevel: this.waterLevel(),
       draft: vessel.draft,
       now: this.clock.now(),
       thresholds: this.config.lookahead.thresholds,

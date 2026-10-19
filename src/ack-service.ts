@@ -5,6 +5,7 @@ import type { ApiReply } from "./api/routes";
 import type { Ack } from "./engine/acks";
 import { convexHull } from "./engine/footprint";
 import type { LookaheadResult } from "./engine/lookahead";
+import type { WaterLevel } from "./model/uncertainty";
 
 /** `GET/POST/DELETE /acks`: acknowledged passages for the current vessel and water level. */
 
@@ -17,7 +18,7 @@ export interface AckServiceDeps {
   current(): LookaheadResult | undefined;
   /** True heading now, radians. */
   heading(): number | undefined;
-  waterLevel(): number;
+  waterLevel(): WaterLevel;
   draft(): number | undefined;
   now(): number;
 }
@@ -37,6 +38,11 @@ export function addAck(body: unknown, deps: AckServiceDeps): ApiReply {
   if (heading === undefined || draft === undefined) {
     return { status: 409, body: { errors: ["heading and draft are needed to acknowledge"] } };
   }
+  const level = deps.waterLevel();
+  if (level.degraded !== undefined) {
+    // An acknowledgement records the level it holds at; a fallback level is not one.
+    return { status: 409, body: { errors: [`water level degraded: ${level.degraded}`] } };
+  }
   const footprints = deps.current()?.footprints ?? [];
   const polygon = req.polygon ?? convexHull(footprints.flatMap((f) => f.ring));
   if (polygon.length < 3) {
@@ -51,7 +57,7 @@ export function addAck(body: unknown, deps: AckServiceDeps): ApiReply {
     heading,
     sector: ((req.sector ?? DEFAULT_SECTOR_DEG) * Math.PI) / 180,
     notificationId: req.notificationId,
-    waterLevel: deps.waterLevel(),
+    waterLevel: level.h,
     draft
   };
   deps.store.add(ack);

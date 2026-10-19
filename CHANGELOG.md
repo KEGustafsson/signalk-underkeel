@@ -134,3 +134,6 @@ All notable changes to signalk-underkeel are documented here.
   second kept every tick `unknown` although the other had a good fix.
 - A failed chart-index load stays shown as the plugin error in the server's plugin list; the
   first look-ahead tick replaced it with an ordinary status line.
+- Acknowledged passages are not honoured while the water level is a fallback, and `POST /acks`
+  answers 409 then. A stale tide feed fell back to 0 m, which compared as more water than an
+  acknowledgement made at −0.4 m and turned a warn into "acknowledged passage".

@@ -65,7 +65,7 @@ export function apiFor(
       store: s.acks,
       current: () => m.last,
       heading: () => m.heading(),
-      waterLevel: () => m.waterLevel().h,
+      waterLevel: () => m.waterLevel(),
       draft: () => m.vessel()?.draft,
       now: () => clock.now()
     });
