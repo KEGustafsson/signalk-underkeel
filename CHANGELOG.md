@@ -259,3 +259,7 @@ All notable changes to signalk-underkeel are documented here.
   degraded, such as an FMI fallback, instead of the configured source.
 - "Check routes again" is hidden on a chart host without `events.publish`, `routes` or
   `background.iframe`, where pressing it did nothing.
+- The background runtime writes route-check results to host state in a compact form (per leg
+  only index, status, minimum UKC and P), once per re-check of all routes instead of once per
+  route. Freeboard keeps that state in localStorage: one 30-leg route wrote 17.6 kB a minute
+  and three routes 158 kB; one route now writes 1.9 kB.

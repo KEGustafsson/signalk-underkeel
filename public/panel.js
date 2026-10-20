@@ -101,16 +101,14 @@ function renderRoutes(entries) {
       table.innerHTML = "<tr><th>Leg</th><th>Status</th><th>Min UKC</th><th>P(UKC&lt;0)</th></tr>";
       r.legs.forEach((leg) => {
         const tr = document.createElement("tr");
-        [String(leg.index + 1), leg.status, UKC.depth(leg.minUkc, unit), `${(leg.risk * 100).toFixed(1)} %`].forEach(
-          (v, i) => {
-            const td = document.createElement("td");
-            td.textContent = v;
-            if (i === 1) {
-              td.className = leg.status;
-            }
-            tr.append(td);
+        UKC.legRow(leg, unit).forEach((v, i) => {
+          const td = document.createElement("td");
+          td.textContent = v;
+          if (i === 1) {
+            td.className = leg.status;
           }
-        );
+          tr.append(td);
+        });
         table.append(tr);
       });
       box.append(table);

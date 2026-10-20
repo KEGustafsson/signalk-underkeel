@@ -115,6 +115,56 @@ describe("extension display logic", () => {
     expect(UKC.checkedAgo(undefined, now)).toBe("");
   });
 
+  test("the compact route result gives the same badge and leg rows as the full one", () => {
+    const now = Date.parse("2026-10-19T12:00:00Z");
+    const at = (s: number) => new Date(now - s * 1000).toISOString();
+    const leg = (index: number, status: string, minUkc: number | null, risk: number) => ({
+      index,
+      status,
+      from: [22 + index / 100, 60],
+      to: [22 + (index + 1) / 100, 60],
+      length: 560,
+      eta: { start: at(0), end: at(-60) },
+      minUkc,
+      sigma: 0.4,
+      risk,
+      charted: minUkc === null ? null : minUkc + 2,
+      flags: ["UNASSESSED"],
+      worst: { position: [22, 60], hazard: { class: "SOUNDG", valsou: 2.1 } },
+      explanation: { terms: [{ name: "draft", value: 1.8 }], text: "draft 1.8 m" }
+    });
+    const legs = [
+      leg(0, "ok", 4.2, 0),
+      leg(1, "marginal", 0.9, 0.012),
+      leg(2, "unverified", null, 0)
+    ];
+    const results = [
+      { name: "A", rev: 3, legs, checkedAt: at(5), receivedAt: at(4) },
+      { name: "B", rev: 1, legs: [...legs, leg(3, "fail", -0.4, 0.93)], receivedAt: at(10) },
+      { name: "C", rev: 2, legs, receivedAt: at(600) },
+      { name: "D", rev: 2, legs: [], error: "route check failed: timeout" },
+      { name: "E", legs: [], pending: true },
+      { name: "F", legs: [leg(0, "ok", 4.2, 0)] }
+    ];
+    for (const full of results) {
+      const compact: Record<string, unknown> & { legs: object[] } = UKC.compactResult(full);
+      expect(UKC.routeBadge(compact, now, 180000)).toEqual(UKC.routeBadge(full, now, 180000));
+      expect(UKC.checkedAgo(compact.receivedAt, now)).toBe(UKC.checkedAgo(full.receivedAt, now));
+      expect(compact.error).toBe(full.error);
+      expect(compact.pending).toBe(full.pending);
+      for (const unit of ["m", "foot"]) {
+        expect(compact.legs.map((l: object) => UKC.legRow(l, unit))).toEqual(
+          full.legs.map((l: object) => UKC.legRow(l, unit))
+        );
+      }
+    }
+    const [first] = results;
+    expect(JSON.stringify(UKC.compactResult(first)).length).toBeLessThan(
+      JSON.stringify(first).length / 4
+    );
+    expect(UKC.legRow(legs[1], "m")).toEqual(["2", "marginal", "0.9 m", "1.2 %"]);
+  });
+
   test("an envelopeRev that does not step by one means a restart or missed deltas", () => {
     expect(UKC.revJumped(undefined, 7)).toBe(false);
     expect(UKC.revJumped(7, 7)).toBe(false);

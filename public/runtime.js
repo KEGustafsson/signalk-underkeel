@@ -179,11 +179,37 @@ function nextSeq(routeId) {
   return n;
 }
 
-/** The panel reads the results from state, so they go there first, whatever the overlay does. */
+/**
+ * The panel reads the results from state, so they go there first, whatever the overlay does.
+ * The host may persist every state write, so state gets the compact form, once per change.
+ */
+let publishedState;
+let publishedLegs;
+let publishTimer;
+const PUBLISH_DELAY_MS = 250;
+
 async function publish() {
-  await client.state.set({ routeCheck: Object.fromEntries(results) }, "extension");
-  const features = [...results].flatMap(([id, r]) => UKC.legFeatures(id, r.legs));
-  await setOverlay("routecheck", "legs", { type: "FeatureCollection", features });
+  clearTimeout(publishTimer);
+  const routeCheck = Object.fromEntries([...results].map(([id, r]) => [id, UKC.compactResult(r)]));
+  const state = JSON.stringify(routeCheck);
+  if (state !== publishedState) {
+    await client.state.set({ routeCheck }, "extension");
+    publishedState = state;
+  }
+  const legs = {
+    type: "FeatureCollection",
+    features: [...results].flatMap(([id, r]) => UKC.legFeatures(id, r.legs))
+  };
+  const json = JSON.stringify(legs);
+  if (json !== publishedLegs) {
+    publishedLegs = (await setOverlay("routecheck", "legs", legs)) ? json : undefined;
+  }
+}
+
+/** Edits and single checks arrive one by one: write them together once they pause. */
+function publishSoon() {
+  clearTimeout(publishTimer);
+  publishTimer = setTimeout(() => void publish(), PUBLISH_DELAY_MS);
 }
 
 async function check(routeId) {
@@ -234,19 +260,20 @@ async function check(routeId) {
     });
     console.warn("under-keel route check", err);
   }
-  await publish();
 }
 
 /** Edits come in bursts while the user drags a point: check once they settle. */
 function schedule(routeId) {
   clearTimeout(timers.get(routeId));
-  timers.set(routeId, setTimeout(() => void check(routeId), 1000));
+  timers.set(routeId, setTimeout(() => void check(routeId).then(publishSoon), 1000));
 }
 
 async function checkAll() {
   try {
     const { routes } = await client.call("route.list");
-    routes.forEach((r) => schedule(r.routeId));
+    routes.forEach((r) => clearTimeout(timers.get(r.routeId)));
+    await Promise.all(routes.map((r) => check(r.routeId)));
+    await publish();
   } catch (err) {
     console.warn("under-keel route list", err);
   }
@@ -274,7 +301,7 @@ if (has("routes")) {
       clearTimeout(timers.get(params.routeId));
       nextSeq(params.routeId);
       results.delete(params.routeId);
-      void publish();
+      publishSoon();
     } else if (params && params.routeId) {
       // The old legs describe the old geometry: drop them until the check comes back.
       nextSeq(params.routeId);
@@ -285,7 +312,7 @@ if (has("routes")) {
         legs: [],
         error: "checking the edited route"
       });
-      void publish();
+      publishSoon();
       schedule(params.routeId);
     }
   });

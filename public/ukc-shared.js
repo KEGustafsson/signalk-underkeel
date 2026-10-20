@@ -209,6 +209,32 @@
     });
   }
 
+  /**
+   * A route result as the runtime keeps it in host state, which a host may
+   * persist on every write: the panel and its badges read only these fields.
+   * The leg geometry and explanations stay in the runtime for the overlay.
+   */
+  function compactResult(r) {
+    const out = {
+      name: r.name,
+      rev: r.rev,
+      legs: (r.legs || []).map(function (leg) {
+        return { index: leg.index, status: leg.status, minUkc: leg.minUkc, risk: leg.risk };
+      })
+    };
+    ["receivedAt", "checkedAt", "error", "pending"].forEach(function (k) {
+      if (r[k] !== undefined) {
+        out[k] = r[k];
+      }
+    });
+    return out;
+  }
+
+  /** One row of the panel's leg table: leg number, status, minimum UKC and P(UKC < 0). */
+  function legRow(leg, unit) {
+    return [String(leg.index + 1), leg.status, depth(leg.minUkc, unit), (leg.risk * 100).toFixed(1) + " %"];
+  }
+
   const api = {
     API: API,
     stateStyle: stateStyle,
@@ -219,6 +245,8 @@
     legFeatures: legFeatures,
     worstStatus: worstStatus,
     routeEntries: routeEntries,
+    compactResult: compactResult,
+    legRow: legRow,
     freshFor: freshFor,
     freshness: freshness,
     routeBadge: routeBadge,
