@@ -34,7 +34,10 @@ export interface RouteServiceDeps {
   queue: RequestQueue;
 }
 
-/** The route lookup, given up when the request's signal aborts first. */
+/**
+ * The route lookup, given up when the request's signal aborts first. The provider gets no
+ * signal, so its lookup runs on; only the request stops waiting for it.
+ */
 function lookup(deps: RouteServiceDeps, id: string, signal: AbortSignal): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const abort = () => reject(signal.reason);
