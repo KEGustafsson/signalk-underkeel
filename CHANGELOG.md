@@ -53,6 +53,11 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Changed
 
+- The next Traficom WFS box is fetched once the edge ahead is closer than SOG × 1.5 × the last
+  download-and-build time plus the look-ahead's reach, as well as at half the radius, and is
+  centred that far ahead along COG (at most 0.8 × the radius). With 10-minute rebuilds at
+  25 kn the vessel was 5.4 km past the old box when the new one was handed over; it is now
+  2.3 km inside it. The last refresh time is saved in `box.json`.
 - The Traficom WFS download, parse, clip and cell write run in the index build worker with the
   build, so the main thread only moves the staged index into place and loads it. With the
   10 km box (one 22 MB page) the server's event loop was blocked for 336–420 ms and 209–277 ms

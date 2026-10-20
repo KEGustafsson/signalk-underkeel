@@ -36,6 +36,18 @@ function useIndex(w: WfsWiring, index: ChartIndex): void {
   }
 }
 
+/** SOG and COG while both are fresh by the look-ahead's staleness limit. */
+function freshMotion(w: WfsWiring): { sog: number; cog: number } | undefined {
+  const nav = w.state.monitor?.nav;
+  const limit = w.config.lookahead.staleAfter * 1000;
+  const now = w.clock.now();
+  const sog = nav?.sog;
+  const cog = nav?.cog;
+  return sog && cog && now - sog.at <= limit && now - cog.at <= limit
+    ? { sog: sog.value, cog: cog.value }
+    : undefined;
+}
+
 export function startWfs(w: WfsWiring, wfs: WfsConfig): WfsService {
   const dir = path.join(w.app.getDataDirPath(), "wfs");
   fs.mkdirSync(dir, { recursive: true });
@@ -50,6 +62,8 @@ export function startWfs(w: WfsWiring, wfs: WfsConfig): WfsService {
     refresh: w.build === workerBuilder ? workerRefresher : inThreadRefresher(w.fetch, w.build),
     clock: w.clock,
     position: () => w.state.monitor?.nav.position?.value,
+    motion: () => freshMotion(w),
+    lookahead: w.config.lookahead,
     onIndex: (index) => useIndex(w, index),
     error: (m) => w.app.error(m)
   });

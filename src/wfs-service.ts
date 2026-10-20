@@ -3,10 +3,10 @@ import os from "os";
 import path from "path";
 import { Worker } from "worker_threads";
 import type { LonLat } from "./foundation/geo";
-import { haversine } from "./foundation/geo";
+import { haversine, project } from "./foundation/geo";
 import type { WfsConfig } from "./config";
 import type { Bbox, WfsFetch } from "./ingest/wfs";
-import { boxAround, downloadWfsCell, WFS_CELL_NAME, WFS_NOTICE } from "./ingest/wfs";
+import { boxAround, downloadWfsCell, edgeAhead, WFS_CELL_NAME, WFS_NOTICE } from "./ingest/wfs";
 import type { WfsCounts, WfsJob, WfsReply } from "./wfs-worker";
 import type { Clock } from "./monitor";
 import type { BuildJob } from "./spatial/build-worker";
@@ -15,9 +15,11 @@ import { commitChartIndex, loadChartIndex, removeStaging } from "./spatial/chart
 
 /**
  * Keeps a Traficom WFS box around the vessel (plan §4.2). When the vessel
- * is more than half the box radius from its centre, the box around the
- * current position is downloaded and the index rebuilt off the event loop,
- * then handed over; until then the previous index stays in use.
+ * is more than half the box radius from its centre, or at its speed would
+ * reach the box edge less the look-ahead before another refresh could
+ * arrive, a box centred ahead along its course is downloaded and the index
+ * rebuilt off the event loop, then handed over; until then the previous
+ * index stays in use.
  */
 
 export type IndexBuilder = (job: BuildJob, signal: AbortSignal) => Promise<ChartIndex>;
@@ -171,6 +173,8 @@ export interface WfsBox {
   catzoc: number;
   fetchedAt: string;
   features: { depthAreas: number; dredgedAreas: number; soundings: number };
+  /** How long its download and index build took; the next box is planned on it. */
+  durationMs?: number;
 }
 
 export interface WfsStatus {
@@ -191,6 +195,10 @@ export interface WfsServiceDeps {
   refresh: WfsRefresher;
   clock: Pick<Clock, "now" | "setInterval" | "clearInterval">;
   position: () => LonLat | undefined;
+  /** Fresh speed (m/s) and course (radians) over ground, when both are known. */
+  motion: () => { sog: number; cog: number } | undefined;
+  /** The look-ahead's reach: `distance`, or `minHorizon` seconds at the current speed. */
+  lookahead: { distance: number; minHorizon: number };
   onIndex: (index: ChartIndex) => void;
   error: (message: string) => void;
 }
@@ -200,6 +208,12 @@ const CHECK_EVERY_MS = 10_000;
 /** No two downloads start closer together than this, and after a failure the wait is longer. */
 const MIN_INTERVAL_MS = 60_000;
 const RETRY_AFTER_ERROR_MS = 300_000;
+/** A refresh is assumed to take this long until one is measured: a z20 rebuild on a Pi 3. */
+const DEFAULT_REFRESH_MS = 600_000;
+/** A refresh is started this many of the last one's durations before the edge comes in reach. */
+const REFRESH_MARGIN = 1.5;
+/** The next box is centred at most this share of the radius ahead of the vessel. */
+const MAX_LEAD = 0.8;
 
 export class WfsService {
   private box?: WfsBox;
@@ -250,8 +264,38 @@ export class WfsService {
       b === undefined ||
       b.radiusKm !== this.deps.config.radiusKm ||
       b.catzoc !== this.deps.config.catzoc ||
-      haversine(pos, b.centre) > (b.radiusKm * 1000) / 2
+      haversine(pos, b.centre) > (b.radiusKm * 1000) / 2 ||
+      this.edgeSoon(pos, b)
     );
+  }
+
+  /**
+   * Whether the vessel would reach the box edge, less the look-ahead's reach, before a
+   * refresh started now, with the margin, could be handed over. At 15 kn the half-radius
+   * rule left 10.8 min of the 10 km box ahead, and a Pi 3 takes 11–14 min.
+   */
+  private edgeSoon(pos: LonLat, b: WfsBox): boolean {
+    const m = this.deps.motion();
+    if (!m || !(m.sog > 0)) {
+      return false;
+    }
+    const reach = Math.max(this.deps.lookahead.distance, m.sog * this.deps.lookahead.minHorizon);
+    const travel = (m.sog * REFRESH_MARGIN * this.refreshMs()) / 1000;
+    return edgeAhead(pos, m.cog, b.bbox) < travel + reach;
+  }
+
+  private refreshMs(): number {
+    return this.box?.durationMs ?? DEFAULT_REFRESH_MS;
+  }
+
+  /** Where the vessel will be when a refresh started now is handed over, kept inside the box. */
+  private centreAhead(pos: LonLat, radiusKm: number): LonLat {
+    const m = this.deps.motion();
+    if (!m || !(m.sog > 0)) {
+      return pos;
+    }
+    const lead = Math.min((m.sog * this.refreshMs()) / 1000, MAX_LEAD * radiusKm * 1000);
+    return project(pos, m.cog, lead);
   }
 
   async check(): Promise<void> {
@@ -265,7 +309,8 @@ export class WfsService {
     const controller = new AbortController();
     this.controller = controller;
     const radiusKm = this.deps.config.radiusKm;
-    const bbox = boxAround(pos, radiusKm);
+    const centre = this.centreAhead(pos, radiusKm);
+    const bbox = boxAround(centre, radiusKm);
     try {
       const { index, features } = await this.deps.refresh(
         {
@@ -286,11 +331,12 @@ export class WfsService {
       );
       const box: WfsBox = {
         bbox,
-        centre: pos,
+        centre,
         radiusKm,
         catzoc: this.deps.config.catzoc,
         fetchedAt: new Date(now).toISOString(),
-        features
+        features,
+        durationMs: this.deps.clock.now() - now
       };
       fs.writeFileSync(path.join(this.deps.dir, "box.json"), JSON.stringify(box));
       this.box = box;

@@ -628,16 +628,19 @@ data is not for navigational purposes**: Traficom licenses it for non-navigation
 
 ```mermaid
 flowchart TD
-  P[vessel position, checked periodically] --> D{more than half the box radius<br/>from the box centre?}
+  P[vessel position, checked periodically] --> D{more than half the box radius from<br/>the box centre, or the edge ahead<br/>closer than a rebuild's run?}
   D -- no --> KEEP[keep the current index]
-  D -- yes, and no download<br/>in the last minute or so --> W[in a worker thread: download the box<br/>DepthArea_A, DredgedArea_A, Sounding_P]
+  D -- yes, and no download<br/>in the last minute or so --> W[in a worker thread: download the box<br/>centred ahead along the course<br/>DepthArea_A, DredgedArea_A, Sounding_P]
   W --> B[rebuild the index in the same thread:<br/>ENC cells first, then the WFS cell]
   B --> S[swap the new index in;<br/>the look-ahead keeps running]
   W -- fails --> E[keep the old index, report the error,<br/>retry after a longer back-off]
 ```
 
 - **Box:** radius 10 km by default (2–25 km). With the default, a new box is fetched once the
-  vessel is 5 km from the centre, so at least 5 km of WFS data lies ahead.
+  vessel is 5 km from the centre, or earlier at speed: once the edge ahead is closer than 1.5
+  times the distance the vessel covered during the last download and rebuild, plus the
+  look-ahead distance. The new box is centred where the vessel will be when it is ready, at
+  most 8 km ahead, so a slow Raspberry Pi at planing speed is not left at the old box's edge.
 - **Priority:** the WFS cell is usage band 1, so any ENC cell wins where both cover.
 - **Land:** the WFS has no land objects. Water that no depth area reaches is land, so a gap in
   the data never reads as open water.

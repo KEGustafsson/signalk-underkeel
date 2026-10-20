@@ -230,8 +230,14 @@ signalk-underkeel/
    non-navigational use only, and it has no land, rocks, wrecks, obstructions or `M_QUAL`.
    Decision (safety invariants 3 and 4): the plugin downloads a box of configurable radius
    (default 10 km) around the vessel and a new one once the vessel is more than half the radius
-   from its centre, checked every 10 s, at most once a minute and 5 minutes after a failed
-   download. A worker thread downloads the box, parses, clips and writes the cell, rebuilds
+   from its centre, or once the distance to the box edge along COG is under SOG × 1.5 × the
+   last download-and-build time plus the look-ahead's reach (the last time is saved with the
+   box; 10 minutes until one is measured). Checks run every 10 s, at most once a minute and
+   5 minutes after a failed download. The new box is centred SOG × the last time ahead along
+   COG, at most 0.8 × the radius, so the vessel is near its centre when it is handed over; at
+   25 kn with 10-minute rebuilds the half-radius rule alone handed a box over with the vessel
+   5.4 km past the old box's edge. A box centred ahead covers less water astern, which route
+   checks of legs behind the vessel see as uncovered (`unverified`, invariant 4). A worker thread downloads the box, parses, clips and writes the cell, rebuilds
    the index and stages it; the main thread moves it into place and swaps it in. Each page is
    read as a stream: more than 64 MB, or 30 s without a byte, fails the download, which then
    waits 5 minutes as after any failure, and the previous index stays. The box is one cell

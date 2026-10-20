@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import type { LonLat } from "../src/foundation/geo";
+import { haversine, project } from "../src/foundation/geo";
 import type { WfsFetch } from "../src/ingest/wfs";
 import type { ChartIndex } from "../src/spatial/chart-index";
 import { WFS_LIMITS } from "../src/ingest/wfs";
@@ -19,7 +20,11 @@ function okReply() {
 }
 
 function harness(fetch: WfsFetch = okReply) {
-  const t = { now: 1_800_000_000_000, pos: undefined as LonLat | undefined };
+  const t = {
+    now: 1_800_000_000_000,
+    pos: undefined as LonLat | undefined,
+    motion: undefined as { sog: number; cog: number } | undefined
+  };
   const fetched: string[] = [];
   const built: string[][] = [];
   const indexes: ChartIndex[] = [];
@@ -45,6 +50,8 @@ function harness(fetch: WfsFetch = okReply) {
     ),
     clock: { now: () => t.now, setInterval: () => 1, clearInterval: () => undefined },
     position: () => t.pos,
+    motion: () => t.motion,
+    lookahead: { distance: 555.6, minHorizon: 60 },
     onIndex: (i) => indexes.push(i),
     error: (m) => errors.push(m)
   };
@@ -160,6 +167,80 @@ describe("WFS box around the vessel", () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  test("at 25 kn with 10-minute rebuilds each new box arrives before the old one runs out", async () => {
+    const h = harness();
+    const knots25 = (25 * 1852) / 3600;
+    h.t.motion = { sog: knots25, cog: Math.PI / 2 };
+    const start: LonLat = [21.5, 60.07];
+    const t0 = h.t.now;
+    // Each refresh takes 10 virtual minutes, as a z20 rebuild on a Pi 3 does.
+    let pending: { at: number; done: () => void } | undefined;
+    h.builder.build = () =>
+      new Promise((resolve) => {
+        pending = {
+          at: h.t.now,
+          done: () => resolve({ catalogue: { version: 1, cells: [] } } as unknown as ChartIndex)
+        };
+      });
+    const handovers: { inside: number; reach: number }[] = [];
+    let box = h.service.status().box;
+    for (let s = 0; s <= 2 * 3600; s += 10) {
+      h.t.now = t0 + s * 1000;
+      h.t.pos = project(start, Math.PI / 2, knots25 * s);
+      if (pending && h.t.now - pending.at >= 600_000) {
+        pending.done();
+        pending = undefined;
+        for (let i = 0; i < 5; i++) {
+          await new Promise((r) => setImmediate(r));
+        }
+        if (box) {
+          // How far inside the old box's east edge the vessel still is.
+          const east: LonLat = [box.bbox[2], h.t.pos[1]];
+          handovers.push({ inside: haversine(h.t.pos, east), reach: knots25 * 60 });
+          expect(h.t.pos[0]).toBeLessThan(box.bbox[2]);
+        }
+        box = h.service.status().box;
+      }
+      void h.service.check();
+      await new Promise((r) => setImmediate(r));
+    }
+    expect(handovers.length).toBeGreaterThanOrEqual(10);
+    for (const x of handovers) {
+      expect(x.inside).toBeGreaterThan(x.reach);
+    }
+    expect(h.errors).toEqual([]);
+  });
+
+  test("the next box is centred ahead along the course, by speed times the last refresh", async () => {
+    const h = harness();
+    h.t.pos = [22.08, 60.07];
+    h.t.motion = { sog: 5, cog: 0 };
+    const build = h.builder.build;
+    h.builder.build = (job, signal) => {
+      h.t.now += 120_000;
+      return build(job, signal);
+    };
+    await h.service.check();
+    // No refresh measured yet: 10 minutes assumed, 3 km ahead.
+    expect(haversine(h.service.status().box?.centre as LonLat, [22.08, 60.07])).toBeCloseTo(
+      3000,
+      -2
+    );
+    expect(h.service.status().box?.durationMs).toBe(120_000);
+    h.t.now += 600_000;
+    h.t.pos = project([22.08, 60.07], 0, 12_500);
+    await h.service.check();
+    const c = h.service.status().box?.centre as LonLat;
+    expect(haversine(c, h.t.pos)).toBeCloseTo(600, -2);
+    expect(c[1]).toBeGreaterThan(h.t.pos[1]);
+    // Stopped: the box is centred on the vessel.
+    h.t.motion = { sog: 0, cog: 0 };
+    h.t.now += 600_000;
+    h.t.pos = project([22.08, 60.07], 0, 20_000);
+    await h.service.check();
+    expect(h.service.status().box?.centre).toEqual(h.t.pos);
   });
 
   test("after a restart the saved box is reused while the vessel stays inside it", async () => {

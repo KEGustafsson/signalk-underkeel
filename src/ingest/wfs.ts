@@ -66,6 +66,20 @@ export function boxAround([lon, lat]: LonLat, radiusKm: number): Bbox {
   return [lon - dLon, lat - dLat, lon + dLon, lat + dLat];
 }
 
+/** Metres from `pos` along `bearing` (radians from north) to the edge of `b`; 0 outside it. */
+export function edgeAhead([lon, lat]: LonLat, bearing: number, [w, s, e, n]: Bbox): number {
+  if (lon < w || lon > e || lat < s || lat > n) {
+    return 0;
+  }
+  const mLat = (EARTH_RADIUS * Math.PI) / 180;
+  const mLon = mLat * Math.cos((lat * Math.PI) / 180);
+  const dx = Math.sin(bearing);
+  const dy = Math.cos(bearing);
+  const tx = dx > 0 ? ((e - lon) * mLon) / dx : dx < 0 ? ((w - lon) * mLon) / dx : Infinity;
+  const ty = dy > 0 ? ((n - lat) * mLat) / dy : dy < 0 ? ((s - lat) * mLat) / dy : Infinity;
+  return Math.min(tx, ty);
+}
+
 /** Why `b` cannot be downloaded, or undefined when it can. */
 export function bboxProblem(b: Bbox): string | undefined {
   const [w, s, e, n] = b;
