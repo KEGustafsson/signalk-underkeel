@@ -1,4 +1,5 @@
 import fc from "fast-check";
+import fs from "fs";
 import os from "os";
 import path from "path";
 import type { LonLat, Rect } from "../../src/foundation/geo";
@@ -41,8 +42,13 @@ const rect = ([w, s, e, n]: Box): Rect => {
   return { minX, minY, maxX, maxY };
 };
 
+const dirs: string[] = [];
+afterEach(() => dirs.splice(0).forEach((d) => fs.rmSync(d, { recursive: true, force: true })));
+
 function service(store: NodeStore, soundings: [LonLat, number][]): LivechartService {
-  const svc = new LivechartService(store, CONFIG, path.join(os.tmpdir(), "underkeel-unused"), {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-rebind-"));
+  dirs.push(dir);
+  const svc = new LivechartService(store, CONFIG, path.join(dir, "livechart.json"), {
     setNote: () => Promise.resolve(),
     error: (m) => {
       throw new Error(m);
