@@ -51,7 +51,8 @@ describe("UKC tile compression", () => {
   const fetchTile = (z: string, acceptEncoding?: string) => {
     const { router, call } = fakeRouter();
     registerRoutes(router as never, api);
-    const headers = acceptEncoding === undefined ? {} : { "accept-encoding": acceptEncoding };
+    const headers: Record<string, string> =
+      acceptEncoding === undefined ? {} : { "accept-encoding": acceptEncoding };
     return call("/v1/tiles/ukc/:z/:x/:file", {}, { z, x: "0", file: "0.pbf" }, headers);
   };
 
