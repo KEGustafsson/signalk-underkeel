@@ -177,7 +177,7 @@ async function pollTiles() {
 /** Without the change list the level rule decides, from /status when there is no stream. */
 async function levelFromStatus() {
   try {
-    const res = await fetch(`${UKC.API}/status`, {
+    const res = await fetch(`${UKC.API}/status?summary`, {
       credentials: "same-origin",
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
     });

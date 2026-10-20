@@ -33,7 +33,7 @@ let statusAt = 0;
 async function refreshStatus() {
   const id = ++statusRequest;
   try {
-    const res = await fetch(`${UKC.API}/status`, {
+    const res = await fetch(`${UKC.API}/status?summary`, {
       credentials: "same-origin",
       signal: AbortSignal.timeout(STATUS_TIMEOUT_MS)
     });

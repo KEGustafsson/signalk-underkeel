@@ -276,6 +276,8 @@ All notable changes to signalk-underkeel are documented here.
 - The runtime checks the visible routes one after another and, when the server answers 503
   busy with `Retry-After`, checks again after it (at most five times). With six routes it
   sent six checks at once, and those the server queue refused showed "busy" as the result.
+- The details panel and the runtime poll `GET /status?summary`, which leaves out the cell
+  catalogue and datum mappings.
 - UKC tiles follow the wave allowance and the water level also without a Signal K stream: the
   runtime asks the new `GET /tiles/ukc/changes` which tiles changed class, every 15 s and
   after each 1 cm water-level move. A wave height change left tiles drawn for calmer water,
