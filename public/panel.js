@@ -120,9 +120,15 @@ function renderRoutes(entries) {
 }
 
 async function refreshRoutes() {
-  const { routeCheck } = await client.state.get(["routeCheck"], "extension");
-  const visible = client.hasCapability("routes") ? (await client.call("route.list")).routes : null;
-  renderRoutes(UKC.routeEntries(routeCheck, visible));
+  try {
+    const { routeCheck } = await client.state.get(["routeCheck"], "extension");
+    const visible = client.hasCapability("routes") ? (await client.call("route.list")).routes : null;
+    renderRoutes(UKC.routeEntries(routeCheck, visible));
+  } catch (err) {
+    // A result left on screen would never age out, so it is replaced, not kept.
+    text("routes", "Route results unavailable: the chart host did not answer.");
+    console.warn("under-keel routes", err);
+  }
 }
 
 if (client.hasCapability("signalk.stream")) {
