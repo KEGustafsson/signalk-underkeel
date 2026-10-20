@@ -177,6 +177,19 @@ describe("a plugin stop while a request still prepares", () => {
     release();
     expect((await reply).body).toEqual({ errors: ["plugin stopped"] });
   });
+
+  test.each([
+    ["route check", routeCheck],
+    ["route repair", routeRepair],
+    ["departure window", departureWindowReply]
+  ] as const)("answers the %s while the route lookup never returns", async (_name, handler) => {
+    const queue = new RequestQueue();
+    const d = deps({ queue, getRoute: () => new Promise(() => undefined) });
+    const reply = handler({ routeRef: "/resources/routes/known", horizon: 3600, step: 600 }, d);
+    await new Promise((resolve) => setImmediate(resolve));
+    queue.abortAll("plugin stopped");
+    expect(await reply).toEqual({ status: 503, body: { errors: ["plugin stopped"] } });
+  });
 });
 
 describe("route-check service", () => {
