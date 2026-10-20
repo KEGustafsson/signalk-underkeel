@@ -1,166 +1,429 @@
 # signalk-underkeel
 
-Under-keel clearance awareness for Signal K. The plugin turns S-57 chart data into a
-queryable hazard model on the server and publishes look-ahead grounding risk, route checks
-and own-sounding discrepancies for chartplotters such as Freeboard-SK.
+A [Signal K](https://signalk.org/) server plugin that warns before a boat runs into water too
+shallow for its keel. It reads S-57 electronic nautical charts (ENC), combines the charted
+depth and the survey quality behind it with the vessel's draft, motion and the current water
+level, and publishes the risk of grounding ahead, route checks and a depth overlay for chart
+plotters such as [Freeboard-SK](https://github.com/SignalK/freeboard-sk).
 
-> Advisory navigation aid, non-commercial. Not ECDIS, and not a replacement for official charts
-> or a proper lookout: always carry and use an official nautical chart, paper or ENC.
+> Advisory navigation aid, non-commercial. Not ECDIS, and not a replacement for official
+> charts or a proper lookout: always carry and use an official nautical chart, paper or ENC.
 
-With a chart index and a configured draft, the plugin predicts a fan of five tracks from COG,
-SOG and rate of turn every second. For each footprint it computes P(UKC < 0) from the charted depth and its survey
-uncertainty (CATZOC), the draft, squat, heel, a wave allowance and the water level, and
-publishes:
+- [For users](#for-users): what the plugin does, installing it, preparing charts, settings,
+  what you see, optional features, limits and troubleshooting.
+- [For developers](#for-developers): architecture, repository layout, building and testing,
+  the REST API and Signal K data model, contributing and releasing.
+- [Documentation map](#documentation-map) and [licence](#license).
 
-- `navigation.underKeel.state`: `normal`, `alert`, `warn`, `alarm`, `unknown` or `off`;
-- `navigation.underKeel.clearance` and `.clearanceSigma` (predicted minimum UKC and its σ),
-  `.risk` (highest P(UKC < 0) over the horizon), `.timeToShoal`, `.escapeHeading` (the
-  heading with the longest time to shoal, when not `normal`; null when no heading does better
-  than another), `.envelopeRev` and
-  `.waterLevel` (the level applied above chart datum);
-- `notifications.navigation.underKeel`, with an explanation of every term behind the result;
-- `notifications.navigation.positionIntegrity` (`warn`) when GNSS leaves dead reckoning from
-  heading and speed through water, the fix is not a satellite fix, or HDOP exceeds 4. The
-  position uncertainty then widens every footprint.
+# For users
 
-Stale position, a missing draft or index, no chart coverage or a fallback water level never
-produce `normal`.
+## What it does
 
-Water-level sources, set under **Water level** in the plugin configuration:
+Every second the plugin predicts where the boat will be over the next minutes, from its
+position, course and speed over ground and rate of turn, as a fan of five tracks. Along each
+track it lays the hull footprint, widened by the position uncertainty, and looks up the
+shallowest charted depth under it. From that depth, the chart's survey quality (CATZOC), the
+draft, squat, heel, a wave allowance and the water level it computes the probability that the
+under-keel clearance (UKC) falls below zero, written P(UKC < 0), and sets a state:
 
-- `none`: chart datum, with a σ for the unknown tide;
-- `manual`: a fixed height above chart datum with its σ;
-- `signalk-tide`: `environment.tide.heightNow` for 5 minutes after each reading, then the lower
-  of it and `heightLow` until 6 h past `timeLow` (6 h past the reading without `timeLow`), then
-  a fallback;
+| State     | When                                                                             | Notification                       |
+| --------- | -------------------------------------------------------------------------------- | ---------------------------------- |
+| `alarm`   | P ≥ 20 % within 60 s, or the mean UKC below zero within 30 s                     | `alarm`, visual and sound          |
+| `warn`    | P ≥ 5 % first reached within 120 s, or part of a footprint has no chart coverage | `warn`, visual and sound           |
+| `alert`   | P ≥ 1 % anywhere in the horizon                                                  | `alert`, visual                    |
+| `normal`  | none of the above, with fresh position, course and speed                         | `normal`                           |
+| `unknown` | no draft, no or stale position, stale course or speed, or non-finite input       | `alert`: "UKC monitoring degraded" |
+| `off`     | no chart index, or the plugin is stopped                                         | `alert`, or `normal` when stopped  |
+
+The thresholds and time windows are settings. A state rises after 2 s at its level and falls
+after 5 s below 80 % of its threshold, so a footprint grazing a shoal edge does not toggle the
+alarm.
+Every notification carries the reason and the terms behind the number: the deciding depth,
+its uncertainty, the water level, squat, heel and waves.
+
+Besides the look-ahead the plugin:
+
+- checks a planned route leg by leg at the water level expected when the boat gets there,
+  suggests waypoints that route around a failing leg, and finds departure times in which every
+  leg passes;
+- serves a UKC overlay as vector tiles, classing chart areas `clear`, `caution`, `danger`,
+  `unverified` or `land` for the current draft and water level;
+- answers point and area queries for cursor readouts;
+- adds its own pages to Freeboard-SK: the look-ahead envelope, route leg colours, the overlay,
+  a status widget and a details panel.
+
+It never reports `normal` on stale or missing input, never marks an unchecked route leg `ok`
+and never steers the boat. The full list is under [Guarantees](#guarantees).
+
+## Requirements
+
+- A Signal K server on Node.js 22 or newer.
+- Unencrypted S-57 ENC cells for your area, and [GDAL](https://gdal.org/) (`ogr2ogr`,
+  `ogrinfo`) to export them, for example from the `gdal-bin` package on Debian and Raspberry
+  Pi OS. Encrypted S-63 cells are not supported.
+- The vessel's draft, set in the plugin or in Signal K `design.draft.maximum`.
+- GNSS position, course and speed over ground. Heading, rate of turn, attitude (roll), speed
+  through water, significant wave height and depth are used when present.
+- Optional: a Freeboard-SK build with the Plotter Extensions API to see the plugin on the chart;
+  internet access for the FMI water level and the Traficom WFS depths.
+
+Reference hardware is a Raspberry Pi 4.
+
+## Install
+
+The plugin is not yet in the npm registry or the Signal K App Store. Build a package from this
+repository and install it into the Signal K server's configuration directory (usually
+`~/.signalk`):
+
+```sh
+git clone https://github.com/KEGustafsson/signalk-underkeel.git
+cd signalk-underkeel
+npm install
+npm pack                       # builds lib/ and writes signalk-underkeel-<version>.tgz
+cd ~/.signalk
+npm install /path/to/signalk-underkeel/signalk-underkeel-0.1.0.tgz
+```
+
+Restart the server, then enable **Under-Keel Awareness** under _Server → Plugin Config_ in the
+Signal K admin UI. The package has no runtime dependencies.
+
+## Prepare the charts
+
+The plugin reads ENC cells that GDAL has exported to GeoJSON, one directory per cell. The
+export script ships with the plugin:
+
+```sh
+SCRIPT=~/.signalk/node_modules/signalk-underkeel/scripts/enc-to-geojson.sh
+$SCRIPT ENC_ROOT/FI5ABCDE/FI5ABCDE.000 ~/charts/cells/FI5ABCDE
+```
+
+To export a whole exchange set:
+
+```sh
+for cell in ENC_ROOT/*/*.000; do
+  "$SCRIPT" "$cell" ~/charts/cells/"$(basename "$cell" .000)"
+done
+```
+
+Update files (`.001`, `.002`, …) next to the `.000` are applied during the export. The script
+refuses a non-empty output directory, so export each new edition into a new or emptied
+directory. A cell without an `M_COVR` coverage layer is rejected.
+
+Set **Exported ENC cells directory** to the parent directory (`~/charts/cells` above). At the
+first start the plugin builds a chart index and saves it under the plugin data directory,
+`~/.signalk/plugin-config-data/signalk-underkeel/index` unless **Chart index directory** says
+otherwise. Later starts load the saved index and rebuild it when a cell directory was added
+or removed, or a cell's edition or update changed; `GET /status` names the cells that caused
+the rebuild. **Rebuild index at start** forces a rebuild on every start. A cell directory may
+be a symbolic link.
+
+## Settings
+
+All settings are in the plugin's page in the admin UI. The defaults suit a small yacht.
+
+| Group               | Main settings and defaults                                                                                                                                                                                                                              |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Chart index         | cells directory, index directory, rebuild at start, index leaf zoom (20)                                                                                                                                                                                |
+| Vessel              | draft, length, beam (fallback: Signal K `design.*`); draft σ (0.05 m); extra margin under the keel (0 m); block coefficient for squat (0.4); double squat in narrow channels; heel effect (none, fin keel or a table); wave allowance factor (0.4 × Hs) |
+| Water level         | source (`none`, `manual`, `signalk-tide`, `fmi`); manual height and σ; FMI refresh (600 s); chart-datum mappings for FMI                                                                                                                                |
+| Look-ahead          | distance (555.6 m = 0.3 NM); minimum horizon (60 s); position buffer (10 m, 2σ); fan spread (COG 5°, rate of turn 0.1°/s); alert, warn and alarm probabilities (1 %, 5 %, 20 %); warn and alarm windows (120 s, 60 s)                                   |
+| Route check         | planning speed (2.5 m/s), cross-track limit (30 m), accepted P(UKC < 0) (1 %)                                                                                                                                                                           |
+| Living chart        | off; depth path and transducer offsets; Signal K notes for suspected shoals; CSB export metadata                                                                                                                                                        |
+| Mooring zones       | Signal K region ids                                                                                                                                                                                                                                     |
+| Grounding detector  | off; optional acceleration path; deceleration threshold (2 m/s²)                                                                                                                                                                                        |
+| Traficom WFS depths | off; assumed survey quality (B); box half-width (10 km)                                                                                                                                                                                                 |
+
+## Water level
+
+The chart gives depths below chart datum; the water level is how far the sea stands above it.
+
+- `none`: chart datum, with σ 0.3 m for the unknown tide.
+- `manual`: a fixed height above chart datum with its σ.
+- `signalk-tide`: `environment.tide.heightNow` for 5 minutes after each reading, then the
+  lower of it and `heightLow` until 6 h past `timeLow`.
 - `fmi`: the Finnish Meteorological Institute sea-level forecast at the vessel, anchored to the
-  nearest tide gauge. FMI reports above theoretical mean water and above N2000; each cell's
-  S-57 vertical datum is mapped to one of them; the defaults cover the mean-water datums, and
-  cells on N2000 need an entry. An unmapped datum widens σ.
+  nearest tide gauge. FMI reports above theoretical mean water and above N2000. S-57 vertical
+  datum codes 3, 19 and 26 map to mean water by default; cells on N2000 need an entry under
+  _Chart datum mappings_. An unmapped datum widens σ to 0.5 m.
 
 A source that stops updating falls back to chart datum, or to its last level when that was
-below chart datum, with a wider σ, and the state carries the reason.
+lower, with a wider σ. While the level is a fallback the state is at least `alert` with the
+reason, and route legs are `unverified`.
 
-**Living chart** (off by default): depth readings that pass a quality gate (good fix, HDOP
-under 2, small roll, a real water level) are reduced to chart datum and kept per ~76 m cell.
-After five readings on two passes 10 minutes apart that put a cell more than 2σ shallower than
-charted, the cell is lowered for every check and a Signal K note marks it. Own soundings never
-make a cell deeper. The IHO CSB export is for you to submit; the plugin uploads nothing.
+## What you see
 
-**Mooring zones**: Signal K region ids listed in the configuration suppress warn and alarm
-to alert inside them, with the zone named. **Grounding detector** (off by default): a sudden
-stop in water as shallow as the keel raises `notifications.grounding`; it is the only part of
-the plugin that writes that path.
+### In Freeboard-SK
 
-**Traficom WFS depths** (off by default, needs internet): depth areas and soundings from
-Traficom's INSPIRE WFS for a box around the vessel, refreshed as the vessel moves, fill gaps
-between ENC cells. The data is **not for navigational purposes** (Traficom hydrographic data
-licence) and has no rocks, wrecks or survey quality: water it alone covers is never `normal` in
-the look-ahead (at most `alert`, with that notice), never `ok` in a route check and never
-`clear` on the overlay; water without a depth area counts as land. `GET /status` shows the box
-and the notice.
+The plugin registers a `plotterExtensions` resource, so a Freeboard-SK build with the Plotter
+Extensions API shows it without any change to Freeboard:
 
-REST, base `/plugins/signalk-underkeel/v1`, open to readonly users:
+| Where in Freeboard              | What the plugin adds                                                             |
+| ------------------------------- | -------------------------------------------------------------------------------- |
+| Layers → Charts → Plugin layers | Under-keel look-ahead (on), Under-keel route check (on), Under-keel risk (off)   |
+| Widget grid                     | Under-keel status: state colour, minimum clearance, time to shoal and the reason |
+| Toolbar button (boat icon)      | details panel: state, water level and source, and a leg table per route          |
 
-- `GET /status`: engine state, chart index and cell editions, look-ahead summary, water-level
-  source health and datum mapping.
-- `GET /envelope?rev=`: the look-ahead as GeoJSON; 304 when the client already has that rev.
-- `POST /route-check`: a route as a GeoJSON LineString or `/resources/routes/<id>`; each leg is
-  checked over a corridor of the cross-track limit plus a planning buffer, where each chart tile
-  counts twice its assessed survey's position σ further out (at most 1 km), at the lowest water
-  level expected while on it, and returned as `ok`, `marginal`, `fail` or `unverified` (no
-  coverage, unassessed survey or a fallback water level; never folded into `ok`), with P(UKC < 0),
-  its explanation and the cell editions used. Body fields: `route` (a GeoJSON LineString) or
-  `routeRef` (`/resources/routes/<id>`); optional `departure` (ISO 8601, default now), `speed`
-  (m/s: one value, one per leg, `{ "default": … }` or `{ "legs": […] }`; default from the
-  plugin configuration), `xteLimit` (m), `probability` (the accepted P(UKC < 0)) and
-  `vessel.draft` (m). The schema is
-  [`schemas/navigation-safety/route-check-request.json`](schemas/navigation-safety/route-check-request.json).
-- `POST /route-repair`: the same body; for each failing or marginal leg, waypoints to insert
-  that route around the shoal and pass the same check, and the whole route with them inserted,
-  re-checked at the times the detours give its later legs. Existing points are never moved.
-- `POST /departure-window`: the same body plus `horizon` and `step` (seconds); the departure
-  intervals in which every leg is `ok` at the forecast water level.
-- All three, and `POST /query`, bound the work one request may cost (route length times
-  corridor width at most 200 km², a query box with its buffer at most 25 km²); the limits are in
-  [plan §4.11](docs/DEVELOPMENT-PLAN.md).
-- `POST /query`: a GeoJSON Point or Polygon, with an optional buffer, draft and speed; returns
-  the class, P(UKC < 0), the deciding hazard and the explanation, for cursor readouts.
-- `GET /acks`, `POST /acks`, `DELETE /acks/:id`: acknowledged passages. Inside one, with the
-  heading within ±20°, the water level at most 5 cm below and the draft no deeper than when
-  acknowledged, warn and alarm are published as alert with the reason "acknowledged passage".
-  A fallback water level honours none, and `POST /acks` answers 409 while the level is a
-  fallback. Adding and deleting need a readwrite user.
-- `GET /livechart/discrepancies` and `GET /livechart/csb.geojson`, with the living chart on
-  (see above).
-- `GET /tiles/ukc/{z}/{x}/{y}.pbf`: Mapbox vector tiles from zoom 11, one `ukc` layer of cells
-  classed `clear`, `caution`, `danger`, `unverified` or `land` for the current draft and water
-  level, sent with `Cache-Control: no-cache` because they change with both. A cell takes the
-  worst class of any cell within twice its assessed survey's position σ, as a route check does.
-  `GET /ukc-style.json` is a MapLibre style for them.
+Routes shown on the chart are checked 1 s after each edit and every minute; the panel shows
+each result's age and marks it "out of date" after 3 minutes. Stale status is shown as Unknown,
+never as the last green state. [How it works §13](docs/HOW-IT-WORKS.md#13-in-freeboard) has
+screenshots.
 
-The plugin also registers a `plotterExtensions` resource. A chart plotter with the Plotter
-Extensions API, such as Freeboard-SK, shows it with no change of its own:
+### In Signal K
 
-- the look-ahead envelope, route-check leg colours and UKC tiles as data overlays;
-- a status widget with the state, minimum clearance and time to shoal;
-- a details panel with the route-check legs, opened from a toolbar button.
+| Path                                         | Content                                                                                         |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `navigation.underKeel.state`                 | `normal`, `alert`, `warn`, `alarm`, `unknown` or `off`                                          |
+| `navigation.underKeel.clearance`             | predicted minimum UKC (m), and `.clearanceSigma` its σ                                          |
+| `navigation.underKeel.risk`                  | highest P(UKC < 0) over the horizon                                                             |
+| `navigation.underKeel.timeToShoal`           | seconds until the deciding footprint                                                            |
+| `navigation.underKeel.escapeHeading`         | the heading with the longest time to shoal, when not `normal` (rad)                             |
+| `navigation.underKeel.waterLevel`            | the level applied above chart datum (m)                                                         |
+| `navigation.underKeel.envelopeRev`           | revision of the look-ahead geometry served at `GET /envelope`                                   |
+| `notifications.navigation.underKeel`         | the state as a notification, with the reason and the explanation                                |
+| `notifications.navigation.positionIntegrity` | `warn` when GNSS and dead reckoning disagree, the fix is not a satellite fix, or HDOP exceeds 4 |
+| `notifications.grounding`                    | only from the optional grounding detector, when the boat has gone aground                       |
 
-The pages are served from `/plotterext/signalk-underkeel/`. The resource also declares the
-experimental `navigationSafety` service.
+Any Signal K app can show these; the status line on the plugin's admin page reads, for
+example, `Monitoring: unknown — position stale`.
+
+## Optional features
+
+- **Acknowledged passages.** A known shallow but passable spot can be acknowledged with
+  `POST /acks`. Inside its polygon, heading within ±20°, water level at most 5 cm lower and draft
+  no deeper than when acknowledged, `warn` and `alarm` are published as `alert` with the reason
+  "acknowledged passage". A fallback water level honours none.
+- **Mooring zones.** Inside a listed Signal K region, `warn` and `alarm` are published as
+  `alert` with the zone named.
+- **Living chart** (off by default). Depth readings that pass a quality gate (good fix, HDOP
+  under 2, small roll, a real water level) are reduced to chart datum per ~76 m cell. After five
+  readings on two passes 10 minutes apart put a cell more than 2σ shallower than charted, the
+  cell is lowered for every check and a Signal K note marks it. Own soundings never make a cell
+  deeper. `GET /livechart/csb.geojson` exports them in the IHO crowd-sourced bathymetry format
+  for you to submit; the plugin uploads nothing.
+- **Grounding detector** (off by default). A sudden stop in water as shallow as the keel raises
+  `notifications.grounding`.
+- **Traficom WFS depths** (off by default, needs internet). Depth areas and soundings from
+  Traficom's INSPIRE WFS for a box around the vessel fill gaps between ENC cells in Finnish
+  waters. The data is licensed **not for navigational purposes** and has no rocks, wrecks or
+  survey quality: water only it covers is at most `alert`, never `ok` in a route check and never
+  `clear` on the overlay.
+
+## Guarantees
+
+- Stale position, a missing draft, a missing index, missing chart coverage or a fallback water
+  level never give `normal`; each gives `unknown`, `off`, `warn` or `alert` with a reason.
+- A route leg without chart coverage or with unassessed survey quality is `unverified`, never
+  `ok`.
+- The plugin never sends autopilot or steering commands.
+- Only the optional grounding detector writes `notifications.grounding`.
+- An acknowledged passage or a mooring zone never turns a warning into `normal`.
+- A suggested route repair never moves an existing route point and never routes through
+  unchecked water.
+
+## Known limits
+
+- The index resolves about 19 m at 60° N, and an index leaf that touches land counts as land,
+  so up to one leaf width of water along a shore reads as land or danger.
+- The look-ahead follows course and rate of turn, not the route: in a winding fairway it sees
+  the shore ahead before each bend until the boat turns.
+- Poor surveys widen hazards a lot: a CATZOC C sounding blocks a disc 1 km across.
+- The UKC overlay does not look across the ±180° meridian, and wave height alone does not
+  refresh it.
+- No land-uplift correction is applied to old charts on mean-water datums.
+
+[How it works §15](docs/HOW-IT-WORKS.md#15-known-limits) has the full list.
+
+## Troubleshooting
+
+`GET /plugins/signalk-underkeel/v1/status` on the server (for example
+`http://localhost:3000/plugins/signalk-underkeel/v1/status`) reports the engine state, the
+chart index and its cell editions, the look-ahead summary, the water-level source and the
+datum mapping.
+
+| Reason shown                                                  | Cause and fix                                                          |
+| ------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `vessel draft not configured`                                 | set **Draft** under Vessel, or `design.draft.maximum` in Signal K      |
+| `position stale`                                              | no recent `navigation.position`; check the GNSS source                 |
+| `course or speed stale: only the current position is checked` | no recent COG or SOG                                                   |
+| `no chart index loaded`                                       | set the cells directory; an index error is shown as the plugin's error |
+| `no chart coverage`                                           | the boat or its footprints are outside every exported cell             |
+
+# For developers
+
+## Architecture
+
+```mermaid
+flowchart LR
+  ENC[ENC cells as GeoJSON] --> IDX[(chart index:<br/>min-depth pyramid<br/>and hazard tree)]
+  NAV[Signal K position,<br/>course, attitude] --> LA
+  WL[water level] --> LA
+  IDX --> LA[look-ahead, 1 Hz]
+  IDX --> RC[route check,<br/>repair, window]
+  IDX --> T[UKC tiles, query]
+  LA --> OUT[Signal K deltas<br/>and notifications]
+  RC --> REST[REST API]
+  T --> REST
+  REST --> FB[Freeboard pages<br/>in public/]
+```
+
+The index is a min-depth pyramid over Web Mercator tiles: each node stores the shallowest
+charted depth under it, the survey's position σ and coverage flags, so "how shallow is it
+anywhere under this polygon" costs a few node visits. Point hazards (rocks, wrecks,
+obstructions) sit in an R-tree. Every question the plugin answers, from the 1 Hz look-ahead
+to a map tile, is that query against a different polygon. The design, risk model and budgets
+are in the [development plan](docs/DEVELOPMENT-PLAN.md).
+
+Source modules are layered, lowest first; a module imports only its own layer or a lower one,
+and ESLint (`no-restricted-imports`) enforces it:
+
+| Layer      | Directory         | Responsibility                                                 |
+| ---------- | ----------------- | -------------------------------------------------------------- |
+| foundation | `src/foundation/` | shared types, Signal K paths, geodesy and geometry             |
+| ingest     | `src/ingest/`     | S-57 GeoJSON reading, coverage mosaic, vertical datums, WFS    |
+| spatial    | `src/spatial/`    | min-depth pyramid, hazard R-tree, index storage, build worker  |
+| model      | `src/model/`      | vessel, water level providers, uncertainty, position integrity |
+| engine     | `src/engine/`     | look-ahead, hysteresis, route check, repair, departure window  |
+| livechart  | `src/livechart/`  | own soundings, posterior, discrepancy notes, CSB export        |
+| api        | `src/api/`        | REST routes, request parsers, vector tiles, manifest           |
+| entry      | `src/*.ts`        | plugin lifecycle, configuration, services and wiring           |
+
+## Repository layout
+
+| Path                         | Content                                                                           |
+| ---------------------------- | --------------------------------------------------------------------------------- |
+| `src/`                       | the plugin, in TypeScript                                                         |
+| `lib/`                       | compiled output of `npm run build`; never edited, not in git                      |
+| `public/`                    | Freeboard pages: background runtime, status widget, details panel, shared helpers |
+| `schemas/navigation-safety/` | JSON Schemas of the provider-neutral navigation-safety contract (Apache-2.0)      |
+| `scripts/`                   | ENC export, synthetic fixture generator, bus vendoring, release and audit checks  |
+| `fixtures/enc/`              | small synthetic cells used by the tests                                           |
+| `__tests__/`                 | Jest tests, property tests, contract tests and benchmarks                         |
+| `docs/`                      | user guide, development plan, release checklist, RFC drafts                       |
+
+## Build and test
+
+Node.js 22 or newer.
+
+```sh
+npm install
+npm run build             # tsc → lib/, and vendors the Plotter Extensions bus client into public/
+npm test                  # Jest, hermetic, no network
+npm run verify            # type-check src and tests, lint, test
+npm run verify:ci-local   # what CI gates: also format check, build, coverage and the release check
+npm run bench             # pyramid build and query cost on a synthetic archipelago
+```
+
+`npm test` must stay hermetic and under 120 s, since the Signal K plugin registry runs it with
+no network. The compiled-worker tests need `lib/`, so run `npm run build` first. A pre-commit
+hook formats and lints staged files.
+
+Tests are behaviour tests under `__tests__/`, mirroring `src/`. Property tests use fast-check;
+the conservative-depth query, monotonic risk, heel and the coverage mosaic have them. Contract
+tests check the REST responses and request parsers against the schemas in
+`schemas/navigation-safety/`. `scripts/make-synthetic-enc.js` regenerates the fixtures; real
+chart data and built indexes stay under `data/`, which git ignores along with `*.000` and
+`*.fgb`.
+
+To run a working copy in a local Signal K server, build it and install the folder, which npm
+links instead of copying:
+
+```sh
+npm run build
+cd ~/.signalk && npm install /path/to/signalk-underkeel
+```
+
+Rebuild and restart the server after each change.
+
+## REST API
+
+Base path `/plugins/signalk-underkeel/v1`. Reads are open to readonly users; adding and
+deleting acknowledgements needs a readwrite user. Errors are `{ "errors": [string, …] }`.
+
+| Route                                         | Purpose                                                                                           |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `GET /status`                                 | engine state, index and cell editions, look-ahead summary, water-level health, datum mapping      |
+| `GET /envelope?rev=`                          | the look-ahead as GeoJSON; 304 when the client already has that revision                          |
+| `POST /route-check`                           | each leg `ok`, `marginal`, `fail` or `unverified`, with P(UKC < 0), explanation and cell editions |
+| `POST /route-repair`                          | waypoints to insert around failing legs, and the whole route re-checked with them                 |
+| `POST /departure-window`                      | departure intervals within `horizon` in which every leg is `ok`                                   |
+| `POST /query`                                 | class, P(UKC < 0), deciding hazard and explanation for a Point or Polygon                         |
+| `GET /acks`, `POST /acks`, `DELETE /acks/:id` | acknowledged passages; `POST` answers 409 while the water level is a fallback                     |
+| `GET /livechart/discrepancies`                | living-chart cells shallower than charted                                                         |
+| `GET /livechart/csb.geojson`                  | own soundings in the IHO CSB format                                                               |
+| `GET /tiles/ukc/{z}/{x}/{y}.pbf`              | Mapbox vector tiles from zoom 11, one `ukc` layer, `Cache-Control: no-cache`                      |
+| `GET /ukc-style.json`                         | a MapLibre style for the tiles                                                                    |
+
+A route-check body carries `route` (a GeoJSON LineString) or `routeRef`
+(`/resources/routes/<id>`), and optionally `departure` (ISO 8601), `speed` (m/s: one value,
+one per leg, `{ "default": … }` or `{ "legs": […] }`), `xteLimit` (m), `probability` and
+`vessel.draft` (m). Each leg is checked over a corridor of the cross-track limit plus a
+planning buffer at the lowest water level expected while on it. The request and response
+schemas are in [`schemas/navigation-safety/`](schemas/navigation-safety/README.md), which also
+lists the size limits that can refuse a valid request (for example route length times corridor
+width at most 200 km²).
+
+## Plotter Extensions
+
+`src/api/manifest.ts` registers the `plotterExtensions` resource: three data overlays (the
+look-ahead envelope, route-check leg colours and the UKC tiles), the status widget, the details
+panel with its toolbar button, a hidden background page and the experimental
+`navigationSafety` service. The pages are plain browser modules in `public/`, served from
+`/plotterext/signalk-underkeel/`:
+
+- `runtime.js`, the background page, keeps the envelope, route results and tiles current;
+- `widget.js` and `panel.js` render the status and the route legs;
+- `ukc-shared.js` holds their pure logic (freshness, badges, labels), the part the Jest tests
+  cover.
+
+The pages talk to the host through the vendored `signalk-plotterext-bus` client, copied into
+`public/vendor/` by the build. The [Plotter Extensions services RFC](docs/rfcs/plotter-extensions-services.md)
+proposes the `services` field the manifest uses.
+
+## Contributing
+
+[AGENTS.md](AGENTS.md) is the contributor guide for people and AI agents: the layering rules,
+coding guidelines, validation per change area and pull-request expectations. Its seven safety
+invariants hold in every change; a change that weakens one needs a recorded decision in the
+development plan first:
+
+1. A spatial query never returns a depth deeper than any source feature under the polygon plus
+   its position-uncertainty buffer.
+2. A deeper draft, a lower water level or a larger position uncertainty never lowers
+   P(UKC < 0).
+3. Stale or missing input never produces `normal`.
+4. Route legs without coverage or with unassessed survey quality are `unverified`, never `ok`.
+5. Own soundings may make a cell shallower, never deeper.
+6. The plugin never sends autopilot or steering commands.
+7. `notifications.grounding` means aground; look-ahead warnings use
+   `notifications.navigation.underKeel`.
+
+Commits and pull-request titles follow `type(scope): subject`. CI runs lint, type checks,
+format, coverage, the build, a shipped-dependency audit and the Signal K plugin CI matrix
+(Linux, macOS, Windows, arm64 and a Signal K server integration run).
+
+## Releasing
+
+Versions and releases are the maintainer's. [docs/release-checklist.md](docs/release-checklist.md)
+lists the commands; `npm publish` runs a release check that refuses an undated changelog
+heading. [CHANGELOG.md](CHANGELOG.md) records user-visible changes.
 
 ## Documentation map
 
 - [How it works](docs/HOW-IT-WORKS.md): the plugin step by step for users, with flowcharts and
   screenshots.
 - [Development plan](docs/DEVELOPMENT-PLAN.md): architecture, risk model, APIs, Freeboard
-  integration and milestones.
+  integration, performance budgets and milestones.
 - [Release checklist](docs/release-checklist.md): commands to run before publishing.
-- [Navigation-safety schemas](schemas/navigation-safety/README.md): JSON Schemas of the
-  provider-neutral contract, checked by `__tests__/contract/`.
+- [Navigation-safety schemas](schemas/navigation-safety/README.md): the provider-neutral
+  contract and its limits.
 - RFC drafts: [`navigation.underKeel.*` paths](docs/rfcs/signalk-navigation-underkeel.md) and
   [Plotter Extensions `services`](docs/rfcs/plotter-extensions-services.md).
-
-## Development
-
-Requires Node.js 22 or newer, the same floor as Signal K server (`signalk-server` 2.33 declares
-`engines.node: ">=22"`).
-
-```sh
-npm install
-npm run verify          # type-check + lint + tests
-npm run verify:ci-local # everything CI gates, including coverage, format and build
-```
-
-`npm run bench` prints pyramid build and query cost on a synthetic archipelago.
-
-## Chart data
-
-Set **Exported ENC cells directory** in the plugin configuration; the index is built from it at
-the first start and saved under the plugin data directory. Each start compares the saved index
-with the `DSID` of every cell directory (name, edition and update) and rebuilds it, with the
-reason in `/status`, when a cell was added, removed or updated. **Rebuild index at start**
-rebuilds it on every start. A cell directory may be a symbolic link. An index saved by an older
-plugin version whose index format differs is also rebuilt. The index reads ENC cells that GDAL
-has exported to GeoJSON, one directory per cell:
-
-```sh
-scripts/enc-to-geojson.sh FI5ABCDE.000 data/cells/FI5ABCDE
-```
-
-The script ships with the plugin, in `node_modules/signalk-underkeel/scripts/` under the
-Signal K server's configuration directory (usually `~/.signalk`).
-
-Only unencrypted S-57 cells are supported. In this repository, keep chart data and built
-indexes under `data/`, which git ignores along with `*.000` and `*.fgb`. `fixtures/enc/` holds
-small synthetic cells written by `scripts/make-synthetic-enc.js`.
-
-Contributor and AI-agent guidance is in [AGENTS.md](AGENTS.md).
+- [AGENTS.md](AGENTS.md): contributor and AI-agent guide.
 
 ## License
 
 Copyright (c) 2026 Karl-Erik Gustafsson. Licensed under the
 [European Union Public Licence v. 1.2](LICENSE) (EUPL-1.2), except the navigation-safety
 contract schemas in [`schemas/navigation-safety/`](schemas/navigation-safety/), which are
-licensed under the [Apache License 2.0](schemas/navigation-safety/LICENSE) so that other plotters
-and providers can adopt the contract.
+licensed under the [Apache License 2.0](schemas/navigation-safety/LICENSE) so that other
+plotters and providers can adopt the contract.
