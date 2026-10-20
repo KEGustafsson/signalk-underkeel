@@ -278,6 +278,11 @@ All notable changes to signalk-underkeel are documented here.
   sent six checks at once, and those the server queue refused showed "busy" as the result.
 - The details panel and the runtime poll `GET /status?summary`, which leaves out the cell
   catalogue and datum mappings.
+- The extension pages fetch nothing while Freeboard is in a hidden tab or minimised window.
+  On return the runtime withdraws the look-ahead envelope until a current one arrives and
+  asks for tile changes and route checks at once; the widget reads Unknown if its data aged
+  out meanwhile, even when its timer fired late. With the panel open they made 139 requests
+  in 65 s hidden.
 - UKC tiles follow the wave allowance and the water level also without a Signal K stream: the
   runtime asks the new `GET /tiles/ukc/changes` which tiles changed class, every 15 s and
   after each 1 cm water-level move. A wave height change left tiles drawn for calmer water,

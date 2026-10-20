@@ -35,17 +35,19 @@
   }
 
   /**
-   * The status widget's texts and colour. A stale view reads Unknown with no
-   * numbers, whatever values it last held.
+   * The status widget's texts and colour at `now`. A stale view, or one past
+   * its `freshUntil`, reads Unknown with no numbers, whatever values it last
+   * held: a timer can fire late in a hidden page, the clock cannot.
    */
-  function widgetView(view, unit) {
-    const s = stateStyle(view.stale ? "unknown" : view.state);
-    const tts = view.stale ? "" : timeToShoal(view.timeToShoal);
+  function widgetView(view, unit, now) {
+    const stale = view.stale || (typeof view.freshUntil === "number" && !(now < view.freshUntil));
+    const s = stateStyle(stale ? "unknown" : view.state);
+    const tts = stale ? "" : timeToShoal(view.timeToShoal);
     return {
       colour: s.colour,
       state: "UKC " + s.label,
-      line: "min " + depth(view.stale ? null : view.clearance, unit) + (tts ? " · shoal " + tts : ""),
-      reason: view.stale ? "no data from the under-keel plugin" : reason(view.message)
+      line: "min " + depth(stale ? null : view.clearance, unit) + (tts ? " · shoal " + tts : ""),
+      reason: stale ? "no data from the under-keel plugin" : reason(view.message)
     };
   }
 

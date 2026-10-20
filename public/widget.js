@@ -14,7 +14,8 @@ function armStale(ms) {
   clearTimeout(staleTimer);
   staleTimer = setTimeout(() => {
     view.stale = true;
-    render();
+    document.addEventListener("visibilitychange", render);
+render();
   }, ms);
 }
 
@@ -22,7 +23,10 @@ function armStale(ms) {
 const shown = {};
 
 function render() {
-  const next = UKC.widgetView(view, unit);
+  if (document.hidden) {
+    return;
+  }
+  const next = UKC.widgetView(view, unit, Date.now());
   if (next.colour !== shown.colour) {
     document.body.style.background = next.colour;
   }
@@ -64,6 +68,7 @@ if (!client.hasCapability("signalk.stream")) {
       }
       view[KEYS[ev.path]] = ev.value;
       view.stale = false;
+      view.freshUntil = Date.now() + left;
       armStale(left);
       render();
     }

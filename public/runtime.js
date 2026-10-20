@@ -38,6 +38,8 @@ let generation = 0;
 let engineState;
 let lastRev;
 let watchdog;
+/** When the last envelopeRev stops being current. */
+let revFreshUntil = 0;
 let fetching = false;
 /** A bump that arrives mid-fetch may be newer than the reply in flight: fetch again after it. */
 let refreshQueued = false;
@@ -51,6 +53,9 @@ function clearEnvelope() {
 }
 
 async function refreshEnvelope() {
+  if (document.hidden) {
+    return;
+  }
   if (fetching) {
     refreshQueued = true;
     return;
@@ -107,6 +112,7 @@ onPath["navigation.underKeel.envelopeRev"] = (rev, left) => {
     onRestart();
   }
   lastRev = rev;
+  revFreshUntil = Date.now() + left;
   clearTimeout(watchdog);
   watchdog = setTimeout(clearEnvelope, left);
   if (isDown(engineState)) {
@@ -142,7 +148,7 @@ function onTileLevel(h, sourceKey) {
 }
 
 async function pollTiles() {
-  if (!has("overlays.data")) {
+  if (!has("overlays.data") || document.hidden) {
     return;
   }
   if (tilePolling) {
@@ -397,7 +403,11 @@ if (has("routes")) {
   });
   await client.subscribe(["ukc.checkRoutes"], () => void checkAll());
   void checkAll();
-  setInterval(() => void checkAll(), RECHECK_MS);
+  setInterval(() => {
+    if (!document.hidden) {
+      void checkAll();
+    }
+  }, RECHECK_MS);
 }
 
 if (has("signalk.stream")) {
@@ -411,3 +421,22 @@ if (has("signalk.stream")) {
   setInterval(() => void refreshEnvelope(), POLL_MS);
   void refreshEnvelope();
 }
+
+/**
+ * A hidden page fetches nothing. Back on screen, the envelope shown is
+ * withdrawn until a current one arrives, and tiles and routes are asked for
+ * at once.
+ */
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    return;
+  }
+  clearEnvelope();
+  if (!has("signalk.stream") || (!isDown(engineState) && Date.now() < revFreshUntil)) {
+    void refreshEnvelope();
+  }
+  void pollTiles();
+  if (has("routes")) {
+    void checkAll();
+  }
+});

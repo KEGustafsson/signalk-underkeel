@@ -132,7 +132,9 @@ async function refreshRoutes() {
 if (client.hasCapability("signalk.stream")) {
   await client.signalk.subscribe(["notifications.navigation.underKeel"], (ev) => {
     text("message", ev.value && typeof ev.value === "object" ? ev.value.message : "");
-    void refreshStatus();
+    if (!document.hidden) {
+      void refreshStatus();
+    }
   });
 }
 await client.subscribe(["state.changed"], (_name, params) => {
@@ -148,13 +150,32 @@ recheck.addEventListener("click", () => {
 });
 await refreshStatus();
 await refreshRoutes();
-/** Notifications arrive only on change and the stream is optional, so the panel also polls. */
-setInterval(() => {
+function checkStatusAge() {
   if (Date.now() - statusAt > STATUS_MAX_AGE_MS) {
     showUnknownStatus("no status from the plugin for over 20 s");
   }
-}, 1000);
-setInterval(() => {
+}
+
+/** Notifications arrive only on change and the stream is optional, so the panel also polls. */
+function poll() {
   void refreshStatus();
   void refreshRoutes();
+}
+
+// A hidden page polls nothing; back on screen an old status reads unknown until the poll answers.
+setInterval(() => {
+  if (!document.hidden) {
+    checkStatusAge();
+  }
+}, 1000);
+setInterval(() => {
+  if (!document.hidden) {
+    poll();
+  }
 }, 10000);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) {
+    checkStatusAge();
+    poll();
+  }
+});

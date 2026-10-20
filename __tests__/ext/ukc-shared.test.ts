@@ -20,21 +20,29 @@ describe("extension display logic", () => {
 
   test("the widget shows the values, and a stale view as unknown with no numbers", () => {
     const view = { state: "warn", clearance: 0.42, timeToShoal: 95, message: "shoal ahead: P 7 %" };
-    expect(UKC.widgetView({ ...view, stale: false }, "m")).toEqual({
+    const now = Date.parse("2026-10-19T12:00:00Z");
+    expect(UKC.widgetView({ ...view, stale: false }, "m", now)).toEqual({
       colour: UKC.stateStyle("warn").colour,
       state: "UKC Warning",
       line: "min 0.4 m · shoal in 95 s",
       reason: "shoal ahead"
     });
-    expect(UKC.widgetView({ ...view, stale: true }, "m")).toEqual({
+    expect(UKC.widgetView({ ...view, stale: true }, "m", now)).toEqual({
       colour: UKC.stateStyle("unknown").colour,
       state: "UKC Unknown",
       line: "min —",
       reason: "no data from the under-keel plugin"
     });
-    expect(UKC.widgetView({ ...view, state: "normal", stale: true }, "m").state).toBe(
+    expect(UKC.widgetView({ ...view, state: "normal", stale: true }, "m", now).state).toBe(
       "UKC Unknown"
     );
+    // Back from a hidden page whose stale timer has not fired: the deadline still holds.
+    const normal = { ...view, state: "normal", stale: false };
+    expect(UKC.widgetView({ ...normal, freshUntil: now + 1 }, "m", now).state).toBe("UKC Normal");
+    expect(UKC.widgetView({ ...normal, freshUntil: now }, "m", now)).toMatchObject({
+      state: "UKC Unknown",
+      reason: "no data from the under-keel plugin"
+    });
   });
 
   test("an unknown state shows as unknown, never as normal", () => {
