@@ -12,7 +12,7 @@ import type { Clock } from "./monitor";
 import type { BuildJob, BuildReply, IndexParts } from "./spatial/build-worker";
 import { adoptIndex } from "./spatial/build-worker";
 import type { ChartIndex } from "./spatial/chart-index";
-import { commitChartIndex, removeStaging } from "./spatial/chart-index";
+import { commitChartIndex, loadChartIndexAsync, removeStaging } from "./spatial/chart-index";
 
 /**
  * Keeps a Traficom WFS box around the vessel (plan §4.2). When the vessel
@@ -119,22 +119,35 @@ export async function runWorker<R extends BuildReply>(
   });
 }
 
+/** Up to this many nodes (about 38 MB of columns) the posted index is kept as posted. */
+const HELD_WHOLE_NODES = 1_000_000;
+
 /**
  * Moves a staged index into `indexDir` and adopts the one the worker posted, unless the run
  * was aborted meanwhile. Reading the saved index back blocked the event loop for 52–61 ms
  * with the Nauvo pair and a 10 km WFS box at leaf zoom 20, 258–292 ms with 32 cells (x86).
  */
-function commit(
+async function commit(
   indexDir: string,
   m: BuildReply & { staging: string },
   signal: AbortSignal
-): ChartIndex {
+): Promise<ChartIndex> {
   if (signal.aborted) {
     fs.rmSync(m.staging, { recursive: true, force: true });
     throw new Error("aborted");
   }
   commitChartIndex(indexDir, m.staging);
-  return adoptIndex(m.index as IndexParts);
+  const posted = adoptIndex(m.index as IndexParts);
+  if (posted.pyramid.count <= HELD_WHOLE_NODES) {
+    return posted;
+  }
+  // Held whole, a coast-wide index would stay resident after every refresh; the committed
+  // file is read block by block instead, its blocks verified off the event loop.
+  const index = await loadChartIndexAsync(indexDir);
+  if (signal.aborted) {
+    throw new Error("aborted");
+  }
+  return index;
 }
 
 /** Builds in a worker thread from the compiled `lib/spatial/build-worker.js`. */
@@ -142,7 +155,7 @@ export const workerBuilder: IndexBuilder = async (job, signal) => {
   const script = path.join(__dirname, "spatial", "build-worker.js");
   const heapMb = workerHeapLimitMb();
   const m = await runWorker(script, { ...job, heapMb }, signal, job.indexDir, heapMb);
-  return commit(job.indexDir, m, signal);
+  return await commit(job.indexDir, m, signal);
 };
 
 /**
@@ -155,7 +168,7 @@ export const workerRefresher: WfsRefresher = async (job, signal) => {
   const data: WfsJob = { ...job, build: { ...job.build, heapMb } };
   const m = await runWorker<WfsReply>(script, data, signal, job.build.indexDir, heapMb);
   const features = m.features ?? { depthAreas: 0, dredgedAreas: 0, soundings: 0 };
-  return { index: commit(job.build.indexDir, m, signal), features };
+  return { index: await commit(job.build.indexDir, m, signal), features };
 };
 
 /** The download on this thread with `fetch`, then `build`: for an injected fetch or builder. */

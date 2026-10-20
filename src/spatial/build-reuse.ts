@@ -87,7 +87,8 @@ export function savedIndex(
   let saved: ReturnType<typeof loadChartIndex>;
   let reaches: CellReach[];
   try {
-    saved = loadChartIndex(indexDir);
+    // Copying roots reads every level, so the blocks are joined rather than read on demand.
+    saved = loadChartIndex(indexDir, { whole: true });
     reaches = readReach(indexDir, saved.catalogue.cells.length);
   } catch {
     return undefined;
