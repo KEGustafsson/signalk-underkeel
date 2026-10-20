@@ -9,12 +9,15 @@ import { fixtureIndex, ROCK } from "./helpers/fixture-index";
 
 /** What a plotter holding the UKC tiles sees: GET /tiles/ukc/changes against the tiles served. */
 
-function feed(level: { h: number; sigma?: number; waves?: number; degraded?: string }) {
+function feed(
+  level: { h: number; sigma?: number; waves?: number; degraded?: string },
+  lookahead: Record<string, unknown> = {}
+) {
   const tileChanges = new UkcTileChanges();
   const deps: QueryServiceDeps = {
     index: fixtureIndex(),
     indexReason: undefined,
-    config: parseConfig({ vessel: { draft: 3.2, length: 12, beam: 4 } }),
+    config: parseConfig({ vessel: { draft: 3.2, length: 12, beam: 4 }, lookahead }),
     vessel: () => ({ draft: 3.2, length: 12, beam: 4 }),
     waterLevel: (): WaterLevel => ({
       h: level.h,
@@ -96,6 +99,13 @@ describe("UKC tile change feed", () => {
       }
     }
     level.sigma = 0.111;
+    expect(f.poll().all).toBe(true);
+  });
+
+  test("with a warn level above 1/2 tiles keep the exact sigma, so a millimetre refreshes them", () => {
+    const level = { h: 0.3, sigma: 0.101 };
+    const f = feed(level, { warnRisk: 0.6 });
+    level.sigma = 0.102;
     expect(f.poll().all).toBe(true);
   });
 });
