@@ -197,7 +197,8 @@ All notable changes to signalk-underkeel are documented here.
   during a save kept the engine `off` with "chart index failed: Unexpected end of JSON input"
   on every later start until **Rebuild index at start** was set. Index files and their
   directories are now fsynced before and after the rename that commits them.
-- The index build worker runs with a heap limit of a quarter of the RAM (256 MB to 2 GB).
+- The index build worker runs with a heap limit of a quarter of the RAM (256 MB to 2 GB);
+  its root threads, on machines with 2 GiB or more, share a second limit of the same size.
   An oversized build fails with "index build stopped at the N MB worker heap limit" in the
   WFS status and the previous index stays in use; before, it could grow until the kernel ended
   the Signal K server on a 1 GB Pi 3 or Cerbo GX. A worker that exits without a result now

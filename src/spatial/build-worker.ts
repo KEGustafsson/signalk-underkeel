@@ -129,7 +129,8 @@ export function regionPool(
   file = __filename,
   heapMb?: number
 ): { run: RegionRunner; close: () => void } {
-  // The threads run at once, so each gets its share of the build's limit.
+  // The threads run at once and share one limit beside the build worker's own: the worker
+  // holds every region's columns and the joined body, so it keeps its whole limit.
   const resourceLimits =
     heapMb === undefined
       ? undefined
