@@ -165,6 +165,18 @@ describe("extension display logic", () => {
     expect(UKC.legRow(legs[1], "m")).toEqual(["2", "marginal", "0.9 m", "1.2 %"]);
   });
 
+  test("a route check asked for while one runs waits and runs once after it", () => {
+    const gate = UKC.oneAtATime();
+    expect(gate.start("r1")).toBe(true);
+    expect(gate.start("r1")).toBe(false);
+    expect(gate.start("r1")).toBe(false);
+    expect(gate.start("r2")).toBe(true);
+    expect(gate.end("r1")).toBe(true);
+    expect(gate.start("r1")).toBe(true);
+    expect(gate.end("r1")).toBe(false);
+    expect(gate.end("r2")).toBe(false);
+  });
+
   test("an envelopeRev that does not step by one means a restart or missed deltas", () => {
     expect(UKC.revJumped(undefined, 7)).toBe(false);
     expect(UKC.revJumped(7, 7)).toBe(false);

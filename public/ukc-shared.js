@@ -235,6 +235,29 @@
     return [String(leg.index + 1), leg.status, depth(leg.minUkc, unit), (leg.risk * 100).toFixed(1) + " %"];
   }
 
+  /**
+   * At most one run per key. A start while one runs is refused and
+   * remembered, and `end` says whether to run once more for it.
+   */
+  function oneAtATime() {
+    const running = new Set();
+    const again = new Set();
+    return {
+      start: function (key) {
+        if (running.has(key)) {
+          again.add(key);
+          return false;
+        }
+        running.add(key);
+        return true;
+      },
+      end: function (key) {
+        running.delete(key);
+        return again.delete(key);
+      }
+    };
+  }
+
   const api = {
     API: API,
     stateStyle: stateStyle,
@@ -247,6 +270,7 @@
     routeEntries: routeEntries,
     compactResult: compactResult,
     legRow: legRow,
+    oneAtATime: oneAtATime,
     freshFor: freshFor,
     freshness: freshness,
     routeBadge: routeBadge,

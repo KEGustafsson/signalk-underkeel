@@ -212,7 +212,14 @@ function publishSoon() {
   publishTimer = setTimeout(() => void publish(), PUBLISH_DELAY_MS);
 }
 
+/** A stalled reply would hold one of the browser's few connections to the server. */
+const ROUTE_CHECK_TIMEOUT_MS = 30000;
+const checking = UKC.oneAtATime();
+
 async function check(routeId) {
+  if (!checking.start(routeId)) {
+    return;
+  }
   const n = nextSeq(routeId);
   const current = () => seq.get(routeId) === n;
   try {
@@ -228,7 +235,8 @@ async function check(routeId) {
         method: "POST",
         credentials: "same-origin",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ route: line })
+        body: JSON.stringify({ route: line }),
+        signal: AbortSignal.timeout(ROUTE_CHECK_TIMEOUT_MS)
       });
       const body = await res.json();
       if (!current()) {
@@ -252,13 +260,23 @@ async function check(routeId) {
       return;
     }
     const prev = results.get(routeId);
+    const why =
+      err && err.name === "TimeoutError"
+        ? `no answer within ${ROUTE_CHECK_TIMEOUT_MS / 1000} s`
+        : err && err.message
+          ? err.message
+          : String(err);
     results.set(routeId, {
       name: prev && prev.name,
       rev: prev && prev.rev,
       legs: [],
-      error: `route check failed: ${err && err.message ? err.message : String(err)}`
+      error: `route check failed: ${why}`
     });
     console.warn("under-keel route check", err);
+  } finally {
+    if (checking.end(routeId)) {
+      schedule(routeId);
+    }
   }
 }
 
@@ -317,7 +335,7 @@ if (has("routes")) {
     }
   });
   await client.subscribe(["ukc.checkRoutes"], () => void checkAll());
-  await checkAll();
+  void checkAll();
   setInterval(() => void checkAll(), RECHECK_MS);
 }
 

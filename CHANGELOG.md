@@ -263,3 +263,6 @@ All notable changes to signalk-underkeel are documented here.
   only index, status, minimum UKC and P), once per re-check of all routes instead of once per
   route. Freeboard keeps that state in localStorage: one 30-leg route wrote 17.6 kB a minute
   and three routes 158 kB; one route now writes 1.9 kB.
+- A route check from the background runtime times out after 30 s and reads "not checked",
+  and a route is checked once at a time: a re-check asked for meanwhile runs after it. A hung
+  reply had no timeout, and each re-check opened another connection beside it.
