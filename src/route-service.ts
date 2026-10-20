@@ -34,15 +34,34 @@ export interface RouteServiceDeps {
   queue: RequestQueue;
 }
 
+/** The route lookup, given up when the request's signal aborts first. */
+function lookup(deps: RouteServiceDeps, id: string, signal: AbortSignal): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+    deps
+      .getRoute(id)
+      .then(resolve, reject)
+      .finally(() => signal.removeEventListener("abort", abort));
+  });
+}
+
 async function coordinatesOf(
   req: { coordinates?: LonLat[]; routeId?: string },
-  deps: RouteServiceDeps
+  deps: RouteServiceDeps,
+  signal: AbortSignal
 ): Promise<LonLat[] | ApiReply> {
   if (req.coordinates) {
     return req.coordinates;
   }
   const id = req.routeId as string;
-  const resource = await deps.getRoute(id).catch(() => undefined);
+  if (signal.aborted) {
+    return aborted(signal);
+  }
+  const resource = await lookup(deps, id, signal).catch(() => undefined);
+  if (signal.aborted) {
+    return aborted(signal);
+  }
   const coords = routeResourceCoordinates(resource);
   return coords ?? { status: 404, body: { errors: [`route ${id} not found or has no geometry`] } };
 }
@@ -58,7 +77,8 @@ function vesselFor(draft: number | undefined, deps: RouteServiceDeps): VesselMod
 /** Validates the request and resolves route, vessel and speeds into a route-check input. */
 async function prepare(
   body: unknown,
-  deps: RouteServiceDeps
+  deps: RouteServiceDeps,
+  signal: AbortSignal
 ): Promise<{ index: ChartIndex; input: RouteCheckInput } | ApiReply> {
   const parsed = parseRouteRequest(body, deps.now());
   if (!parsed.ok) {
@@ -68,7 +88,7 @@ async function prepare(
     return { status: 503, body: { errors: [deps.indexReason ?? "no chart index loaded"] } };
   }
   const req = parsed.value;
-  const coords = await coordinatesOf(req, deps);
+  const coords = await coordinatesOf(req, deps, signal);
   if (!Array.isArray(coords)) {
     return coords;
   }
@@ -217,7 +237,7 @@ export async function routeCheck(
   client: AbortSignal = NEVER
 ): Promise<ApiReply> {
   const scoped = AbortSignal.any([client, deps.queue.stopSignal]);
-  const p = await prepare(body, deps);
+  const p = await prepare(body, deps, scoped);
   if (isReply(p)) {
     return p;
   }
@@ -234,7 +254,7 @@ export async function routeRepair(
   client: AbortSignal = NEVER
 ): Promise<ApiReply> {
   const scoped = AbortSignal.any([client, deps.queue.stopSignal]);
-  const p = await prepare(body, deps);
+  const p = await prepare(body, deps, scoped);
   if (isReply(p)) {
     return p;
   }
@@ -261,7 +281,7 @@ export async function departureWindowReply(
   if (!opts.ok) {
     return { status: 400, body: { errors: opts.errors } };
   }
-  const p = await prepare(body, deps);
+  const p = await prepare(body, deps, scoped);
   if (isReply(p)) {
     return p;
   }
