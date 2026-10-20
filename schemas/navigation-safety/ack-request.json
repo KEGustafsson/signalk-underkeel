@@ -11,17 +11,19 @@
     "sector": {
       "description": "half-width of the heading sector, degrees",
       "type": "number",
-      "exclusiveMinimum": 0,
-      "maximum": 180
+      "minimum": 1,
+      "maximum": 90
     },
     "ttl": {
-      "description": "seconds until the acknowledgement lapses",
+      "description": "seconds until the acknowledgement lapses, at most 30 days",
       "type": "number",
-      "exclusiveMinimum": 0
+      "minimum": 1,
+      "maximum": 2592000
     },
     "notificationId": {
       "description": "the notification being acknowledged, kept for the record",
-      "type": "string"
+      "type": "string",
+      "maxLength": 200
     }
   }
 }

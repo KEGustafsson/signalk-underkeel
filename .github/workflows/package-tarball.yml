@@ -1,6 +1,7 @@
-name: Publish to GitHub Packages
+name: Package tarball
 
-# Test, build, pack and upload the plugin tarball. Triggered manually via
+# Test, build, pack and upload the plugin tarball as a workflow artifact kept
+# for one day; nothing is published. Triggered manually via
 # workflow_dispatch. The package name is rewritten to the repository owner's
 # scope (for example @kegustafsson/signalk-underkeel) so snapshots never clash
 # with the canonical unscoped package name used for public releases.
@@ -9,11 +10,10 @@ on:
   workflow_dispatch:
 
 jobs:
-  publish:
+  package:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
 
     steps:
       - name: Checkout
@@ -21,10 +21,9 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Derive scope (repository owner, lowercased)
+      - name: Derive scoped package name (repository owner, lowercased)
         id: scope
         run: |
-          echo "scope=@${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
           echo "package=@${GITHUB_REPOSITORY_OWNER,,}/signalk-underkeel" >> "$GITHUB_OUTPUT"
 
       - name: Check for package-lock.json
@@ -41,8 +40,6 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
-          registry-url: https://npm.pkg.github.com
-          scope: ${{ steps.scope.outputs.scope }}
           cache: ${{ steps.lockfile.outputs.exists == 'true' && 'npm' || '' }}
 
       - name: Install dependencies
@@ -69,7 +66,7 @@ jobs:
       - name: Release documentation and package truth
         run: npm run check:release-docs
 
-      - name: Rewrite package name for GitHub Packages
+      - name: Rewrite package name to the owner's scope
         run: npm pkg set name='${{ steps.scope.outputs.package }}'
 
       - name: Pack tarball

@@ -70,7 +70,12 @@ REST, base `/plugins/signalk-underkeel/v1`, open to readonly users:
   counts twice its assessed survey's position σ further out (at most 1 km), at the lowest water
   level expected while on it, and returned as `ok`, `marginal`, `fail` or `unverified` (no
   coverage, unassessed survey or a fallback water level; never folded into `ok`), with P(UKC < 0),
-  its explanation and the cell editions used.
+  its explanation and the cell editions used. Body fields: `route` (a GeoJSON LineString) or
+  `routeRef` (`/resources/routes/<id>`); optional `departure` (ISO 8601, default now), `speed`
+  (m/s: one value, one per leg, `{ "default": … }` or `{ "legs": […] }`; default from the
+  plugin configuration), `xteLimit` (m), `probability` (the accepted P(UKC < 0)) and
+  `vessel.draft` (m). The schema is
+  [`schemas/navigation-safety/route-check-request.json`](schemas/navigation-safety/route-check-request.json).
 - `POST /route-repair`: the same body; for each failing or marginal leg, waypoints to insert
   that route around the shoal and pass the same check, and the whole route with them inserted,
   re-checked at the times the detours give its later legs. Existing points are never moved.
@@ -82,10 +87,10 @@ REST, base `/plugins/signalk-underkeel/v1`, open to readonly users:
 - `POST /query`: a GeoJSON Point or Polygon, with an optional buffer, draft and speed; returns
   the class, P(UKC < 0), the deciding hazard and the explanation, for cursor readouts.
 - `GET /acks`, `POST /acks`, `DELETE /acks/:id`: acknowledged passages. Inside one, with the
-  heading within ±20° and no less water or more draft than when acknowledged, warn and alarm
-  are published as alert with the reason "acknowledged passage". A fallback water level
-  honours none, and `POST /acks` answers 409 while the level is a fallback. Adding and
-  deleting need a readwrite user.
+  heading within ±20°, the water level at most 5 cm below and the draft no deeper than when
+  acknowledged, warn and alarm are published as alert with the reason "acknowledged passage".
+  A fallback water level honours none, and `POST /acks` answers 409 while the level is a
+  fallback. Adding and deleting need a readwrite user.
 - `GET /livechart/discrepancies` and `GET /livechart/csb.geojson`, with the living chart on
   (see above).
 - `GET /tiles/ukc/{z}/{x}/{y}.pbf`: Mapbox vector tiles from zoom 11, one `ukc` layer of cells

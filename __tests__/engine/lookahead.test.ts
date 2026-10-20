@@ -415,10 +415,10 @@ describe("chart position uncertainty", () => {
     ),
     hazards: new HazardIndex([])
   });
-  test.each([
+  test.each<[3 | 4, string]>([
     [3, "B"],
     [4, "C"]
-  ] as const)("a drying area 60 m off under CATZOC %s (%s) alarms", (catzoc) => {
+  ])("a drying area 60 m off under CATZOC %s (%s) alarms", (catzoc) => {
     const r = evaluateLookahead(nav(22.03, 60.015, EAST, 0), ctx(SHALLOW_KEEL), chart(catzoc), NOW);
     expect(r.state).toBe("alarm");
     expect(r.footprints[0]?.charted).toBe(-1);

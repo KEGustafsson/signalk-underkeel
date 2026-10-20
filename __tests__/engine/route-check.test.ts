@@ -6,6 +6,7 @@ import { fromMercator, haversine, project, toMercator } from "../../src/foundati
 import type { LonLat } from "../../src/foundation/geo";
 import { pointInPolygon, pointSegmentDistance } from "../../src/foundation/geometry";
 import type { ChartIndex } from "../../src/spatial/chart-index";
+import type { Catzoc } from "../../src/ingest/features";
 import { HazardIndex } from "../../src/spatial/hazards";
 import { FLAGS } from "../../src/spatial/node-store";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
@@ -13,6 +14,7 @@ import { BANK, fixtureIndex, ROCK } from "../helpers/fixture-index";
 import { area, basin, coverage, point, quality } from "../helpers/synthetic";
 import { CHART_DATUM } from "../helpers/engine";
 import { DEFAULT_DYNAMICS } from "../../src/model/vessel";
+import { uniform } from "../helpers/arbitraries";
 
 const NOW = Date.parse("2026-10-18T07:00:00Z");
 
@@ -235,12 +237,12 @@ describe("corridor geometry", () => {
   test("the corridor contains every point within r of the leg", () => {
     fc.assert(
       fc.property(
-        fc.double({ min: 0, max: 2 * Math.PI, noNaN: true }),
-        fc.double({ min: 10, max: 1000, noNaN: true }),
-        fc.double({ min: 1, max: 200, noNaN: true }),
-        fc.double({ min: 0, max: 1, noNaN: true }),
-        fc.double({ min: 0, max: 2 * Math.PI, noNaN: true }),
-        fc.double({ min: 0, max: 0.999, noNaN: true }),
+        uniform(0, 2 * Math.PI),
+        uniform(10, 1000),
+        uniform(1, 200),
+        uniform(0, 1),
+        uniform(0, 2 * Math.PI),
+        uniform(0, 0.999),
         (brg, length, r, along, dir, frac) => {
           const a: LonLat = [22.0, 60.0];
           const b = project(a, brg, length);
@@ -374,10 +376,10 @@ describe("chart position uncertainty", () => {
   // 60 m north of the leg: outside its ±30 m corridor, inside it once CATZOC B (±50 m) or
   // C (±500 m) position accuracy is added.
   const north = 60 / 111195;
-  test.each([
+  test.each<[Catzoc, string]>([
     [3, "B"],
     [4, "C"]
-  ] as const)("a drying area 60 m off the leg under CATZOC %s (%s) fails it", (catzoc) => {
+  ])("a drying area 60 m off the leg under CATZOC %s (%s) fails it", (catzoc) => {
     const box = [22.0, 60.0, 22.06, 60.03] as const;
     const index: ChartIndex = {
       catalogue: { version: 1, cells: [] },

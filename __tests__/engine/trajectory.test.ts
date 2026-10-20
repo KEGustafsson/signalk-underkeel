@@ -4,6 +4,7 @@ import { escapeTrack, fanMembers, trackAt } from "../../src/engine/trajectory";
 import type { LonLat } from "../../src/foundation/geo";
 import { haversine, project } from "../../src/foundation/geo";
 import { DEFAULT_GNSS_SIGMA, gnssSigma, UERE } from "../../src/model/position";
+import { uniform } from "../helpers/arbitraries";
 
 const ORIGIN: LonLat = [22.0, 60.0];
 const DEG = Math.PI / 180;
@@ -34,20 +35,15 @@ describe("CTRV tracks", () => {
 
   test("the distance run along an arc is sog · t whatever the turn", () => {
     fc.assert(
-      fc.property(
-        fc.double({ min: -3, max: 3, noNaN: true }),
-        fc.double({ min: 0.5, max: 10, noNaN: true }),
-        (rotDeg, sog) => {
-          const rot = rotDeg * DEG;
-          const t = 30;
-          const chord = haversine(ORIGIN, trackAt(ORIGIN, { course: 0.3, sog, rot }, t).position);
-          const angle = Math.abs(rot * t);
-          const expected =
-            angle < 1e-9 ? sog * t : ((2 * sog) / Math.abs(rot)) * Math.sin(angle / 2);
-          // project works on WGS84, haversine on the mean sphere: up to 0.4 % apart at 60° N.
-          expect(Math.abs(chord - expected)).toBeLessThan(0.005 * sog * t + 0.01);
-        }
-      )
+      fc.property(uniform(-3, 3), uniform(0.5, 10), (rotDeg, sog) => {
+        const rot = rotDeg * DEG;
+        const t = 30;
+        const chord = haversine(ORIGIN, trackAt(ORIGIN, { course: 0.3, sog, rot }, t).position);
+        const angle = Math.abs(rot * t);
+        const expected = angle < 1e-9 ? sog * t : ((2 * sog) / Math.abs(rot)) * Math.sin(angle / 2);
+        // project works on WGS84, haversine on the mean sphere: up to 0.4 % apart at 60° N.
+        expect(Math.abs(chord - expected)).toBeLessThan(0.005 * sog * t + 0.01);
+      })
     );
   });
 

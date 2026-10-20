@@ -2,13 +2,15 @@
 "use strict";
 
 // Release truth gate: the package that gets packed must match what the docs
-// and workflows say about it. Run by CI and by the publish workflow before
-// `npm pack`.
+// and workflows say about it. Run after `npm run build` by CI and by the
+// package workflow before `npm pack`. With --publish (prepublishOnly) the
+// changelog section must also carry a release date, not "Unreleased".
 
 const fs = require("fs");
 const path = require("path");
 
 const root = path.resolve(__dirname, "..");
+const publishing = process.argv.includes("--publish");
 const failures = [];
 
 function fail(message) {
@@ -36,15 +38,27 @@ if (typeof version !== "string" || !version) {
   fail("package.json is missing a valid version field");
 } else {
   const changelog = readText("CHANGELOG.md");
-  if (!changelog.includes(`## [${version}]`)) {
+  const heading = changelog.split("\n").find((line) => line.startsWith(`## [${version}]`));
+  if (heading === undefined) {
     fail(`CHANGELOG.md must contain a "## [${version}]" section for the package version.`);
+  } else if (publishing && !/^## \[[^\]]+\] - \d{4}-\d{2}-\d{2}$/.test(heading.trim())) {
+    fail(
+      `CHANGELOG.md "${heading.trim()}" must be dated "## [${version}] - YYYY-MM-DD" to publish.`
+    );
   }
 }
 
 const packageFiles = Array.isArray(packageJson.files) ? packageJson.files : [];
-for (const requiredFile of ["lib/", "CHANGELOG.md"]) {
+for (const requiredFile of ["lib/", "public/", "CHANGELOG.md"]) {
   if (!packageFiles.includes(requiredFile)) {
     fail(`package.json files must include "${requiredFile}".`);
+  }
+}
+
+// The plugin entry and the vendored Plotter Extensions client are build output.
+for (const builtPath of ["lib/index.js", "public/vendor/plotterext-bus/extension.js"]) {
+  if (!fs.existsSync(path.join(root, builtPath))) {
+    fail(`${builtPath} is missing: run npm run build first.`);
   }
 }
 
@@ -57,25 +71,25 @@ if (!keywords.includes("signalk-node-server-plugin")) {
   fail('package.json keywords must include "signalk-node-server-plugin".');
 }
 
-const publishWorkflow = readText(".github/workflows/publish-packages.yml");
-const buildIndex = publishWorkflow.indexOf("npm run build");
-const packIndex = publishWorkflow.indexOf("npm pack");
-const releaseCheckIndex = publishWorkflow.indexOf("npm run check:release-docs");
+const packageWorkflow = readText(".github/workflows/package-tarball.yml");
+const buildIndex = packageWorkflow.indexOf("npm run build");
+const packIndex = packageWorkflow.indexOf("npm pack");
+const releaseCheckIndex = packageWorkflow.indexOf("npm run check:release-docs");
 
 if (buildIndex === -1) {
-  fail(".github/workflows/publish-packages.yml must run npm run build.");
+  fail(".github/workflows/package-tarball.yml must run npm run build.");
 }
 if (packIndex === -1) {
-  fail(".github/workflows/publish-packages.yml must run npm pack.");
+  fail(".github/workflows/package-tarball.yml must run npm pack.");
 }
 if (buildIndex !== -1 && packIndex !== -1 && buildIndex > packIndex) {
-  fail(".github/workflows/publish-packages.yml must build before packing.");
+  fail(".github/workflows/package-tarball.yml must build before packing.");
 }
 if (releaseCheckIndex === -1) {
-  fail(".github/workflows/publish-packages.yml must run npm run check:release-docs.");
+  fail(".github/workflows/package-tarball.yml must run npm run check:release-docs.");
 }
 if (releaseCheckIndex !== -1 && packIndex !== -1 && releaseCheckIndex > packIndex) {
-  fail(".github/workflows/publish-packages.yml must check release docs before packing.");
+  fail(".github/workflows/package-tarball.yml must check release docs before packing.");
 }
 
 if (failures.length > 0) {

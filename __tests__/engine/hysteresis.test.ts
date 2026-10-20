@@ -5,7 +5,7 @@ import type { UnderKeelState } from "../../src/foundation/state";
 
 const TH = DEFAULT_LOOKAHEAD;
 
-function raw(state: UnderKeelState, risk: number | null, reason = state): LookaheadResult {
+function raw(state: UnderKeelState, risk: number | null, reason: string = state): LookaheadResult {
   return {
     state,
     reason,

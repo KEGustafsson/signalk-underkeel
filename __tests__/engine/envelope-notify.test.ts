@@ -132,7 +132,8 @@ describe("notification", () => {
     risk: 0,
     timeToShoal: null,
     horizon: 60,
-    footprints: []
+    footprints: [],
+    escapeHeading: null
   };
 
   test("normal clears with no method", () => {

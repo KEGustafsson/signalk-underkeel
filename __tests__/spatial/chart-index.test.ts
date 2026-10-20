@@ -1,3 +1,4 @@
+import { spawnSync } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -6,6 +7,7 @@ import {
   buildChartIndex,
   loadChartIndex,
   recoverChartIndex,
+  removeStaging,
   saveChartIndex
 } from "../../src/spatial/chart-index";
 import { HazardIndex } from "../../src/spatial/hazards";
@@ -155,6 +157,28 @@ describe("index persistence", () => {
       expect(fs.readdirSync(dir)).toEqual(["index"]);
       expect(recoverChartIndex(target)).toBe(false);
       expect(recoverChartIndex(path.join(dir, "missing-parent", "index"))).toBe(false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("staging a dead process left is removed; a live one's, this one's and other names stay", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-index-"));
+    try {
+      const target = path.join(dir, "index");
+      const exited = spawnSync(process.execPath, ["-e", ""]).pid;
+      const names = [
+        `index.tmp-${exited}-0-aa`,
+        `index.tmp-${process.ppid}-0-ee`,
+        `index.tmp-${process.pid}-3-bb`,
+        `index.tmp-${process.pid}-4-cc`,
+        "index.tmp-notes",
+        "other.tmp-1-0-dd"
+      ];
+      names.forEach((n) => fs.mkdirSync(path.join(dir, n)));
+      expect(recoverChartIndex(target)).toBe(false);
+      removeStaging(target, (pid, thread) => pid === process.pid && thread === 3);
+      expect(fs.readdirSync(dir).sort()).toEqual([names[1], ...names.slice(3)].sort());
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

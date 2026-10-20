@@ -4,9 +4,9 @@
   "use strict";
 
   /** Plugin REST base; the pages are same-origin with the Signal K server. */
-  var API = "/plugins/signalk-underkeel/v1";
+  const API = "/plugins/signalk-underkeel/v1";
 
-  var STATES = {
+  const STATES = {
     normal: { label: "Normal", colour: "#1a9850" },
     alert: { label: "Alert", colour: "#d4a000" },
     warn: { label: "Warning", colour: "#e66101" },
@@ -39,13 +39,13 @@
     if (typeof message !== "string") {
       return "";
     }
-    var i = message.indexOf(": ");
+    const i = message.indexOf(": ");
     return i < 0 ? message : message.slice(0, i);
   }
 
   /** A host route's points as a GeoJSON LineString, or null with fewer than two. */
   function routeLine(points) {
-    var coords = (points || [])
+    const coords = (points || [])
       .map(function (p) {
         return p && p.position ? [p.position[0], p.position[1]] : null;
       })
@@ -79,20 +79,137 @@
    * legs: nothing on it has been checked.
    */
   function worstStatus(legs) {
-    var rank = { ok: 0, marginal: 1, unverified: 2, fail: 3 };
-    var known = function (s) {
+    const rank = { ok: 0, marginal: 1, unverified: 2, fail: 3 };
+    const known = function (s) {
       return Object.prototype.hasOwnProperty.call(rank, s) ? s : "unverified";
     };
     if (!legs || legs.length === 0) {
       return "unverified";
     }
     return legs.reduce(function (worst, leg) {
-      var s = known(leg.status);
+      const s = known(leg.status);
       return rank[s] > rank[worst] ? s : worst;
     }, "ok");
   }
 
-  var api = {
+  /**
+   * How long a Signal K value stays current, in ms from `now`; 0 when it is
+   * already stale or has no timestamp. Signal K replays its cached values on
+   * every subscribe, so a value counts from its own timestamp. One newer than
+   * `previous`, the last timestamp seen on the path, shows the stream is live
+   * even when the server's clock and this browser's disagree.
+   */
+  function freshFor(timestamp, previous, now, staleMs) {
+    const t = Date.parse(timestamp);
+    if (!isFinite(t)) {
+      return 0;
+    }
+    if (typeof previous === "number" && t > previous) {
+      return staleMs;
+    }
+    return Math.max(0, Math.min(staleMs, staleMs - (now - t)));
+  }
+
+  /** freshFor with the latest timestamp seen per path kept for the caller. */
+  function freshness(staleMs) {
+    const seen = {};
+    return function (path, timestamp, now) {
+      const left = freshFor(timestamp, seen[path], now, staleMs);
+      const t = Date.parse(timestamp);
+      if (isFinite(t) && !(seen[path] >= t)) {
+        seen[path] = t;
+      }
+      return left;
+    };
+  }
+
+  /**
+   * The badge of a route result. An ok older than `maxAgeMs` is out of date:
+   * the runtime re-checks every visible route each minute, so an old result
+   * means it stopped and the water level or draft may have changed since.
+   * The age counts from `receivedAt`, stamped by the runtime in this browser,
+   * because the server's `checkedAt` comes from a clock that may differ.
+   */
+  function routeBadge(r, now, maxAgeMs) {
+    if (r.pending) {
+      return { text: "not checked yet", cls: "unverified" };
+    }
+    if (r.error) {
+      return { text: "not checked", cls: "unverified" };
+    }
+    const at = Date.parse(r.receivedAt);
+    if (!isFinite(at) || now - at > maxAgeMs) {
+      return { text: "out of date", cls: "unverified" };
+    }
+    const worst = worstStatus(r.legs);
+    return { text: worst, cls: worst };
+  }
+
+  function checkedAgo(iso, now) {
+    const at = Date.parse(iso);
+    if (!isFinite(at)) {
+      return "";
+    }
+    const s = (now - at) / 1000;
+    if (s < 60) {
+      return "checked just now";
+    }
+    return s < 3600 ? "checked " + Math.round(s / 60) + " min ago" : "checked " + Math.round(s / 3600) + " h ago";
+  }
+
+  /** envelopeRev steps by one per change: any other step is a plugin restart or missed deltas. */
+  function revJumped(prev, next) {
+    return typeof prev === "number" && next !== prev && next !== prev + 1;
+  }
+
+  /** Whether a water level (metres, or null for none) differs from `prev` by more than `step`. */
+  function levelMoved(prev, next, step) {
+    if (typeof prev === "number" && typeof next === "number") {
+      return Math.abs(next - prev) > step;
+    }
+    return prev !== next;
+  }
+
+  /** The applied water level's source and degraded reason from `GET /status`; "" without one. */
+  function waterSourceKey(status) {
+    const applied = status && status.waterLevel && status.waterLevel.applied;
+    return applied ? applied.source + "|" + (applied.degraded || "") : "";
+  }
+
+  /** The panel's status notes from `GET /status`: the water level applied, its degradation, the WFS notice. */
+  function statusLines(status, unit) {
+    const parts = [];
+    const wl = status && status.waterLevel && status.waterLevel.applied;
+    if (wl) {
+      parts.push("Water level " + depth(wl.h, unit) + " (" + wl.source + ")");
+      if (wl.degraded) {
+        parts.push("Water level degraded: " + wl.degraded);
+      }
+    }
+    if (status && status.wfs && status.wfs.notice) {
+      parts.push(status.wfs.notice);
+    }
+    return parts;
+  }
+
+  /**
+   * The route results the panel lists: one per visible route, a route the
+   * runtime has not answered for yet marked pending. Without the visible set
+   * (a host that lists no routes) every result is listed.
+   */
+  function routeEntries(routeCheck, visible) {
+    const results = routeCheck || {};
+    if (!visible) {
+      return Object.entries(results);
+    }
+    return visible.map(function (r) {
+      return Object.prototype.hasOwnProperty.call(results, r.routeId)
+        ? [r.routeId, results[r.routeId]]
+        : [r.routeId, { name: r.name, legs: [], pending: true }];
+    });
+  }
+
+  const api = {
     API: API,
     stateStyle: stateStyle,
     depth: depth,
@@ -100,7 +217,16 @@
     reason: reason,
     routeLine: routeLine,
     legFeatures: legFeatures,
-    worstStatus: worstStatus
+    worstStatus: worstStatus,
+    routeEntries: routeEntries,
+    freshFor: freshFor,
+    freshness: freshness,
+    routeBadge: routeBadge,
+    checkedAgo: checkedAgo,
+    revJumped: revJumped,
+    levelMoved: levelMoved,
+    waterSourceKey: waterSourceKey,
+    statusLines: statusLines
   };
   if (typeof module !== "undefined" && module.exports) {
     module.exports = api;

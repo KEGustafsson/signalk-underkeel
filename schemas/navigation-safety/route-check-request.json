@@ -21,15 +21,31 @@
     "departure": { "$ref": "defs.json#/$defs/isoTime" },
     "speed": {
       "description": "m/s: one value, a per-leg array, or { default } / { legs }.",
-      "type": ["number", "array", "object"]
+      "anyOf": [
+        { "$ref": "#/$defs/speed" },
+        { "type": "array", "items": { "$ref": "#/$defs/speed" }, "minItems": 1 },
+        {
+          "type": "object",
+          "anyOf": [{ "required": ["default"] }, { "required": ["legs"] }],
+          "properties": {
+            "default": { "$ref": "#/$defs/speed" },
+            "legs": { "type": "array", "items": { "$ref": "#/$defs/speed" }, "minItems": 1 }
+          }
+        }
+      ]
     },
-    "xteLimit": { "type": "number", "minimum": 0 },
-    "probability": { "type": "number", "exclusiveMinimum": 0, "maximum": 0.5 },
+    "xteLimit": { "description": "metres", "type": "number", "minimum": 0, "maximum": 2000 },
+    "probability": { "type": "number", "minimum": 1e-6, "maximum": 0.5 },
     "vessel": {
       "type": "object",
-      "properties": { "draft": { "type": "number", "exclusiveMinimum": 0 } }
+      "properties": {
+        "draft": { "description": "metres", "type": "number", "minimum": 0.01, "maximum": 30 }
+      }
     },
     "horizon": { "description": "departure-window only, seconds", "type": "number", "minimum": 0 },
     "step": { "description": "departure-window only, seconds", "type": "number", "minimum": 300 }
+  },
+  "$defs": {
+    "speed": { "description": "m/s", "type": "number", "minimum": 0.1, "maximum": 30 }
   }
 }

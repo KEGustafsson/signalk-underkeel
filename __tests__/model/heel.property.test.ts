@@ -18,7 +18,7 @@ const NOW = 1_800_000_000_000;
 describe("risk monotonicity in draft with roll (property)", () => {
   // From nearly drying to deep, so P is between 0 and 1 for some draft and roll.
   const indexes = [0.2, 1, 3].map((depth) => ({
-    catalogue: { version: 1, cells: [] },
+    catalogue: { version: 1 as const, cells: [] },
     pyramid: buildPyramid(basin([22.0, 60.0, 22.04, 60.02], depth), { minZoom: 12, leafZoom: 16 }),
     hazards: new HazardIndex([])
   }));

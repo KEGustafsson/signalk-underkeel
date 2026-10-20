@@ -1,6 +1,7 @@
 import fc from "fast-check";
 import { footprintGeom, minDepthOver } from "../../src/spatial/pyramid";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
+import { fraction, uniform } from "../helpers/arbitraries";
 import type { Box } from "../helpers/synthetic";
 import { area, basin, boxRing, coverage, point, quality } from "../helpers/synthetic";
 
@@ -38,31 +39,54 @@ function boxDistance(a: Box, b: Box): number {
   return Math.hypot(dx, dy);
 }
 
-const frac = fc.double({ min: 0, max: 1, noNaN: true });
+type Interval = readonly [number, number];
+type Unit = { kind: "box" | "point"; x: Interval; y: Interval };
 
-const boxArb = fc.tuple(frac, frac, frac, frac).map(([a, b, c, d]): Box => {
-  const lon0 = W + Math.min(a, b) * SPAN_LON;
-  const lon1 = W + Math.max(a, b) * SPAN_LON;
-  const lat0 = S + Math.min(c, d) * SPAN_LAT;
-  const lat1 = S + Math.max(c, d) * SPAN_LAT;
-  return [lon0, lat0, Math.max(lon1, lon0 + 1e-5), Math.max(lat1, lat0 + 1e-5)];
+const unitInterval = fc
+  .tuple(fraction, fraction)
+  .map(([a, b]): Interval => [Math.min(a, b), Math.max(a, b)]);
+
+const unitBox = fc.record({
+  kind: fc.constant("box" as const),
+  x: unitInterval,
+  y: unitInterval
 });
 
-const pointArb = fc.tuple(frac, frac).map(([a, b]): Box => {
-  const lon = W + a * SPAN_LON;
-  const lat = S + b * SPAN_LAT;
-  return [lon, lat, lon, lat];
-});
+const unitPoint = fc
+  .tuple(fraction, fraction)
+  .map(([a, b]): Unit => ({ kind: "point", x: [a, a], y: [b, b] }));
+
+const within = ([lo, hi]: Interval, [a, b]: Interval): Interval => [
+  lo + a * (hi - lo),
+  lo + b * (hi - lo)
+];
+
+/** Places a unit-square box or point inside the given fractions of DOMAIN. */
+function place(u: Unit, x: Interval = [0, 1], y: Interval = [0, 1]): Box {
+  const [x0, x1] = within(x, u.x);
+  const [y0, y1] = within(y, u.y);
+  const lon0 = W + x0 * SPAN_LON;
+  const lat0 = S + y0 * SPAN_LAT;
+  if (u.kind === "point") {
+    return [lon0, lat0, lon0, lat0];
+  }
+  return [
+    lon0,
+    lat0,
+    Math.max(W + x1 * SPAN_LON, lon0 + 1e-5),
+    Math.max(S + y1 * SPAN_LAT, lat0 + 1e-5)
+  ];
+}
+
+const boxArb = unitBox.map((u) => place(u));
+const pointArb = unitPoint.map((u) => place(u));
+const queryUnit = fc.oneof(unitBox, unitPoint);
 
 const scenario = fc.record({
-  areas: fc.array(fc.tuple(boxArb, fc.double({ min: -2, max: 25, noNaN: true })), {
-    maxLength: 4
-  }),
-  points: fc.array(fc.tuple(pointArb, fc.double({ min: 0, max: 20, noNaN: true })), {
-    maxLength: 6
-  }),
-  query: fc.oneof(boxArb, pointArb),
-  buffer: fc.double({ min: 0, max: 60, noNaN: true })
+  areas: fc.array(fc.tuple(boxArb, uniform(-2, 25)), { maxLength: 4 }),
+  points: fc.array(fc.tuple(pointArb, uniform(0, 20)), { maxLength: 6 }),
+  query: queryUnit.map((u) => place(u)),
+  buffer: uniform(0, 60)
 });
 
 describe("pyramid conservativeness (property)", () => {
@@ -95,10 +119,11 @@ describe("pyramid conservativeness (property)", () => {
 
 /**
  * With two overlapping usage bands, the larger-scale cell decides wherever
- * it has coverage and the smaller scale fills the rest (plan §4.2). Queries
- * whose buffered footprint lies wholly on one side are checked against that
- * side's features; footprints straddling the coverage edge are skipped, as
- * either answer can be right there.
+ * it has coverage and the smaller scale fills the rest (plan §4.2). Each case
+ * puts the buffered footprint, plus one leaf tile (~150 m), wholly on one
+ * side of the fine cell's coverage edge and checks it against that side's
+ * features; straddling footprints are left out, as either answer can be
+ * right there.
  */
 function expandBox(b: Box, metres: number): Box {
   const dLon = metres / M_PER_DEG_LON;
@@ -116,23 +141,55 @@ function disjoint(a: Box, b: Box): boolean {
   return a[2] < b[0] || b[2] < a[0] || a[3] < b[1] || b[3] < a[1];
 }
 
+const MAX_BUFFER = 40;
+const EDGE_MARGIN = MAX_BUFFER + 160;
+/** 0.2 of either DOMAIN span is over 220 m, more than EDGE_MARGIN. */
+const GAP = 0.2;
+
+const longInterval = fc
+  .tuple(fraction, uniform(2 * GAP + 0.05, 1))
+  .map(([at, length]): Interval => [at * (1 - length), at * (1 - length) + length]);
+
+const fineSide = fc
+  .record({ x: longInterval, y: longInterval, query: queryUnit })
+  .map(({ x, y, query }) => ({
+    side: "fine" as const,
+    fine: place({ kind: "box", x, y }),
+    query: place(query, [x[0] + GAP, x[1] - GAP], [y[0] + GAP, y[1] - GAP])
+  }));
+
+const coarseSide = fc
+  .record({
+    alongLon: fc.boolean(),
+    mirror: fc.boolean(),
+    split: uniform(0.25, 0.75),
+    fine: unitBox,
+    query: queryUnit
+  })
+  .map(({ alongLon, mirror, split, fine, query }) => {
+    const flip = ([a, b]: Interval): Interval => (mirror ? [1 - b, 1 - a] : [a, b]);
+    const fineAxis = flip([0, split - GAP / 2]);
+    const queryAxis = flip([split + GAP / 2, 1]);
+    return {
+      side: "coarse" as const,
+      fine: alongLon ? place(fine, fineAxis) : place(fine, undefined, fineAxis),
+      query: alongLon ? place(query, queryAxis) : place(query, undefined, queryAxis)
+    };
+  });
+
 const mosaic = fc.record({
-  fine: boxArb,
-  fineBase: fc.double({ min: 0, max: 40, noNaN: true }),
-  fineAreas: fc.array(fc.tuple(boxArb, fc.double({ min: 0, max: 25, noNaN: true })), {
-    maxLength: 3
-  }),
-  coarseAreas: fc.array(fc.tuple(boxArb, fc.double({ min: 0, max: 25, noNaN: true })), {
-    maxLength: 3
-  }),
-  query: fc.oneof(boxArb, pointArb),
-  buffer: fc.double({ min: 0, max: 40, noNaN: true })
+  layout: fc.oneof(fineSide, coarseSide),
+  fineBase: uniform(0, 40),
+  fineAreas: fc.array(fc.tuple(boxArb, uniform(0, 25)), { maxLength: 3 }),
+  coarseAreas: fc.array(fc.tuple(boxArb, uniform(0, 25)), { maxLength: 3 }),
+  buffer: uniform(0, MAX_BUFFER)
 });
 
 describe("usage-band mosaic (property)", () => {
   test("the covering band's features bound the answer", () => {
     fc.assert(
-      fc.property(mosaic, ({ fine, fineBase, fineAreas, coarseAreas, query, buffer }) => {
+      fc.property(mosaic, ({ layout, fineBase, fineAreas, coarseAreas, buffer }) => {
+        const { side, fine, query } = layout;
         const features = [
           ...basin(DOMAIN, BASE_DEPTH, { band: 3, cellRef: 1 }),
           ...coarseAreas.map(([b, d]) => area(b, d, { band: 3, cellRef: 1 })),
@@ -145,22 +202,11 @@ describe("usage-band mosaic (property)", () => {
         const isPoint = query[0] === query[2] && query[1] === query[3];
         const geom = footprintGeom(isPoint ? [[query[0], query[1]]] : boxRing(query));
         const result = minDepthOver(store, geom, { bufferMetres: buffer });
-        // Margin: one leaf tile (~150 m) plus the buffer, so tile-edge effects never decide.
-        const reach = expandBox(query, buffer + 160);
-        let side: [Box, number][] | undefined;
-        let base = 0;
-        if (insideBox(reach, fine)) {
-          side = fineAreas;
-          base = fineBase;
-        } else if (disjoint(reach, fine)) {
-          side = coarseAreas;
-          base = BASE_DEPTH;
-        }
-        if (side === undefined) {
-          return;
-        }
-        let oracle = base;
-        for (const [b, d] of side) {
+
+        const reach = expandBox(query, EDGE_MARGIN);
+        expect(side === "fine" ? insideBox(reach, fine) : disjoint(reach, fine)).toBe(true);
+        let oracle = side === "fine" ? fineBase : BASE_DEPTH;
+        for (const [b, d] of side === "fine" ? fineAreas : coarseAreas) {
           if (boxDistance(b, query) <= buffer * 0.98) {
             oracle = Math.min(oracle, d);
           }

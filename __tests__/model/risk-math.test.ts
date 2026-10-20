@@ -4,6 +4,7 @@ import { MAX_ROLL, RollWindow, heel, squat, waveAllowance } from "../../src/mode
 import { sigmaExtra, thresholdDepth, ukcAt } from "../../src/model/uncertainty";
 import { DEFAULT_DYNAMICS, vesselTerms } from "../../src/model/vessel";
 import { explain, sentence } from "../../src/engine/explain";
+import { uniform } from "../helpers/arbitraries";
 
 describe("normal CDF", () => {
   test.each([
@@ -21,13 +22,9 @@ describe("normal CDF", () => {
     expect(normalCdf(Infinity)).toBe(1);
     expect(normalCdf(-Infinity)).toBe(0);
     fc.assert(
-      fc.property(
-        fc.double({ min: -8, max: 8, noNaN: true }),
-        fc.double({ min: 0, max: 1, noNaN: true }),
-        (x, d) => {
-          expect(normalCdf(x + d)).toBeGreaterThanOrEqual(normalCdf(x) - 1e-7);
-        }
-      )
+      fc.property(uniform(-8, 8), uniform(0, 1), (x, d) => {
+        expect(normalCdf(x + d)).toBeGreaterThanOrEqual(normalCdf(x) - 1e-7);
+      })
     );
   });
 

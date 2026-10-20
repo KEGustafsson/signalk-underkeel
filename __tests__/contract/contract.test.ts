@@ -4,6 +4,7 @@ import path from "path";
 import { parseAckRequest } from "../../src/api/ack-request";
 import { buildManifest } from "../../src/api/manifest";
 import { parseQueryRequest } from "../../src/api/query-request";
+import { parseRouteRequest } from "../../src/api/route-request";
 import underkeel = require("../../src/index");
 import { FIXTURES, M_PER_DEG_LON, ROCK } from "../helpers/fixture-index";
 import { Validator } from "../helpers/json-schema";
@@ -118,7 +119,66 @@ describe("signalk-underkeel satisfies the contract", () => {
       expectValid("ack-request.json", body);
       expect(parseAckRequest(body).ok).toBe(true);
     }
-    expect(v.validate("ack-request.json", { ttl: 0 })).toEqual(["$.ttl: 0 ≤ 0"]);
+    expect(v.validate("ack-request.json", { ttl: 0 })).toEqual(["$.ttl: 0 < 1"]);
+  });
+
+  test("a request field the schemas allow is one the parsers accept, edge to edge", () => {
+    const point = { type: "Point", coordinates: ROCK };
+    const cases: [
+      string,
+      (b: unknown) => { ok: boolean },
+      Record<string, unknown>,
+      unknown[],
+      unknown[]
+    ][] = [
+      ["ack-request.json", parseAckRequest, { sector: 1 }, [1, 90], [0.5, 91]],
+      ["ack-request.json", parseAckRequest, { ttl: 1 }, [1, 30 * 86400], [0.5, 30 * 86400 + 1]],
+      [
+        "ack-request.json",
+        parseAckRequest,
+        { notificationId: "" },
+        ["x".repeat(200)],
+        ["x".repeat(201), 123]
+      ],
+      ["query-request.json", parseQueryRequest, { bufferMetres: 0 }, [0, 2000], [-1, 2001]],
+      ["query-request.json", parseQueryRequest, { draft: 0.1 }, [0.1, 30], [0.05, 31]],
+      ["query-request.json", parseQueryRequest, { speed: 0 }, [0, 30], [-1, 31]],
+      ["route-check-request.json", parseRouteRequest, { xteLimit: 0 }, [0, 2000], [-1, 2001]],
+      ["route-check-request.json", parseRouteRequest, { probability: 1e-6 }, [1e-6, 0.5], [0, 0.6]],
+      [
+        "route-check-request.json",
+        parseRouteRequest,
+        { vessel: { draft: 0.01 } },
+        [0.01, 30],
+        [0, 31]
+      ],
+      [
+        "route-check-request.json",
+        parseRouteRequest,
+        { speed: 0.1 },
+        [0.1, 30, [0.1, 30], { default: 30 }, { legs: [0.1] }],
+        [0, 31, [3, 31], { default: 0 }, { legs: [0] }, {}, [], { legs: [] }]
+      ]
+    ];
+    for (const [schema, parse, field, inside, outside] of cases) {
+      const key = Object.keys(field)[0] as string;
+      const body = (value: unknown) => ({
+        ...(schema === "query-request.json" ? { geometry: point } : { route: ROUTE }),
+        [key]: key === "vessel" ? { draft: value } : value
+      });
+      for (const value of inside) {
+        expectValid(schema, body(value));
+        expect([key, value, parse(body(value)).ok]).toEqual([key, value, true]);
+      }
+      for (const value of outside) {
+        expect([key, value, v.validate(schema, body(value)).length > 0]).toEqual([
+          key,
+          value,
+          true
+        ]);
+        expect([key, value, parse(body(value)).ok]).toEqual([key, value, false]);
+      }
+    }
   });
 
   test("manifest, REST responses and the notification", async () => {

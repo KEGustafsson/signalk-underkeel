@@ -90,7 +90,7 @@ function parseSpeed(raw: unknown, errors: string[]): number | number[] | undefin
     legs?: unknown;
   };
   const candidate = Array.isArray(raw) ? raw : isNum(raw) ? raw : (s.legs ?? s.default);
-  if (Array.isArray(candidate) ? candidate.every(ok) : ok(candidate)) {
+  if (Array.isArray(candidate) ? candidate.length > 0 && candidate.every(ok) : ok(candidate)) {
     return candidate as number | number[];
   }
   errors.push(`speed must be ${LIMITS.minSpeed}..${LIMITS.maxSpeed} m/s`);

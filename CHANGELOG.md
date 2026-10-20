@@ -55,9 +55,17 @@ All notable changes to signalk-underkeel are documented here.
 
 - The navigation-safety contract schemas in `schemas/navigation-safety/` are licensed under
   Apache-2.0, so other plotters and providers can adopt the contract; the plugin stays EUPL-1.2.
+- The request schemas bound `sector` (1..90°), `ttl` (1 s..30 days), `notificationId` (200
+  characters), speeds, drafts, `bufferMetres`, `xteLimit` and `probability` as the plugin
+  does, so a request that validates is no longer refused for those fields; size budgets are
+  listed in `schemas/navigation-safety/README.md`.
 
 ### Fixed
 
+- An index build stopped mid-write, by an abort or a crash, no longer leaves its half-written
+  staging directory beside the chart index for good: an aborted WFS build removes its own once
+  the worker has exited, and loading an index removes any staging directory left by a
+  process that has exited.
 - Route check: long legs are checked along the rhumb line as the chart draws it, and along
   the great circle where that strays more than 10 m from it. Pieces were stepped on a fixed
   flat-earth bearing, which drifted 75 m off the drawn line on a 78 km leg at 60° N and left a
@@ -227,3 +235,27 @@ All notable changes to signalk-underkeel are documented here.
 - The look-ahead envelope draws water from an advisory (WFS) source, with unassessed survey
   quality or against a fallback water level as `unverified`, never `clear`, as the README
   states; before, those footprints were green while the state was `alert`.
+- Route-check results reach the details panel on a chart host without data overlays, or while
+  the host is still loading the overlay style; the runtime stored them only after the overlay
+  call, which failed there. A visible route without a result reads "not checked yet" instead of
+  "No route on the chart."
+- The runtime clears the stored route-check results when it starts. The host keeps extension
+  state across sessions, so the panel listed results from an earlier session as current.
+- The status widget judges a value by its timestamp. Signal K replays its cached values on
+  every subscribe, so after a reconnect a normal state from a stalled plugin showed green for
+  up to 10 s. While stale, the widget shows no clearance or time to shoal under Unknown.
+- The look-ahead overlay is withdrawn when the plugin goes quiet: after 10 s without an
+  `envelopeRev` delta, when the state is `off` or `unknown`, and when the envelope fetch fails.
+  Without a Signal K stream the runtime polls `/envelope` every 3 s; it fetched it once before.
+- Route checks are re-run every 60 s and after a plugin restart, not only after a route edit,
+  so an ok leg no longer stays ok after the tide falls, the draft changes or the water-level
+  source falls back. The panel shows the age of each result and reads "out of date" past 3 min.
+- The runtime refreshes the UKC tiles when the water level moves over 1 cm, the applied
+  water-level source or its degraded reason changes, the state enters or leaves `off` or
+  `unknown`, and after a plugin restart. Tiles stayed classed for the conditions at fetch time.
+- The details panel shows Unknown when `/status` does not answer within 8 s or no answer has
+  arrived for 20 s. A request that hung left the chip on its last state, such as Normal.
+- The details panel names the water-level source the engine applies and the reason it is
+  degraded, such as an FMI fallback, instead of the configured source.
+- "Check routes again" is hidden on a chart host without `events.publish`, `routes` or
+  `background.iframe`, where pressing it did nothing.

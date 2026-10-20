@@ -25,11 +25,18 @@ function showUnknownStatus(why) {
 
 /** The poll and the notification can overlap: only the latest request may update the panel. */
 let statusRequest = 0;
+const STATUS_TIMEOUT_MS = 8000;
+/** Two missed polls; requests superseded before their timeout never report a failure. */
+const STATUS_MAX_AGE_MS = 20000;
+let statusAt = 0;
 
 async function refreshStatus() {
   const id = ++statusRequest;
   try {
-    const res = await fetch(`${UKC.API}/status`, { credentials: "same-origin" });
+    const res = await fetch(`${UKC.API}/status`, {
+      credentials: "same-origin",
+      signal: AbortSignal.timeout(STATUS_TIMEOUT_MS)
+    });
     if (id !== statusRequest) {
       return;
     }
@@ -41,31 +48,28 @@ async function refreshStatus() {
     if (id !== statusRequest) {
       return;
     }
+    statusAt = Date.now();
     const style = UKC.stateStyle(s.engine.state);
     const chip = document.getElementById("state");
     chip.textContent = style.label;
     chip.style.background = style.colour;
-    const wl = s.waterLevel && s.waterLevel.applied;
-    const parts = [];
-    if (wl) {
-      parts.push(`Water level ${UKC.depth(wl.h, unit)} (${s.waterLevel.source})`);
-    }
-    if (s.wfs && s.wfs.notice) {
-      parts.push(s.wfs.notice);
-    }
-    text("source", parts.join(" · "));
+    text("source", UKC.statusLines(s, unit).join(" · "));
   } catch (err) {
     if (id !== statusRequest) {
       return;
     }
-    showUnknownStatus(err && err.message ? err.message : String(err));
+    showUnknownStatus(
+      err && err.name === "TimeoutError" ? "no answer from the plugin" : err && err.message ? err.message : String(err)
+    );
     console.warn("under-keel status", err);
   }
 }
 
-function renderRoutes(routeCheck) {
+/** The runtime re-checks each minute: three missed re-checks make a result out of date. */
+const ROUTE_MAX_AGE_MS = 180000;
+
+function renderRoutes(entries) {
   const el = document.getElementById("routes");
-  const entries = Object.entries(routeCheck || {});
   if (!client.hasCapability("routes")) {
     el.textContent = "This chart host does not share its routes, so none is checked here.";
     return;
@@ -78,17 +82,21 @@ function renderRoutes(routeCheck) {
     ...entries.map(([, r]) => {
       const box = document.createElement("div");
       const title = document.createElement("div");
-      const worst = UKC.worstStatus(r.legs);
+      const status = UKC.routeBadge(r, Date.now(), ROUTE_MAX_AGE_MS);
       title.append(`${r.name || "Unsaved route"}: `);
       const badge = document.createElement("b");
-      badge.className = r.error ? "unverified" : worst;
-      badge.textContent = r.error ? "not checked" : worst;
+      badge.className = status.cls;
+      badge.textContent = status.text;
       title.append(badge);
       box.append(title);
-      if (r.error) {
-        box.append(r.error);
+      if (r.error || r.pending) {
+        box.append(r.error || "");
         return box;
       }
+      const age = document.createElement("div");
+      age.className = "muted";
+      age.textContent = UKC.checkedAgo(r.receivedAt, Date.now());
+      box.append(age);
       const table = document.createElement("table");
       table.innerHTML = "<tr><th>Leg</th><th>Status</th><th>Min UKC</th><th>P(UKC&lt;0)</th></tr>";
       r.legs.forEach((leg) => {
@@ -112,8 +120,15 @@ function renderRoutes(routeCheck) {
 }
 
 async function refreshRoutes() {
-  const { routeCheck } = await client.state.get(["routeCheck"], "extension");
-  renderRoutes(routeCheck);
+  try {
+    const { routeCheck } = await client.state.get(["routeCheck"], "extension");
+    const visible = client.hasCapability("routes") ? (await client.call("route.list")).routes : null;
+    renderRoutes(UKC.routeEntries(routeCheck, visible));
+  } catch (err) {
+    // A result left on screen would never age out, so it is replaced, not kept.
+    text("routes", "Route results unavailable: the chart host did not answer.");
+    console.warn("under-keel routes", err);
+  }
 }
 
 if (client.hasCapability("signalk.stream")) {
@@ -127,10 +142,21 @@ await client.subscribe(["state.changed"], (_name, params) => {
     void refreshRoutes();
   }
 });
-document.getElementById("recheck").addEventListener("click", () => {
+// The background runtime answers the button, over an event the host must carry.
+const recheck = document.getElementById("recheck");
+recheck.hidden = !["events.publish", "routes", "background.iframe"].every((c) => client.hasCapability(c));
+recheck.addEventListener("click", () => {
   void client.publish("ukc.checkRoutes", {}, "extension");
 });
 await refreshStatus();
 await refreshRoutes();
 /** Notifications arrive only on change and the stream is optional, so the panel also polls. */
-setInterval(() => void refreshStatus(), 10000);
+setInterval(() => {
+  if (Date.now() - statusAt > STATUS_MAX_AGE_MS) {
+    showUnknownStatus("no status from the plugin for over 20 s");
+  }
+}, 1000);
+setInterval(() => {
+  void refreshStatus();
+  void refreshRoutes();
+}, 10000);

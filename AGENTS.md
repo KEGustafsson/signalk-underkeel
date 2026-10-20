@@ -106,12 +106,12 @@ These hold in every change. A change that weakens one needs an explicit decision
 
 ## Validation
 
-| Change area      | Validation                                                  |
-| ---------------- | ----------------------------------------------------------- |
-| Any TypeScript   | `npm run check:ts`, targeted `npx jest <file>`              |
-| Spatial / engine | targeted tests plus property tests; `npm test`              |
-| Routes / deltas  | route tests with a fake router and fake `ServerAPI`         |
-| Package/release  | `npm run verify:ci-local`, then `docs/release-checklist.md` |
+| Change area      | Validation                                                               |
+| ---------------- | ------------------------------------------------------------------------ |
+| Any TypeScript   | `npm run check:ts`, `npm run check:ts:tests`, targeted `npx jest <file>` |
+| Spatial / engine | targeted tests plus property tests; `npm test`                           |
+| Routes / deltas  | route tests with a fake router and fake `ServerAPI`                      |
+| Package/release  | `npm run verify:ci-local`, then `docs/release-checklist.md`              |
 
 `npm test` must stay hermetic and under 120 s: the Signal K plugin registry runs it with no
 network and `SIGNALK_REGISTRY_TEST=1` (see `.github/workflows/plugin-test.yml`).

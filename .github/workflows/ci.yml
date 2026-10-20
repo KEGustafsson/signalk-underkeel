@@ -71,8 +71,12 @@ jobs:
             npm install
           fi
 
+      # Built first: the worker-thread test runs the compiled lib/.
+      - name: Build
+        run: npm run build
+
       # Single required gate: type-check + lint + full test suite.
-      # Tests run against src/ via ts-jest (no stale lib/ artifact).
+      # Tests run against src/ via ts-jest, except the worker thread above.
       - name: Verify (check:ts + lint + test)
         run: npm run verify
 
@@ -82,15 +86,12 @@ jobs:
         if: matrix.node-version == 22
         run: npm run test:coverage
 
-      - name: Build
-        run: npm run build
-
       - name: Release documentation and package truth
         run: npm run check:release-docs
 
   # REPORTING ONLY — this job never gates a merge, hence continue-on-error at
   # the job level. The real gates are the npm-audit test in the main suite
-  # (runtime deps, per PR) and the weekly `audit-blocking` job. This job adds
+  # (shipped deps, per PR) and the weekly `audit-blocking` job. This job adds
   # visibility for the DEV tree, whose advisories must not block a merge.
   audit:
     runs-on: ubuntu-latest
@@ -113,16 +114,19 @@ jobs:
 
       # continue-on-error keeps the full-tree step below reachable — `npm
       # audit` exits non-zero on ANY advisory.
-      - name: Audit runtime dependencies (informational)
+      # Shipped: runtime dependencies plus signalk-plotterext-bus, a
+      # devDependency vendored into public/vendor/ that --omit=dev skips.
+      - name: Audit shipped dependencies (informational)
         continue-on-error: true
-        run: npm audit --omit=dev
+        run: npm run audit:shipped
 
       - name: Audit full dependency tree (informational)
         continue-on-error: true
         run: npm audit
 
   # Blocking dependency audit, runs ONLY on the weekly schedule. Fails the run
-  # on any high/critical advisory in the production dependency tree.
+  # on any high/critical advisory in what the package ships: the runtime tree
+  # and the vendored signalk-plotterext-bus client.
   audit-blocking:
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
@@ -142,5 +146,5 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Audit production dependencies (high/critical, blocking)
-        run: npm audit --omit=dev --audit-level=high
+      - name: Audit shipped dependencies (high/critical, blocking)
+        run: npm run audit:shipped -- --audit-level=high

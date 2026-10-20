@@ -1,11 +1,13 @@
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import path from "path";
 
 const ROOT = path.resolve(__dirname, "..");
 
-// Audits the RUNTIME dependency tree (`--omit=dev`). Build/test tooling never
-// reaches an operator, so a dev-tree advisory must not gate `npm test`;
-// dev-tree advisories are surfaced by the scheduled CI audit job instead.
+// Audits the third-party code the package ships, through scripts/audit-shipped.js:
+// the runtime dependency tree and the vendored signalk-plotterext-bus client
+// in public/vendor/. Build/test tooling never reaches an operator, so a
+// dev-tree advisory must not gate `npm test`; dev-tree advisories are
+// surfaced by the CI audit job instead.
 //
 // `npm audit` queries the registry, so the report can be unavailable offline.
 // That case is reported explicitly rather than coerced to "zero
@@ -15,84 +17,74 @@ const ROOT = path.resolve(__dirname, "..");
 // --net=none` and sets SIGNALK_REGISTRY_TEST=1. The registry is unreachable
 // there by construction, so the audit is skipped outright.
 
-type AuditResult = { ok: true; raw: string } | { ok: false; reason: string };
+type Report = {
+  packages: string[];
+  vulnerabilities: Record<string, number>;
+  advisories: { name: string; severity: string }[];
+};
+type AuditResult = { ok: true; report: Report } | { ok: false; reason: string };
+
+const SCRIPT = path.join(ROOT, "scripts", "audit-shipped.js");
+
+function parse(stdout: string): AuditResult {
+  try {
+    return { ok: true, report: JSON.parse(stdout) as Report };
+  } catch (err) {
+    return { ok: false, reason: `audit-shipped did not print JSON: ${(err as Error).message}` };
+  }
+}
 
 function runAudit(): AuditResult {
   if (process.env.SIGNALK_REGISTRY_TEST === "1") {
     return { ok: false, reason: "SIGNALK_REGISTRY_TEST=1 — sandboxed run has no registry access" };
   }
   try {
-    return {
-      ok: true,
-      raw: execSync("npm audit --omit=dev --json", { cwd: ROOT, encoding: "utf8" })
-    };
+    return parse(
+      execFileSync(process.execPath, [SCRIPT], { cwd: ROOT, encoding: "utf8", stdio: "pipe" })
+    );
   } catch (err) {
-    // npm audit exits non-zero when vulnerabilities exist; stdout still has JSON.
-    const e = err as { stdout?: string; message: string };
-    if (e.stdout) {
-      return { ok: true, raw: e.stdout };
+    // Exit 1: advisories found, report on stdout. Exit 2: no report.
+    const e = err as { status?: number; stdout?: string; stderr?: string; message: string };
+    if (e.status === 1 && e.stdout) {
+      return parse(e.stdout);
     }
-    return { ok: false, reason: e.message };
+    return { ok: false, reason: e.stderr?.trim() || e.message };
   }
 }
 
-// Severity buckets only. `metadata.vulnerabilities` also carries a `total`
-// key, so summing every value double-counts.
-const SEVERITIES = ["info", "low", "moderate", "high", "critical"] as const;
-
-type Report = { metadata?: { vulnerabilities?: Record<string, number> } };
-
-describe("npm audit (runtime dependencies)", () => {
+describe("npm audit (shipped dependencies)", () => {
   let report: Report | null = null;
   let unavailable: string | null = null;
 
   beforeAll(() => {
     const result = runAudit();
-    if (!result.ok) {
+    if (result.ok) {
+      report = result.report;
+    } else {
       unavailable = result.reason;
-      return;
     }
-    let parsed: Report & { message?: string; error?: { summary?: string } };
-    try {
-      parsed = JSON.parse(result.raw);
-    } catch (err) {
-      unavailable = `npm audit did not return JSON: ${(err as Error).message}`;
-      return;
-    }
-    // Offline, npm still prints JSON — an error envelope, not an audit report.
-    if (!parsed?.metadata?.vulnerabilities) {
-      unavailable =
-        parsed?.message ||
-        parsed?.error?.summary ||
-        "npm audit returned no metadata.vulnerabilities";
-      return;
-    }
-    report = parsed;
   });
 
-  test("audit report is available", () => {
+  test("audit report is available and covers the vendored client", () => {
     if (unavailable) {
       console.warn(`npm audit unavailable, advisory assertions skipped: ${unavailable}`);
       return;
     }
-    expect(report?.metadata?.vulnerabilities).toBeDefined();
+    expect(report?.packages).toContain("signalk-plotterext-bus");
   });
 
   test("no high or critical severity vulnerabilities", () => {
     if (unavailable) {
       return;
     }
-    const meta = report?.metadata?.vulnerabilities ?? {};
-    expect(meta.high ?? 0).toBe(0);
-    expect(meta.critical ?? 0).toBe(0);
+    expect(report?.vulnerabilities.high).toBe(0);
+    expect(report?.vulnerabilities.critical).toBe(0);
   });
 
-  test("total vulnerability count is zero", () => {
+  test("no advisory against any shipped package", () => {
     if (unavailable) {
       return;
     }
-    const meta = report?.metadata?.vulnerabilities ?? {};
-    const total = SEVERITIES.reduce((sum, key) => sum + (meta[key] ?? 0), 0);
-    expect(total).toBe(0);
+    expect(report?.advisories).toEqual([]);
   });
 });

@@ -197,8 +197,10 @@ describe("planar geometry", () => {
             for (let i = 0; i <= 4; i++) {
               for (let j = 0; j <= 4; j++) {
                 const p = [x + (w * i) / 4 + 1e-7, y + (h * j) / 4 + 1e-7] as const;
+                // A point on the shared edge is in both areas; pointInPolygon alone
+                // may count it in neither.
                 const inside = [lower, upper].some(
-                  (g) => g.type === "polygon" && pointInPolygon(p, g.polygons[0] as PolygonGeom)
+                  (g) => geomRectDistance(g, r(p[0], p[1], p[0], p[1])) <= 1e-9
                 );
                 expect(inside).toBe(true);
               }

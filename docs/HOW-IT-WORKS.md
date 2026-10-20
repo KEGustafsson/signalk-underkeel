@@ -656,12 +656,12 @@ The plugin serves its own Freeboard UI through the Plotter Extensions API, so Fr
 needs no change. The screenshots use a Freeboard-SK 3.4.0-beta.1 build with the Traficom WMS
 chart, on the route from the Nauvo fairway west to Stenskär harbour at 7 kn, with a 1.8 m draft.
 
-| Where in Freeboard                     | What the plugin adds                                                                 |
-| -------------------------------------- | ------------------------------------------------------------------------------------ |
-| Layers → Charts → Plugin layers        | Under-keel look-ahead (on), Under-keel route check (on), Under-keel risk (off)       |
-| Widget grid                            | Under-keel status: state colour, minimum clearance, time to shoal and the reason     |
-| Toolbar button (boat icon), the widget | Under-keel details panel: state, water level, and a leg table per route on the chart |
-| Hidden background page                 | refetches the envelope and checks the routes on the chart 1 s after each change      |
+| Where in Freeboard                     | What the plugin adds                                                                                                                                        |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Layers → Charts → Plugin layers        | Under-keel look-ahead (on), Under-keel route check (on), Under-keel risk (off)                                                                              |
+| Widget grid                            | Under-keel status: state colour, minimum clearance, time to shoal and the reason                                                                            |
+| Toolbar button (boat icon), the widget | Under-keel details panel: state, water level, and a leg table per route on the chart                                                                        |
+| Hidden background page                 | refetches the envelope on each new revision (every 3 s without a Signal K stream) and checks the routes on the chart 1 s after each change and every minute |
 
 ![Freeboard: the look-ahead envelope ahead of the vessel and the status widget](images/how-it-works/freeboard-lookahead.jpg)
 

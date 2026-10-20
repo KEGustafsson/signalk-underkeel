@@ -3,6 +3,7 @@ import { DEFAULT_LOOKAHEAD, evaluateLookahead } from "../../src/engine/lookahead
 import type { Catzoc } from "../../src/ingest/features";
 import { RISK_STOP_BELOW, footprintGeom, minDepthOver } from "../../src/spatial/pyramid";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
+import { fraction, uniform } from "../helpers/arbitraries";
 import { ctx } from "../helpers/engine";
 import { fixtureIndex } from "../helpers/fixture-index";
 import type { Box } from "../helpers/synthetic";
@@ -18,8 +19,7 @@ import { area, boxRing, coverage, point, quality } from "../helpers/synthetic";
 const W = 22.0;
 const S = 60.0;
 const DOMAIN: Box = [W, S, W + 0.02, S + 0.01];
-const frac = fc.double({ min: 0, max: 1, noNaN: true });
-const box = fc.tuple(frac, frac, frac, frac).map(([a, b, c, d]): Box => {
+const box = fc.tuple(fraction, fraction, fraction, fraction).map(([a, b, c, d]): Box => {
   const lon0 = W + Math.min(a, b) * 0.02;
   const lat0 = S + Math.min(c, d) * 0.01;
   return [lon0, lat0, W + Math.max(a, b) * 0.02 + 1e-5, S + Math.max(c, d) * 0.01 + 1e-5];
@@ -27,8 +27,8 @@ const box = fc.tuple(frac, frac, frac, frac).map(([a, b, c, d]): Box => {
 
 const chart = fc.record({
   zones: fc.array(fc.tuple(box, fc.integer({ min: 1, max: 6 })), { minLength: 1, maxLength: 3 }),
-  areas: fc.array(fc.tuple(box, fc.double({ min: 0, max: 15, noNaN: true })), { maxLength: 3 }),
-  points: fc.array(fc.tuple(frac, frac, fc.double({ min: 0, max: 10, noNaN: true })), {
+  areas: fc.array(fc.tuple(box, uniform(0, 15)), { maxLength: 3 }),
+  points: fc.array(fc.tuple(fraction, fraction, uniform(0, 10)), {
     maxLength: 4
   })
 });
@@ -55,20 +55,13 @@ function build(c: ChartSpec) {
 describe("risk monotonicity (property)", () => {
   test("a higher UKC-zero depth (deeper draft, lower water) never lowers P", () => {
     fc.assert(
-      fc.property(
-        chart,
-        box,
-        fc.double({ min: 0, max: 15, noNaN: true }),
-        fc.double({ min: 0, max: 3, noNaN: true }),
-        fc.double({ min: 0, max: 1, noNaN: true }),
-        (c, q, t1, dt, sx) => {
-          const store = build(c);
-          const geom = footprintGeom(boxRing(q));
-          const r1 = minDepthOver(store, geom, { risk: { threshold: t1, sigmaExtra: sx } });
-          const r2 = minDepthOver(store, geom, { risk: { threshold: t1 + dt, sigmaExtra: sx } });
-          expect(r2.maxRisk).toBeGreaterThanOrEqual(r1.maxRisk - RISK_STOP_BELOW);
-        }
-      ),
+      fc.property(chart, box, uniform(0, 15), uniform(0, 3), uniform(0, 1), (c, q, t1, dt, sx) => {
+        const store = build(c);
+        const geom = footprintGeom(boxRing(q));
+        const r1 = minDepthOver(store, geom, { risk: { threshold: t1, sigmaExtra: sx } });
+        const r2 = minDepthOver(store, geom, { risk: { threshold: t1 + dt, sigmaExtra: sx } });
+        expect(r2.maxRisk).toBeGreaterThanOrEqual(r1.maxRisk - RISK_STOP_BELOW);
+      }),
       { numRuns: 100 }
     );
   });
@@ -78,9 +71,9 @@ describe("risk monotonicity (property)", () => {
       fc.property(
         chart,
         box,
-        fc.double({ min: 0, max: 50, noNaN: true }),
-        fc.double({ min: 0, max: 100, noNaN: true }),
-        fc.double({ min: 0, max: 12, noNaN: true }),
+        uniform(0, 50),
+        uniform(0, 100),
+        uniform(0, 12),
         (c, q, b1, db, t) => {
           const store = build(c);
           const geom = footprintGeom(boxRing(q));
@@ -99,13 +92,13 @@ describe("risk monotonicity (property)", () => {
     const NOW = 1_800_000_000_000;
     fc.assert(
       fc.property(
-        fc.double({ min: 22.002, max: 22.033, noNaN: true }),
-        fc.double({ min: 60.001, max: 60.019, noNaN: true }),
-        fc.double({ min: 0, max: 2 * Math.PI, noNaN: true }),
-        fc.double({ min: 0.5, max: 4, noNaN: true }),
-        fc.double({ min: 0.5, max: 4, noNaN: true }),
-        fc.double({ min: 0, max: 1, noNaN: true }),
-        fc.double({ min: 0, max: 20, noNaN: true }),
+        uniform(22.002, 22.033),
+        uniform(60.001, 60.019),
+        uniform(0, 2 * Math.PI),
+        uniform(0.5, 4),
+        uniform(0.5, 4),
+        uniform(0, 1),
+        uniform(0, 20),
         (lon, lat, cog, sog, draft, more, buffer) => {
           const nav = {
             position: { value: [lon, lat] as const, at: NOW },
