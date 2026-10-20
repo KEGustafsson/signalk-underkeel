@@ -53,6 +53,10 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Changed
 
+- Route repair yields to the event loop every 256 cells its search expands and after each
+  simplification check, not only between legs. A search that exhausts its grid around an
+  enclosed goal blocked the server for 105–109 ms on a laptop (about 0.4 s on a Raspberry Pi 4);
+  its longest slice is now 3.4–5.2 ms.
 - Route checks split a leg into pieces of max(1 km, 4 × corridor half-width) instead of 1 km,
   and check the great circle separately only where it strays more than max(10 m, r/4) from the
   rhumb line. A 12 km leg at xteLimit 2000 took 129 ms on a laptop and takes 39 ms; four such

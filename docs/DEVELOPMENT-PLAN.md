@@ -761,7 +761,8 @@ corridor width (2 × (xteLimit + planning buffer)) exceeds 200 km², and a windo
 departures times that area exceed 1600 km² or its departures times legs exceed 20 000, since a
 leg check costs a corridor query however short the leg is. All three yield to the event loop
 after each corridor query (the route check and the repaired route's re-check), each leg check
-or each departure, so look-ahead ticks keep running during a long request. On a laptop a
+or each departure, and route repair also every 256 cells its search expands and after each
+simplification check, so look-ahead ticks keep running during a long request. On a laptop a
 corridor over 3000 shoals costs 1–3.5 ms per km². `POST /query` is refused when its bounding
 box widened by the buffer exceeds 25 km², or when its vertices times that area exceed 150 km²:
 every tile is tested against every vertex, and a 499-vertex ring over 25 km² took 0.47 s on a

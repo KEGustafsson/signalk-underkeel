@@ -228,9 +228,9 @@ interface Scoring {
 }
 
 /** A check split at its corridor queries, so a caller can let other work in between them. */
-type Steps<T> = Generator<void, T, void>;
+export type Steps<T> = Generator<void, T, void>;
 
-function drain<T>(steps: Steps<T>): T {
+export function drain<T>(steps: Steps<T>): T {
   for (;;) {
     const r = steps.next();
     if (r.done) {

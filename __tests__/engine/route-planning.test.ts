@@ -1,6 +1,6 @@
 import fc from "fast-check";
 import { departureWindow } from "../../src/engine/departure-window";
-import type { RouteCheckInput } from "../../src/engine/route-check";
+import type { LegResult, RouteCheckInput } from "../../src/engine/route-check";
 import { checkLeg, checkRoute } from "../../src/engine/route-check";
 import { DEFAULT_REPAIR, repairLeg, repairRoute, simplify } from "../../src/engine/route-repair";
 import type { LonLat } from "../../src/foundation/geo";
@@ -9,6 +9,7 @@ import { DEFAULT_DYNAMICS } from "../../src/model/vessel";
 import type { WaterLevel } from "../../src/model/uncertainty";
 import type { ChartIndex } from "../../src/spatial/chart-index";
 import { HazardIndex } from "../../src/spatial/hazards";
+import * as pyramid from "../../src/spatial/pyramid";
 import { footprintGeom, minDepthOver } from "../../src/spatial/pyramid";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
 import { area, basin, coverage, quality } from "../helpers/synthetic";
@@ -26,6 +27,17 @@ function shoalIndex(): ChartIndex {
       { minZoom: 12, leafZoom: 18 }
     ),
     hazards: new HazardIndex([])
+  };
+}
+
+/** The 10 m basin with one more feature. */
+function shoalIndexWith(feature: ReturnType<typeof area>): ChartIndex {
+  return {
+    ...shoalIndex(),
+    pyramid: buildPyramid([...basin([22.0, 60.0, 22.06, 60.03], 10), feature], {
+      minZoom: 12,
+      leafZoom: 18
+    })
   };
 }
 
@@ -69,6 +81,31 @@ describe("route repair", () => {
     // Existing points are not moved: the repair starts and ends on the leg's own ends.
     expect(repair?.legs[0]?.from).toEqual(LEG[0]);
     expect(repair?.legs.at(-1)?.to).toEqual(LEG[1]);
+  });
+
+  test("one leg's search lets other work in between slices of a few hundred cells", async () => {
+    // A long leg whose shoal fills most of the grid's width, so the search expands many cells.
+    const wall = shoalIndexWith(area([22.02, 60.004, 22.04, 60.026], 1));
+    const queries = jest.spyOn(pyramid, "minDepthOver");
+    const slices: number[] = [];
+    let last = 0;
+    const pause = () => {
+      slices.push(queries.mock.calls.length - last);
+      last = queries.mock.calls.length;
+      return Promise.resolve();
+    };
+    const leg = input([
+      [22.005, 60.015],
+      [22.055, 60.015]
+    ]);
+    const { repairs } = await repairRoute(wall, leg, DEFAULT_REPAIR, pause);
+    queries.mockRestore();
+    const checked = checkRoute(wall, leg, NOW).legs[0] as LegResult;
+    expect(repairs).toEqual([repairLeg(wall, leg, checked)]);
+    const total = slices.reduce((a, b) => a + b, 0);
+    expect(total).toBeGreaterThan(1000);
+    // 256 expansions of up to 8 neighbours each, and the cells along their lines of sight.
+    expect(Math.max(...slices)).toBeLessThan(total / 3);
   });
 
   test("legs that pass are left alone", async () => {
