@@ -234,7 +234,9 @@ describe("unassessed survey", () => {
 });
 
 describe("corridor geometry", () => {
-  test("the corridor contains every point within r of the leg", () => {
+  // The leg here is drawn straight in a's tangent plane, neither its rhumb line nor its great
+  // circle: one ring holds only the rhumb buffer, and the leg's rings widen for the rest.
+  test("a leg's corridors contain every point within r of the leg", () => {
     fc.assert(
       fc.property(
         uniform(0, 2 * Math.PI),
@@ -247,11 +249,12 @@ describe("corridor geometry", () => {
           const a: LonLat = [22.0, 60.0];
           const b = project(a, brg, length);
           const p = project(project(a, brg, along * length), dir, frac * r);
-          const ring = corridorRing(a, b, r).map((q) => toMercator(q[0], q[1]));
           const pm = toMercator(p[0], p[1]);
-          expect(pointInPolygon(pm, { outer: ring, holes: [] })).toBe(true);
+          const rings = legCorridors(a, b, r).map((g) => g.map((q) => toMercator(q[0], q[1])));
+          expect(rings.some((ring) => pointInPolygon(pm, { outer: ring, holes: [] }))).toBe(true);
         }
-      )
+      ),
+      { numRuns: 1000 }
     );
   });
 
