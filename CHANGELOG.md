@@ -53,6 +53,10 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Changed
 
+- Route checks split a leg into pieces of max(1 km, 4 × corridor half-width) instead of 1 km,
+  and check the great circle separately only where it strays more than max(10 m, r/4) from the
+  rhumb line. A 12 km leg at xteLimit 2000 took 129 ms on a laptop and takes 39 ms; four such
+  legs 402 → 115 ms. Corridors at the default width are unchanged in number.
 - The departure window stops checking a departure at its first failing leg, whose status the
   remaining legs cannot change. On a 100-leg route over the Nauvo cells that fails early,
   9 991 leg checks and 1.9 s became 91 checks and 54 ms on a laptop, with the same steps.
@@ -69,6 +73,11 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Fixed
 
+- Route-check corridors contain every point within the corridor half-width of the leg. They
+  were drawn with a spherical bearing in the ellipsoid's tangent plane and missed points at the
+  edge by up to 0.3 % of the width (0.12 m at the default ±40 m at the equator); they are now
+  drawn on the ellipsoid's bearing and 1/256 wider. Over the Nauvo cells 1 of 609 legs at the
+  default width went from `marginal` to `fail` (a 0 m depth area now in reach).
 - `POST /query` is also refused when the polygon's vertices times its box widened by the buffer
   exceed 150 km². A 499-vertex ring with a 2 km buffer fitted the 25 km² limit and blocked the
   server for 0.47 s on a laptop (about 2 s on a Raspberry Pi 4); within both limits the slowest

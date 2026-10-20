@@ -723,11 +723,17 @@ the full forecast horizon), re-checking only the legs whose water level changed.
 intervals in which every leg passes. In Finnish waters this matters during low-water episodes
 with high pressure and easterly winds; in tidal waters it becomes a full tide-gate planner.
 
-**As built (M2).** A leg is checked in pieces of about 1 km taken at equal fractions of the
-rhumb line, the line a Mercator chart plotter draws between the waypoints, so the corridor
-follows the leg as drawn and the last piece ends on its end point. A course computer may
-steer the great circle instead: where the great circle strays more than 10 m from the rhumb
-line, its own pieces are checked too; below that the rhumb corridor is widened by the gap.
+**As built (M2).** A leg is checked in pieces of about max(1 km, 4r), r the corridor half-width,
+taken at equal fractions of the rhumb line, the line a Mercator chart plotter draws between the
+waypoints, so the corridor follows the leg as drawn and the last piece ends on its end point.
+Each piece's rectangle reaches r past both ends, so 1 km pieces of a ±2 km corridor queried the
+same water about five times. A course computer may steer the great circle instead: where the
+great circle strays more than max(10 m, r/4) from the rhumb line, its own pieces are checked
+too, widened by how far it strays from their chords; below that the rhumb corridor is widened
+by the gap. Every rectangle is 1/256 wider than asked, since the Mercator chart and the tangent
+plane the rectangle is drawn in drift apart over a piece (up to 0.15 % of r, measured to 84°);
+a fast-check property holds every point exactly r from either line inside the corridor
+(invariant 4).
 
 **As built (M5).** The repair grid has at most 120 cells on its longer side, at least 10 m
 each, and reaches half the leg's length (at least 300 m) beyond it. A cell is blocked when the

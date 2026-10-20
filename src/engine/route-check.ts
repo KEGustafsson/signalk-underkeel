@@ -1,12 +1,5 @@
 import type { LonLat } from "../foundation/geo";
-import {
-  EARTH_RADIUS,
-  fromMercator,
-  haversine,
-  project,
-  toMercator,
-  wrapLon
-} from "../foundation/geo";
+import { fromMercator, haversine, offset, project, toMercator, wrapLon } from "../foundation/geo";
 import { geomBounds } from "../foundation/geometry";
 import type { VesselTerms, WaterLevel } from "../model/uncertainty";
 import { sigmaExtra, thresholdDepth } from "../model/uncertainty";
@@ -87,7 +80,11 @@ export interface RouteCheckResult {
   legs: LegResult[];
 }
 
-/** Long legs are checked in pieces about this long so the corridor hugs the line. */
+/**
+ * Long legs are checked in pieces at least this long, and at least four
+ * corridor half-widths: each piece reaches r past both ends, so shorter
+ * pieces of a wide corridor would query the same water several times.
+ */
 const SEGMENT_METRES = 1000;
 
 /** b moved by whole turns of longitude to within 180° of a: the short way round. */
@@ -95,22 +92,30 @@ function nearSide(a: LonLat, b: LonLat): LonLat {
   return [a[0] + wrapLon(b[0] - a[0]), b[1]];
 }
 
-/** True bearing from a to b in the local tangent plane, radians. */
+/** True bearing from a to b in the tangent plane at a that `project` offsets in, radians. */
 function bearing(a: LonLat, b: LonLat): number {
-  const deg = Math.PI / 180;
-  const east = (nearSide(a, b)[0] - a[0]) * deg * EARTH_RADIUS * Math.cos(a[1] * deg);
-  const north = (b[1] - a[1]) * deg * EARTH_RADIUS;
+  const east = (nearSide(a, b)[0] - a[0]) / (offset(a, 1, 0)[0] - a[0]);
+  const north = (b[1] - a[1]) / (offset(a, 0, 1)[1] - a[1]);
   return Math.atan2(east, north);
 }
 
 /**
- * Rectangle around segment a→b, `r` metres to each side and past each
- * end. It contains the capsule buffer(a→b, r), so the check is never
- * narrower than the corridor. Across ±180° the ring keeps a's side and
- * reaches past it.
+ * Relative widening of every ring. Over a piece the Mercator chart and the
+ * tangent plane at its start drift apart: a ring exactly r wide missed
+ * points r off the rhumb line by up to 0.15 % of r (measured up to 84°,
+ * pieces up to 4r long).
  */
-export function corridorRing(a: LonLat, b: LonLat, r: number): LonLat[] {
+const RING_SLACK = 1 / 256;
+
+/**
+ * Rectangle around segment a→b, `r` metres to each side and past each
+ * end. It contains the capsule buffer(a→b, r) around the segment drawn
+ * straight on the chart, so the check is never narrower than the corridor.
+ * Across ±180° the ring keeps a's side and reaches past it.
+ */
+export function corridorRing(a: LonLat, b: LonLat, rMetres: number): LonLat[] {
   const brg = bearing(a, b);
+  const r = rMetres * (1 + RING_SLACK);
   const start = project(a, brg + Math.PI, r);
   const end = project(nearSide(a, b), brg, r);
   return [
@@ -160,25 +165,51 @@ function greatCircleOffset(a: LonLat, b: LonLat): number {
   return gap;
 }
 
-/** Below this gap the rhumb corridor is widened by it; above, the great circle gets its own. */
+/**
+ * Below this gap, or a quarter of the corridor half-width, the rhumb
+ * corridor is widened by the gap; above, the great circle gets its own.
+ */
 const GREAT_CIRCLE_TOLERANCE = 10;
+
+type Line = (a: LonLat, b: LonLat, t: number) => LonLat;
+
+/**
+ * How far a line strays from the chords between its points, metres: the
+ * gap at a quarter, half and three quarters of each piece to the point as
+ * far along the chord. The rhumb line is its own chord on the chart.
+ */
+function chordGap(along: Line, a: LonLat, b: LonLat, points: LonLat[]): number {
+  if (along === alongRhumb) {
+    return 0;
+  }
+  const n = points.length - 1;
+  let gap = 0;
+  for (let i = 0; i < n; i++) {
+    for (const s of [0.25, 0.5, 0.75]) {
+      const chord = alongRhumb(points[i] as LonLat, points[i + 1] as LonLat, s);
+      gap = Math.max(gap, haversine(along(a, b, (i + s) / n), chord));
+    }
+  }
+  return gap;
+}
 
 /**
  * Corridor rings that together contain every point within `r` of both the
  * rhumb line a→b, as a chart plotter draws the leg, and its great circle,
  * as a course computer may steer it. Each line is split into pieces of
- * about SEGMENT_METRES at equal fractions, so the last piece ends on b.
+ * about max(SEGMENT_METRES, 4r) at equal fractions, so the last piece ends
+ * on b, and each ring is widened by how far its line strays from the chord.
  */
 export function legCorridors(a: LonLat, b: LonLat, r: number): LonLat[][] {
-  const n = Math.max(1, Math.ceil(haversine(a, b) / SEGMENT_METRES));
+  const n = Math.max(1, Math.ceil(haversine(a, b) / Math.max(SEGMENT_METRES, 4 * r)));
   const gap = greatCircleOffset(a, b);
-  const apart = gap > GREAT_CIRCLE_TOLERANCE;
+  const apart = gap > Math.max(GREAT_CIRCLE_TOLERANCE, r / 4);
   const lines = apart ? [alongRhumb, alongGreatCircle] : [alongRhumb];
-  const width = apart ? r : r + gap;
   return lines.flatMap((along) => {
     const points = Array.from({ length: n + 1 }, (_, i) =>
       i === 0 ? a : i === n ? b : along(a, b, i / n)
     );
+    const width = (apart ? r : r + gap) + chordGap(along, a, b, points);
     return points.slice(1).map((q, i) => corridorRing(points[i] as LonLat, q, width));
   });
 }
