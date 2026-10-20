@@ -148,7 +148,9 @@ export const workerBuilder: IndexBuilder = async (job, signal) => {
  */
 export const workerRefresher: WfsRefresher = async (job, signal) => {
   const script = path.join(__dirname, "wfs-worker.js");
-  const m = await runWorker<WfsReply>(script, job, signal, job.build.indexDir);
+  const heapMb = workerHeapLimitMb();
+  const data: WfsJob = { ...job, build: { ...job.build, heapMb } };
+  const m = await runWorker<WfsReply>(script, data, signal, job.build.indexDir, heapMb);
   const features = m.features ?? { depthAreas: 0, dredgedAreas: 0, soundings: 0 };
   return { index: commit(job.build.indexDir, m.staging, signal), features };
 };
@@ -331,7 +333,8 @@ export class WfsService {
           build: {
             dirs: [...this.deps.encDirs(), this.cellDir],
             leafZoom: this.deps.leafZoom,
-            indexDir: this.deps.indexDir
+            indexDir: this.deps.indexDir,
+            changed: [this.cellDir]
           }
         },
         controller.signal

@@ -56,6 +56,12 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Changed
 
+- A Traficom WFS refresh builds only the z10 index roots that the old or new box reaches, or a
+  cell with a new DSID, and copies the other roots from the saved index, which now keeps each
+  cell's reach in `reach.json`; the result is byte-identical to a full build. With 16 copies of
+  the Nauvo pair (32 cells) and the real 10 km box moved 5 km, the refresh built 4 of 12 roots:
+  30.8 → 11.8 s of worker time at leaf zoom 20 and 5.6 → 2.7 s at 18 on x86. Where both boxes
+  reach every ENC root, as with the Nauvo pair alone, every root is still built.
 - The index build in the worker builds the pyramid one z10 root at a time, from only the cells
   reaching it, on up to four threads, with output byte-identical to a build of all cells at
   once. Sixteen copies of the Nauvo pair (3.3 M nodes) on x86: peak RSS 817 → 481 MB on one

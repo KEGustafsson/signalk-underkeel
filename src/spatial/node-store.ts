@@ -327,6 +327,24 @@ export class NodeStore {
     return this.split[i] === 1;
   }
 
+  /** The stored tiles at zoom z with keys in [lo, hi) as [key, nodeIndex], in key order. */
+  *keyRange(z: number, lo: number, hi: number): Generator<[number, number]> {
+    const level = this.level(z);
+    let a = 0;
+    let b = level.n;
+    while (a < b) {
+      const mid = (a + b) >>> 1;
+      if ((level.keys[mid] as number) < lo) {
+        a = mid + 1;
+      } else {
+        b = mid;
+      }
+    }
+    for (let j = a; j < level.n && (level.keys[j] as number) < hi; j++) {
+      yield [level.keys[j] as number, nodeAt(level, j)];
+    }
+  }
+
   /** Every stored tile at zoom z as [x, y, nodeIndex], in tile-key order. */
   *entries(z: number): Generator<[number, number, number]> {
     const n = 2 ** z;

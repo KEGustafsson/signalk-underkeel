@@ -238,7 +238,9 @@ signalk-underkeel/
    25 kn with 10-minute rebuilds the half-radius rule alone handed a box over with the vessel
    5.4 km past the old box's edge. A box centred ahead covers less water astern, which route
    checks of legs behind the vessel see as uncovered (`unverified`, invariant 4). A worker thread downloads the box, parses, clips and writes the cell, rebuilds
-   the index and stages it; the main thread moves it into place and swaps it in. Each page is
+   the index and stages it; the main thread moves it into place and swaps it in. The rebuild
+   builds only the z10 roots that the WFS cell reaches in the saved index or now, and copies
+   the others from the saved index (§4.3). Each page is
    read as a stream: more than 64 MB, or 30 s without a byte, fails the download, which then
    waits 5 minutes as after any failure, and the previous index stays. The living chart is
    moved onto the new index in slices of 1 000 cells, each its own turn of the event loop, and
@@ -365,6 +367,16 @@ CATZOC C sounding counts up to 1 km from its position.
 - `cells.json` (provenance) and `hazards.json` (exact hazard geometry) sit beside it. The
   hazard R-tree is rebuilt from `hazards.json` at load, packed in typed arrays (about 47 bytes
   per hazard).
+- `reach.json` holds each cell's reach: the box of its features, its widest burn radius and
+  its coverage box. A build told which cells changed (the WFS cell after each download) copies
+  from the saved index every z10 root that none of them reaches, by the saved reach or the new
+  one, nor any cell whose DSID differs from `cells.json`: the features reaching such a root are
+  those of the saved build. The result is byte-identical to building every root (tested for
+  boxes moved within a root, across root edges, over ENC cells and out of or back into the
+  roots of the ENC cells). Every root is built when the saved
+  index holds other cells or another order, another leaf zoom, no `reach.json`, or fails to
+  read. As at start, a cell with the same DSID edition, update, issue date and datum areas is
+  taken as unchanged.
 - The index is built in a worker thread, at start as for a new WFS box (§4.2); until the
   worker hands it over the look-ahead is `off` with the reason `building chart index`, and the
   WFS box starts only after the handover, so this build never replaces a newer box's index.

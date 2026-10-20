@@ -121,7 +121,9 @@ describe("workerBuilder (compiled lib/)", () => {
   });
 
   test("columns built on several threads join into the single-thread index, byte for byte", async () => {
-    const lib = (await import(LIB_WORKER)) as { runBuild: (j: BuildJob) => Promise<string> };
+    const lib = (await import(LIB_WORKER)) as {
+      runBuild: (j: BuildJob) => Promise<{ staging: string }>;
+    };
     const cells = spreadCells(path.join(dir, "cells"));
     const staged = (threads: number) =>
       lib.runBuild({
@@ -130,8 +132,11 @@ describe("workerBuilder (compiled lib/)", () => {
         indexDir: path.join(dir, `index-${threads}`),
         threads
       });
-    const [one, three] = await Promise.all([staged(1), staged(3)]);
-    for (const file of ["pyramid.bin", "hazards.json", "cells.json"]) {
+    const [one, three] = (await Promise.all([staged(1), staged(3)])).map((r) => r.staging) as [
+      string,
+      string
+    ];
+    for (const file of ["pyramid.bin", "hazards.json", "cells.json", "reach.json"]) {
       expect(
         fs.readFileSync(path.join(three, file)).equals(fs.readFileSync(path.join(one, file)))
       ).toBe(true);

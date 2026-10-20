@@ -81,7 +81,7 @@ describe("only the main thread writes the index directory", () => {
   afterEach(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
   test("the build worker stages the index and leaves the index directory alone", async () => {
-    const staging = await runBuild({
+    const { staging } = await runBuild({
       dirs: [path.join(FIXTURES, "FI5SYNTH")],
       leafZoom: 14,
       indexDir,

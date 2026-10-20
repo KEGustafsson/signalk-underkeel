@@ -656,7 +656,7 @@ flowchart TD
   P[vessel position, checked periodically] --> D{more than half the box radius from<br/>the box centre, or the edge ahead<br/>closer than a rebuild's run?}
   D -- no --> KEEP[keep the current index]
   D -- yes, and no download<br/>in the last minute or so --> W[in a worker thread: download the box<br/>centred ahead along the course<br/>DepthArea_A, DredgedArea_A, Sounding_P]
-  W --> B[rebuild the index in the same thread:<br/>ENC cells first, then the WFS cell]
+  W --> B[rebuild in the same thread the index tiles<br/>about 20 km square that the old or new box reaches;<br/>copy the others from the saved index]
   B --> S[swap the new index in;<br/>the look-ahead keeps running]
   W -- fails --> E[keep the old index, report the error,<br/>retry after a longer back-off]
 ```

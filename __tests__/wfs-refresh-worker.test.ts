@@ -80,7 +80,7 @@ describe("WFS refresh worker entry", () => {
       jest.isolateModules(() => {
         jest.doMock("worker_threads", () => ({
           parentPort: { postMessage: (m: WfsReply) => messages.push(m) },
-          workerData: j
+          workerData: { ...j, build: { ...j.build, threads: 1 } }
         }));
         require("../src/wfs-worker");
       });

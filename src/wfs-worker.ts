@@ -1,9 +1,8 @@
 import { parentPort, workerData } from "worker_threads";
 import type { WfsDownload, WfsFetch } from "./ingest/wfs";
 import { downloadWfsCell } from "./ingest/wfs";
-import { readCellDirectory } from "./ingest/cell-reader";
 import type { BuildJob } from "./spatial/build-worker";
-import { buildChartIndex, stageChartIndex } from "./spatial/chart-index";
+import { runBuild } from "./spatial/build-worker";
 
 /**
  * A Traficom WFS refresh off the event loop: download, parse, clip and write the cell, then
@@ -37,13 +36,8 @@ export async function runWfsJob(
     fetch,
     signal
   });
-  // As spatial/build-worker's runBuild, which this thread cannot import: that module runs
-  // its own job when loaded in a worker.
-  const index = buildChartIndex(
-    job.build.dirs.map((d, i) => readCellDirectory(d, i)),
-    { leafZoom: job.build.leafZoom }
-  );
-  return { staging: stageChartIndex(job.build.indexDir, index), features };
+  const { staging } = await runBuild(job.build);
+  return { staging, features };
 }
 
 if (parentPort && workerData) {

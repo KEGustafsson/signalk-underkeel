@@ -14,7 +14,7 @@ import { areasCoverRect, geomContainsRect, geomRectDistance } from "../foundatio
 import type { ChartFeature, QualityFeature } from "../ingest/features";
 import type { BuildOptions, Item } from "./build-items";
 import { DEFAULT_BUILD, prepareItems } from "./build-items";
-import type { NodeValues } from "./node-store";
+import type { NodeColumns, NodeValues } from "./node-store";
 import { combine, EMPTY, FLAGS, NO_DATA, NodeStore } from "./node-store";
 import {
   FULL,
@@ -25,6 +25,7 @@ import {
 } from "./polygon-index";
 import { REACH_SLACK } from "./pyramid";
 import { sigmaFor, SWEPT_SIGMA_D } from "./quality";
+import { bodyColumns } from "./store";
 
 /**
  * Builds the min-depth pyramid top-down (plan §4.3). A tile is subdivided
@@ -421,6 +422,38 @@ export function buildRoots(items: Item[], opts: BuildOptions, range: RootRange):
     }
   }
   return store;
+}
+
+/**
+ * The nodes of root (x, y) at the store's minZoom, copied out zoom by zoom
+ * in tile-key order: the columns a build of that root alone gives. At zoom
+ * z the root holds s = 2^(z − minZoom) tile columns, each a run of s keys.
+ */
+export function rootColumns(store: NodeStore, x: number, y: number): NodeColumns {
+  const found: number[] = [];
+  for (let z = store.minZoom; z <= store.leafZoom; z++) {
+    const s = 2 ** (z - store.minZoom);
+    const n = 2 ** z;
+    for (let tx = x * s; tx < (x + 1) * s; tx++) {
+      for (const [key, i] of store.keyRange(z, tx * n + y * s, tx * n + (y + 1) * s)) {
+        found.push(z, key, i);
+      }
+    }
+  }
+  const { cols } = bodyColumns(found.length / 3);
+  for (let at = 0; at < cols.z.length; at++) {
+    const i = found[3 * at + 2] as number;
+    cols.z[at] = found[3 * at] as number;
+    cols.key[at] = found[3 * at + 1] as number;
+    cols.dMin[at] = store.dMin[i] as number;
+    cols.sigmaD[at] = store.sigmaD[i] as number;
+    cols.sigmaP[at] = store.sigmaP[i] as number;
+    cols.surveySigmaP[at] = store.surveySigmaP[i] as number;
+    cols.flags[at] = store.flags[i] as number;
+    cols.cellRef[at] = store.cellRef[i] as number;
+    cols.split[at] = store.split[i] as number;
+  }
+  return cols;
 }
 
 /**
