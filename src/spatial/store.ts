@@ -21,6 +21,7 @@ import {
   headOn,
   inflate,
   inflateSync,
+  joinBlocks,
   layoutFor,
   splitBlocks
 } from "./pyramid-blocks";
@@ -286,7 +287,7 @@ function assemble(
   const store = NodeStore.fromColumns(header.minZoom, header.leafZoom, cols);
   if (entries.length > 0) {
     const layout = { ...header, cutZoom: header.residentZoom, firstIndex: header.resident };
-    attachBlocks(store, { layout, entries, summary, reader, opts }, header.count);
+    attachBlocks(store, { layout, entries, resident: cols, summary, reader, opts }, header.count);
   }
   return store;
 }
@@ -307,6 +308,20 @@ export function deserializePyramid(buf: Buffer): NodeStore {
   const store = pyramidFromBuffer(buf, WHOLE);
   cacheOf(store)?.loadAll();
   return store;
+}
+
+/**
+ * The store with every node in its own columns, in file order, for code
+ * that reads a store's levels directly; a store held whole is returned as is.
+ */
+export function wholePyramid(store: NodeStore): NodeStore {
+  const cache = cacheOf(store);
+  if (!cache) {
+    return store;
+  }
+  const { resident, blocks } = cache.columns();
+  const { body, cols } = joinBlocks(resident, blocks, cache.blockZoom);
+  return storeOnBody(store.minZoom, store.leafZoom, body, cols);
 }
 
 /** A store held whole: every block loaded and none evicted. */

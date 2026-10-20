@@ -23,7 +23,12 @@ import {
   headOn
 } from "../../src/spatial/pyramid-blocks";
 import { footprintGeom, minDepthOver } from "../../src/spatial/pyramid";
-import { openPyramid, pyramidFromBuffer, serializePyramid } from "../../src/spatial/store";
+import {
+  openPyramid,
+  pyramidFromBuffer,
+  serializePyramid,
+  wholePyramid
+} from "../../src/spatial/store";
 import { cellsInTile } from "../../src/spatial/tile-walk";
 import { uniform } from "../helpers/arbitraries";
 import { spreadCells } from "../helpers/shifted-cells";
@@ -242,6 +247,31 @@ describe.each([
       }),
       { numRuns: 200 }
     );
+  });
+});
+
+describe("a store held whole", () => {
+  test.each([
+    ["default", DEFAULT_LAYOUT],
+    ["fine", FINE]
+  ])("joined from its blocks (%s layout) is the built store, node for node", (_, layout) => {
+    const whole = wholePyramid(pyramidFromBuffer(serializePyramid(built, layout)));
+    expect(cacheOf(whole)).toBeUndefined();
+    for (let z = built.minZoom; z <= built.leafZoom; z++) {
+      const at = (s: NodeStore) =>
+        [...s.entries(z)].map(([x, y, i]) => [x, y, s.values(i), s.isSplit(i), s.surveySigma(i)]);
+      expect(at(whole)).toEqual(at(built));
+    }
+    expect(serializePyramid(whole).equals(serializePyramid(built))).toBe(true);
+  });
+
+  test("loadChartIndex reads every block into it when asked", () => {
+    const dir = path.join(tmp, "whole");
+    saveChartIndex(dir, { ...buildChartIndex([]), pyramid: built });
+    const { pyramid } = loadChartIndex(dir, { whole: true });
+    expect(cacheOf(pyramid)).toBeUndefined();
+    expect(pyramid.count).toBe(built.count);
+    expect(cacheOf(loadChartIndex(dir).pyramid)).toBeDefined();
   });
 });
 

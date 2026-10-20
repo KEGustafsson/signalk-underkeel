@@ -286,3 +286,100 @@ export function inflate(member: Buffer, bytes: number): Promise<Buffer> {
     )
   ).then((out) => sized(out, bytes));
 }
+
+/** Index of the first node of each zoom in zoom-ordered columns, and the end, by zoom. */
+function zoomStarts(z: Uint8Array): Map<number, [number, number]> {
+  const out = new Map<number, [number, number]>();
+  for (let i = 0; i < z.length;) {
+    let j = i;
+    while (j < z.length && z[j] === z[i]) {
+      j++;
+    }
+    out.set(z[i] as number, [i, j]);
+    i = j;
+  }
+  return out;
+}
+
+const COLUMNS: (keyof NodeColumns)[] = [
+  "dMin",
+  "key",
+  "sigmaD",
+  "sigmaP",
+  "surveySigmaP",
+  "cellRef",
+  "flags",
+  "z",
+  "split"
+];
+
+/**
+ * The resident nodes and the blocks' (given in key order) as one set of
+ * columns in zoom and tile-key order. At each zoom the blocks of one block
+ * column interleave by tile column, and are copied in that order.
+ */
+export function joinBlocks(
+  resident: NodeColumns,
+  keyed: { key: number; cols: NodeColumns }[],
+  blockZoom: number
+): { body: Uint8Array; cols: NodeColumns } {
+  const blocks = keyed.map((b) => b.cols);
+  const total = blocks.reduce((n, b) => n + b.z.length, resident.z.length);
+  const body = new Uint8Array(BYTES_PER_NODE * total);
+  const out = columnsOn(body, total);
+  const copy = (from: NodeColumns, a: number, b: number, at: number): number => {
+    for (const k of COLUMNS) {
+      (out[k] as Float64Array).set((from[k] as Float64Array).subarray(a, b), at);
+    }
+    return at + b - a;
+  };
+  let at = copy(resident, 0, resident.z.length, 0);
+  const runs = blocks.map((b) => zoomStarts(b.z));
+  const zooms = [...new Set(runs.flatMap((r) => [...r.keys()]))].sort((a, b) => a - b);
+  const column = keyed.map((b) => Math.floor(b.key / (POW[blockZoom] as number)));
+  for (const z of zooms) {
+    for (let g = 0; g < blocks.length;) {
+      let h = g;
+      while (h < blocks.length && column[h] === column[g]) {
+        h++;
+      }
+      at = joinColumn(blocks.slice(g, h), runs.slice(g, h), z, copy, at);
+      g = h;
+    }
+  }
+  return { body, cols: out };
+}
+
+function joinColumn(
+  blocks: NodeColumns[],
+  runs: Map<number, [number, number]>[],
+  z: number,
+  copy: (from: NodeColumns, a: number, b: number, at: number) => number,
+  start: number
+): number {
+  const n = POW[z] as number;
+  const cursor = runs.map((r) => {
+    const [a, b] = r.get(z) ?? [0, 0];
+    return { at: a, end: b };
+  });
+  let at = start;
+  for (;;) {
+    let x = Infinity;
+    blocks.forEach((b, k) => {
+      const c = cursor[k] as { at: number; end: number };
+      x = c.at < c.end ? Math.min(x, Math.floor((b.key[c.at] as number) / n)) : x;
+    });
+    if (x === Infinity) {
+      return at;
+    }
+    blocks.forEach((b, k) => {
+      const c = cursor[k] as { at: number; end: number };
+      let to = c.at;
+      while (to < c.end && (b.key[to] as number) < (x + 1) * n) {
+        to++;
+      }
+      at = copy(b, c.at, to, at);
+      c.at = to;
+    });
+  }
+}

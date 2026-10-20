@@ -1,7 +1,7 @@
 import fs from "fs";
 import type { Rect } from "../foundation/geo";
 import { tileKey, tileRange } from "../foundation/geo";
-import type { BlockSource, NodeValues, StandIn } from "./node-store";
+import type { BlockSource, NodeColumns, NodeValues, StandIn } from "./node-store";
 import { NO_DATA, NodeStore } from "./node-store";
 import type { BlockEntry, Summary } from "./pyramid-blocks";
 import { BYTES_PER_NODE, columnsOn, inflate, inflateSync } from "./pyramid-blocks";
@@ -133,12 +133,15 @@ interface Loaded {
   base: number;
   n: number;
   store: NodeStore;
+  cols: NodeColumns;
   used: number;
 }
 
 export interface CacheParts {
   layout: CacheLayout;
   entries: BlockEntry[];
+  /** The store's own nodes, the columns it was made from. */
+  resident: NodeColumns;
   summary: Summary;
   reader: BlockReader;
   opts: CacheOptions;
@@ -167,7 +170,7 @@ export class BlockCache implements BlockSource {
   bytes = 0;
   private readonly leafZoom: number;
   /** Tiles per side at the block zoom. */
-  private readonly columns: number;
+  private readonly side: number;
   private readonly table = new Map<number, BlockEntry>();
   private readonly loaded = new Map<number, Loaded>();
   /** The loaded blocks in increasing `base`, for finding a node's block. */
@@ -181,6 +184,7 @@ export class BlockCache implements BlockSource {
   private last: Loaded | undefined;
   private trimming: NodeJS.Immediate | undefined;
   private readonly summary: Summary;
+  private readonly resident: NodeColumns;
   private readonly reader: BlockReader;
   private readonly opts: CacheOptions;
 
@@ -188,10 +192,11 @@ export class BlockCache implements BlockSource {
     const { layout } = parts;
     this.cutZoom = layout.cutZoom;
     this.blockZoom = layout.blockZoom;
-    this.columns = 2 ** layout.blockZoom;
+    this.side = 2 ** layout.blockZoom;
     this.leafZoom = layout.leafZoom;
     this.nextBase = layout.firstIndex;
     this.summary = parts.summary;
+    this.resident = parts.resident;
     this.reader = parts.reader;
     this.opts = parts.opts;
     for (const e of parts.entries) {
@@ -222,7 +227,7 @@ export class BlockCache implements BlockSource {
   /** The block tile holding tile (z, x, y), z ≥ the block zoom; x and y are below 2^26. */
   private keyOf(z: number, x: number, y: number): number {
     const d = z - this.blockZoom;
-    return (x >>> d) * this.columns + (y >>> d);
+    return (x >>> d) * this.side + (y >>> d);
   }
 
   private block(key: number): Loaded | undefined {
@@ -337,8 +342,16 @@ export class BlockCache implements BlockSource {
   }
 
   private insert(e: BlockEntry, body: Buffer): Loaded {
-    const store = NodeStore.fromColumns(this.cutZoom + 1, this.leafZoom, columnsOn(body, e.nodes));
-    const b: Loaded = { key: e.key, base: this.nextBase, n: e.nodes, store, used: ++this.clock };
+    const cols = columnsOn(body, e.nodes);
+    const store = NodeStore.fromColumns(this.cutZoom + 1, this.leafZoom, cols);
+    const b: Loaded = {
+      key: e.key,
+      base: this.nextBase,
+      n: e.nodes,
+      store,
+      cols,
+      used: ++this.clock
+    };
     this.nextBase += e.nodes;
     this.loaded.set(e.key, b);
     this.byBase.push(b);
@@ -447,6 +460,15 @@ export class BlockCache implements BlockSource {
     for (const key of this.table.keys()) {
       this.loadNow(key);
     }
+  }
+
+  /** The resident columns and every block's, in key order; reads every block now. */
+  columns(): { resident: NodeColumns; blocks: { key: number; cols: NodeColumns }[] } {
+    const blocks = [...this.table.values()].map((e) => ({
+      key: e.key,
+      cols: (this.loaded.get(e.key) ?? this.readNow(e)).cols
+    }));
+    return { resident: this.resident, blocks };
   }
 
   /** Every block's tile key, in increasing order. */

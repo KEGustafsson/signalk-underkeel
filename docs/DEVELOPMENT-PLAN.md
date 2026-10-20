@@ -381,7 +381,7 @@ CATZOC C sounding counts up to 1 km from its position.
   threshold, at the widest where deeper). A look-ahead footprint over it is therefore at least
   `warn` ("no chart coverage"), a leg at least `unverified`, a query or a UKC tile cell at least
   `unverified`, and each at least as severe as with the block loaded; with every block loaded
-  every answer equals that of the store held whole. A store's `loadRevision` counts block
+  every answer equals that of the store held whole. `loadChartIndex(dir, { whole: true })` joins every block back into the store's own columns, in file order, for code that reads a store's levels directly (an incremental rebuild copying unchanged roots). A store's `loadRevision` counts block
   loads and drops, and `blocksChangedSince(revision)` names the block tiles, for caches of
   answers that may have read a stand-in.
 - `cells.json` (provenance) and `hazards.json` (exact hazard geometry) sit beside it. The
