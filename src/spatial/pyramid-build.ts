@@ -4,6 +4,7 @@ import {
   expandRect,
   extendRect,
   groundToMercator,
+  MERCATOR_HALF_WORLD,
   maxAbsLat,
   rectsOverlap,
   tileRange,
@@ -99,6 +100,25 @@ function prepare(features: ChartFeature[], opts: BuildOptions): Item[] {
   });
 }
 
+/** Containment is tested this far, in Mercator metres, inside the world's ±180° edge. */
+const WORLD_EDGE_INSET = 1e-3;
+
+/**
+ * The tile as containment sees it. Nothing lies past ±180°, so a cell whose
+ * edge runs along it holds a tile on that edge; read as is, the shared edge
+ * left every leaf there uncovered. A real gap past 180° is still found by
+ * queries, which walk the tiles at the other end of the world.
+ */
+function inWorld(rect: Rect): Rect {
+  const edge = MERCATOR_HALF_WORLD - WORLD_EDGE_INSET;
+  return {
+    minX: Math.max(rect.minX, -edge),
+    minY: rect.minY,
+    maxX: Math.min(rect.maxX, edge),
+    maxY: rect.maxY
+  };
+}
+
 function classify(items: Item[], rect: Rect): Hit[] {
   const scale = groundToMercator(1, maxAbsLat(rect));
   const hits: Hit[] = [];
@@ -110,7 +130,7 @@ function classify(items: Item[], rect: Rect): Hit[] {
     if (geomRectDistance(item.f.geom, rect, r) > r) {
       continue;
     }
-    hits.push({ item, full: item.radius === 0 && geomContainsRect(item.f.geom, rect) });
+    hits.push({ item, full: item.radius === 0 && geomContainsRect(item.f.geom, inWorld(rect)) });
   }
   return hits;
 }
@@ -176,7 +196,7 @@ function coveredBand(coverage: Hit[], rect: Rect): number | undefined {
       (inBand.length > 1 &&
         areasCoverRect(
           inBand.map((h) => h.item.f.geom),
-          rect
+          inWorld(rect)
         ))
     );
   });
@@ -237,7 +257,7 @@ function assessedCover(hits: Hit[], rect: Rect): boolean {
     zones.length > 0 &&
     areasCoverRect(
       zones.map((h) => h.item.f.geom),
-      rect
+      inWorld(rect)
     )
   );
 }
@@ -339,6 +359,27 @@ function uniformValues(a: Analysis, rect: Rect, opts: BuildOptions): NodeValues 
   };
 }
 
+/**
+ * Chart position σP of a leaf: the widest of the assessed, non-advisory
+ * quality zones reaching it, however much of it they cover.
+ */
+function surveySigma(hits: Hit[], opts: BuildOptions): number {
+  let sigmaP = 0;
+  for (const h of hits) {
+    const f = h.item.f;
+    if (f.role === "quality" && f.catzoc !== 6 && !f.advisory) {
+      sigmaP = Math.max(sigmaP, sigmaFor(f.catzoc, 0, f, opts.quality).sigmaP);
+    }
+  }
+  return sigmaP;
+}
+
+interface Evaluated {
+  v: NodeValues;
+  /** Widest leaf `surveySigma` under the node. */
+  survey: number;
+}
+
 function evaluate(
   store: NodeStore,
   opts: BuildOptions,
@@ -346,32 +387,36 @@ function evaluate(
   x: number,
   y: number,
   items: Item[]
-): NodeValues {
+): Evaluated {
   const rect = tileRect(z, x, y);
   const all = classify(items, rect);
   if (!all.some((h) => h.item.f.role === "coverage")) {
-    store.add(z, x, y, NO_DATA, false);
-    return NO_DATA;
+    store.add(z, x, y, NO_DATA, false, 0);
+    return { v: NO_DATA, survey: 0 };
   }
   const tileGround = (rect.maxX - rect.minX) / groundToMercator(1, maxAbsLat(rect));
   const a = analyse(all, rect, tileGround);
   if (!a.needsSplit || z === opts.leafZoom) {
     const v = uniformValues(a, rect, opts);
-    store.add(z, x, y, v, false);
-    return v;
+    const survey = surveySigma(a.hits, opts);
+    store.add(z, x, y, v, false, survey);
+    return { v, survey };
   }
   const passed = forChildren(all, a);
   let v = EMPTY;
+  let survey = 0;
   for (const [dx, dy] of [
     [0, 0],
     [1, 0],
     [0, 1],
     [1, 1]
   ] as const) {
-    v = combine(v, evaluate(store, opts, z + 1, 2 * x + dx, 2 * y + dy, passed));
+    const child = evaluate(store, opts, z + 1, 2 * x + dx, 2 * y + dy, passed);
+    v = combine(v, child.v);
+    survey = Math.max(survey, child.survey);
   }
-  store.add(z, x, y, v, true);
-  return v;
+  store.add(z, x, y, v, true, survey);
+  return { v, survey };
 }
 
 /**

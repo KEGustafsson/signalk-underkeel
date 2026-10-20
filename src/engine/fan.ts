@@ -74,6 +74,7 @@ export function footprint(
   const buffer = bufferAt(s, opts);
   const r = minDepthOver(index.pyramid, footprintGeom(ring), {
     bufferMetres: buffer,
+    chartReachK: opts.kp,
     clearAbove: s.threshold + CLEARANCE_RESOLUTION,
     risk: { threshold: s.threshold, sigmaExtra: s.sigmaExtra }
   });

@@ -32,6 +32,11 @@ export interface WaterLevelProvider {
   readonly reference: "chart" | "series";
   levelAt(position: LonLat | undefined, t: number, series: LevelSeries): LevelSample | undefined;
   health(now: number): ProviderHealth;
+  /**
+   * Times in [start, end] where the level can turn, e.g. forecast points;
+   * an interval minimum is sampled there as well as on a fixed step.
+   */
+  knots?(start: number, end: number): number[];
 }
 
 /** With no usable water level the engine works at chart datum with this σ. */
@@ -46,8 +51,13 @@ const MAX_INTERVAL_SAMPLES = 300;
 
 export const CHART_DATUM: WaterLevel = { h: 0, sigma: CHART_DATUM_SIGMA, source: "chart-datum" };
 
-function fallback(reason: string): WaterLevel {
-  return { h: 0, sigma: CHART_DATUM_SIGMA, source: "fallback", degraded: reason };
+/**
+ * Chart datum, or the last level the source gave when that was lower: Baltic
+ * levels are often below chart datum, and falling back to 0 would assume
+ * more water than was last seen.
+ */
+function fallback(reason: string, last: number): WaterLevel {
+  return { h: Math.min(0, last), sigma: CHART_DATUM_SIGMA, source: "fallback", degraded: reason };
 }
 
 /** A constant height above chart datum with a user-set σ. */
@@ -60,16 +70,28 @@ export function manualProvider(h: number, sigma: number): WaterLevelProvider {
   };
 }
 
+/** heightNow stands for the level only this long after it was read. */
+const TIDE_NOW_HOLD_MS = 5 * 60 * 1000;
+/**
+ * The next low water bounds the level until the flood after it has turned:
+ * about 6 h past timeLow on a semi-diurnal tide. Without timeLow the low may
+ * be due at once, so the bound ends 6 h after the reading.
+ */
+const TIDE_LOW_HOLD_MS = 6 * 3600 * 1000;
+
 /**
  * Reads `environment.tide.*` from whatever tide provider is installed in
  * Signal K. Only the current height and the next low water are published
- * there, so a level more than half an hour ahead takes the lower of the two.
+ * there: heightNow holds for a few minutes, then the tide may be falling,
+ * so the lower of heightNow and heightLow applies until six hours past the
+ * next low water, and nothing is known after that.
  */
 export class SignalKTideProvider implements WaterLevelProvider {
   readonly id = "signalk-tide";
   readonly reference = "chart";
   private now?: { h: number; at: number };
   private low?: number;
+  private timeLow?: number;
 
   constructor(private readonly sigma: number) {}
 
@@ -84,6 +106,11 @@ export class SignalKTideProvider implements WaterLevelProvider {
       this.low = h;
       return true;
     }
+    if (path === "environment.tide.timeLow") {
+      const t = typeof value === "string" ? Date.parse(value) : NaN;
+      this.timeLow = Number.isFinite(t) ? t : undefined;
+      return true;
+    }
     return false;
   }
 
@@ -91,9 +118,14 @@ export class SignalKTideProvider implements WaterLevelProvider {
     if (!this.now) {
       return undefined;
     }
-    const ahead = t - this.now.at > STALE_AFTER_MS && this.low !== undefined;
-    const h = ahead ? Math.min(this.now.h, this.low as number) : this.now.h;
-    return { h, sigma: this.sigma, source: "signalk-tide" };
+    if (t - this.now.at <= TIDE_NOW_HOLD_MS) {
+      return { h: this.now.h, sigma: this.sigma, source: "signalk-tide" };
+    }
+    const until = (this.timeLow ?? this.now.at) + TIDE_LOW_HOLD_MS;
+    if (this.low === undefined || t > until) {
+      return undefined;
+    }
+    return { h: Math.min(this.now.h, this.low), sigma: this.sigma, source: "signalk-tide" };
   }
 
   health(): ProviderHealth {
@@ -119,15 +151,16 @@ function unusable(p: WaterLevelProvider, now: number): string | undefined {
   return undefined;
 }
 
+/** The level at `t`, or why there is none. */
 function sampleAt(
   p: WaterLevelProvider,
   uses: readonly DatumUse[],
   position: LonLat | undefined,
   t: number
-): WaterLevel {
+): WaterLevel | string {
   if (p.reference === "chart") {
     const s = p.levelAt(position, t, "mw");
-    return s ? { ...s } : fallback(`water level from ${p.id}: no value for ${iso(t)}`);
+    return s ? { ...s } : `water level from ${p.id}: no value for ${iso(t)}`;
   }
   // Cells on different datums share one level: take the lowest and the
   // widest σ, which per invariant 2 can only raise P(UKC < 0).
@@ -136,7 +169,7 @@ function sampleAt(
   for (const use of uses) {
     const s = p.levelAt(position, t, use.series);
     if (!s) {
-      return fallback(`water level from ${p.id}: no ${use.series} value for ${iso(t)}`);
+      return `water level from ${p.id}: no ${use.series} value for ${iso(t)}`;
     }
     if (!use.known) {
       unknown.push(...use.cells);
@@ -147,12 +180,22 @@ function sampleAt(
       : { h: s.h, sigma, source: s.source };
   }
   if (!out) {
-    return fallback("no chart cells to relate the water level to");
+    return "no chart cells to relate the water level to";
   }
   if (unknown.length > 0) {
     out.note = `vertical datum unknown for ${unknown.join(", ")}`;
   }
   return out;
+}
+
+/**
+ * The level at the source's newest data, from wherever it was fetched, or 0
+ * when there is none.
+ */
+function lastLevel(p: WaterLevelProvider, uses: readonly DatumUse[], now: number): number {
+  const at = p.health(now).lastUpdate;
+  const wl = at === undefined ? undefined : sampleAt(p, uses, undefined, at);
+  return typeof wl === "object" ? wl.h : 0;
 }
 
 function iso(t: number): string {
@@ -161,8 +204,9 @@ function iso(t: number): string {
 
 /**
  * The level to apply at time `t`. No provider means chart datum; a
- * provider that is unhealthy or stale for more than 30 minutes falls back
- * to chart datum with σ 0.3 m and a `degraded` reason, never silently.
+ * provider that is unhealthy, stale for more than 30 minutes or without a
+ * value for `t` falls back to chart datum, or its last level when lower,
+ * with σ 0.3 m and a `degraded` reason, never silently.
  */
 export function resolveWaterLevel(
   p: WaterLevelProvider | undefined,
@@ -174,8 +218,8 @@ export function resolveWaterLevel(
   if (!p) {
     return CHART_DATUM;
   }
-  const reason = unusable(p, now);
-  return reason ? fallback(reason) : sampleAt(p, uses, position, t);
+  const wl = unusable(p, now) ?? sampleAt(p, uses, position, t);
+  return typeof wl === "string" ? fallback(wl, lastLevel(p, uses, now)) : wl;
 }
 
 /** The lowest level, with the widest σ, over [start, end]; any fallback wins. */
@@ -188,15 +232,17 @@ export function lowestWaterLevel(
   now: number
 ): WaterLevel {
   const step = Math.max(INTERVAL_STEP_MS, (end - start) / MAX_INTERVAL_SAMPLES);
-  let out = resolveWaterLevel(p, uses, position, start, now);
-  for (let t = start + step; out.degraded === undefined; t += step) {
-    const wl = resolveWaterLevel(p, uses, position, Math.min(t, end), now);
-    out = wl.degraded
-      ? wl
-      : { ...out, h: Math.min(out.h, wl.h), sigma: Math.max(out.sigma, wl.sigma) };
-    if (t >= end) {
-      break;
-    }
+  const times = [start, end, ...(p?.knots?.(start, end) ?? [])];
+  for (let t = start + step; t < end; t += step) {
+    times.push(t);
   }
-  return out;
+  let out: WaterLevel | undefined;
+  for (const t of times.sort((a, b) => a - b)) {
+    const wl = resolveWaterLevel(p, uses, position, t, now);
+    if (wl.degraded !== undefined) {
+      return wl;
+    }
+    out = out ? { ...out, h: Math.min(out.h, wl.h), sigma: Math.max(out.sigma, wl.sigma) } : wl;
+  }
+  return out as WaterLevel;
 }

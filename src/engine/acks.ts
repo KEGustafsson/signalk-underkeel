@@ -1,4 +1,5 @@
 import type { LonLat } from "../foundation/geo";
+import type { WaterLevel } from "../model/uncertainty";
 import type { LookaheadResult, Thresholds } from "./lookahead";
 
 /**
@@ -30,6 +31,8 @@ export interface Ack {
 export interface Zone {
   name: string;
   polygon: LonLat[];
+  /** Rings cut out of the zone, such as water around a rock; they are not part of it. */
+  holes: LonLat[][];
 }
 
 export interface SuppressionContext {
@@ -37,7 +40,8 @@ export interface SuppressionContext {
   zones: readonly Zone[];
   /** Current true heading, radians. */
   heading: number;
-  waterLevel: number;
+  /** A degraded (fallback) level covers no acknowledgement: it is not a measured level. */
+  waterLevel: WaterLevel;
   draft: number;
   now: number;
   thresholds: Thresholds;
@@ -124,13 +128,12 @@ function onBoundary(p: LonLat, polygon: readonly LonLat[]): boolean {
 }
 
 /**
- * Whether the whole ring, edges included, lies in the polygon. Each edge is
- * split wherever it meets the polygon's boundary; between two such points
- * the edge is either all inside or all outside, so the middle of each piece
- * decides. A piece lying on the boundary counts as inside. Vertices alone
- * are not enough: an edge can leave a concave passage between them.
+ * The middle of each piece of the ring's edges, split wherever an edge meets the polygon's
+ * boundary. Between two such points an edge is either all inside the polygon or all outside,
+ * so each middle point decides for its piece.
  */
-function ringWithin(ring: readonly LonLat[], polygon: readonly LonLat[]): boolean {
+function pieceMiddles(ring: readonly LonLat[], polygon: readonly LonLat[]): LonLat[] {
+  const out: LonLat[] = [];
   for (let i = 0; i < ring.length; i++) {
     const a = ring[i] as LonLat;
     const b = ring[(i + 1) % ring.length] as LonLat;
@@ -142,17 +145,47 @@ function ringWithin(ring: readonly LonLat[], polygon: readonly LonLat[]): boolea
     for (let k = 1; k < cuts.length; k++) {
       const t0 = cuts[k - 1] as number;
       const t1 = cuts[k] as number;
-      if (t1 - t0 <= 1e-12) {
-        continue;
-      }
-      const t = (t0 + t1) / 2;
-      const m: LonLat = [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])];
-      if (!onBoundary(m, polygon) && !inside(m, polygon)) {
-        return false;
+      if (t1 - t0 > 1e-12) {
+        const t = (t0 + t1) / 2;
+        out.push([a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])]);
       }
     }
   }
-  return true;
+  return out;
+}
+
+/**
+ * Whether the whole ring, edges included, lies in the polygon. A piece lying on the boundary
+ * counts as inside. Vertices alone are not enough: an edge can leave a concave passage
+ * between them.
+ */
+function ringWithin(ring: readonly LonLat[], polygon: readonly LonLat[]): boolean {
+  return pieceMiddles(ring, polygon).every((m) => onBoundary(m, polygon) || inside(m, polygon));
+}
+
+const strictlyInside = (p: LonLat, polygon: readonly LonLat[]): boolean =>
+  !onBoundary(p, polygon) && inside(p, polygon);
+
+/**
+ * Whether the interiors of two rings meet: an edge piece of either lies inside the other, or
+ * every piece of `a` lies on the boundary of `b`, which for simple rings means they are the
+ * same ring. Rings that only share boundary do not meet.
+ */
+function interiorsMeet(a: readonly LonLat[], b: readonly LonLat[]): boolean {
+  const ofA = pieceMiddles(a, b);
+  return (
+    ofA.some((m) => strictlyInside(m, b)) ||
+    pieceMiddles(b, a).some((m) => strictlyInside(m, a)) ||
+    ofA.every((m) => onBoundary(m, b))
+  );
+}
+
+/** In the zone's outer ring and touching none of its holes' interiors. */
+function inZone(rings: LonLat[][], zone: Zone): boolean {
+  return (
+    within(rings, zone.polygon) &&
+    !rings.some((ring) => zone.holes.some((hole) => interiorsMeet(ring, hole)))
+  );
 }
 
 function within(rings: LonLat[][], polygon: readonly LonLat[]): boolean {
@@ -169,7 +202,8 @@ export function ackCovers(ack: Ack, rings: LonLat[][], ctx: SuppressionContext):
   return (
     (ack.expires === undefined || Date.parse(ack.expires) > ctx.now) &&
     angleBetween(ctx.heading, ack.heading) <= ack.sector &&
-    ctx.waterLevel >= ack.waterLevel - ACK_LEVEL_TOLERANCE &&
+    ctx.waterLevel.degraded === undefined &&
+    ctx.waterLevel.h >= ack.waterLevel - ACK_LEVEL_TOLERANCE &&
     ctx.draft <= ack.draft &&
     within(rings, ack.polygon)
   );
@@ -185,7 +219,7 @@ export function suppress(result: LookaheadResult, ctx: SuppressionContext): Look
     return result;
   }
   const rings = riskyRings(result, ctx.thresholds);
-  const zone = ctx.zones.find((z) => within(rings, z.polygon));
+  const zone = ctx.zones.find((z) => inZone(rings, z));
   if (zone) {
     return { ...result, state: "alert", reason: `in mooring zone ${zone.name}: ${result.reason}` };
   }

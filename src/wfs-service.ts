@@ -9,7 +9,7 @@ import { boxAround, downloadWfsCell, WFS_CELL_NAME, WFS_NOTICE } from "./ingest/
 import type { Clock } from "./monitor";
 import type { BuildJob } from "./spatial/build-worker";
 import type { ChartIndex } from "./spatial/chart-index";
-import { loadChartIndex } from "./spatial/chart-index";
+import { commitChartIndex, loadChartIndex } from "./spatial/chart-index";
 
 /**
  * Keeps a Traficom WFS box around the vessel (plan §4.2). When the vessel
@@ -20,31 +20,61 @@ import { loadChartIndex } from "./spatial/chart-index";
 
 export type IndexBuilder = (job: BuildJob, signal: AbortSignal) => Promise<ChartIndex>;
 
-/** Builds in a worker thread from the compiled `lib/spatial/build-worker.js`. */
-export const workerBuilder: IndexBuilder = (job, signal) =>
-  new Promise((resolve, reject) => {
+/** Settles once every worker aborted so far has exited. */
+let exits: Promise<unknown> = Promise.resolve();
+
+/**
+ * Builds in a worker thread from the compiled `lib/spatial/build-worker.js`.
+ * The worker only stages the index; it is moved into the index directory
+ * here, on the main thread, and never for an aborted build, so a worker
+ * still exiting cannot replace an index saved after it was aborted. An
+ * aborted worker runs until terminate() resolves, so its build rejects only
+ * then and the next build starts only then; stop() itself returns at once.
+ */
+export const workerBuilder: IndexBuilder = async (job, signal) => {
+  await exits;
+  if (signal.aborted) {
+    throw new Error("aborted");
+  }
+  return new Promise((resolve, reject) => {
     const worker = new Worker(path.join(__dirname, "spatial", "build-worker.js"), {
       workerData: job
     });
     const abort = (): void => {
-      void worker.terminate();
-      reject(new Error("aborted"));
+      const exit = worker.terminate().catch(() => undefined);
+      exits = Promise.all([exits, exit]);
+      void exit.then(() => reject(new Error("aborted")));
     };
     signal.addEventListener("abort", abort, { once: true });
-    worker.once("message", (m: { ok: boolean; error?: string }) => {
+    worker.once("message", (m: { ok: boolean; staging?: string; error?: string }) => {
+      if (signal.aborted) {
+        if (m.staging) {
+          fs.rmSync(m.staging, { recursive: true, force: true });
+        }
+        return;
+      }
       signal.removeEventListener("abort", abort);
       void worker.terminate();
-      if (m.ok) {
-        resolve(loadChartIndex(job.indexDir));
+      if (m.ok && m.staging) {
+        try {
+          commitChartIndex(job.indexDir, m.staging);
+          resolve(loadChartIndex(job.indexDir));
+        } catch (err) {
+          reject(err as Error);
+        }
       } else {
         reject(new Error(m.error ?? "index build failed"));
       }
     });
     worker.once("error", (err) => {
+      if (signal.aborted) {
+        return;
+      }
       signal.removeEventListener("abort", abort);
       reject(err);
     });
   });
+};
 
 /** The box in use, as saved in `<data dir>/wfs/box.json`. */
 export interface WfsBox {

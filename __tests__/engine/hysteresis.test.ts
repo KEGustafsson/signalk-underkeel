@@ -1,9 +1,9 @@
 import { Hysteresis } from "../../src/engine/hysteresis";
-import type { LookaheadResult } from "../../src/engine/lookahead";
+import type { FootprintResult, LookaheadResult } from "../../src/engine/lookahead";
 import { DEFAULT_LOOKAHEAD } from "../../src/engine/lookahead";
 import type { UnderKeelState } from "../../src/foundation/state";
 
-const TH = DEFAULT_LOOKAHEAD.thresholds;
+const TH = DEFAULT_LOOKAHEAD;
 
 function raw(state: UnderKeelState, risk: number | null, reason = state): LookaheadResult {
   return {
@@ -71,7 +71,7 @@ describe("state hysteresis", () => {
     });
   });
 
-  test("unknown and off pass through at once and are left at once", () => {
+  test("unknown and off pass through at once; after them a held state lowers as usual", () => {
     const h = new Hysteresis(TH);
     expect(
       run(h, [
@@ -81,7 +81,50 @@ describe("state hysteresis", () => {
         raw("off", null),
         raw("normal", 0)
       ])
-    ).toEqual(["alarm", "unknown", "alarm", "off", "normal"]);
+    ).toEqual(["alarm", "unknown", "alarm", "off", "alarm"]);
+    expect(h.next(raw("normal", 0)).reason).toBe("alarm");
+    expect(
+      run(
+        h,
+        Array.from({ length: 3 }, () => raw("normal", 0))
+      )
+    ).toEqual(["alarm", "alarm", "normal"]);
+  });
+
+  test("leaving unknown into a higher state raises at once", () => {
+    const h = new Hysteresis(TH);
+    expect(run(h, [raw("normal", 0), raw("unknown", null), raw("alarm", 0.5)])).toEqual([
+      "normal",
+      "unknown",
+      "alarm"
+    ]);
+  });
+
+  test("risk beyond the held state's time window does not hold it", () => {
+    const fp = (t: number, risk: number) => ({ t, risk }) as FootprintResult;
+    const at = (state: UnderKeelState, reason: string, far: number): LookaheadResult => ({
+      ...raw(state, 0.9, reason),
+      footprints: [fp(0, 0), fp(40, state === "alarm" ? 0.9 : 0), fp(150, far)]
+    });
+    const h = new Hysteresis(TH);
+    run(h, [at("alarm", "shoal ahead in 40 s", 0.9), at("alarm", "shoal ahead in 40 s", 0.9)]);
+    // The vessel slowed: the shoal is 150 s ahead, beyond the 60 s alarm window.
+    const out = Array.from({ length: 5 }, () => h.next(at("alert", "shoal risk in 150 s", 0.9)));
+    expect(out.map((o) => o.state)).toEqual(["alarm", "alarm", "alarm", "alarm", "alert"]);
+    expect(out.map((o) => o.reason)).toEqual([
+      ...Array.from({ length: 4 }, () => "shoal ahead in 40 s"),
+      "shoal risk in 150 s"
+    ]);
+    // Risk inside the window still holds the state.
+    const held = new Hysteresis(TH);
+    run(held, [at("alarm", "a", 0.9), at("alarm", "a", 0.9)]);
+    const near = { ...at("warn", "b", 0), footprints: [fp(0, 0), fp(50, 0.18)] };
+    expect(
+      run(
+        held,
+        Array.from({ length: 8 }, () => near)
+      )
+    ).toEqual(Array.from({ length: 8 }, () => "alarm"));
   });
 
   test("a raise interrupted by a lower state starts counting again", () => {

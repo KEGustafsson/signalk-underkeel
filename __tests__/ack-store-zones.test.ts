@@ -82,11 +82,29 @@ describe("mooring zones from Signal K regions", () => {
         name: "home",
         feature: { geometry: { type: "Polygon", coordinates: [square] } }
       })
-    ).toEqual([{ name: "home", polygon: square.slice(0, -1) }]);
+    ).toEqual([{ name: "home", polygon: square.slice(0, -1), holes: [] }]);
     const multi = zonesFromRegion("r2", {
       feature: { geometry: { type: "MultiPolygon", coordinates: [[square], [square]] } }
     });
     expect(multi.map((z) => z.name)).toEqual(["r2", "r2"]);
+  });
+
+  test("holes cut out of a region are kept", () => {
+    const hole = [
+      [22.004, 60.004],
+      [22.006, 60.004],
+      [22.006, 60.006],
+      [22.004, 60.004]
+    ];
+    const [zone] = zonesFromRegion("r3", {
+      feature: { geometry: { type: "Polygon", coordinates: [square, hole] } }
+    });
+    expect(zone?.holes).toEqual([hole.slice(0, -1)]);
+    expect(() =>
+      zonesFromRegion("r4", {
+        feature: { geometry: { type: "Polygon", coordinates: [square, [[22, 60]]] } }
+      })
+    ).toThrow(/no valid Polygon/);
   });
 
   test("a region that cannot be read is reported, not skipped", async () => {

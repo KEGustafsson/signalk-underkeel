@@ -11,7 +11,8 @@ import {
   lowestWaterLevel,
   manualProvider,
   resolveWaterLevel,
-  SignalKTideProvider
+  SignalKTideProvider,
+  STALE_AFTER_MS
 } from "./model/water-level";
 import type { ChartIndex } from "./spatial/chart-index";
 
@@ -24,8 +25,18 @@ import type { ChartIndex } from "./spatial/chart-index";
 const FMI_REFETCH_METRES = 10000;
 /** A failed or moved-triggered FMI fetch is retried no sooner than this. */
 const FMI_RETRY_MS = 60000;
+/**
+ * The forecast is refetched, and a failed refetch retried, once it is this
+ * close to stale, whatever the interval, so a 30-minute interval or one
+ * failed request never lets it go stale.
+ */
+const FMI_REFRESH_BEFORE_STALE_MS = 5 * 60 * 1000;
 
-export const TIDE_PATHS = ["environment.tide.heightNow", "environment.tide.heightLow"] as const;
+export const TIDE_PATHS = [
+  "environment.tide.heightNow",
+  "environment.tide.heightLow",
+  "environment.tide.timeLow"
+] as const;
 
 /** What `GET /status` reports about the water level. */
 export interface WaterLevelStatus {
@@ -78,7 +89,7 @@ export class WaterLevelService {
     return this.provider instanceof SignalKTideProvider && this.provider.record(path, value, at);
   }
 
-  /** Starts an FMI fetch when one is due or the vessel left the forecast area. */
+  /** Starts an FMI fetch when one is due, the forecast is near stale or the vessel left its area. */
   refresh(position: LonLat | undefined, now: number): void {
     const p = this.provider;
     if (!(p instanceof FmiProvider) || !position) {
@@ -86,8 +97,13 @@ export class WaterLevelService {
     }
     const at = p.forecastPosition();
     const moved = at === undefined || haversine(at, position) > FMI_REFETCH_METRES;
+    const age = now - (p.health().lastUpdate ?? -Infinity);
+    const ageing = age >= STALE_AFTER_MS - FMI_REFRESH_BEFORE_STALE_MS;
     const since = now - this.lastFetch;
-    if (since >= this.config.waterLevel.updateInterval * 1000 || (moved && since >= FMI_RETRY_MS)) {
+    if (
+      since >= this.config.waterLevel.updateInterval * 1000 ||
+      ((moved || ageing) && since >= FMI_RETRY_MS)
+    ) {
       this.lastFetch = now;
       void p.update(position, now);
     }
@@ -105,12 +121,21 @@ export class WaterLevelService {
   }
 
   /**
-   * The lowest level over [start, end] (epoch ms), for route checks. A
-   * route has no single position, so FMI answers with the forecast held for
-   * the vessel's position.
+   * The lowest level over [start, end] (epoch ms) at any of `at`, for
+   * route checks; a fallback at any position wins. FMI answers only within
+   * its forecast distance of where the forecast was fetched, so a leg far
+   * from the vessel falls back rather than taking the vessel's level.
    */
-  over(start: number, end: number, now: number): WaterLevel {
-    return lowestWaterLevel(this.provider, this.datums, undefined, start, end, now);
+  over(start: number, end: number, at: readonly LonLat[], now: number): WaterLevel {
+    let out: WaterLevel | undefined;
+    for (const p of at) {
+      const wl = lowestWaterLevel(this.provider, this.datums, p, start, end, now);
+      if (wl.degraded) {
+        return wl;
+      }
+      out = out ? { ...out, h: Math.min(out.h, wl.h), sigma: Math.max(out.sigma, wl.sigma) } : wl;
+    }
+    return out ?? lowestWaterLevel(this.provider, this.datums, undefined, start, end, now);
   }
 
   status(position: LonLat | undefined, now: number): WaterLevelStatus {

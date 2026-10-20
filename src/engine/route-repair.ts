@@ -1,12 +1,13 @@
 import type { LonLat } from "../foundation/geo";
-import { EARTH_RADIUS, offset } from "../foundation/geo";
+import { EARTH_RADIUS, wrapLon } from "../foundation/geo";
 import { sigmaExtra, thresholdDepth } from "../model/uncertainty";
 import { vesselTerms } from "../model/vessel";
 import type { ChartIndex } from "../spatial/chart-index";
 import { FLAGS } from "../spatial/node-store";
 import { footprintGeom, minDepthOver } from "../spatial/pyramid";
+import { DEFAULT_BUILD } from "../spatial/pyramid-build";
 import type { LegResult, RouteCheckInput } from "./route-check";
-import { checkRoute, UNCHECKED } from "./route-check";
+import { checkLeg, checkRoute, checkRouteYielding, UNCHECKED } from "./route-check";
 
 /**
  * Route repair (plan §4.11): for a leg that fails, Theta* over a local cost
@@ -49,23 +50,35 @@ export interface LegRepair {
   reason?: string;
 }
 
-/** Local east/north metres around an origin; exact enough over a leg's window. */
+/**
+ * Local east/north metres around an origin; exact enough over a leg's
+ * window. Both directions use the same sphere, so a cell centre maps back
+ * to the cell it came from.
+ */
 interface Frame {
   origin: LonLat;
   toXY(p: LonLat): [number, number];
   toLonLat(x: number, y: number): LonLat;
 }
 
+/**
+ * Longitudes are taken the short way round from the origin, so a grid
+ * across 180° spans the leg and not the world, and points mapped back are
+ * canonical, since they are returned as waypoints.
+ */
 function frameAt(origin: LonLat): Frame {
   const k = Math.PI / 180;
   const cos = Math.cos(origin[1] * k);
   return {
     origin,
     toXY: (p) => [
-      (p[0] - origin[0]) * k * EARTH_RADIUS * cos,
+      wrapLon(p[0] - origin[0]) * k * EARTH_RADIUS * cos,
       (p[1] - origin[1]) * k * EARTH_RADIUS
     ],
-    toLonLat: (x, y) => offset(origin, x, y)
+    toLonLat: (x, y) => [
+      wrapLon(origin[0] + x / (k * EARTH_RADIUS * cos)),
+      origin[1] + y / (k * EARTH_RADIUS)
+    ]
   };
 }
 
@@ -138,7 +151,10 @@ export function repairLeg(
   opts: RepairOptions = DEFAULT_REPAIR
 ): LegRepair {
   const speed = input.speeds[leg.index] as number;
-  const wl = input.waterLevel(Date.parse(leg.eta.start), Date.parse(leg.eta.end));
+  const wl = input.waterLevel(Date.parse(leg.eta.start), Date.parse(leg.eta.end), [
+    leg.from,
+    leg.to
+  ]);
   const terms = vesselTerms(input.vessel, { speed, waveHeight: input.waveHeight }, input.dynamics);
   const risk = { threshold: thresholdDepth(terms, wl), sigmaExtra: sigmaExtra(terms, wl) };
   const corridor = input.xteLimit + input.planningBuffer;
@@ -148,8 +164,10 @@ export function repairLeg(
       grid.known[i] = 1;
       const cx = grid.x0 + ((i % grid.nx) + 0.5) * grid.cell;
       const cy = grid.y0 + (Math.floor(i / grid.nx) + 0.5) * grid.cell;
-      const r = minDepthOver(index.pyramid, footprintGeom([grid.frame.toLonLat(cx, cy)]), {
+      const at = footprintGeom([grid.frame.toLonLat(cx, cy)]);
+      const r = minDepthOver(index.pyramid, at, {
         bufferMetres: corridor + grid.cell / 2,
+        chartReachK: DEFAULT_BUILD.k,
         risk
       });
       const unchecked = (r.flags & UNCHECKED) !== 0;
@@ -384,31 +402,55 @@ export function simplify(points: LonLat[], passes: (pts: LonLat[]) => boolean): 
   return keep(0, points.length - 1);
 }
 
+export interface RouteRepair {
+  repairs: LegRepair[];
+  /**
+   * The route with every suggested waypoint inserted, checked as a whole:
+   * a detour delays the legs after it, so they are checked at their new times.
+   */
+  route: { coordinates: LonLat[]; legs: LegResult[] };
+}
+
 /**
- * Repairs the failing or marginal legs of a checked route, the first
- * `maxLegs` of them; the rest get a reason. `pause` runs after each leg so
- * a caller on the event loop can let other work in between.
+ * Repairs the failing or marginal legs of a route in order, the first
+ * `maxLegs` of them; the rest get a reason. Each leg is checked at the time
+ * the repairs before it bring the boat there, so a leg a detour makes late
+ * is repaired or reported as it is then. `pause` runs after each searched
+ * leg so a caller on the event loop can let other work in between.
  */
 export async function repairRoute(
   index: ChartIndex,
   input: RouteCheckInput,
-  legs: LegResult[],
   opts: RepairOptions = DEFAULT_REPAIR,
   pause: () => Promise<void> = () => Promise.resolve()
-): Promise<LegRepair[]> {
-  const out: LegRepair[] = [];
-  for (const l of legs.filter((l) => l.status === "fail" || l.status === "marginal")) {
-    if (out.length >= opts.maxLegs) {
-      out.push({
-        index: l.index,
+): Promise<RouteRepair> {
+  const repairs: LegRepair[] = [];
+  const coordinates: LonLat[] = [input.coordinates[0] as LonLat];
+  const speeds: number[] = [];
+  let searched = 0;
+  let t = input.departure;
+  for (let i = 0; i + 1 < input.coordinates.length; i++) {
+    const { leg } = checkLeg(index, input, i, t);
+    let repair: LegRepair | undefined;
+    if ((leg.status === "fail" || leg.status === "marginal") && searched >= opts.maxLegs) {
+      repairs.push({
+        index: i,
         waypoints: [],
         legs: [],
         reason: `not searched: at most ${opts.maxLegs} legs are repaired per request`
       });
-      continue;
+    } else if (leg.status === "fail" || leg.status === "marginal") {
+      searched += 1;
+      repair = repairLeg(index, input, leg, opts);
+      repairs.push(repair);
+      await pause();
     }
-    out.push(repairLeg(index, input, l, opts));
-    await pause();
+    const waypoints = repair?.waypoints ?? [];
+    coordinates.push(...waypoints, leg.to);
+    speeds.push(...[...waypoints, leg.to].map(() => input.speeds[i] as number));
+    t = Date.parse((waypoints.length > 0 ? repair?.legs.at(-1) : leg)?.eta.end as string);
   }
-  return out;
+  const repaired = { ...input, coordinates, speeds };
+  const { legs } = await checkRouteYielding(index, repaired, input.departure, pause);
+  return { repairs, route: { coordinates, legs } };
 }

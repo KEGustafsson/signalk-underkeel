@@ -1,5 +1,6 @@
 import type { ApiReply } from "./api/routes";
 import {
+  corridorBudgetError,
   parseRouteRequest,
   parseWindowOptions,
   routeResourceCoordinates,
@@ -9,7 +10,7 @@ import {
 import type { PluginConfig } from "./config";
 import { departureWindow } from "./engine/departure-window";
 import type { RouteCheckInput } from "./engine/route-check";
-import { checkRoute } from "./engine/route-check";
+import { checkRouteYielding } from "./engine/route-check";
 import { DEFAULT_REPAIR, repairRoute } from "./engine/route-repair";
 import type { LonLat } from "./foundation/geo";
 import type { WaterLevel } from "./model/uncertainty";
@@ -24,8 +25,8 @@ export interface RouteServiceDeps {
   indexReason: string | undefined;
   config: PluginConfig;
   vessel(): VesselModel | undefined;
-  /** Water level over an arrival interval (epoch ms); the lowest applies. */
-  waterLevel(start: number, end: number): WaterLevel;
+  /** Water level over an arrival interval (epoch ms) at the positions `at`; the lowest applies. */
+  waterLevel(start: number, end: number, at: readonly LonLat[]): WaterLevel;
   /** Current significant wave height, if known, metres. */
   waveHeight(): number | undefined;
   getRoute(id: string): Promise<unknown>;
@@ -58,7 +59,7 @@ async function prepare(
   body: unknown,
   deps: RouteServiceDeps
 ): Promise<{ index: ChartIndex; input: RouteCheckInput } | ApiReply> {
-  const parsed = parseRouteRequest(body);
+  const parsed = parseRouteRequest(body, deps.now());
   if (!parsed.ok) {
     return { status: 400, body: { errors: parsed.errors } };
   }
@@ -78,14 +79,20 @@ async function prepare(
   if (typeof speeds === "string") {
     return { status: 400, body: { errors: [speeds] } };
   }
+  const xteLimit = req.xteLimit ?? deps.config.routeCheck.xteLimit;
+  const planningBuffer = deps.config.lookahead.positionBuffer;
+  const budget = corridorBudgetError(coords, xteLimit + planningBuffer);
+  if (budget) {
+    return { status: 400, body: { errors: [budget] } };
+  }
   return {
     index: deps.index,
     input: {
       coordinates: coords,
       departure: req.departure ?? deps.now(),
       speeds,
-      xteLimit: req.xteLimit ?? deps.config.routeCheck.xteLimit,
-      planningBuffer: deps.config.lookahead.positionBuffer,
+      xteLimit,
+      planningBuffer,
       vessel,
       dynamics: deps.config.dynamics,
       waterLevel: deps.waterLevel,
@@ -102,7 +109,11 @@ const yieldToEventLoop = (): Promise<void> => new Promise((resolve) => setImmedi
 
 export async function routeCheck(body: unknown, deps: RouteServiceDeps): Promise<ApiReply> {
   const p = await prepare(body, deps);
-  return isReply(p) ? p : { status: 200, body: checkRoute(p.index, p.input, deps.now()) };
+  if (isReply(p)) {
+    return p;
+  }
+  const result = await checkRouteYielding(p.index, p.input, deps.now(), yieldToEventLoop);
+  return { status: 200, body: result };
 }
 
 /** `POST /route-repair`: suggested waypoints for each failing or marginal leg. */
@@ -111,15 +122,9 @@ export async function routeRepair(body: unknown, deps: RouteServiceDeps): Promis
   if (isReply(p)) {
     return p;
   }
-  const checked = checkRoute(p.index, p.input, deps.now());
-  const repairs = await repairRoute(
-    p.index,
-    p.input,
-    checked.legs,
-    DEFAULT_REPAIR,
-    yieldToEventLoop
-  );
-  return { status: 200, body: { checkedAt: checked.checkedAt, repairs } };
+  const checkedAt = new Date(deps.now()).toISOString();
+  const { repairs, route } = await repairRoute(p.index, p.input, DEFAULT_REPAIR, yieldToEventLoop);
+  return { status: 200, body: { checkedAt, repairs, route } };
 }
 
 /** `POST /departure-window`: departures over the horizon in which every leg is ok. */
@@ -135,7 +140,11 @@ export async function departureWindowReply(
   if (isReply(p)) {
     return p;
   }
-  const budget = windowBudgetError(p.input.coordinates, opts.value);
+  const budget = windowBudgetError(
+    p.input.coordinates,
+    opts.value,
+    p.input.xteLimit + p.input.planningBuffer
+  );
   if (budget) {
     return { status: 400, body: { errors: [budget] } };
   }

@@ -15,7 +15,8 @@ publishes:
 - `navigation.underKeel.state`: `normal`, `alert`, `warn`, `alarm`, `unknown` or `off`;
 - `navigation.underKeel.clearance` and `.clearanceSigma` (predicted minimum UKC and its σ),
   `.risk` (highest P(UKC < 0) over the horizon), `.timeToShoal`, `.escapeHeading` (the
-  heading with the longest time to shoal, when not `normal`), `.envelopeRev` and
+  heading with the longest time to shoal, when not `normal`; null when no heading does better
+  than another), `.envelopeRev` and
   `.waterLevel` (the level applied above chart datum);
 - `notifications.navigation.underKeel`, with an explanation of every term behind the result;
 - `notifications.navigation.positionIntegrity` (`warn`) when GNSS leaves dead reckoning from
@@ -29,14 +30,16 @@ Water-level sources, set under **Water level** in the plugin configuration:
 
 - `none`: chart datum, with a σ for the unknown tide;
 - `manual`: a fixed height above chart datum with its σ;
-- `signalk-tide`: `environment.tide.heightNow`, bounded ahead by `heightLow`;
+- `signalk-tide`: `environment.tide.heightNow` for 5 minutes after each reading, then the lower
+  of it and `heightLow` until 6 h past `timeLow` (6 h past the reading without `timeLow`), then
+  a fallback;
 - `fmi`: the Finnish Meteorological Institute sea-level forecast at the vessel, anchored to the
   nearest tide gauge. FMI reports above theoretical mean water and above N2000; each cell's
   S-57 vertical datum is mapped to one of them; the defaults cover the mean-water datums, and
   cells on N2000 need an entry. An unmapped datum widens σ.
 
-A source that stops updating falls back to chart datum with a wider σ, and the state carries
-the reason.
+A source that stops updating falls back to chart datum, or to its last level when that was
+below chart datum, with a wider σ, and the state carries the reason.
 
 **Living chart** (off by default): depth readings that pass a quality gate (good fix, HDOP
 under 2, small roll, a real water level) are reduced to chart datum and kept per ~76 m cell.
@@ -63,27 +66,33 @@ REST, base `/plugins/signalk-underkeel/v1`, open to readonly users:
   source health and datum mapping.
 - `GET /envelope?rev=`: the look-ahead as GeoJSON; 304 when the client already has that rev.
 - `POST /route-check`: a route as a GeoJSON LineString or `/resources/routes/<id>`; each leg is
-  checked over a corridor of the cross-track limit plus a planning buffer at the lowest water
+  checked over a corridor of the cross-track limit plus a planning buffer, where each chart tile
+  counts twice its assessed survey's position σ further out (at most 1 km), at the lowest water
   level expected while on it, and returned as `ok`, `marginal`, `fail` or `unverified` (no
   coverage, unassessed survey or a fallback water level; never folded into `ok`), with P(UKC < 0),
   its explanation and the cell editions used.
 - `POST /route-repair`: the same body; for each failing or marginal leg, waypoints to insert
-  that route around the shoal and pass the same check. Existing points are never moved.
+  that route around the shoal and pass the same check, and the whole route with them inserted,
+  re-checked at the times the detours give its later legs. Existing points are never moved.
 - `POST /departure-window`: the same body plus `horizon` and `step` (seconds); the departure
   intervals in which every leg is `ok` at the forecast water level.
-- Both bound the work one request may cost; the limits are in
+- All three, and `POST /query`, bound the work one request may cost (route length times
+  corridor width at most 200 km², a query box with its buffer at most 25 km²); the limits are in
   [plan §4.11](docs/DEVELOPMENT-PLAN.md).
 - `POST /query`: a GeoJSON Point or Polygon, with an optional buffer, draft and speed; returns
   the class, P(UKC < 0), the deciding hazard and the explanation, for cursor readouts.
 - `GET /acks`, `POST /acks`, `DELETE /acks/:id`: acknowledged passages. Inside one, with the
   heading within ±20° and no less water or more draft than when acknowledged, warn and alarm
-  are published as alert with the reason "acknowledged passage". Adding and deleting need a
-  readwrite user.
+  are published as alert with the reason "acknowledged passage". A fallback water level
+  honours none, and `POST /acks` answers 409 while the level is a fallback. Adding and
+  deleting need a readwrite user.
 - `GET /livechart/discrepancies` and `GET /livechart/csb.geojson`, with the living chart on
   (see above).
 - `GET /tiles/ukc/{z}/{x}/{y}.pbf`: Mapbox vector tiles from zoom 11, one `ukc` layer of cells
   classed `clear`, `caution`, `danger`, `unverified` or `land` for the current draft and water
-  level. `GET /ukc-style.json` is a MapLibre style for them.
+  level, sent with `Cache-Control: no-cache` because they change with both. A cell takes the
+  worst class of any cell within twice its assessed survey's position σ, as a route check does.
+  `GET /ukc-style.json` is a MapLibre style for them.
 
 The plugin also registers a `plotterExtensions` resource. A chart plotter with the Plotter
 Extensions API, such as Freeboard-SK, shows it with no change of its own:

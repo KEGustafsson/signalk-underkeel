@@ -125,6 +125,29 @@ describe("water-level resolution", () => {
     });
   });
 
+  test("a stale feed below chart datum falls back to its last level, not to chart datum", () => {
+    const last = NOW + 10 * HOUR;
+    const stale = last + 31 * 60000;
+    expect(resolveWaterLevel(seriesProvider(last), n2000, undefined, stale, stale)).toEqual({
+      h: expect.closeTo(-0.4, 9) as number,
+      sigma: CHART_DATUM_SIGMA,
+      source: "fallback",
+      degraded: "water level from stub is 31 min old"
+    });
+  });
+
+  test("a time past the data falls back to the last level when that is below chart datum", () => {
+    const low: WaterLevelProvider = {
+      id: "low",
+      reference: "chart",
+      levelAt: (_p, t) => (t <= NOW ? { h: -0.25, sigma: 0.05, source: "low" } : undefined),
+      health: () => ({ ok: true, lastUpdate: NOW })
+    };
+    const wl = resolveWaterLevel(low, [], undefined, NOW + HOUR, NOW);
+    expect(wl).toMatchObject({ h: -0.25, sigma: CHART_DATUM_SIGMA, source: "fallback" });
+    expect(wl.degraded).toMatch(/no value/);
+  });
+
   test("an unhealthy or empty feed falls back with its message", () => {
     const down = resolveWaterLevel(seriesProvider(NOW, false), n2000, undefined, NOW, NOW);
     expect(down.degraded).toBe("water level from stub: feed down");
@@ -159,12 +182,67 @@ describe("Signal K tide provider", () => {
     });
   });
 
-  test("beyond half an hour ahead the next low water bounds the level", () => {
+  test("a few minutes after the reading the next low water bounds the level", () => {
     const p = new SignalKTideProvider(0.1);
     p.record("environment.tide.heightNow", 0.42, NOW);
     p.record("environment.tide.heightLow", 0.05, NOW);
-    expect(resolveWaterLevel(p, [], undefined, NOW + 10 * 60000, NOW).h).toBe(0.42);
+    expect(resolveWaterLevel(p, [], undefined, NOW + 2 * 60000, NOW).h).toBe(0.42);
+    expect(resolveWaterLevel(p, [], undefined, NOW + 10 * 60000, NOW).h).toBe(0.05);
     expect(lowestWaterLevel(p, [], undefined, NOW, NOW + 2 * HOUR, NOW).h).toBe(0.05);
+  });
+
+  test("a falling tide never holds heightNow for a leg or a reading half an hour old", () => {
+    const p = new SignalKTideProvider(0.1);
+    p.record("environment.tide.heightNow", 2.0, NOW);
+    p.record("environment.tide.heightLow", 0.5, NOW);
+    expect(lowestWaterLevel(p, [], undefined, NOW, NOW + 28 * 60000, NOW).h).toBe(0.5);
+    const later = NOW + 29 * 60000;
+    expect(resolveWaterLevel(p, [], undefined, later, later)).toEqual({
+      h: 0.5,
+      sigma: 0.1,
+      source: "signalk-tide"
+    });
+  });
+
+  test("without heightLow only the current reading is known", () => {
+    const p = new SignalKTideProvider(0.1);
+    p.record("environment.tide.heightNow", 0.42, NOW);
+    expect(resolveWaterLevel(p, [], undefined, NOW + 2 * 60000, NOW).h).toBe(0.42);
+    expect(resolveWaterLevel(p, [], undefined, NOW + HOUR, NOW).degraded).toMatch(/no value/);
+  });
+
+  test("past six hours after the next low water the level is unknown", () => {
+    const p = new SignalKTideProvider(0.1);
+    p.record("environment.tide.heightNow", 2.0, NOW);
+    p.record("environment.tide.heightLow", 0.5, NOW);
+    p.record("environment.tide.timeLow", new Date(NOW + 1.5 * HOUR).toISOString(), NOW);
+    expect(lowestWaterLevel(p, [], undefined, NOW, NOW + 7 * HOUR, NOW)).toEqual({
+      h: 0.5,
+      sigma: 0.1,
+      source: "signalk-tide"
+    });
+    const leg = lowestWaterLevel(p, [], undefined, NOW + 12 * HOUR, NOW + 14 * HOUR, NOW);
+    expect(leg.degraded).toMatch(/no value/);
+  });
+
+  test("without timeLow the next low water bounds the level for six hours", () => {
+    const p = new SignalKTideProvider(0.1);
+    p.record("environment.tide.heightNow", 2.0, NOW);
+    p.record("environment.tide.heightLow", 0.5, NOW);
+    expect(resolveWaterLevel(p, [], undefined, NOW + 5 * HOUR, NOW).h).toBe(0.5);
+    expect(resolveWaterLevel(p, [], undefined, NOW + 7 * HOUR, NOW).degraded).toMatch(/no value/);
+  });
+
+  test("a stale negative reading falls back to that reading", () => {
+    const p = new SignalKTideProvider(0.1);
+    p.record("environment.tide.heightNow", -0.4, NOW);
+    const later = NOW + 40 * 60000;
+    expect(resolveWaterLevel(p, [], undefined, later, later)).toEqual({
+      h: -0.4,
+      sigma: CHART_DATUM_SIGMA,
+      source: "fallback",
+      degraded: "water level from signalk-tide is 40 min old"
+    });
   });
 
   test("a reading older than 30 minutes is stale", () => {

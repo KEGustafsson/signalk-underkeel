@@ -9,12 +9,13 @@ import { NodeStore } from "./node-store";
  * than reading swapped values.
  *
  * The version also counts changes to how nodes are built from the chart
- * (version 2: swept σ, coverage seams, skin-of-earth classes), so an index
- * built under older rules is rebuilt rather than reused.
+ * (version 2: swept σ, coverage seams, skin-of-earth classes; version 3:
+ * the assessed survey σP column for chart reach), so an index built under
+ * older rules is rebuilt rather than reused.
  */
 
 const MAGIC = "underkeel-pyramid";
-export const PYRAMID_VERSION = 2;
+export const PYRAMID_VERSION = 3;
 
 interface Header {
   magic: string;
@@ -31,6 +32,7 @@ interface Columns {
   dMin: Float64Array;
   sigmaD: Float32Array;
   sigmaP: Float32Array;
+  surveySigmaP: Float32Array;
   flags: Uint16Array;
   cellRef: Int32Array;
   split: Uint8Array;
@@ -44,6 +46,7 @@ function columnsOf(count: number): Columns {
     dMin: new Float64Array(count),
     sigmaD: new Float32Array(count),
     sigmaP: new Float32Array(count),
+    surveySigmaP: new Float32Array(count),
     flags: new Uint16Array(count),
     cellRef: new Int32Array(count),
     split: new Uint8Array(count)
@@ -56,6 +59,7 @@ const ORDER: (keyof Columns)[] = [
   "y",
   "sigmaD",
   "sigmaP",
+  "surveySigmaP",
   "cellRef",
   "flags",
   "z",
@@ -82,6 +86,7 @@ export function serializePyramid(store: NodeStore): Buffer {
       cols.dMin[n] = v.dMin;
       cols.sigmaD[n] = v.sigmaD;
       cols.sigmaP[n] = v.sigmaP;
+      cols.surveySigmaP[n] = store.surveySigmaP[i] as number;
       cols.flags[n] = v.flags;
       cols.cellRef[n] = v.cellRef;
       cols.split[n] = store.isSplit(i) ? 1 : 0;
@@ -154,7 +159,8 @@ export function deserializePyramid(buf: Buffer): NodeStore {
         flags: cols.flags[i] as number,
         cellRef: cols.cellRef[i] as number
       },
-      cols.split[i] === 1
+      cols.split[i] === 1,
+      cols.surveySigmaP[i] as number
     );
   }
   return store;

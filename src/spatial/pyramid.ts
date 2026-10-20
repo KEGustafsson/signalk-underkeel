@@ -1,9 +1,10 @@
-import type { LonLat, Rect } from "../foundation/geo";
+import type { LonLat, Rect, XY } from "../foundation/geo";
 import {
   expandRect,
   fromMercator,
   groundToMercator,
   maxAbsLat,
+  rectGap,
   shiftRect,
   tileKey,
   tileRange,
@@ -12,10 +13,12 @@ import {
   worldShifts
 } from "../foundation/geo";
 import type { Geom } from "../foundation/geometry";
-import { geomBounds, geomRectDistance, shiftGeom } from "../foundation/geometry";
+import { geomBounds, geomRectDistance, pointRectDistance, shiftGeom } from "../foundation/geometry";
 import type { NodeStore, NodeValues } from "./node-store";
 import { probabilityBelowZero } from "../foundation/stats";
 import { combine, EMPTY, FLAGS, NO_DATA } from "./node-store";
+import type { SurveySigmaP } from "./chart-position";
+import { chartReach, surveySigmaP } from "./chart-position";
 
 /**
  * `minDepthOver` (plan §4.3): the shallowest charted depth any part of a
@@ -65,6 +68,11 @@ export interface QueryOptions {
   risk?: { threshold: number; sigmaExtra: number };
   /** Leave living-chart adjustments out, to read the chart alone. */
   chartOnly?: boolean;
+  /**
+   * Also count a tile within k·σP of its own survey beyond the buffer, for
+   * the chart's position uncertainty (`chart-position.ts`); 0 by default.
+   */
+  chartReachK?: number;
 }
 
 /** A footprint ring in WGS84, as a Mercator polygon. */
@@ -79,7 +87,16 @@ export function footprintGeom(ring: readonly LonLat[]): Geom {
 interface Walk {
   store: NodeStore;
   geom: Geom;
+  /** Bounds of `geom`, and a point of it when it has one. */
+  bounds: Rect;
+  vertex?: XY;
+  /** Mercator reach of a tile without chart position, and of any tile at most. */
   buffer: number;
+  maxReach: number;
+  /** Mercator metres per ground metre of chart reach. */
+  perMetre: number;
+  k: number;
+  survey?: SurveySigmaP;
   clearAbove: number;
   result: NodeValues;
   coveredDMin: number;
@@ -141,19 +158,41 @@ function canStop(w: Walk, v: NodeValues): boolean {
   return probabilityBelowZero(v.dMin - w.risk.threshold, sigma) < RISK_STOP_BELOW;
 }
 
+/** Mercator distance at which node i still counts; a split node's bounds its subtree's. */
+function reachOf(w: Walk, i: number): number {
+  if (!w.survey || i < 0) {
+    return w.buffer;
+  }
+  return w.buffer + w.perMetre * chartReach(w.k, w.survey.node[i] as number);
+}
+
 function visit(w: Walk, z: number, x: number, y: number): void {
   const rect = tileRect(z, x, y);
-  if (geomRectDistance(w.geom, rect, w.buffer) > w.buffer) {
+  // The gap to the footprint's bounds never exceeds the distance to the
+  // footprint, and costs far less to find.
+  const gap = rectGap(w.bounds, rect);
+  if (gap > w.maxReach) {
+    return;
+  }
+  const i = w.store.find(z, x, y);
+  const reach = reachOf(w, i);
+  if (gap > reach) {
+    return;
+  }
+  // A point of the footprint within reach settles it; most tiles inside a
+  // wide chart reach are settled so.
+  const close = w.vertex !== undefined && pointRectDistance(w.vertex, rect) <= reach;
+  if (!close && geomRectDistance(w.geom, rect, reach) > reach) {
     return;
   }
   w.visits++;
-  const i = w.store.find(z, x, y);
   if (i < 0) {
     take(w, NO_DATA, z, x, y);
     return;
   }
   const v = w.store.values(i);
-  if (!w.store.isSplit(i) || canStop(w, v)) {
+  const split = w.store.isSplit(i);
+  if (!split || canStop(w, v)) {
     take(w, v, z, x, y);
     return;
   }
@@ -198,21 +237,26 @@ function takeAdjustments(w: Walk, reach: Rect): void {
   }
 }
 
+function vertexOf(g: Geom): XY | undefined {
+  return g.type === "point" ? g.p : g.type === "line" ? g.coords[0] : g.polygons[0]?.outer[0];
+}
+
 /** Mercator buffer for a ground buffer around `bounds`, sized at its poleward edge. */
 export function mercatorBuffer(bounds: Rect, metres: number): number {
   const first = groundToMercator(metres, maxAbsLat(bounds));
   return groundToMercator(metres, maxAbsLat(expandRect(bounds, first)));
 }
 
-/**
- * Conservative minimum depth over `geom` widened by the ground buffer.
- * Tiles never built (outside the chart) count as NO_DATA. A footprint or
- * buffer reaching past ±180° is also walked one world over, so the tiles
- * at the other end of the world count too.
- */
-export function minDepthOver(store: NodeStore, geom: Geom, opts: QueryOptions = {}): DepthResult {
+function walkFor(store: NodeStore, geom: Geom, opts: QueryOptions): Walk {
   const bounds = geomBounds(geom);
-  const buffer = mercatorBuffer(bounds, opts.bufferMetres ?? 0);
+  const bufferMetres = opts.bufferMetres ?? 0;
+  const k = opts.chartReachK ?? 0;
+  const survey = k > 0 ? surveySigmaP(store) : undefined;
+  // Sized for the widest reach, so every narrower one is converted at a
+  // latitude at least as far poleward as its own edge.
+  const ground = bufferMetres + (survey ? chartReach(k, survey.max) : 0);
+  const maxReach = mercatorBuffer(bounds, ground);
+  const perMetre = ground > 0 ? maxReach / ground : 0;
   // Stopping early is only conservative for risk where the bound is at or
   // past the threshold: there P rises with σ, so the parent's widest σ
   // bounds every child's P from above.
@@ -220,10 +264,15 @@ export function minDepthOver(store: NodeStore, geom: Geom, opts: QueryOptions = 
     opts.clearAbove ?? (opts.risk ? -Infinity : Infinity),
     opts.risk?.threshold ?? -Infinity
   );
-  const w: Walk = {
+  return {
     store,
     geom,
-    buffer,
+    bounds,
+    buffer: survey ? perMetre * bufferMetres : maxReach,
+    maxReach,
+    perMetre,
+    k,
+    survey,
     clearAbove,
     risk: opts.risk,
     maxRisk: 0,
@@ -232,9 +281,23 @@ export function minDepthOver(store: NodeStore, geom: Geom, opts: QueryOptions = 
     cells: new Set(),
     visits: 0
   };
-  const reach = expandRect(bounds, buffer);
+}
+
+/**
+ * Conservative minimum depth over `geom` widened by the ground buffer, and
+ * with `chartReachK` by each tile's chart position reach.
+ * Tiles never built (outside the chart) count as NO_DATA. A footprint or
+ * buffer reaching past ±180° is also walked one world over, so the tiles
+ * at the other end of the world count too.
+ */
+export function minDepthOver(store: NodeStore, geom: Geom, opts: QueryOptions = {}): DepthResult {
+  const w = walkFor(store, geom, opts);
+  const bounds = w.bounds;
+  const reach = expandRect(bounds, w.maxReach);
   for (const shift of worldShifts(reach)) {
     w.geom = shift === 0 ? geom : shiftGeom(geom, shift);
+    w.bounds = shiftRect(bounds, shift);
+    w.vertex = vertexOf(w.geom);
     const shifted = shiftRect(reach, shift);
     const range = tileRange(store.minZoom, shifted);
     for (let x = range.minX; x <= range.maxX; x++) {

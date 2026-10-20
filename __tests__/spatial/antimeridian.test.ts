@@ -61,3 +61,21 @@ describe("queries across the antimeridian", () => {
     expect(hits.map((h) => h.feature)).toEqual([rock]);
   });
 });
+
+describe("cells meeting at the antimeridian", () => {
+  test("two cells meeting at ±180° cover the leaves on that edge", () => {
+    for (const lon of [179.99999, -179.99999]) {
+      const r = minDepthOver(store(179.95), footprintGeom([[lon, -16.85]]), { bufferMetres: 10 });
+      expect(r.dMin).toBe(20);
+      expect(r.flags).toBe(0);
+    }
+  });
+
+  test("a cell ending at 180° with nothing past it still leaves a gap", () => {
+    const west = buildPyramid(basin(WEST, 20), OPTS);
+    const inside = minDepthOver(west, footprintGeom([[179.99999, -16.85]]));
+    expect(inside.flags).toBe(0);
+    const across = minDepthOver(west, footprintGeom([[179.99999, -16.85]]), { bufferMetres: 10 });
+    expect(across.flags & FLAGS.NO_COVERAGE).toBeTruthy();
+  });
+});

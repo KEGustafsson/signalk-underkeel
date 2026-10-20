@@ -22,13 +22,16 @@ const LINE = {
 
 describe("route-check request validation", () => {
   test("accepts inline geometry with options", () => {
-    const r = parseRouteRequest({
-      route: LINE,
-      departure: "2026-10-18T07:00:00Z",
-      speed: { default: 3.1 },
-      xteLimit: 25,
-      vessel: { draft: 1.9 }
-    });
+    const r = parseRouteRequest(
+      {
+        route: LINE,
+        departure: "2026-10-18T07:00:00Z",
+        speed: { default: 3.1 },
+        xteLimit: 25,
+        vessel: { draft: 1.9 }
+      },
+      Date.parse("2026-10-18T06:00:00Z")
+    );
     expect(r).toEqual({
       ok: true,
       value: {
@@ -70,18 +73,6 @@ describe("route-check request validation", () => {
     [{ route: LINE, speed: 0 }, /speed/],
     [{ route: LINE, speed: [2, 99] }, /speed/],
     [{ route: LINE, speed: null }, /speed must be/],
-    [
-      {
-        route: {
-          type: "LineString",
-          coordinates: [
-            [179.9, 60],
-            [-179.9, 60]
-          ]
-        }
-      },
-      /must not cross the ±180° meridian/
-    ],
     [{ route: LINE, departure: "tomorrow" }, /ISO 8601/],
     [{ route: LINE, xteLimit: -1 }, /xteLimit/],
     [{ route: LINE, vessel: { draft: 100 } }, /draft/],
@@ -102,6 +93,26 @@ describe("route-check request validation", () => {
     expect(parseRouteRequest({ route: { type: "LineString", coordinates: ok } }).ok).toBe(true);
     const geometry = { type: "LineString", coordinates };
     expect(routeResourceCoordinates({ feature: { geometry } })).toBeUndefined();
+  });
+
+  test("a departure more than a year from now is refused with a reason", async () => {
+    const now = Date.parse("2026-10-18T07:00:00Z");
+    for (const departure of [
+      "+275760-09-13T00:00:00.000Z",
+      "2028-01-01T00:00:00Z",
+      "2025-01-01T00:00:00Z"
+    ]) {
+      const r = parseRouteRequest({ route: LINE, departure }, now);
+      expect(r.ok ? "" : r.errors.join("; ")).toBe("departure must be within a year of now");
+    }
+    expect(parseRouteRequest({ route: LINE, departure: "2027-04-01T00:00:00Z" }, now).ok).toBe(
+      true
+    );
+    const far = await routeCheck({ route: LINE, departure: "+275760-09-13T00:00:00.000Z" }, deps());
+    expect(far).toEqual({
+      status: 400,
+      body: { errors: ["departure must be within a year of now"] }
+    });
   });
 
   test("too many points are refused", () => {
@@ -156,6 +167,33 @@ describe("route-check service", () => {
     expect(none.status).toBe(200);
   });
 
+  test("a corridor too wide for the route's length is refused before any work", async () => {
+    // About 61 km at ±2010 m is 245 km² of corridor; at the default ±40 m it is 5 km².
+    const long = {
+      type: "LineString",
+      coordinates: [
+        [22.004, 60.01],
+        [22.004, 60.56]
+      ]
+    };
+    const wide = await routeCheck({ route: long, xteLimit: 2000 }, deps());
+    expect(wide.status).toBe(400);
+    expect((wide.body as { errors: string[] }).errors[0]).toMatch(
+      /route length × corridor width must be at most 200 km²/
+    );
+    expect((await routeCheck({ route: long }, deps())).status).toBe(200);
+  });
+
+  test("other work runs between the corridor queries of a check", async () => {
+    let ran = false;
+    setImmediate(() => {
+      ran = true;
+    });
+    const r = await routeCheck({ route: LINE }, deps());
+    expect(r.status).toBe(200);
+    expect(ran).toBe(true);
+  });
+
   test("resolves a route reference", async () => {
     expect((await routeCheck({ routeRef: "/resources/routes/known" }, deps())).status).toBe(200);
     expect((await routeCheck({ routeRef: "/resources/routes/missing" }, deps())).status).toBe(404);
@@ -199,4 +237,17 @@ describe("JSON body", () => {
     const big = "x".repeat(MAX_BODY_BYTES + 1);
     await expect(readJsonBody(streamRequest([big]))).rejects.toThrow(/too large/);
   });
+});
+
+test("a leg across ±180° is accepted and taken the short way round", () => {
+  const r = parseRouteRequest({
+    route: {
+      type: "LineString",
+      coordinates: [
+        [179.9, 60],
+        [-179.9, 60]
+      ]
+    }
+  });
+  expect(r.ok).toBe(true);
 });

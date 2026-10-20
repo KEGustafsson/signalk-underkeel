@@ -8,8 +8,11 @@ import { checkLeg } from "./route-check";
 /**
  * Departure window (plan §4.11): the route is re-checked for departures
  * every `step` over the horizon, and the intervals in which every leg is
- * `ok` are returned. A leg's result depends on the departure only through
- * its water level, so legs are re-checked only when that level changes.
+ * `ok` are returned. Each leg takes the lowest level from its arrival until
+ * one step after it leaves, so a sampled departure answers for every
+ * departure up to the next one. A leg's result depends on the departure
+ * only through its water level, so legs are re-checked only when that
+ * level changes.
  * Levels are rounded down to the centimetre and σ up, so the reuse is never
  * optimistic.
  */
@@ -38,7 +41,7 @@ function rounded(wl: WaterLevel): WaterLevel {
   };
 }
 
-/** `pause` runs after each departure so a caller on the event loop can let other work in. */
+/** `pause` runs after each leg check and each departure so a caller on the event loop can let other work in. */
 export async function departureWindow(
   index: ChartIndex,
   input: Omit<RouteCheckInput, "departure">,
@@ -58,7 +61,7 @@ export async function departureWindow(
       const a = input.coordinates[i] as LonLat;
       const b = input.coordinates[i + 1] as LonLat;
       const end = start + (haversine(a, b) / (input.speeds[i] as number)) * 1000;
-      const wl = rounded(input.waterLevel(start, end));
+      const wl = rounded(input.waterLevel(start, end + stepMs, [a, b]));
       const key = `${i}|${wl.h}|${wl.sigma}|${wl.degraded ?? ""}`;
       let status = memo.get(key);
       if (status === undefined) {
@@ -66,6 +69,7 @@ export async function departureWindow(
         const fixed = { ...input, departure: t, waterLevel: () => wl };
         status = checkLeg(index, fixed, i, start).leg.status;
         memo.set(key, status);
+        await pause();
       }
       if (RANK[status] > RANK[worst]) {
         worst = status;

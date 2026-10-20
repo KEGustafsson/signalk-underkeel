@@ -44,6 +44,10 @@ function replay(p: Passage): { t: number; state: UnderKeelState; distance: numbe
       at
     );
     timeline.push({ t, state: r.state, distance: haversine(pos, p.hazard) });
+    // Every check is on the timeline up to the first alarm.
+    if (r.state === "alarm") {
+      break;
+    }
   }
   return timeline;
 }
@@ -59,13 +63,14 @@ const PASSAGES: Passage[] = [
     vessel: { draft: 3.2, length: 12, beam: 4 }
   },
   {
-    // CATZOC C (σP 250 m) burns the 1.8 m sounding 500 m around it, so the
-    // passage starts north of the swept fairway to leave room to warn.
+    // CATZOC C (σP 250 m) burns the 1.8 m sounding 500 m around it, and a
+    // C tile counts 500 m beyond the footprint, so the passage starts north
+    // of the swept fairway to leave room to warn.
     name: "southbound across the fairway onto the CATZOC C bank",
     start: [22.012, 60.0145],
     cog: Math.PI,
     sog: 2.5,
-    seconds: 400,
+    seconds: 1000,
     hazard: BANK,
     vessel: { draft: 1.9, length: 10, beam: 3.5 }
   }

@@ -34,7 +34,7 @@ export interface PluginState {
 const NOT_STARTED: ApiReply = { status: 503, body: { errors: ["plugin not started"] } };
 
 export function apiFor(
-  app: Pick<ServerAPI, "resourcesApi">,
+  app: Pick<ServerAPI, "resourcesApi" | "error">,
   clock: Clock,
   s: PluginState
 ): ApiProvider {
@@ -51,7 +51,7 @@ export function apiFor(
     indexReason: s.load?.reason ?? "plugin not started",
     config: s.config ?? parseConfig({}),
     vessel: () => s.monitor?.vessel(),
-    waterLevel: (start, end) => s.monitor?.waterLevelOver(start, end) ?? CHART_DATUM,
+    waterLevel: (start, end, at) => s.monitor?.waterLevelOver(start, end, at) ?? CHART_DATUM,
     waveHeight: () => s.monitor?.nav.waveHeight?.value,
     getRoute: (id) => app.resourcesApi.getResource("routes", id),
     now: () => clock.now()
@@ -65,9 +65,10 @@ export function apiFor(
       store: s.acks,
       current: () => m.last,
       heading: () => m.heading(),
-      waterLevel: () => m.waterLevel().h,
+      waterLevel: () => m.waterLevel(),
       draft: () => m.vessel()?.draft,
-      now: () => clock.now()
+      now: () => clock.now(),
+      error: (message) => app.error(message)
     });
   };
   return {

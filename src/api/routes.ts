@@ -39,6 +39,9 @@ type Registrar = {
 /** Request bodies above this size are refused before parsing. */
 export const MAX_BODY_BYTES = 256 * 1024;
 
+/** A request body that is too large or not JSON: the client's fault, answered 400. */
+class BodyError extends Error {}
+
 /**
  * The parsed JSON body. Signal K normally runs express.json() before plugin
  * routes; when it has not, the raw stream is read here with a size cap.
@@ -53,7 +56,7 @@ export function readJsonBody(req: Request): Promise<unknown> {
     req.on("data", (chunk: Buffer) => {
       size += chunk.length;
       if (size > MAX_BODY_BYTES) {
-        reject(new Error("request body too large"));
+        reject(new BodyError("request body too large"));
         req.destroy();
         return;
       }
@@ -63,7 +66,7 @@ export function readJsonBody(req: Request): Promise<unknown> {
       try {
         resolve(chunks.length === 0 ? {} : JSON.parse(Buffer.concat(chunks).toString("utf8")));
       } catch {
-        reject(new Error("request body is not JSON"));
+        reject(new BodyError("request body is not JSON"));
       }
     });
     req.on("error", reject);
@@ -88,6 +91,19 @@ function readwrite(router: RouterLike): Registrar {
   return router.access ? router.access("readwrite") : router;
 }
 
+/**
+ * Any other failure is ours; its message may name files on the server, so it
+ * stays off the wire and goes to the server log instead.
+ */
+function fail(res: Response, err: unknown, log: (message: string) => void): void {
+  if (err instanceof BodyError) {
+    res.status(400).json({ errors: [err.message] });
+  } else {
+    log(`REST handler failed: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
+    res.status(500).json({ errors: ["internal error"] });
+  }
+}
+
 function send(res: Response, reply: ApiReply): void {
   if (reply.body === undefined) {
     res.status(reply.status).end();
@@ -103,7 +119,11 @@ function send(res: Response, reply: ApiReply): void {
  * /envelope?rev=N` answers 304 when the client already holds rev N, so
  * clients can poll on the `envelopeRev` delta without refetching.
  */
-export function registerRoutes(router: RouterLike, api: ApiProvider): void {
+export function registerRoutes(
+  router: RouterLike,
+  api: ApiProvider,
+  log: (message: string) => void = console.error
+): void {
   const r = readonly(router);
   r.get(`${API_BASE}/status`, (_req: Request, res: Response) => {
     res.json(api.status());
@@ -121,7 +141,7 @@ export function registerRoutes(router: RouterLike, api: ApiProvider): void {
     readJsonBody(req)
       .then((body) => api.routeCheck(body))
       .then((reply) => res.status(reply.status).json(reply.body))
-      .catch((err: Error) => res.status(400).json({ errors: [err.message] }));
+      .catch((err: unknown) => fail(res, err, log));
   });
   for (const [route, handler] of [
     ["route-repair", api.routeRepair],
@@ -131,7 +151,7 @@ export function registerRoutes(router: RouterLike, api: ApiProvider): void {
       readJsonBody(req)
         .then((body) => handler(body))
         .then((reply) => send(res, reply))
-        .catch((err: Error) => res.status(400).json({ errors: [err.message] }));
+        .catch((err: unknown) => fail(res, err, log));
     });
   }
   r.post(`${API_BASE}/query`, (req: Request, res: Response) => {
@@ -140,12 +160,14 @@ export function registerRoutes(router: RouterLike, api: ApiProvider): void {
         const reply = api.query(body);
         res.status(reply.status).json(reply.body);
       })
-      .catch((err: Error) => res.status(400).json({ errors: [err.message] }));
+      .catch((err: unknown) => fail(res, err, log));
   });
   r.get(`${API_BASE}/tiles/ukc/:z/:x/:file`, (req: Request, res: Response) => {
     const p = (req.params ?? {}) as Record<string, string | undefined>;
     const y = /^(\d{1,8})\.pbf$/.exec(p.file ?? "")?.[1];
     const reply = api.ukcTile(int(p.z), int(p.x), int(y));
+    // The tiles follow the water level and vessel: Plotter Extensions §Live changes.
+    res.setHeader("Cache-Control", "no-cache");
     if (reply.body instanceof Uint8Array) {
       res.status(reply.status).type(reply.contentType).send(Buffer.from(reply.body));
     } else {
@@ -166,7 +188,7 @@ export function registerRoutes(router: RouterLike, api: ApiProvider): void {
   w.post(`${API_BASE}/acks`, (req: Request, res: Response) => {
     readJsonBody(req)
       .then((body) => send(res, api.addAck(body)))
-      .catch((err: Error) => res.status(400).json({ errors: [err.message] }));
+      .catch((err: unknown) => fail(res, err, log));
   });
   w.delete(`${API_BASE}/acks/:id`, (req: Request, res: Response) => {
     send(res, api.deleteAck(String((req.params as Record<string, unknown> | undefined)?.id ?? "")));

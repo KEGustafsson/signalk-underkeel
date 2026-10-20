@@ -272,6 +272,7 @@ interface Cell {
   dMin: number; // conservative charted depth (m below chart datum), -Inf = land
   sigmaD: number; // 1σ depth uncertainty from CATZOC/SOUACC (m)
   sigmaP: number; // 1σ horizontal uncertainty of the source (m) from CATZOC/POSACC
+  surveySigmaP: number; // widest σP of the assessed quality zones reaching it (chart reach)
   flags: number; // SWEPT | NO_COVERAGE | UNASSESSED | DREDGED | LIVECHART_ADJUSTED
   cellRef: number; // index into cells.json (edition provenance)
 }
@@ -301,6 +302,22 @@ splitting every tile down to the leaf zoom.
    polygon.
 
 Expected cost is about 50 to 300 cell visits per look-ahead footprint.
+
+**Chart position in the query.** Depth areas and lines are not burned, so the look-ahead
+(k = k_p), a route check, a repair cost cell, `POST /query` and the UKC tiles (k = 2) count
+each tile within the query buffer plus `k·σP` of that tile's own survey, at most 1000 m
+(`spatial/chart-position.ts`). A drying area drawn 60 m off a footprint in CATZOC B water
+(σP 25 m) is therefore in reach, while an A1 rock beside it is not widened by C water
+elsewhere in the query. A leaf's reach comes from `surveySigmaP`, the widest σP of the
+assessed, non-advisory quality zones reaching it, so a leaf only partly assessed (at a coverage
+edge or between a B and a U zone) keeps the reach of its assessed part; `sigmaP` would also hold
+the unassessed guess. A split tile stores the widest of its leaves and prunes its subtree by
+it, so the walk descends wherever any leaf may reach and nowhere else. Unassessed water and
+Traficom WFS water add no reach: their flags already make a leg `unverified`, a query
+never `clear` and the look-ahead never `normal`, and the unassessed σP of 500 m would make
+nearly every leg over WFS water `fail` on land within 1 km that the data does not put there. A
+point hazard is counted twice this way, burned and reached, which errs on the shallow side: a
+CATZOC C sounding counts up to 1 km from its position.
 
 **Storage.**
 
@@ -379,13 +396,17 @@ mean water. `datum.ts` maps each cell's vertical datum (`M_VDAT` / `VERDAT`) to 
 FMI series. **An unknown datum sets σ_wl = 0.5 m and flags the cell.**
 
 **Fail-safe.** If the provider is stale for more than 30 minutes, the engine falls back to
-`h = 0` (chart datum) with σ = 0.3 m, and publishes the reason. It never stays silent.
+`h = min(0, last level)` with σ = 0.3 m, and publishes the reason. It never stays silent. The
+last level is the provider's at its newest data; Baltic levels are often below chart datum,
+and `h = 0` would then assume more water than was last observed.
 
 **As built (M3).**
 
 - `levelAt` is synchronous and answers from data the provider already holds; FMI refreshes
-  itself every 10 minutes (configurable) and when the vessel moves 10 km from the forecast
-  point. The 1 Hz loop never waits on the network.
+  itself every 10 minutes (configurable), when the vessel moves 10 km from the forecast
+  point, and once the held forecast is 25 minutes old, retrying each minute until a fetch
+  succeeds, so neither a 30-minute interval nor one failed request lets it go stale. The
+  1 Hz loop never waits on the network.
 - FMI stored queries, checked against `opendata.fmi.fi` on 2026-10-17:
   `fmi::forecast::sealevel::point::simple` (SeaLevel, SeaLevelN2000; centimetres, hourly
   for 48 h) and `fmi::observations::mareograph::instant::simple` (WATLEV,
@@ -401,9 +422,17 @@ FMI series. **An unknown datum sets σ_wl = 0.5 m and flags the cell.**
 - The engine applies one level per tick. When the index holds cells on different datums,
   it takes the lowest level and the widest σ among them, which can only raise P(UKC < 0).
   Per-cell levels are a follow-up.
-- Route checks take the lowest level over each leg's ETA interval. FMI answers them with the
-  forecast held for the vessel's position. A fallback level makes every `ok` leg
-  `unverified`.
+- `signalk-tide` reads `heightNow`, `heightLow` and `timeLow`. `heightNow` applies for 5 min
+  after the reading; after that the tide may be falling, so the lower of `heightNow` and
+  `heightLow` applies until 6 h past `timeLow`, when the next flood has turned. Without
+  `timeLow` that bound ends 6 h after the reading, since the low may be due at once. Without
+  `heightLow`, or past the bound, there is no level and the engine falls back.
+- Route checks take the lowest level over each leg's ETA interval at both of its ends, sampled
+  every 10 minutes and at every FMI forecast point inside it. FMI answers only within 30 km of
+  the point its forecast was fetched for, so a leg farther from the vessel gets the chart-datum
+  fallback and is at best `unverified`. Applying the vessel's forecast to every leg took the
+  level at Kemi (+0.62 m) for legs off Vaasa (+0.23 m) with no degraded flag. A fallback level
+  makes every `ok` leg `unverified`.
 
 ### 4.6 Vessel model
 
@@ -417,6 +446,10 @@ with plugin configuration overriding.
 | Squat `S`          | Barrass, open water: `S = Cb·V²/100` (V in kn, S in m) | ×2 when the check is inside a narrow-channel geofence or `FAIRWAY` width < k·beam; σ = 30 % of S               |
 | Wave allowance `W` | `c·Hs`                                                 | Hs from `environment.water.waves.significantHeight` or weather provider; c ≈ 0.3–0.5 (config), σ = 50 % of W   |
 | Transducer offset  | `environment.depth.transducerToKeel`                   | for the living chart                                                                                           |
+
+Heel uses the range of absolute roll over the last 10 s: a fin keel takes the least roll, a
+table its largest change over the range. Roll above 60° or stale is no roll, which gives a fin
+keel no lift and a table its largest change.
 
 ### 4.7 Risk model (core math)
 
@@ -433,8 +466,9 @@ P   = Φ(−UKC / σ)                                            // P(UKC < 0)
 - `σ_pos(t)` combines the following, root-sum-square:
   - the GNSS horizontal error, from `navigation.gnss.horizontalDilution` and fix type;
   - the integrity monitor's inflation (§4.8);
-  - the chart's `σP`;
   - prediction spread that grows with look-ahead time.
+- The chart's `σP` is added to the buffer per tile, `k_p·σP` of that tile's survey (§4.3),
+  which is never narrower than taking it root-sum-square.
 - `k_p` is 2 by default, and acts as the "how far off do I believe my position" knob.
 - **Explanation object:** every result carries all terms, their sources, the worst cell's
   `cellRef` and its exact R-tree hazard (with LNAM), so the UI can render the breakdown
@@ -450,7 +484,8 @@ P   = Φ(−UKC / σ)                                            // P(UKC < 0)
 | `alarm`  | P ≥ 20 % and TTS ≤ 60 s, or deterministic UKC < 0 at P50 within 30 s |
 
 **Hysteresis.** Raising a state needs 2 consecutive ticks. Lowering it needs 5 consecutive
-ticks below the threshold minus 20 %.
+ticks below the threshold minus 20 %, with P taken over the footprints inside the held state's
+window (`alarmWithin` for `alarm`, `warnWithin` for `warn`, the whole horizon for `alert`).
 
 ### 4.8 Look-ahead engine (1 Hz)
 
@@ -470,7 +505,9 @@ ticks below the threshold minus 20 %.
 
 Footprint at each step (Δt = 3 s) is a rectangle of hull length × beam, inflated by `σ_pos(t)`.
 Δt shrinks at speed so that consecutive footprints, hull length plus the position buffer at
-both ends, still touch: a fast boat must not skip a rock between two samples.
+both ends, still touch: a fast boat must not skip a rock between two samples. A tick scores at
+most 400 footprints: Δt grows toward that touching limit when the horizon would need more, and
+the horizon is cut only past it. Configuration caps D at 5 NM and the minimum horizon at 600 s.
 
 **Output per tick.**
 
@@ -482,7 +519,9 @@ both ends, still touch: a fast boat must not skip a rock between two samples.
 
 **Escape fan** (only in alert, warn or alarm). Evaluate headings at ±5° steps out to ±90°,
 using arcs limited by the boat's configured maximum turn rate. Publish the heading with the
-greatest TTS, breaking ties by the smallest heading change.
+greatest TTS, breaking ties by the smallest heading change. TTS counts from the first step
+after t = 0, since the footprint under the vessel is common to all headings; when every heading
+has the same TTS, or none is clear past the first step, publish null.
 
 **Integrity monitor** (`model/integrity.ts`).
 
@@ -516,7 +555,8 @@ suppressing.
 - σ_pos combines GNSS (HDOP × 3 m, 5 m without HDOP) and, from the integrity monitor, its
   inflation. The buffer is max(10 m, k_p · σ_pos). Speed error (σ_SOG 0.1 m/s) lengthens each
   footprint by k_p · σ_SOG · t fore and aft instead of widening it, since it moves the boat
-  along its track. The chart's σP is already burned into the pyramid around point hazards.
+  along its track. The chart's σP widens the buffer per tile by k_p·σP of the tile's own
+  assessed survey (§4.3), on top of the burn around point hazards.
 - The escape fan uses the maximum turn rate (default 3°/s) and stops at the first heading,
   smallest change first, that stays clear over the whole horizon. The monitor searches it at
   most every 3 s and holds the heading in between.
@@ -528,7 +568,9 @@ suppressing.
   σ_pos ≥ 50 m. Without speed through water the check reports itself unavailable in the
   notification and in `/status`.
 - Hysteresis applies between `normal`, `alert`, `warn` and `alarm`. `unknown` and `off` pass
-  through at once, so stale input is never held as an earlier state.
+  through at once, so stale input is never held as an earlier state. The risk state before
+  them stays held: after the gap a lower state still needs the 5 lowering ticks, and a higher
+  one is taken at once.
 - Measured on the synthetic archipelago at leaf z20 (`npm run bench`, x86, plain Node):
   median 1.2 ms and p95 4 ms per tick, escape fan included. Under Jest the same run is about
   15× slower.
@@ -559,18 +601,18 @@ fired, the notification holds until SOG stays above 0.5 m/s for 10 s.
 **Deltas.** These are published by the plugin, use plugin-scoped units in SI, and are
 proposed for the Signal K spec later.
 
-| Path                                         | Unit         | Meaning                                              |
-| -------------------------------------------- | ------------ | ---------------------------------------------------- |
-| `navigation.underKeel.state`                 | enum         | `normal \| alert \| warn \| alarm \| unknown \| off` |
-| `navigation.underKeel.clearance`             | m            | predicted min UKC (μ) over horizon                   |
-| `navigation.underKeel.clearanceSigma`        | m            | σ of the above                                       |
-| `navigation.underKeel.risk`                  | ratio        | max P(UKC < 0) over horizon                          |
-| `navigation.underKeel.timeToShoal`           | s            | null if none in horizon                              |
-| `navigation.underKeel.escapeHeading`         | rad          | true heading, null when normal                       |
-| `navigation.underKeel.envelopeRev`           | int          | bump → client fetches `/envelope`                    |
-| `navigation.underKeel.waterLevel`            | m            | applied level above chart datum                      |
-| `notifications.navigation.underKeel`         | notification | state + message + `data.explanation`                 |
-| `notifications.navigation.positionIntegrity` | notification | GNSS/DR divergence                                   |
+| Path                                         | Unit         | Meaning                                                |
+| -------------------------------------------- | ------------ | ------------------------------------------------------ |
+| `navigation.underKeel.state`                 | enum         | `normal \| alert \| warn \| alarm \| unknown \| off`   |
+| `navigation.underKeel.clearance`             | m            | predicted min UKC (μ) over horizon                     |
+| `navigation.underKeel.clearanceSigma`        | m            | σ of the above                                         |
+| `navigation.underKeel.risk`                  | ratio        | max P(UKC < 0) over horizon                            |
+| `navigation.underKeel.timeToShoal`           | s            | null if none in horizon                                |
+| `navigation.underKeel.escapeHeading`         | rad          | true heading, null when normal or no heading is better |
+| `navigation.underKeel.envelopeRev`           | int          | bump → client fetches `/envelope`                      |
+| `navigation.underKeel.waterLevel`            | m            | applied level above chart datum                        |
+| `notifications.navigation.underKeel`         | notification | state + message + `data.explanation`                   |
+| `notifications.navigation.positionIntegrity` | notification | GNSS/DR divergence                                     |
 
 This follows the "lightweight signal, then fetch the snapshot" pattern from the Plotter
 Extensions route API (`route.dirty` → `route.get`). Deltas stay small, and the GeoJSON is
@@ -609,7 +651,7 @@ admin or readwrite token.
     ]
   },
   "routeRef": "/resources/routes/<id>", // optional alternative to geometry
-  "departure": "2026-10-18T07:00:00Z", // optional; default now
+  "departure": "2026-10-18T07:00:00Z", // optional; default now; within a year of now
   "speed": { "default": 3.1 }, // m/s, or per-leg array
   "xteLimit": 30, // m; default from course settings
   "probability": 0.01, // accept threshold
@@ -681,21 +723,37 @@ the full forecast horizon), re-checking only the legs whose water level changed.
 intervals in which every leg passes. In Finnish waters this matters during low-water episodes
 with high pressure and easterly winds; in tidal waters it becomes a full tide-gate planner.
 
+**As built (M2).** A leg is checked in pieces of about 1 km taken at equal fractions of the
+rhumb line, the line a Mercator chart plotter draws between the waypoints, so the corridor
+follows the leg as drawn and the last piece ends on its end point. A course computer may
+steer the great circle instead: where the great circle strays more than 10 m from the rhumb
+line, its own pieces are checked too; below that the rhumb corridor is widened by the gap.
+
 **As built (M5).** The repair grid has at most 120 cells on its longer side, at least 10 m
 each, and reaches half the leg's length (at least 300 m) beyond it. A cell is blocked when the
 corridor around it has P at or above the accept threshold, or touches `NO_COVERAGE`,
 `UNASSESSED` or `NO_DEPTH`: a repair must not route through water it cannot check. Costs are
 evaluated lazily as Theta* expands. Simplification replaces a span with its chord whenever the
 chord passes the corridor check, so no simplification makes a leg fail; a path that still fails
-is reported with a reason and no waypoints. Both `/route-repair` and `/departure-window` take
+is reported with a reason and no waypoints. Legs are repaired in route order, each checked at
+the arrival time the detours before it give, and the response's `route` is the whole route with
+every suggested waypoint inserted, checked again. Both `/route-repair` and `/departure-window` take
 the `/route-check` body; the window adds `horizon` (default 48 h, at most 7 days) and `step`
-(default 15 min, at least 5 min, at most 1000 departures). Leg results are reused across
+(default 15 min, at least 5 min, at most 1000 departures). Each leg takes the lowest level from
+its arrival until one step after it leaves, so a sampled `ok` departure also holds for every
+departure until the next sample and a coarse step cannot skip a low water. Leg results are reused across
 departures for the same water level rounded down to the centimetre (σ rounded up). One request
-repairs at most 10 legs, and the rest are listed with a reason; a window is refused when its
-departures times the route length exceed 20 000 km or its departures times legs exceed 20 000,
-since a leg check costs a corridor query however short the leg is. Both yield to the event loop after each leg
-or departure, so look-ahead ticks keep running during a long request. Measured under Jest on the
-synthetic archipelago: 52 ms per repaired leg.
+repairs at most 10 legs, and the rest are listed with a reason. A corridor query costs about
+its area, so a route check, repair or window is refused when the route's length times its
+corridor width (2 × (xteLimit + planning buffer)) exceeds 200 km², and a window when its
+departures times that area exceed 1600 km² or its departures times legs exceed 20 000, since a
+leg check costs a corridor query however short the leg is. All three yield to the event loop
+after each corridor query (the route check and the repaired route's re-check), each leg check
+or each departure, so look-ahead ticks keep running during a long request. On a laptop a
+corridor over 3000 shoals costs 1–3.5 ms per km². `POST /query` is refused when its bounding
+box widened by the buffer exceeds 25 km²: a 500-vertex ring tests every tile against every
+vertex, about 60 ms at that size. Measured under Jest on the synthetic archipelago: 52 ms per
+repaired leg.
 
 ### 4.12 Acknowledged passages
 
@@ -711,7 +769,8 @@ On acknowledge, Freeboard POSTs to `/acks` with:
 
 - the footprint lies inside the acknowledged polygon;
 - the heading is inside the sector;
-- the current water level is at least `h_ack − 0.05`;
+- the current water level is at least `h_ack − 0.05` and is not a fallback (a fallback level
+  neither honours nor records an acknowledgement);
 - the current draft is no deeper than `T_ack`.
 
 Suppression is published as `state: alert` with the message "acknowledged passage". It is
@@ -721,7 +780,8 @@ Acknowledgements are kept per vessel and exported as Signal K **notes**, so they
 the chart and can be deleted there.
 
 **As built (M4).** `POST /acks` takes an optional GeoJSON Polygon (default: the hull of the
-current look-ahead footprints), `sector` in degrees (default 20), `ttl` in seconds and
+current look-ahead footprints), checked like a `/query` polygon: a closed ring, no holes, at
+most 50 km across and not across ±180°; `sector` in degrees (default 20), `ttl` in seconds and
 `notificationId`; heading, water level and draft are taken from the plugin's current state.
 `GET /acks` is readonly; `POST` and `DELETE /acks/:id` need readwrite. They are stored in
 `acks.json` in the plugin data directory, so no database dependency is added; export as
@@ -762,8 +822,8 @@ suppress the same way, with the zone's name in the reason.
 
 **As built (M5).** The living chart is off by default and reads one depth path
 (`belowSurface`, or `belowTransducer` plus the configured transducer depth). The gate needs a
-known HDOP below 2, a satellite `methodQuality`, |roll| < 15°, a depth of 0.3–200 m and a
-water level that is not a fallback. Cells are the pyramid's z18 tiles (z = leaf zoom when the
+known HDOP below 2, a satellite `methodQuality`, |roll| < 15°, a depth of 0.3–200 m, a
+position measured within 2 s of the depth and a water level that is not a fallback. Cells are the pyramid's z18 tiles (z = leaf zoom when the
 leaf is coarser); the prior is the cell's charted depth and σD without adjustments, and a pass
 starts after a 10-minute gap. A confirmed discrepancy sets a z18 adjustment that every query
 takes beside the chart, through `minDepthOver` and the UKC tiles, so look-ahead, route check,
@@ -772,7 +832,12 @@ readings leave it as it is. Notes are written with `resourcesApi.setResource("no
 rewritten as evidence grows. Posteriors, adjustments and the last 20 000 accepted soundings are
 kept in `livechart.json` beside the index (no database dependency) and saved at most once a
 minute and on stop. A failed save is reported and retried at the next one, and a malformed file
-is skipped entry by entry rather than stopping the plugin. The CSB export
+is skipped entry by entry rather than stopping the plugin; a file that did not load whole (bad
+JSON, another version, malformed entries, cells at another zoom) is first renamed to
+`livechart.json.bad-<ms>` and reported, so no save overwrites it, and if it cannot be renamed
+it is not saved over at all. The file records its living-chart zoom; after a leaf-zoom change
+the adjustments are mapped onto the new zoom (a coarser cell takes the lowest `dMin` and largest
+σ of the cells in it, a finer cell copies its parent's) and the posteriors are dropped. The CSB export
 (`GET /livechart/csb.geojson`) is B-12 GeoJSON of depths below the transducer, with the
 transducer depth as the sounder's `draft`; it is never uploaded.
 

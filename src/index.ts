@@ -13,6 +13,7 @@ import type { FetchLike } from "./model/fmi";
 import { AckStore } from "./ack-store";
 import type { PluginState } from "./api-wiring";
 import { apiFor } from "./api-wiring";
+import { stoppedNotification } from "./notifications";
 import { loadZones } from "./zones";
 import { startLivechart } from "./livechart-service";
 import type { IndexBuilder } from "./wfs-service";
@@ -27,6 +28,39 @@ const VERSION = (
     version: string;
   }
 ).version;
+
+function stopPlugin(app: ServerAPI, clock: Clock, state: PluginState): void {
+  state.wfs?.stop();
+  state.wfs = undefined;
+  // A save that throws must not leave the monitor running or REST answering on the old index.
+  try {
+    state.livechart?.save();
+  } catch (err) {
+    app.error(`living chart not saved on stop: ${(err as Error).message}`);
+  }
+  state.livechart = undefined;
+  state.monitor?.stop();
+  // Without these the REST handlers would keep answering on the old index at chart datum.
+  Object.assign(state, { monitor: undefined, load: undefined, config: undefined, acks: undefined });
+  state.stopped = createStatus("off", "plugin stopped", new Date(clock.now()));
+  app.handleMessage(PLUGIN_ID, {
+    updates: [
+      {
+        values: [
+          { path: PATHS.state as Path, value: "off" },
+          { path: PATHS.clearance as Path, value: null },
+          { path: PATHS.clearanceSigma as Path, value: null },
+          { path: PATHS.risk as Path, value: null },
+          { path: PATHS.timeToShoal as Path, value: null },
+          { path: PATHS.escapeHeading as Path, value: null },
+          { path: PATHS.envelopeRev as Path, value: null },
+          { path: PATHS.waterLevel as Path, value: null },
+          { path: PATHS.notification as Path, value: stoppedNotification() }
+        ]
+      }
+    ]
+  });
+}
 
 export = function underkeel(
   app: ServerAPI,
@@ -55,9 +89,6 @@ export = function underkeel(
         app.getDataDirPath(),
         wfs?.savedCell() ? [wfs.cellDir] : []
       );
-      if (load.reason) {
-        app.setPluginError(load.reason);
-      }
       const monitor = new Monitor(app, PLUGIN_ID, config, load.index, load.reason, clock, fetch);
       const acks = new AckStore(path.join(app.getDataDirPath(), "acks.json"));
       if (acks.error) {
@@ -70,6 +101,10 @@ export = function underkeel(
       wfs?.start();
       void loadZones(config.mooringZones, (id) => app.resourcesApi.getResource("regions", id)).then(
         ({ zones, errors }) => {
+          // A slow load from an earlier start must not report into this one.
+          if (state.monitor !== monitor) {
+            return;
+          }
           monitor.setZones(zones);
           state.zoneErrors = errors;
           errors.forEach((e) => app.error(e));
@@ -80,35 +115,11 @@ export = function underkeel(
     },
 
     stop(): void {
-      state.wfs?.stop();
-      state.wfs = undefined;
-      state.livechart?.save();
-      state.livechart = undefined;
-      state.monitor?.stop();
-      state.monitor = undefined;
-      state.stopped = createStatus("off", "plugin stopped", new Date(clock.now()));
-      app.handleMessage(PLUGIN_ID, {
-        updates: [
-          {
-            values: [
-              { path: PATHS.state as Path, value: "off" },
-              { path: PATHS.clearance as Path, value: null },
-              { path: PATHS.clearanceSigma as Path, value: null },
-              { path: PATHS.risk as Path, value: null },
-              { path: PATHS.timeToShoal as Path, value: null },
-              { path: PATHS.escapeHeading as Path, value: null },
-              {
-                path: PATHS.notification as Path,
-                value: { state: "normal", method: [], message: "UKC monitoring stopped" } as never
-              }
-            ]
-          }
-        ]
-      });
+      stopPlugin(app, clock, state);
     },
 
     registerWithRouter(router: PluginRouter): void {
-      registerRoutes(router, apiFor(app, clock, state));
+      registerRoutes(router, apiFor(app, clock, state), (message) => app.error(message));
     }
   };
 };

@@ -166,6 +166,13 @@ export function expandRect(rect: Rect, by: number): Rect {
   };
 }
 
+/** Euclidean distance between two rectangles; 0 when they overlap or touch. */
+export function rectGap(a: Rect, b: Rect): number {
+  const dx = Math.max(0, a.minX - b.maxX, b.minX - a.maxX);
+  const dy = Math.max(0, a.minY - b.maxY, b.minY - a.maxY);
+  return Math.hypot(dx, dy);
+}
+
 /** Closed-interval overlap: touching edges count. */
 export function rectsOverlap(a: Rect, b: Rect): boolean {
   return a.minX <= b.maxX && b.minX <= a.maxX && a.minY <= b.maxY && b.minY <= a.maxY;
@@ -210,6 +217,11 @@ export function offset(origin: LonLat, east: number, north: number): LonLat {
   const lat = origin[1] + north / meridian / DEG;
   const lon = origin[0] + east / (primeVertical * Math.cos(phi)) / DEG;
   return [lon, lat];
+}
+
+/** Longitude in [-180, 180). */
+export function wrapLon(lon: number): number {
+  return ((((lon + 180) % 360) + 360) % 360) - 180;
 }
 
 /** The point `distance` metres from `origin` along true bearing `bearing` (radians). */

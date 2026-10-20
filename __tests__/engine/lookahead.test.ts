@@ -1,16 +1,19 @@
 import type { NavState } from "../../src/engine/lookahead";
 import {
   DEFAULT_LOOKAHEAD,
+  MAX_FOOTPRINTS,
   describe as explain,
-  evaluateLookahead
+  evaluateLookahead,
+  navState
 } from "../../src/engine/lookahead";
+import { Hysteresis } from "../../src/engine/hysteresis";
 import type { VesselModel } from "../../src/model/vessel";
 import type { ChartIndex } from "../../src/spatial/chart-index";
 import { HazardIndex } from "../../src/spatial/hazards";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
 import { CHART_DATUM, ctx } from "../helpers/engine";
 import { BANK, FAIRWAY_LAT, fixtureIndex, M_PER_DEG_LON, ROCK } from "../helpers/fixture-index";
-import { basin, point } from "../helpers/synthetic";
+import { area, basin, coverage, point, quality } from "../helpers/synthetic";
 
 const NOW = 1_800_000_000_000;
 const DEEP_KEEL: VesselModel = { draft: 3.2, length: 12, beam: 4 };
@@ -243,9 +246,9 @@ describe("probabilistic look-ahead on the synthetic chart", () => {
   });
 
   test("a turn toward the rock is caught by the fan; the same track held straight passes", () => {
-    // 150 m west of the rock and 120 m north of it, heading east: straight
+    // 150 m west of the rock and 140 m north of it, heading east: straight
     // runs clear to the north; a 1.2°/s turn to starboard curves onto it.
-    const start = nav(ROCK[0] - 150 / M_PER_DEG_LON, ROCK[1] + 120 / 111320, EAST, 3);
+    const start = nav(ROCK[0] - 150 / M_PER_DEG_LON, ROCK[1] + 140 / 111320, EAST, 3);
     const straight = evaluateLookahead(start, ctx(DEEP_KEEL), index, NOW);
     const turning = evaluateLookahead(
       { ...start, rot: { value: (1.2 * Math.PI) / 180, at: NOW } },
@@ -260,15 +263,15 @@ describe("probabilistic look-ahead on the synthetic chart", () => {
   });
 
   test("a stale rate of turn is ignored", () => {
-    const start = nav(ROCK[0] - 150 / M_PER_DEG_LON, ROCK[1] + 120 / 111320, EAST, 3);
+    const start = nav(ROCK[0] - 150 / M_PER_DEG_LON, ROCK[1] + 140 / 111320, EAST, 3);
     const old = { value: (1.2 * Math.PI) / 180, at: NOW - 60_000 };
     const r = evaluateLookahead({ ...start, rot: old }, ctx(DEEP_KEEL), index, NOW);
     expect(r.state).toBe(evaluateLookahead(start, ctx(DEEP_KEEL), index, NOW).state);
   });
 
   test("a wide GNSS fix grows the buffer until it reaches the rock", () => {
-    // 100 m north of the rock heading east: k_p · σ_pos reaches it only with a poor fix.
-    const beside = nav(westOfRock(30), ROCK[1] + 100 / 111320);
+    // 120 m north of the rock heading east: k_p · σ_pos reaches it only with a poor fix.
+    const beside = nav(westOfRock(30), ROCK[1] + 120 / 111320);
     const good = evaluateLookahead(
       { ...beside, hdop: { value: 0.8, at: NOW } },
       ctx(DEEP_KEEL),
@@ -311,6 +314,68 @@ describe("probabilistic look-ahead on the synthetic chart", () => {
     expect(calm.escapeHeading).toBeNull();
   });
 
+  test("a long look-ahead at low speed stays bounded and leaves no gaps", () => {
+    const opts = { ...DEFAULT_LOOKAHEAD, distance: 5 * 1852, minHorizon: 600 };
+    const r = evaluateLookahead(
+      nav(22.003, FAIRWAY_LAT, EAST, 0.3),
+      ctx(DEEP_KEEL),
+      index,
+      NOW,
+      opts
+    );
+    expect(r.footprints.length).toBeLessThanOrEqual(MAX_FOOTPRINTS);
+    expect(r.horizon).toBeCloseTo((5 * 1852) / 0.3, 6);
+    const reach = DEEP_KEEL.length + 2 * opts.positionBuffer;
+    for (let i = 1; i < r.footprints.length; i++) {
+      const dt = (r.footprints[i]?.t as number) - (r.footprints[i - 1]?.t as number);
+      expect(dt * 0.3).toBeLessThanOrEqual(reach + 1e-9);
+    }
+    // A tiny hull with no buffer would need more steps: the horizon is cut instead.
+    const dinghy = { draft: 1, length: 3, beam: 1.5 };
+    const cut = evaluateLookahead(nav(22.003, FAIRWAY_LAT, EAST, 0.3), ctx(dinghy), index, NOW, {
+      ...opts,
+      positionBuffer: 0
+    });
+    expect(cut.footprints.length).toBeLessThanOrEqual(MAX_FOOTPRINTS);
+    expect(cut.horizon).toBe(cut.footprints[cut.footprints.length - 1]?.t);
+    expect(cut.horizon).toBeLessThan((5 * 1852) / 0.3);
+  });
+
+  test("squat uses the faster of SOG and STW, even with COG stale", () => {
+    const squatOf = (n: NavState) =>
+      evaluateLookahead(n, ctx(DEEP_KEEL), index, NOW).worst?.explanation.squat;
+    const base = nav(westOfRock(40), FAIRWAY_LAT, EAST, 2);
+    // Barrass with Cb 0.4: 4 m/s = 7.78 kn → 0.24 m; 2 m/s → 0.06 m.
+    expect(squatOf({ ...base, stw: { value: 4, at: NOW } })).toBeCloseTo(0.24, 2);
+    expect(squatOf(base)).toBeCloseTo(0.06, 2);
+    const noCog = { ...base, cog: { value: EAST, at: NOW - 60_000 } };
+    expect(squatOf(noCog)).toBeCloseTo(0.06, 2);
+    expect(squatOf({ ...noCog, sog: undefined, stw: { value: 4, at: NOW } })).toBeCloseTo(0.24, 2);
+  });
+
+  test("a rock under the bow never yields hold course as the escape", () => {
+    const rock: ChartIndex = {
+      catalogue: { version: 1, cells: [] },
+      pyramid: buildPyramid([...basin([22.0, 60.0, 22.04, 60.02], 10), point(22.02, 60.01, 1)], {
+        minZoom: 12,
+        leafZoom: 18
+      }),
+      hazards: new HazardIndex([])
+    };
+    for (const d of [5, 15, 30]) {
+      const r = evaluateLookahead(
+        nav(22.02 - d / M_PER_DEG_LON, 60.01),
+        { ...ctx(DEEP_KEEL), escape: true },
+        rock,
+        NOW
+      );
+      expect(r.state).toBe("alarm");
+      if (r.escapeHeading !== null) {
+        expect(Math.abs(r.escapeHeading - EAST)).toBeGreaterThanOrEqual((5 * Math.PI) / 180 - 1e-9);
+      }
+    }
+  });
+
   test("an escape heading never counts water off the chart as clear", () => {
     // A deep basin whose east edge is 200 m ahead; the vessel runs east near its north side.
     const edge: ChartIndex = {
@@ -329,5 +394,80 @@ describe("probabilistic look-ahead on the synthetic chart", () => {
     const turn = (r.escapeHeading as number) - EAST;
     expect(turn).toBeGreaterThan(0);
     expect(turn).toBeLessThanOrEqual(Math.PI / 2 + 1e-9);
+  });
+});
+
+describe("chart position uncertainty", () => {
+  // A drying patch 60 m north of a stopped boat: beyond the 10 m buffer, in
+  // reach once the survey's k_p·σP (B 50 m, C 500 m) is added.
+  const box = [22.0, 60.0, 22.06, 60.03] as const;
+  const north = 60 / 111195;
+  const chart = (catzoc: 1 | 3 | 4): ChartIndex => ({
+    catalogue: { version: 1, cells: [] },
+    pyramid: buildPyramid(
+      [
+        coverage(box),
+        quality(box, catzoc),
+        area(box, 15),
+        area([22.028, 60.015 + north, 22.032, 60.016 + north], -1)
+      ],
+      { minZoom: 12, leafZoom: 20 }
+    ),
+    hazards: new HazardIndex([])
+  });
+  test.each([
+    [3, "B"],
+    [4, "C"]
+  ] as const)("a drying area 60 m off under CATZOC %s (%s) alarms", (catzoc) => {
+    const r = evaluateLookahead(nav(22.03, 60.015, EAST, 0), ctx(SHALLOW_KEEL), chart(catzoc), NOW);
+    expect(r.state).toBe("alarm");
+    expect(r.footprints[0]?.charted).toBe(-1);
+  });
+
+  test("under CATZOC A1 (±5 m) the same area is out of reach", () => {
+    const r = evaluateLookahead(nav(22.03, 60.015, EAST, 0), ctx(SHALLOW_KEEL), chart(1), NOW);
+    expect(r.state).toBe("normal");
+  });
+});
+
+describe("heel from roll", () => {
+  // A 2.5 m bank everywhere: a 2.4 m fin keel is only clear when heeled.
+  const bank: ChartIndex = {
+    catalogue: { version: 1, cells: [] },
+    pyramid: buildPyramid(basin([22.0, 60.0, 22.04, 60.02], 2.5), { minZoom: 12, leafZoom: 18 }),
+    hazards: new HazardIndex([])
+  };
+  const fin = { heel: { kind: "fin" as const } };
+  const rolled = (roll: number, at = NOW): NavState => ({
+    ...nav(22.02, 60.01),
+    roll: { value: roll, at }
+  });
+
+  test("a roll beyond 60° never lifts the keel", () => {
+    for (const draft of [2.4, 4, 8]) {
+      const v = { ...DEEP_KEEL, draft };
+      const upright = evaluateLookahead(nav(22.02, 60.01), ctx(v, CHART_DATUM, fin), bank, NOW);
+      for (const roll of [1.2, 3, -3]) {
+        const r = evaluateLookahead(rolled(roll), ctx(v, CHART_DATUM, fin), bank, NOW);
+        expect(r.state).toBe("alarm");
+        expect(r.risk).toBe(upright.risk);
+      }
+    }
+  });
+
+  test("a boat rolling through upright is scored at its least roll", () => {
+    const n = navState();
+    const h = new Hysteresis(DEFAULT_LOOKAHEAD);
+    const v = { ...DEEP_KEEL, draft: 2.4 };
+    const published = [];
+    for (let tick = 0; tick < 6; tick++) {
+      const now = NOW + tick * 1000;
+      const at = { ...rolled(tick % 2 === 0 ? 0.7 : 0.05, now), rolls: n.rolls };
+      for (const k of ["position", "cog", "sog", "heading"] as const) {
+        (at[k] as { at: number }).at = now;
+      }
+      published.push(h.next(evaluateLookahead(at, ctx(v, CHART_DATUM, fin), bank, now)).state);
+    }
+    expect(published.slice(2)).toEqual(["alarm", "alarm", "alarm", "alarm"]);
   });
 });

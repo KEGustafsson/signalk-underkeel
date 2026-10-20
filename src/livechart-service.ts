@@ -13,6 +13,15 @@ import {
   Posteriors,
   rebasePrior
 } from "./livechart/posterior";
+import {
+  isCell,
+  isNodeValues,
+  isRecord,
+  isSounding,
+  listOf,
+  mergeAdjustments,
+  tilesAt
+} from "./livechart/saved-state";
 import type { RawSounding, Sounding, SoundingSource } from "./livechart/soundings";
 import { reduce } from "./livechart/soundings";
 import type { NodeStore, NodeValues } from "./spatial/node-store";
@@ -44,6 +53,8 @@ const MAX_SAMPLES = 20000;
 
 interface Saved {
   version: 1;
+  /** The living-chart zoom the cells and adjustment keys are at. */
+  zoom: number;
   cells: CellPosterior[];
   adjustments: [number, NodeValues][];
   samples: Sounding[];
@@ -55,6 +66,8 @@ export class LivechartService {
   private dirty = false;
   readonly rejected = new Map<string, number>();
   accepted = 0;
+  /** Set when a state file that did not load whole could not be moved aside: never overwrite it. */
+  private keepFile = false;
 
   constructor(
     private store: NodeStore,
@@ -72,12 +85,11 @@ export class LivechartService {
    */
   rebind(store: NodeStore): void {
     for (const [key, c] of this.posteriors.cells) {
-      const rebased = rebasePrior(c, chartPrior(store, c.z, c.x, c.y));
-      this.posteriors.cells.set(key, rebased);
-      const v = this.store.adjustments.get(key);
-      if (v) {
-        store.adjustments.set(key, { ...v, cellRef: rebased.cellRef });
-      }
+      this.posteriors.cells.set(key, rebasePrior(c, chartPrior(store, c.z, c.x, c.y)));
+    }
+    const z = this.store.adjustZoom;
+    for (const [key, v] of this.store.adjustments) {
+      store.adjustments.set(key, { ...v, cellRef: this.cellRefAt(store, z, key) });
     }
     this.store = store;
     this.posteriors.rebind(store);
@@ -158,11 +170,12 @@ export class LivechartService {
    * handler. The state stays dirty, so the next save tries again.
    */
   save(): void {
-    if (!this.dirty) {
+    if (!this.dirty || this.keepFile) {
       return;
     }
     const saved: Saved = {
       version: 1,
+      zoom: this.store.adjustZoom,
       cells: [...this.posteriors.cells.values()],
       adjustments: [...this.store.adjustments],
       samples: this.samples
@@ -179,21 +192,49 @@ export class LivechartService {
     }
   }
 
-  /** Restores saved state; anything malformed is skipped, so a bad file never stops the plugin. */
+  /**
+   * Restores saved state; anything malformed is skipped, so a bad file never stops the plugin.
+   * A file that does not load whole is moved aside first, so a later save cannot overwrite what
+   * was skipped.
+   */
   private load(): void {
     const saved = this.readSaved();
     if (!saved) {
       return;
     }
-    this.restoreCells(saved.cells);
-    this.restoreAdjustments(saved.adjustments);
+    const z = this.store.adjustZoom;
+    const from = savedZoom(saved, z);
+    if (from === undefined || z - from > MAX_ZOOM_STEPS) {
+      this.setAside(`has zoom ${String(saved.zoom)}, which cannot be mapped onto zoom ${z}`);
+      return;
+    }
+    const cells = listOf(saved.cells);
+    const samples = listOf(saved.samples);
+    const notLists = [saved.cells, saved.adjustments, saved.samples].filter(
+      (v) => v !== undefined && !Array.isArray(v)
+    ).length;
+    const malformed =
+      notLists +
+      this.restoreCells(cells) +
+      this.restoreAdjustments(saved.adjustments, from) +
+      samples.filter((v) => !isSounding(v)).length;
     // Against a rebuilt chart a cell may qualify that did not before; adjust() only lowers.
     for (const c of this.posteriors.cells.values()) {
       if (isDiscrepancy(c)) {
         this.adjust(c);
       }
     }
-    this.samples = listOf(saved.samples).filter(isSounding).slice(-MAX_SAMPLES);
+    this.samples = samples.filter(isSounding).slice(-MAX_SAMPLES);
+    // What did load is written to a new file at the next save; the old one is set aside.
+    this.dirty ||= malformed > 0 || from !== z;
+    if (malformed > 0) {
+      this.setAside(`had ${malformed} malformed entries, skipped`);
+    } else if (from !== z && cells.length > 0) {
+      this.setAside(
+        `was saved at zoom ${from}: its ${cells.length} cells are dropped and their ` +
+          `adjustments moved onto zoom ${z}`
+      );
+    }
   }
 
   /** The saved state file as a version-1 record, or undefined with the reason reported. */
@@ -205,30 +246,47 @@ export class LivechartService {
     try {
       saved = JSON.parse(fs.readFileSync(this.file, "utf8"));
     } catch (err) {
-      this.deps.error(
-        `${this.file} is not readable JSON, starting empty: ${(err as Error).message}`
-      );
+      this.setAside(`is not readable JSON, starting empty: ${(err as Error).message}`);
       return undefined;
     }
     if (!isRecord(saved)) {
-      this.deps.error(`${this.file} is not a living-chart state, starting empty`);
+      this.setAside("is not a living-chart state, starting empty");
       return undefined;
     }
     if (saved.version !== 1) {
-      this.deps.error(`${this.file} has version ${String(saved.version)}, starting empty`);
+      this.setAside(`has version ${String(saved.version)}, starting empty`);
       return undefined;
     }
     return saved;
   }
 
-  private restoreCells(cells: unknown): void {
-    // Cells from an index with another leaf zoom are keyed at another zoom: drop them.
-    // The index may have been rebuilt since the save, so each cell is moved onto the
-    // current chart's prior and cell reference; a saved cellRef indexes the catalogue it
-    // was saved with. Saved adjustments keep their depths: they only ever lower a cell.
+  /** Renames the state file to `.bad-<ms>` and reports why; if that fails, never writes it. */
+  private setAside(reason: string): void {
+    const aside = `${this.file}.bad-${Date.now()}`;
+    try {
+      fs.renameSync(this.file, aside);
+      this.deps.error(`${this.file} ${reason}; moved to ${aside}`);
+    } catch (err) {
+      this.keepFile = true;
+      this.deps.error(
+        `${this.file} ${reason}; not moved aside (${(err as Error).message}), so not saved over`
+      );
+    }
+  }
+
+  /**
+   * Restores the cells at the current living-chart zoom and returns how many were malformed.
+   * Cells at another zoom are keyed at that zoom and dropped; their adjustments are mapped.
+   * The index may have been rebuilt since the save, so each cell is moved onto the current
+   * chart's prior and cell reference; a saved cellRef indexes the catalogue it was saved with.
+   */
+  private restoreCells(cells: unknown[]): number {
     const z = this.store.adjustZoom;
-    for (const c of listOf(cells)) {
-      if (isCell(c) && c.z === z) {
+    let malformed = 0;
+    for (const c of cells) {
+      if (!isCell(c)) {
+        malformed++;
+      } else if (c.z === z) {
         // An uncharted cell's NaN prior is saved as null.
         const chartDepth = typeof c.chartDepth === "number" ? c.chartDepth : NaN;
         const current = chartPrior(this.store, c.z, c.x, c.y);
@@ -238,68 +296,58 @@ export class LivechartService {
         );
       }
     }
+    return malformed;
   }
 
-  private restoreAdjustments(adjustments: unknown): void {
+  /**
+   * Restores saved adjustments at the current zoom and returns how many were malformed. They
+   * keep their depths, since they only ever lower a cell: onto a coarser zoom a cell takes the
+   * shallowest depth and largest σ of the saved cells in it, onto a finer one every cell inside
+   * a saved one takes its values.
+   */
+  private restoreAdjustments(adjustments: unknown, from: number): number {
+    const z = this.store.adjustZoom;
+    let malformed = 0;
     for (const entry of listOf(adjustments)) {
-      if (Array.isArray(entry) && entry.length === 2) {
-        const [key, v] = entry as [unknown, unknown];
-        const c = typeof key === "number" ? this.posteriors.cells.get(key) : undefined;
-        if (c && isNodeValues(v)) {
-          this.store.adjustments.set(key as number, { ...v, cellRef: c.cellRef });
-        }
+      const [key, v] = Array.isArray(entry) ? (entry as unknown[]) : [];
+      const valid =
+        Number.isSafeInteger(key) && (key as number) >= 0 && (key as number) < 4 ** from;
+      if (!(valid && isNodeValues(v))) {
+        malformed++;
+        continue;
+      }
+      for (const t of tilesAt(key as number, from, z)) {
+        const k = tileKey(z, t.x, t.y);
+        const next = { ...v, cellRef: this.cellRefAt(this.store, z, k) };
+        this.store.adjustments.set(k, mergeAdjustments(this.store.adjustments.get(k), next));
       }
     }
+    return malformed;
+  }
+
+  /** The current chart's cell reference for living-chart cell `key`. */
+  private cellRefAt(store: NodeStore, z: number, key: number): number {
+    const n = 2 ** z;
+    return (
+      this.posteriors.cells.get(key)?.cellRef ??
+      chartPrior(store, z, Math.floor(key / n), key % n).cellRef
+    );
   }
 }
 
-const isRecord = (v: unknown): v is Record<string, unknown> =>
-  typeof v === "object" && v !== null && !Array.isArray(v);
+/**
+ * A saved cell is copied onto 4^steps finer cells; leaf zooms 14–22 give living-chart zooms
+ * 14–18, so a real change is at most 4 steps.
+ */
+const MAX_ZOOM_STEPS = 4;
 
-const listOf = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
-
-const allFinite = (o: Record<string, unknown>, keys: readonly string[]): boolean =>
-  keys.every((k) => Number.isFinite(o[k]));
-
-const CELL_NUMBERS = [
-  "z",
-  "x",
-  "y",
-  "chartSigma",
-  "cellRef",
-  "mean",
-  "sigma",
-  "samples",
-  "passes",
-  "lastAt"
-] as const;
-
-function isCell(v: unknown): v is CellPosterior {
-  return (
-    isRecord(v) && allFinite(v, CELL_NUMBERS) && Number.isInteger(v.x) && Number.isInteger(v.y)
-  );
-}
-
-function isNodeValues(v: unknown): v is NodeValues {
-  return (
-    isRecord(v) &&
-    allFinite(v, ["dMin", "sigmaD", "sigmaP", "cellRef"]) &&
-    Number.isInteger(v.flags)
-  );
-}
-
-/** The ECMAScript Date range, ms: a sample outside it cannot be exported. */
-const MAX_TIME = 8.64e15;
-
-function isSounding(v: unknown): v is Sounding {
-  return (
-    isRecord(v) &&
-    allFinite(v, ["at", "belowSurface", "depth", "sigma"]) &&
-    Math.abs(v.at as number) <= MAX_TIME &&
-    Array.isArray(v.position) &&
-    v.position.length === 2 &&
-    v.position.every((n) => Number.isFinite(n))
-  );
+/** The zoom a saved state's cells and keys are at: as saved, else that of its cells. */
+function savedZoom(saved: Record<string, unknown>, current: number): number | undefined {
+  const z =
+    saved.zoom !== undefined ? saved.zoom : (listOf(saved.cells).find(isCell)?.z ?? current);
+  return Number.isInteger(z) && (z as number) >= 0 && (z as number) <= 26
+    ? (z as number)
+    : undefined;
 }
 
 /** The living chart is written to disk at most this often while soundings arrive. */
@@ -331,6 +379,7 @@ export function startLivechart(
       depth: typeof value === "number" ? value : NaN,
       at,
       ...monitor.fresh(),
+      positionAt: monitor.nav.position?.at,
       waterLevel: monitor.waterLevel()
     });
     if (clock.now() - savedAt >= SAVE_EVERY_MS) {

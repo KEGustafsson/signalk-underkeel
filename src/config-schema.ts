@@ -1,3 +1,5 @@
+import { LOOKAHEAD_LIMITS } from "./engine/lookahead";
+
 /** JSON schema of the plugin configuration, as shown in the Signal K admin UI. */
 export const SCHEMA = {
   type: "object",
@@ -63,7 +65,7 @@ export const SCHEMA = {
           enum: ["none", "manual", "signalk-tide", "fmi"],
           default: "none",
           description:
-            "none: chart datum with σ 0.3 m; manual: the height below; signalk-tide: environment.tide.heightNow; fmi: Finnish Meteorological Institute forecast and tide gauges (needs internet)"
+            "none: chart datum with σ 0.3 m; manual: the height below; signalk-tide: environment.tide.heightNow, heightLow and timeLow; fmi: Finnish Meteorological Institute forecast and tide gauges (needs internet)"
         },
         height: { type: "number", title: "Manual height above chart datum (m)", default: 0 },
         sigma: {
@@ -96,8 +98,20 @@ export const SCHEMA = {
       type: "object",
       title: "Look-ahead",
       properties: {
-        distance: { type: "number", title: "Look-ahead distance (m)", default: 555.6 },
-        minHorizon: { type: "number", title: "Minimum horizon (s)", default: 60 },
+        distance: {
+          type: "number",
+          title: "Look-ahead distance (m)",
+          default: 555.6,
+          minimum: 0,
+          maximum: LOOKAHEAD_LIMITS.distance
+        },
+        minHorizon: {
+          type: "number",
+          title: "Minimum horizon (s)",
+          default: 60,
+          minimum: 0,
+          maximum: LOOKAHEAD_LIMITS.minHorizon
+        },
         positionBuffer: { type: "number", title: "Least position buffer (m)", default: 10 },
         kp: {
           type: "number",

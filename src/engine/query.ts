@@ -5,6 +5,7 @@ import type { ChartIndex } from "../spatial/chart-index";
 import { FLAGS, flagNames } from "../spatial/node-store";
 import type { DepthResult } from "../spatial/pyramid";
 import { footprintGeom, minDepthOver } from "../spatial/pyramid";
+import { DEFAULT_BUILD } from "../spatial/pyramid-build";
 import type { FootprintClass } from "./envelope";
 import { classOf } from "./envelope";
 import type { Explanation, NamedHazard } from "./explain";
@@ -68,6 +69,7 @@ export function queryUkc(index: ChartIndex, input: QueryInput): QueryResult {
   };
   const r = minDepthOver(index.pyramid, footprintGeom(input.ring), {
     bufferMetres: input.bufferMetres,
+    chartReachK: DEFAULT_BUILD.k,
     risk
   });
   const covered = r.coveredDMin;

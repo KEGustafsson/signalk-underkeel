@@ -9,7 +9,7 @@ import type { ChartIndex } from "../../src/spatial/chart-index";
 import { HazardIndex } from "../../src/spatial/hazards";
 import { footprintGeom, minDepthOver } from "../../src/spatial/pyramid";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
-import { area, basin } from "../helpers/synthetic";
+import { area, basin, coverage, quality } from "../helpers/synthetic";
 
 const NOW = Date.parse("2026-10-18T07:00:00Z");
 const HOUR = 3600_000;
@@ -53,7 +53,9 @@ describe("route repair", () => {
   test("a leg through the shoal gets waypoints around it, and the new legs pass", async () => {
     const checked = checkRoute(index, input(LEG), NOW);
     expect(checked.legs[0]?.status).toBe("fail");
-    const [repair, ...rest] = await repairRoute(index, input(LEG), checked.legs);
+    const {
+      repairs: [repair, ...rest]
+    } = await repairRoute(index, input(LEG));
     expect(rest).toEqual([]);
     expect(repair?.reason).toBeUndefined();
     expect(repair?.waypoints.length).toBeGreaterThanOrEqual(1);
@@ -73,18 +75,19 @@ describe("route repair", () => {
       [22.05, 60.005]
     ];
     const checked = checkRoute(index, input(clear), NOW);
-    expect(await repairRoute(index, input(clear), checked.legs)).toEqual([]);
+    const { repairs, route } = await repairRoute(index, input(clear));
+    expect(repairs).toEqual([]);
+    expect(route.coordinates).toEqual(clear);
+    expect(route.legs).toEqual(checked.legs);
   });
 
   test("legs past the per-request limit are listed with a reason, not searched", async () => {
     // The same failing leg there and back three times: six failing legs.
     const zigzag: LonLat[] = [LEG[0], LEG[1], LEG[0], LEG[1], LEG[0], LEG[1], LEG[0]] as LonLat[];
-    const checked = checkRoute(index, input(zigzag), NOW);
     let pauses = 0;
-    const repairs = await repairRoute(
+    const { repairs } = await repairRoute(
       index,
       input(zigzag),
-      checked.legs,
       { ...DEFAULT_REPAIR, maxLegs: 2 },
       () => {
         pauses += 1;
@@ -97,7 +100,8 @@ describe("route repair", () => {
       expect(r).toMatchObject({ waypoints: [], legs: [] });
       expect(r.reason).toBe("not searched: at most 2 legs are repaired per request");
     }
-    expect(pauses).toBe(2);
+    // After each searched leg, and after each corridor query of the repaired route's re-check.
+    expect(pauses).toBeGreaterThan(2);
   });
 
   test("a shoal that closes the whole search window is reported, not routed through", () => {
@@ -112,6 +116,61 @@ describe("route repair", () => {
     const repair = repairLeg(wall, input(LEG), checked.legs[0] as never);
     expect(repair.waypoints).toEqual([]);
     expect(repair.reason).toBe("no passable path in the search window");
+  });
+
+  test("the search keeps the chart's position uncertainty clear of the shoal", async () => {
+    // CATZOC B: depth areas may lie 50 m from where they are drawn.
+    const box = [22.0, 60.0, 22.06, 60.03] as const;
+    const b: ChartIndex = {
+      ...index,
+      pyramid: buildPyramid(
+        [coverage(box), quality(box, 3), area(box, 10), area([22.027, 60.012, 22.033, 60.018], 1)],
+        { minZoom: 12, leafZoom: 18 }
+      )
+    };
+    const {
+      repairs: [repair]
+    } = await repairRoute(b, input(LEG));
+    expect(repair?.reason).toBeUndefined();
+    expect(repair?.legs.every((l) => l.status === "ok")).toBe(true);
+  });
+
+  test("a repair that delays the later legs re-checks them at their new times", async () => {
+    // A drying shoal across leg 0, and a bank on leg 1 passable only until the water falls,
+    // 20 s after the original arrival at its end: the detour round the shoal makes leg 1 late.
+    const tidal: ChartIndex = {
+      ...index,
+      pyramid: buildPyramid(
+        [
+          ...basin([22.0, 60.0, 22.07, 60.04], 10),
+          area([22.027, 60.012, 22.033, 60.018], -1),
+          area([22.045, 60.019, 22.055, 60.021], 1.5)
+        ],
+        { minZoom: 12, leafZoom: 18 }
+      )
+    };
+    const route: LonLat[] = [LEG[0] as LonLat, LEG[1] as LonLat, [22.05, 60.025]];
+    const onTime = checkRoute(tidal, input(route), NOW).legs;
+    const drop = Date.parse(onTime[1]?.eta.end as string) + 20_000;
+    const falling = input(route, {
+      waterLevel: (_s, e) => ({ h: e < drop ? 1.5 : 0, sigma: 0.05, source: "manual" })
+    });
+    expect(checkRoute(tidal, falling, NOW).legs.map((l) => l.status)).toEqual(["fail", "ok"]);
+    const { repairs, route: repaired } = await repairRoute(tidal, falling);
+    expect(repairs[0]?.waypoints.length).toBeGreaterThan(0);
+    // Leg 1, sailed later, is looked at again rather than reported as it was.
+    expect(repairs.map((r) => r.index)).toContain(1);
+    const recheck = checkRoute(
+      tidal,
+      {
+        ...falling,
+        coordinates: repaired.coordinates,
+        speeds: repaired.coordinates.slice(1).map(() => 3)
+      },
+      NOW
+    );
+    expect(repaired.legs.map((l) => l.status)).toEqual(recheck.legs.map((l) => l.status));
+    expect(repaired.legs.map((l) => l.eta)).toEqual(recheck.legs.map((l) => l.eta));
   });
 
   test("simplification keeps a point only where the chord would fail", () => {
@@ -148,6 +207,23 @@ describe("departure window", () => {
     // The last ok departure arrives before the level drops at +6 h.
     expect(Date.parse(w.windows[0]?.to as string)).toBeLessThan(NOW + 6 * HOUR);
     expect(w.steps.at(-1)?.status).not.toBe("ok");
+  });
+
+  test("a low water between two sampled departures is not a window", async () => {
+    // High water at 0, 12 and 24 h, low water at 6 and 18 h; sampled every 12 h.
+    const h = (t: number) => 0.5 + Math.cos(((t - NOW) / (12 * HOUR)) * 2 * Math.PI);
+    const lowest = (s: number, e: number): WaterLevel => {
+      let m = Math.min(h(s), h(e));
+      for (let t = s; t <= e; t += 60_000) {
+        m = Math.min(m, h(t));
+      }
+      return { h: m, sigma: 0.05, source: "manual" };
+    };
+    const route = input(LEG, { vessel: shallow, waterLevel: lowest });
+    const at6 = checkRoute(index, { ...route, departure: NOW + 6 * HOUR }, NOW).legs[0];
+    expect(at6?.status).toBe("fail");
+    const w = await departureWindow(index, route, NOW, NOW + 24 * HOUR, 12 * HOUR);
+    expect(w.windows).toEqual([]);
   });
 
   test("legs are re-checked only when their water level changes", async () => {

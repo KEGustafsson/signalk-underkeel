@@ -164,6 +164,25 @@ describe("signalk-underkeel satisfies the contract", () => {
     expect(v.validate("error.json", { errors: [] })).toEqual(["$.errors: fewer than 1 items"]);
     plugin.stop();
   });
+  test("the off, unknown and stopped notifications validate too", () => {
+    const notification = (options: Record<string, unknown>) => {
+      const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 3.6 } } });
+      const clock = fakeClock(T0);
+      const plugin = underkeel(f.app, clock);
+      plugin.start(options, () => undefined);
+      clock.advance(1000);
+      const running = lastValue(f.deltas, "notifications.navigation.underKeel");
+      plugin.stop();
+      return { running, stopped: lastValue(f.deltas, "notifications.navigation.underKeel") };
+    };
+    const off = notification({ indexDir: path.join(dataDir, "no-index") });
+    const unknown = notification({ cellsDir: FIXTURES, leafZoom: 18 });
+    expect(off.running).toMatchObject({ data: { engineState: "off" } });
+    expect(unknown.running).toMatchObject({ data: { engineState: "unknown" } });
+    for (const n of [off.running, unknown.running, off.stopped, unknown.stopped]) {
+      expectValid("notification.json", n);
+    }
+  });
 });
 
 describe("a second provider satisfies the same contract", () => {

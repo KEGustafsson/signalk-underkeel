@@ -21,7 +21,7 @@ export function fixtureIndex(): ChartIndex {
 
 /** Fixture landmarks (lon, lat). */
 export const ROCK: [number, number] = [22.02, 60.01]; // UWTROC VALSOU 3.5 in the 8 m swept fairway
-export const BANK: [number, number] = [22.012, 60.0045]; // CATZOC C bank, shoal sounding 1.8 m
+export const BANK: [number, number] = [22.012, 59.9895]; // CATZOC C bank, shoal sounding 1.8 m
 export const FAIRWAY_LAT = 60.01;
 
 /** Metres per degree of longitude at the fixture latitude. */

@@ -1,4 +1,7 @@
+import { splitLine, splitRing } from "../foundation/antimeridian";
 import type { LonLat } from "../foundation/geo";
+import { wrapLon } from "../foundation/geo";
+import { FLAGS } from "../spatial/node-store";
 import type { FootprintResult, LookaheadResult, Thresholds, WorstPoint } from "./lookahead";
 
 /**
@@ -30,22 +33,31 @@ const cm = (v: number | null): number | null => (v === null ? null : Math.round(
 
 export type FootprintClass = "clear" | "caution" | "danger" | "unverified";
 
+/** Survey quality or source a depth cannot be called clear on. */
+const UNVERIFIED_FLAGS = FLAGS.NO_COVERAGE | FLAGS.UNASSESSED | FLAGS.NOT_FOR_NAVIGATION;
+
 /**
  * Colour class of a footprint (plan §5.4: green, amber, red by P). A
  * charted danger outranks missing coverage, since the danger is known
- * either way; otherwise any gap makes the footprint unverified.
+ * either way; otherwise any gap, an unassessed survey or an advisory
+ * source makes the footprint unverified, and against a fallback water
+ * level (`degraded`) nothing is clear.
  */
 export function classOf(
-  f: Pick<FootprintResult, "risk" | "uncovered" | "charted">,
-  th: Thresholds
+  f: Pick<FootprintResult, "risk" | "uncovered" | "charted"> & { flags?: number },
+  th: Thresholds,
+  degraded = false
 ): FootprintClass {
   if (f.risk >= th.warn) {
     return "danger";
   }
-  if (f.uncovered || f.charted === null) {
+  if (f.uncovered || f.charted === null || ((f.flags ?? 0) & UNVERIFIED_FLAGS) !== 0) {
     return "unverified";
   }
-  return f.risk >= th.alert ? "caution" : "clear";
+  if (f.risk >= th.alert) {
+    return "caution";
+  }
+  return degraded ? "unverified" : "clear";
 }
 
 /** At most this many vertices on the drawn track line. */
@@ -148,7 +160,8 @@ function segmentFeature(
   run: FootprintResult[],
   all: FootprintResult[],
   start: number,
-  th: Thresholds
+  th: Thresholds,
+  degraded: boolean
 ): EnvelopeFeature {
   const first = run[0] as FootprintResult;
   const last = run[run.length - 1] as FootprintResult;
@@ -161,7 +174,7 @@ function segmentFeature(
     geometry: { type: "Polygon", coordinates: [ring] },
     properties: {
       kind: "segment",
-      class: classOf(first, th),
+      class: classOf(first, th, degraded),
       from: first.t,
       to: last.t,
       minUkc: minMean !== null && Number.isFinite(minMean) ? cm(minMean) : null,
@@ -170,11 +183,12 @@ function segmentFeature(
   };
 }
 
-function runs(fps: FootprintResult[], th: Thresholds): FootprintResult[][] {
+function runs(fps: FootprintResult[], th: Thresholds, degraded: boolean): FootprintResult[][] {
   const out: FootprintResult[][] = [];
   for (const f of fps) {
     const current = out[out.length - 1];
-    if (current && classOf(current[0] as FootprintResult, th) === classOf(f, th)) {
+    const cls = (x: FootprintResult) => classOf(x, th, degraded);
+    if (current && cls(current[0] as FootprintResult) === cls(f)) {
       current.push(f);
     } else {
       out.push([f]);
@@ -191,25 +205,66 @@ function worstFeature(w: WorstPoint): EnvelopeFeature {
   };
 }
 
+const lonLat = (c: number[]): LonLat => [c[0] as number, c[1] as number];
+
+/**
+ * The feature in [-180, 180]. Footprints near the antimeridian run past it,
+ * so a line or ring crossing it is cut there into features that keep its
+ * properties.
+ */
+function canonical(f: EnvelopeFeature): EnvelopeFeature[] {
+  const g = f.geometry;
+  if (g.type === "Point") {
+    const [lon, lat] = lonLat(g.coordinates);
+    return [{ ...f, geometry: { type: "Point", coordinates: qp([wrapLon(lon), lat]) } }];
+  }
+  if (g.type === "LineString") {
+    return splitLine(g.coordinates.map(lonLat)).map((line) => ({
+      ...f,
+      geometry: { type: "LineString", coordinates: line.map(qp) }
+    }));
+  }
+  const outer = (g.coordinates[0] ?? []).slice(0, -1).map(lonLat);
+  return splitRing(outer).map((part) => {
+    const ring = part.map(qp);
+    ring.push(ring[0] as number[]);
+    return { ...f, geometry: { type: "Polygon", coordinates: [ring] } };
+  });
+}
+
 export function buildEnvelope(result: LookaheadResult, th: Thresholds): Envelope {
   const features: EnvelopeFeature[] = [];
   if (result.footprints.length > 1) {
     features.push(trackFeature(result));
   }
+  const degraded = result.waterLevel?.degraded !== undefined;
   let start = 0;
-  for (const run of runs(result.footprints, th)) {
-    features.push(segmentFeature(run, result.footprints, start, th));
+  for (const run of runs(result.footprints, th, degraded)) {
+    features.push(segmentFeature(run, result.footprints, start, th, degraded));
     start += run.length;
   }
   if (result.worst) {
     features.push(worstFeature(result.worst));
   }
-  return { type: "FeatureCollection", features };
+  return { type: "FeatureCollection", features: features.flatMap(canonical) };
 }
 
-/** Holds the latest envelope and bumps `rev` only when its content changes. */
+/** The highest rev any tracker in this process has issued. */
+let issued = 0;
+
+function firstRev(): number {
+  issued = Math.max(Date.now(), issued + 1);
+  return issued;
+}
+
+/**
+ * Holds the latest envelope and bumps `rev` only when its content changes. `rev` starts at the
+ * wall-clock ms of creation (and above any rev issued before in this process), so a client
+ * holding a rev from before a restart never gets 304 for content it has not seen. It stays an
+ * integer well below 2^53.
+ */
 export class EnvelopeTracker {
-  rev = 0;
+  rev = firstRev();
   envelope: Envelope = { type: "FeatureCollection", features: [] };
   private key = JSON.stringify(this.envelope);
 
@@ -221,6 +276,7 @@ export class EnvelopeTracker {
     this.key = key;
     this.envelope = next;
     this.rev++;
+    issued = Math.max(issued, this.rev);
     return true;
   }
 }

@@ -2,6 +2,7 @@ import { buildEnvelope, classOf, EnvelopeTracker } from "../../src/engine/envelo
 import type { LookaheadResult } from "../../src/engine/lookahead";
 import { DEFAULT_LOOKAHEAD, evaluateLookahead } from "../../src/engine/lookahead";
 import { notificationFor } from "../../src/engine/notify";
+import { FLAGS } from "../../src/spatial/node-store";
 import { ctx } from "../helpers/engine";
 import { fixtureIndex, M_PER_DEG_LON, ROCK } from "../helpers/fixture-index";
 
@@ -76,6 +77,23 @@ describe("envelope", () => {
     expect(classOf({ risk: 0, uncovered: false, charted: 5 }, TH)).toBe("clear");
   });
 
+  test("advisory, unassessed or fallback-level water is never drawn clear", () => {
+    const calm = at(22.003, 60.01, 1);
+    const classes = (r: LookaheadResult) =>
+      buildEnvelope(r, TH)
+        .features.filter((f) => f.properties.kind === "segment")
+        .map((f) => f.properties.class);
+    expect(classes(calm)).toContain("clear");
+    for (const flag of [FLAGS.NOT_FOR_NAVIGATION, FLAGS.UNASSESSED]) {
+      const flagged = calm.footprints.map((f) => ({ ...f, flags: f.flags | flag }));
+      expect(classes({ ...calm, footprints: flagged })).not.toContain("clear");
+    }
+    const fallback = { h: 0, sigma: 0.3, source: "chart-datum", degraded: "water level stale" };
+    expect(classes({ ...calm, waterLevel: fallback })).not.toContain("clear");
+    expect(classOf({ risk: 0, uncovered: false, charted: 5 }, TH, true)).toBe("unverified");
+    expect(classOf({ risk: 0.1, uncovered: false, charted: 5 }, TH, true)).toBe("danger");
+  });
+
   test("land and no-coverage values are null, never Infinity", () => {
     const env = buildEnvelope(at(22.0275, 60.0145, 0), TH);
     const text = JSON.stringify(env);
@@ -86,12 +104,22 @@ describe("envelope", () => {
 
   test("rev bumps only when the envelope changes", () => {
     const tracker = new EnvelopeTracker();
+    const start = tracker.rev;
     expect(tracker.update(buildEnvelope(at(22.005, 60.01), TH))).toBe(true);
-    expect(tracker.rev).toBe(1);
+    expect(tracker.rev).toBe(start + 1);
     expect(tracker.update(buildEnvelope(at(22.005, 60.01), TH))).toBe(false);
-    expect(tracker.rev).toBe(1);
+    expect(tracker.rev).toBe(start + 1);
     expect(tracker.update(buildEnvelope(at(22.006, 60.01), TH))).toBe(true);
-    expect(tracker.rev).toBe(2);
+    expect(tracker.rev).toBe(start + 2);
+  });
+
+  test("a new tracker starts above every rev issued before it", () => {
+    const old = new EnvelopeTracker();
+    old.update(buildEnvelope(at(22.005, 60.01), TH));
+    const next = new EnvelopeTracker();
+    expect(next.rev).toBeGreaterThan(old.rev);
+    expect(next.rev).toBeGreaterThanOrEqual(Date.now() - 1000);
+    expect(Number.isSafeInteger(next.rev)).toBe(true);
   });
 });
 

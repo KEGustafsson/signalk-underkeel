@@ -1,11 +1,13 @@
 import { parentPort, workerData } from "worker_threads";
 import { readCellDirectory } from "../ingest/cell-reader";
-import { buildChartIndex, saveChartIndex } from "./chart-index";
+import { buildChartIndex, stageChartIndex } from "./chart-index";
 
 /**
  * Index build off the event loop: a worker thread reads the cells, builds
- * the pyramid and saves it, so the 1 Hz look-ahead keeps running while a
- * new Traficom WFS box is indexed (plan §6).
+ * the pyramid and stages it, so the 1 Hz look-ahead keeps running while a
+ * new Traficom WFS box is indexed (plan §6). Only the main thread moves it
+ * into the index directory: a worker aborted by stop() may run on after the
+ * next start() has saved its own index there.
  */
 
 export interface BuildJob {
@@ -15,18 +17,18 @@ export interface BuildJob {
   indexDir: string;
 }
 
-export function runBuild(job: BuildJob): void {
+/** Builds the index and returns the staging directory it was written to. */
+export function runBuild(job: BuildJob): string {
   const index = buildChartIndex(
     job.dirs.map((d, i) => readCellDirectory(d, i)),
     { leafZoom: job.leafZoom }
   );
-  saveChartIndex(job.indexDir, index);
+  return stageChartIndex(job.indexDir, index);
 }
 
 if (parentPort && workerData) {
   try {
-    runBuild(workerData as BuildJob);
-    parentPort.postMessage({ ok: true });
+    parentPort.postMessage({ ok: true, staging: runBuild(workerData as BuildJob) });
   } catch (err) {
     parentPort.postMessage({ ok: false, error: (err as Error).message });
   }

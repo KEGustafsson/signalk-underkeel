@@ -7,6 +7,7 @@ import { parseConfig } from "../src/config";
 import { stepFor, DEFAULT_LOOKAHEAD } from "../src/engine/lookahead";
 import underkeel = require("../src/index");
 import { tileAt, toMercator } from "../src/foundation/geo";
+import { PYRAMID_VERSION } from "../src/spatial/store";
 import { FIXTURES, M_PER_DEG_LON, ROCK } from "./helpers/fixture-index";
 import { decodeMvt } from "./helpers/mvt-decode";
 import {
@@ -87,8 +88,8 @@ describe("plugin lifecycle", () => {
     expect(fs.existsSync(path.join(dataDir, "index", "pyramid.bin"))).toBe(true);
     expect(lastValue(f.deltas, "navigation.underKeel.state")).toBe("unknown");
 
-    // 75 m west of the rock at 3 m/s: the rock is ~25 s ahead.
-    const lon = ROCK[0] - 75 / M_PER_DEG_LON;
+    // 110 m west of the rock at 3 m/s: the rock is ~35 s ahead, still room to turn away.
+    const lon = ROCK[0] - 110 / M_PER_DEG_LON;
     f.send(navDelta(lon, ROCK[1], 3, T0));
     clock.advance(1000);
     expect(lastValue(f.deltas, "navigation.underKeel.state")).toBe("alarm");
@@ -299,6 +300,68 @@ describe("plugin lifecycle", () => {
     plugin.stop();
   });
 
+  test("an acknowledgement is neither made nor honoured on a fallback water level", async () => {
+    const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 3.0 } } });
+    const clock = fakeClock(T0);
+    const plugin = underkeel(f.app, clock);
+    const { router, post } = fakeRouter();
+    plugin.registerWithRouter?.(router as never);
+    plugin.start(
+      { cellsDir: FIXTURES, leafZoom: 18, waterLevel: { source: "signalk-tide", sigma: 0.05 } },
+      () => undefined
+    );
+    const lon = ROCK[0] - 300 / M_PER_DEG_LON;
+    const tick = (tide: boolean) => {
+      const d = navDelta(lon, ROCK[1], 3, clock.now() + 1000);
+      if (tide) {
+        d.updates[0]?.values.push({ path: "environment.tide.heightNow" as never, value: -0.4 });
+      }
+      f.send(d);
+      clock.advance(1000);
+      return lastValue(f.deltas, "navigation.underKeel.state");
+    };
+    // No tide received yet: the level is the chart-datum fallback.
+    expect(tick(false)).toBe("warn");
+    const refused = await post("/v1/acks", {});
+    expect(refused.code).toBe(409);
+    expect((refused.body as { errors: string[] }).errors[0]).toMatch(/water level degraded/);
+
+    tick(true);
+    expect(tick(true)).toBe("warn");
+    const made = await post("/v1/acks", {});
+    expect(made.code).toBe(201);
+    expect((made.body as { waterLevel: number }).waterLevel).toBe(-0.4);
+    expect(tick(true)).toBe("alert");
+
+    // The tide feed goes stale: the 0 m fallback is above the acknowledged -0.4 m, but a guess.
+    clock.advance(31 * 60_000);
+    tick(false);
+    expect(tick(false)).toBe("warn");
+    const n = lastValue(f.deltas, "notifications.navigation.underKeel") as { message: string };
+    expect(n.message).not.toMatch(/acknowledged passage/);
+    plugin.stop();
+  });
+
+  test("an acknowledgement that cannot be saved answers 500 without the file path", async () => {
+    const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 3.2 } } });
+    const clock = fakeClock(T0);
+    const plugin = underkeel(f.app, clock);
+    const { router, post, del } = fakeRouter();
+    plugin.registerWithRouter?.(router as never);
+    plugin.start({ cellsDir: FIXTURES, leafZoom: 18 }, () => undefined);
+    f.send(navDelta(ROCK[0] - 300 / M_PER_DEG_LON, ROCK[1], 3, clock.now() + 1000));
+    clock.advance(1000);
+    const made = await post("/v1/acks", {});
+    expect(made.code).toBe(201);
+    // A directory where the temporary file goes makes every save throw.
+    fs.mkdirSync(path.join(dataDir, `acks.json.tmp-${process.pid}`));
+    const failed = { code: 500, body: { errors: ["could not save acknowledgements"] } };
+    expect(await post("/v1/acks", {})).toEqual(failed);
+    expect(await del("/v1/acks/:id", { id: (made.body as { id: string }).id })).toEqual(failed);
+    expect(f.errors.filter((e) => /acks\.json/.test(e))).toHaveLength(2);
+    plugin.stop();
+  });
+
   test("the grounding detector is off by default and writes notifications.grounding when on", () => {
     const run = (options: Record<string, unknown>) => {
       const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 1.8 } } });
@@ -421,7 +484,7 @@ describe("plugin lifecycle", () => {
       step: 300
     });
     expect(tooMuch.code).toBe(400);
-    expect((tooMuch.body as { errors: string[] }).errors[0]).toMatch(/departures × route length/);
+    expect((tooMuch.body as { errors: string[] }).errors[0]).toMatch(/departures × corridor area/);
     // 200 legs of 5 m are short, but 193 departures still make 38 600 leg checks.
     const zigzag = {
       type: "LineString",
@@ -582,6 +645,37 @@ describe("plugin lifecycle", () => {
     expect(lastValue(f.deltas, "navigation.underKeel.state")).toBe("unknown");
     plugin.stop();
   });
+  test("a null from one $source leaves another source's good position in place", () => {
+    const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 3.2 } } });
+    const clock = fakeClock(T0);
+    const plugin = underkeel(f.app, clock);
+    plugin.start({ cellsDir: FIXTURES, leafZoom: 18 }, () => undefined);
+    const nullFrom = (source: string) => ({
+      updates: [
+        {
+          $source: source as never,
+          timestamp: new Date(clock.now() + 500).toISOString() as never,
+          values: [{ path: "navigation.position" as never, value: null }]
+        }
+      ]
+    });
+    const states: unknown[] = [];
+    for (let k = 0; k < 4; k++) {
+      const d = navDelta(ROCK[0] - 300 / M_PER_DEG_LON, ROCK[1], 3, clock.now());
+      (d.updates[0] as { $source?: string }).$source = "gps.A";
+      f.send(d);
+      // A second receiver without a fix publishes a null position.
+      f.send(nullFrom("gps.B"));
+      clock.advance(1000);
+      states.push(lastValue(f.deltas, "navigation.underKeel.state"));
+    }
+    expect(states).toEqual(["warn", "warn", "warn", "warn"]);
+    // The source that gave the position can still clear it.
+    f.send(nullFrom("gps.A"));
+    clock.advance(1000);
+    expect(lastValue(f.deltas, "navigation.underKeel.state")).toBe("unknown");
+    plugin.stop();
+  });
 });
 
 describe("index loader", () => {
@@ -623,7 +717,7 @@ describe("index loader", () => {
       const buf = fs.readFileSync(file);
       const nl = buf.indexOf(0x0a);
       const header = JSON.parse(buf.subarray(0, nl).toString("utf8")) as { version: number };
-      const old = Buffer.from(JSON.stringify({ ...header, version: 1 }), "utf8");
+      const old = Buffer.from(JSON.stringify({ ...header, version: PYRAMID_VERSION - 1 }), "utf8");
       fs.writeFileSync(file, Buffer.concat([old, buf.subarray(nl)]));
       const again = loadOrBuildIndex(cfg, dir);
       expect(again.built).toBe(true);

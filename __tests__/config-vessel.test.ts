@@ -16,6 +16,16 @@ describe("plugin configuration", () => {
     }
   });
 
+  test("look-ahead distance and minimum horizon are capped at 5 NM and 600 s", () => {
+    const c = parseConfig({ lookahead: { distance: 10 * 1852, minHorizon: 3600 } });
+    expect(c.lookahead.distance).toBe(5 * 1852);
+    expect(c.lookahead.minHorizon).toBe(600);
+    const props = (SCHEMA.properties as Record<string, { properties: Record<string, unknown> }>)
+      .lookahead?.properties;
+    expect(props?.distance).toMatchObject({ minimum: 0, maximum: 5 * 1852 });
+    expect(props?.minHorizon).toMatchObject({ minimum: 0, maximum: 600 });
+  });
+
   test("reads valid values and rejects out-of-range ones", () => {
     const c = parseConfig({
       indexDir: "/data/index",

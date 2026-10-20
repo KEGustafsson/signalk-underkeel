@@ -1,8 +1,8 @@
 import fc from "fast-check";
 import type { RouteCheckInput } from "../../src/engine/route-check";
-import { checkRoute, corridorRing } from "../../src/engine/route-check";
+import { checkRoute, corridorRing, legCorridors } from "../../src/engine/route-check";
 import { flagNames } from "../../src/spatial/node-store";
-import { haversine, project, toMercator } from "../../src/foundation/geo";
+import { fromMercator, haversine, project, toMercator } from "../../src/foundation/geo";
 import type { LonLat } from "../../src/foundation/geo";
 import { pointInPolygon, pointSegmentDistance } from "../../src/foundation/geometry";
 import type { ChartIndex } from "../../src/spatial/chart-index";
@@ -10,7 +10,7 @@ import { HazardIndex } from "../../src/spatial/hazards";
 import { FLAGS } from "../../src/spatial/node-store";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
 import { BANK, fixtureIndex, ROCK } from "../helpers/fixture-index";
-import { area, basin, coverage, point } from "../helpers/synthetic";
+import { area, basin, coverage, point, quality } from "../helpers/synthetic";
 import { CHART_DATUM } from "../helpers/engine";
 import { DEFAULT_DYNAMICS } from "../../src/model/vessel";
 
@@ -123,12 +123,14 @@ describe("corridor route check on the synthetic chart", () => {
   });
 
   test("a leg into the coverage gap is unverified, never ok", () => {
+    // From CATZOC B water in FI4SYNTH east into the gap; the unassessed tiles at its edge add
+    // no position buffer.
     const r = checkRoute(
       index,
       input(
         [
-          [22.03, 60.005],
-          [22.045, 60.005]
+          [22.036, 60.025],
+          [22.045, 60.025]
         ],
         1.0
       ),
@@ -263,8 +265,139 @@ describe("corridor geometry", () => {
     }
   });
 
+  test("a multi-piece leg's corridor contains every point within r of its rhumb line and great circle", () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: -60_0000, max: 60_0000 }),
+        fc.integer({ min: 0, max: 359_99 }),
+        fc.integer({ min: 1000, max: 500_000 }),
+        fc.integer({ min: 1, max: 200 }),
+        fc.integer({ min: 0, max: 10_000 }),
+        fc.integer({ min: 0, max: 359 }),
+        fc.integer({ min: 0, max: 999 }),
+        (lat, brgCdeg, length, r, along, dirDeg, frac) => {
+          const a: LonLat = [20, lat / 10_000];
+          const b = project(a, (brgCdeg / 100) * (Math.PI / 180), length);
+          const t = along / 10_000;
+          const rings = legCorridors(a, b, r).map((ring) => ({
+            outer: ring.map((q) => toMercator(q[0], q[1])),
+            holes: []
+          }));
+          for (const p of [alongRhumb(a, b, t), alongGreatCircle(a, b, t)]) {
+            const q = project(p, (dirDeg * Math.PI) / 180, (frac / 1000) * r);
+            const qm = toMercator(q[0], q[1]);
+            expect(rings.some((ring) => pointInPolygon(qm, ring))).toBe(true);
+          }
+        }
+      )
+    );
+  });
+
+  test("a leg across 180° is checked the short way round", () => {
+    const rings = legCorridors([179.99, 60], [-179.99, 60], 40);
+    expect(rings.length).toBeGreaterThan(0);
+    for (const ring of rings) {
+      const lons = ring.map((q) => q[0]);
+      expect(Math.max(...lons) - Math.min(...lons)).toBeLessThan(0.05);
+      for (const lon of lons) {
+        expect(180 - Math.abs(lon)).toBeLessThan(0.02);
+      }
+    }
+    // The corridor reaches the antimeridian from both sides.
+    expect(rings.some((ring) => ring.some((q) => q[0] >= 180))).toBe(true);
+    expect(rings.some((ring) => ring.some((q) => q[0] <= -179.99))).toBe(true);
+  });
+
   test("flag names", () => {
     expect(flagNames(FLAGS.SWEPT | FLAGS.UNASSESSED)).toEqual(["SWEPT", "UNASSESSED"]);
     expect(flagNames(0)).toEqual([]);
+  });
+});
+
+/** The point `t` of the way along the rhumb line a→b: straight on the Mercator chart. */
+function alongRhumb(a: LonLat, b: LonLat, t: number): LonLat {
+  const [ax, ay] = toMercator(a[0], a[1]);
+  const [bx, by] = toMercator(b[0], b[1]);
+  return fromMercator(ax + (bx - ax) * t, ay + (by - ay) * t);
+}
+
+function alongGreatCircle(a: LonLat, b: LonLat, t: number): LonLat {
+  const k = Math.PI / 180;
+  const v = (p: LonLat) => [
+    Math.cos(p[1] * k) * Math.cos(p[0] * k),
+    Math.cos(p[1] * k) * Math.sin(p[0] * k),
+    Math.sin(p[1] * k)
+  ];
+  const [va, vb] = [v(a), v(b)];
+  const omega = Math.acos(
+    Math.min(
+      1,
+      va.reduce((s, x, i) => s + x * (vb[i] as number), 0)
+    )
+  );
+  if (omega === 0) {
+    return a;
+  }
+  const [wa, wb] = [Math.sin((1 - t) * omega), Math.sin(t * omega)];
+  const [x, y, z] = va.map((x, i) => (wa * x + wb * (vb[i] as number)) / Math.sin(omega)) as [
+    number,
+    number,
+    number
+  ];
+  return [Math.atan2(y, x) / k, Math.atan2(z, Math.hypot(x, y)) / k];
+}
+
+describe("long legs", () => {
+  test("a drying patch on the rhumb line as drawn on the chart fails the leg", () => {
+    const a: LonLat = [20, 60];
+    const b: LonLat = [21, 60.5];
+    const mid = alongRhumb(a, b, 0.5);
+    const d = 0.0001;
+    const index: ChartIndex = {
+      catalogue: { version: 1, cells: [] },
+      pyramid: buildPyramid(
+        [
+          ...basin([19.9, 59.9, 21.1, 60.6], 20),
+          area([mid[0] - d, mid[1] - d / 2, mid[0] + d, mid[1] + d / 2], -2)
+        ],
+        { minZoom: 10, leafZoom: 20 }
+      ),
+      hazards: new HazardIndex([])
+    };
+    const leg = checkRoute(index, input([a, b], 1.8, { xteLimit: 30 }), NOW).legs[0];
+    expect(leg?.status).toBe("fail");
+    expect(leg?.charted).toBe(-2);
+  });
+});
+
+describe("chart position uncertainty", () => {
+  // 60 m north of the leg: outside its ±30 m corridor, inside it once CATZOC B (±50 m) or
+  // C (±500 m) position accuracy is added.
+  const north = 60 / 111195;
+  test.each([
+    [3, "B"],
+    [4, "C"]
+  ] as const)("a drying area 60 m off the leg under CATZOC %s (%s) fails it", (catzoc) => {
+    const box = [22.0, 60.0, 22.06, 60.03] as const;
+    const index: ChartIndex = {
+      catalogue: { version: 1, cells: [] },
+      pyramid: buildPyramid(
+        [
+          coverage(box),
+          quality(box, catzoc),
+          area(box, 15),
+          area([22.028, 60.015 + north, 22.032, 60.016 + north], -1)
+        ],
+        { minZoom: 12, leafZoom: 20 }
+      ),
+      hazards: new HazardIndex([])
+    };
+    const leg: LonLat[] = [
+      [22.01, 60.015],
+      [22.05, 60.015]
+    ];
+    const r = checkRoute(index, input(leg, 1.8), NOW).legs[0];
+    expect(r?.status).toBe("fail");
+    expect(r?.charted).toBe(-1);
   });
 });

@@ -201,4 +201,33 @@ describe("Traficom WFS ingest", () => {
     );
     expect(fs.readFileSync(path.join(dir, "marker"), "utf8")).toBe("old");
   });
+
+  test("a page that never answers fails with a timeout after 120 s", async () => {
+    const timeout = jest
+      .spyOn(AbortSignal, "timeout")
+      .mockImplementation(() => AbortSignal.abort(new DOMException("timed out", "TimeoutError")));
+    const stalled: WfsFetch = (_url, init) =>
+      new Promise((_resolve, reject) => {
+        const signal = init?.signal;
+        if (signal?.aborted) {
+          reject(signal.reason as Error);
+        }
+        signal?.addEventListener("abort", () => reject(signal.reason as Error));
+      });
+    try {
+      await expect(
+        downloadWfsCell({
+          fetch: stalled,
+          url: "https://wfs.test/wfs",
+          bbox: [21.95, 59.95, 22.05, 60.05],
+          dir: path.join(TMP, "stalled"),
+          now: new Date(),
+          signal: new AbortController().signal
+        })
+      ).rejects.toThrow("rajoitettu:DepthArea_A: no response within 120 s");
+      expect(timeout).toHaveBeenCalledWith(120_000);
+    } finally {
+      timeout.mockRestore();
+    }
+  });
 });

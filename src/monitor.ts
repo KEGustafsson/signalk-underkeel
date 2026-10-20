@@ -23,6 +23,7 @@ import { WFS_NOTICE } from "./ingest/wfs";
 import type { WaterLevelStatus } from "./water-level-service";
 import { WaterLevelService } from "./water-level-service";
 import { ChangeNotifier, groundingNotification, integrityNotification } from "./notifications";
+import { asNumber, INPUT_PATHS, NavInputs, sampleTime, selfValue } from "./nav-inputs";
 
 /**
  * Signal K wiring for the look-ahead: keeps the latest navigation inputs,
@@ -31,7 +32,12 @@ import { ChangeNotifier, groundingNotification, integrityNotification } from "./
 
 type App = Pick<
   ServerAPI,
-  "subscriptionmanager" | "handleMessage" | "getSelfPath" | "setPluginStatus" | "error"
+  | "subscriptionmanager"
+  | "handleMessage"
+  | "getSelfPath"
+  | "setPluginStatus"
+  | "setPluginError"
+  | "error"
 >;
 
 export interface Clock {
@@ -46,59 +52,12 @@ export const SYSTEM_CLOCK: Clock = {
   clearInterval: (h) => clearInterval(h as NodeJS.Timeout)
 };
 
-const asString = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
-
-/** Where each subscribed path lands in NavState and how its value is read. */
-const INPUTS: Record<string, { key: keyof NavState; read: (v: unknown) => unknown } | undefined> = {
-  "navigation.position": { key: "position", read: (v) => asPosition(v) },
-  "navigation.courseOverGroundTrue": { key: "cog", read: (v) => asNumber(v) },
-  "navigation.speedOverGround": { key: "sog", read: (v) => asNumber(v) },
-  "navigation.headingTrue": { key: "heading", read: (v) => asNumber(v) },
-  "navigation.rateOfTurn": { key: "rot", read: (v) => asNumber(v) },
-  "navigation.speedThroughWater": { key: "stw", read: (v) => asNumber(v) },
-  "navigation.gnss.horizontalDilution": { key: "hdop", read: (v) => asNumber(v) },
-  "navigation.gnss.methodQuality": { key: "methodQuality", read: asString },
-  "navigation.attitude": {
-    key: "roll",
-    read: (v) => asNumber((v as { roll?: unknown } | null)?.roll)
-  },
-  "environment.water.waves.significantHeight": { key: "waveHeight", read: (v) => asNumber(v) }
-};
-
-const INPUT_PATHS = Object.keys(INPUTS);
-
 /** The escape fan is searched at most once in this many ms. */
 const ESCAPE_EVERY_MS = 3000;
 
-/** Signal K timestamps from the future are clock errors; trust receipt time then. */
-const FUTURE_TOLERANCE_MS = 5000;
-
-function sampleTime(timestamp: string | undefined, now: number): number {
-  const t = timestamp ? Date.parse(timestamp) : NaN;
-  return Number.isFinite(t) && t <= now + FUTURE_TOLERANCE_MS ? t : now;
-}
-
-function asPosition(v: unknown): LonLat | undefined {
-  const p = v as { latitude?: unknown; longitude?: unknown } | null;
-  const lat = asNumber(p?.latitude);
-  const lon = asNumber(p?.longitude);
-  return lat !== undefined && lon !== undefined && Math.abs(lat) <= 90 && Math.abs(lon) <= 180
-    ? [lon, lat]
-    : undefined;
-}
-
-function asNumber(v: unknown): number | undefined {
-  return typeof v === "number" && Number.isFinite(v) ? v : undefined;
-}
-
-/** `getSelfPath` returns the full node; the reading is under `.value`. */
-function selfValue(app: App, path: string): unknown {
-  const node = app.getSelfPath(path) as { value?: unknown } | undefined;
-  return node && typeof node === "object" && "value" in node ? node.value : node;
-}
-
 export class Monitor {
-  readonly nav: NavState = {};
+  private readonly inputs = new NavInputs();
+  readonly nav: NavState = this.inputs.nav;
   readonly envelope = new EnvelopeTracker();
   last: LookaheadResult;
   /** Epoch ms when the engine entered its current state. */
@@ -140,7 +99,7 @@ export class Monitor {
     if (config.groundingDetector) {
       this.grounding = new GroundingDetector(config.groundingDetector);
     }
-    this.hysteresis = new Hysteresis(config.lookahead.thresholds);
+    this.hysteresis = new Hysteresis(config.lookahead);
     this.last = this.evaluate();
     this.since = clock.now();
   }
@@ -187,30 +146,20 @@ export class Monitor {
       }
       const at = sampleTime(update.timestamp, now);
       for (const pv of update.values) {
-        this.record(pv.path, pv.value, at);
+        this.record(pv.path, pv.value, at, update.$source);
       }
     }
   }
 
-  private record(path: string, value: unknown, at: number): void {
+  private record(path: string, value: unknown, at: number, source: string | undefined): void {
     this.grounding?.record(path, value, at);
     for (const w of this.watchers) {
       if (w.paths.has(path)) {
         w.fn(path, value, at);
       }
     }
-    if (this.levels.record(path, value, at)) {
-      return;
-    }
-    const input = INPUTS[path];
-    if (!input) {
-      return;
-    }
-    const v = input.read(value);
-    if (v === undefined) {
-      delete this.nav[input.key];
-    } else {
-      (this.nav as Record<string, Sample<unknown>>)[input.key] = { value: v, at };
+    if (!this.levels.record(path, value, at)) {
+      this.inputs.record(path, value, at, source);
     }
   }
 
@@ -245,7 +194,7 @@ export class Monitor {
       acks: this.acks?.list(this.clock.now()) ?? [],
       zones: this.zones,
       heading,
-      waterLevel: this.waterLevel().h,
+      waterLevel: this.waterLevel(),
       draft: vessel.draft,
       now: this.clock.now(),
       thresholds: this.config.lookahead.thresholds,
@@ -324,9 +273,9 @@ export class Monitor {
     return this.levels.now(this.nav.position?.value, this.clock.now());
   }
 
-  /** The lowest water level over [start, end] (epoch ms), for route checks. */
-  waterLevelOver(start: number, end: number): WaterLevel {
-    return this.levels.over(start, end, this.clock.now());
+  /** The lowest water level over [start, end] (epoch ms) at the positions `at`, for route checks. */
+  waterLevelOver(start: number, end: number, at: readonly LonLat[]): WaterLevel {
+    return this.levels.over(start, end, at, this.clock.now());
   }
 
   waterLevelStatus(): WaterLevelStatus {
@@ -426,6 +375,11 @@ export class Monitor {
     this.checkGrounding(r);
     const status =
       r.state === "normal" ? "Monitoring: normal" : `Monitoring: ${r.state} — ${r.reason}`;
+    if (this.indexReason !== undefined) {
+      // A status would replace the error the server shows for a failed index load.
+      this.app.setPluginError(this.indexReason);
+      return;
+    }
     // The WFS licence allows non-navigational use only; say so while it is on.
     this.app.setPluginStatus(
       this.config.wfs && r.reason !== WFS_NOTICE ? `${status} · ${WFS_NOTICE}` : status

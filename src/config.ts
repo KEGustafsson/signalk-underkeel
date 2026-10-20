@@ -2,7 +2,7 @@ import type { GroundingOptions } from "./engine/grounding-detect";
 import { DEFAULT_GROUNDING } from "./engine/grounding-detect";
 import type { LookaheadOptions } from "./engine/lookahead";
 import type { LivechartConfig } from "./livechart-service";
-import { DEFAULT_LOOKAHEAD } from "./engine/lookahead";
+import { DEFAULT_LOOKAHEAD, LOOKAHEAD_LIMITS } from "./engine/lookahead";
 import type { HeelModel } from "./model/allowances";
 import type { DatumMapping } from "./ingest/datum";
 import { DEFAULT_DATUMS } from "./ingest/datum";
@@ -161,8 +161,8 @@ function parseLookahead(l: Record<string, unknown>): LookaheadOptions {
   const alarmWithin = num(l.alarmWithin, d.alarmWithin, 0);
   return {
     ...d,
-    distance: num(l.distance, d.distance, 0),
-    minHorizon: num(l.minHorizon, d.minHorizon, 0),
+    distance: Math.min(num(l.distance, d.distance, 0), LOOKAHEAD_LIMITS.distance),
+    minHorizon: Math.min(num(l.minHorizon, d.minHorizon, 0), LOOKAHEAD_LIMITS.minHorizon),
     positionBuffer: num(l.positionBuffer, d.positionBuffer, 0),
     kp: num(l.kp, d.kp, 0, 5),
     sigmaCog: degrees(l.sigmaCog, d.sigmaCog, 0, 45),

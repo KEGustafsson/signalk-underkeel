@@ -1,4 +1,4 @@
-import type { HeelModel, Term } from "./allowances";
+import type { HeelModel, RollRange, Term } from "./allowances";
 import { heel, squat, waveAllowance } from "./allowances";
 import type { VesselTerms } from "./uncertainty";
 
@@ -41,8 +41,8 @@ export const DEFAULT_DYNAMICS: DynamicsOptions = {
 export interface MotionInputs {
   /** Speed for squat, m/s. */
   speed: number;
-  /** Roll angle, radians. */
-  roll?: number;
+  /** |roll| range over the roll window; undefined when roll is not known. */
+  roll?: RollRange;
   /** Significant wave height, metres. */
   waveHeight?: number;
 }
