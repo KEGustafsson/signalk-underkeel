@@ -9,7 +9,7 @@ import { boxAround, downloadWfsCell, WFS_CELL_NAME, WFS_NOTICE } from "./ingest/
 import type { Clock } from "./monitor";
 import type { BuildJob } from "./spatial/build-worker";
 import type { ChartIndex } from "./spatial/chart-index";
-import { commitChartIndex, loadChartIndex } from "./spatial/chart-index";
+import { commitChartIndex, loadChartIndex, removeStaging } from "./spatial/chart-index";
 
 /**
  * Keeps a Traficom WFS box around the vessel (plan §4.2). When the vessel
@@ -40,8 +40,15 @@ export const workerBuilder: IndexBuilder = async (job, signal) => {
     const worker = new Worker(path.join(__dirname, "spatial", "build-worker.js"), {
       workerData: job
     });
+    const thread = worker.threadId;
     const abort = (): void => {
-      const exit = worker.terminate().catch(() => undefined);
+      // A worker stopped mid-write leaves its staging behind; once it has
+      // exited nothing else writes there.
+      const exit = worker
+        .terminate()
+        .catch(() => undefined)
+        .then(() => removeStaging(job.indexDir, (p, t) => p === process.pid && t === thread))
+        .catch(() => undefined);
       exits = Promise.all([exits, exit]);
       void exit.then(() => reject(new Error("aborted")));
     };

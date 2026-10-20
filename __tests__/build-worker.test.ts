@@ -93,6 +93,6 @@ describe("workerBuilder (compiled lib/)", () => {
     await new Promise((resolve) => setImmediate(resolve));
     ctl.abort();
     await expect(pending).rejects.toThrow("aborted");
-    expect(fs.existsSync(j.indexDir)).toBe(false);
+    expect(fs.readdirSync(dir)).toEqual([]);
   });
 });

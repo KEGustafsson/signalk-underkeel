@@ -6,6 +6,7 @@ import {
   buildChartIndex,
   loadChartIndex,
   recoverChartIndex,
+  removeStaging,
   saveChartIndex
 } from "../../src/spatial/chart-index";
 import { HazardIndex } from "../../src/spatial/hazards";
@@ -155,6 +156,26 @@ describe("index persistence", () => {
       expect(fs.readdirSync(dir)).toEqual(["index"]);
       expect(recoverChartIndex(target)).toBe(false);
       expect(recoverChartIndex(path.join(dir, "missing-parent", "index"))).toBe(false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("staging a dead process left is removed; this process's and other names stay", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-index-"));
+    try {
+      const target = path.join(dir, "index");
+      const names = [
+        `index.tmp-${process.pid + 1}-0-aa`,
+        `index.tmp-${process.pid}-3-bb`,
+        `index.tmp-${process.pid}-4-cc`,
+        "index.tmp-notes",
+        "other.tmp-1-0-dd"
+      ];
+      names.forEach((n) => fs.mkdirSync(path.join(dir, n)));
+      expect(recoverChartIndex(target)).toBe(false);
+      removeStaging(target, (pid, thread) => pid === process.pid && thread === 3);
+      expect(fs.readdirSync(dir).sort()).toEqual(names.slice(2).sort());
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
