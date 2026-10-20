@@ -56,6 +56,10 @@ All notable changes to signalk-underkeel are documented here.
 - The departure window stops checking a departure at its first failing leg, whose status the
   remaining legs cannot change. On a 100-leg route over the Nauvo cells that fails early,
   9 991 leg checks and 1.9 s became 91 checks and 54 ms on a laptop, with the same steps.
+- The departure window reuses a leg's `ok` at any higher water level and its `fail` at any lower
+  one, with the same σ, when `probability` is at least 1e-3; below that each level is checked
+  directly. A 60-leg route over a 24 h ramp went from 3 793 leg checks and 347 ms to 2 219 and
+  212 ms on a laptop, with the same steps.
 - The navigation-safety contract schemas in `schemas/navigation-safety/` are licensed under
   Apache-2.0, so other plotters and providers can adopt the contract; the plugin stays EUPL-1.2.
 - The request schemas bound `sector` (1..90°), `ttl` (1 s..30 days), `notificationId` (200

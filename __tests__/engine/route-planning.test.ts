@@ -1,3 +1,4 @@
+import fc from "fast-check";
 import { departureWindow } from "../../src/engine/departure-window";
 import type { RouteCheckInput } from "../../src/engine/route-check";
 import { checkLeg, checkRoute } from "../../src/engine/route-check";
@@ -248,6 +249,62 @@ describe("departure window", () => {
     );
     expect(w.steps.every((s) => s.status === "fail")).toBe(true);
     expect(w.checks).toBeLessThanOrEqual(w.steps.length);
+  });
+
+  test("reusing a leg's result at another water level never differs from checking it directly", async () => {
+    const route: LonLat[] = [...LEG, [22.03, 60.025], [22.03, 60.005]];
+    const step = 15 * 60_000;
+    await fc.assert(
+      fc.asyncProperty(
+        // Levels a few centimetres apart, so legs change status between departures.
+        fc.integer({ min: -80, max: 200 }),
+        fc.array(fc.integer({ min: -12, max: 12 }), { minLength: 9, maxLength: 9 }),
+        fc.integer({ min: 1, max: 30 }),
+        fc.integer({ min: 0, max: 1000 }),
+        fc.integer({ min: 20, max: 250 }),
+        async (base, offsets, sigmaCm, pExp, draftCm) => {
+          const level = (s: number): WaterLevel => ({
+            h: (base + (offsets[Math.min(8, Math.floor((s - NOW) / step))] as number)) / 100,
+            sigma: sigmaCm / 100,
+            source: "manual"
+          });
+          const r = input(route, {
+            vessel: { draft: draftCm / 100, length: 6, beam: 2 },
+            waterLevel: level,
+            // 1e-3..0.5: the range in which results are reused across levels.
+            probability: 10 ** (-3 + (2.7 * pExp) / 1000)
+          });
+          const w = await departureWindow(index, r, NOW, NOW + 8 * step, step);
+          expect(w.steps.map((s) => s.status)).toEqual(
+            directStatuses(index, r, NOW, NOW + 8 * step, step)
+          );
+        }
+      ),
+      { numRuns: 60 }
+    );
+  });
+
+  test("a leg ok at one level is ok at a higher one without a new check", async () => {
+    const step = 15 * 60_000;
+    // Rising 10 cm per departure from well above the shoal's depth.
+    const rising = (s: number): WaterLevel => ({
+      h: 1.5 + Math.floor((s - NOW) / step) / 10,
+      sigma: 0.05,
+      source: "manual"
+    });
+    const r = input(LEG, { vessel: shallow, waterLevel: rising });
+    const w = await departureWindow(index, r, NOW, NOW + 8 * step, step);
+    expect(w.steps.every((s) => s.status === "ok")).toBe(true);
+    expect(w.checks).toBe(1);
+    // Below 1e-3 every level is checked directly.
+    const strict = await departureWindow(
+      index,
+      { ...r, probability: 1e-4 },
+      NOW,
+      NOW + 8 * step,
+      step
+    );
+    expect(strict.checks).toBe(9);
   });
 
   test("a fallback water level is never a window", async () => {

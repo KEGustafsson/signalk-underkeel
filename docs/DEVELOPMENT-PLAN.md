@@ -743,7 +743,12 @@ the `/route-check` body; the window adds `horizon` (default 48 h, at most 7 days
 its arrival until one step after it leaves, so a sampled `ok` departure also holds for every
 departure until the next sample and a coarse step cannot skip a low water. Leg results are reused across
 departures for the same water level rounded down to the centimetre (σ rounded up), and a
-departure's legs after its first `fail` are not checked, since `fail` already decides its status. One request
+departure's legs after its first `fail` are not checked, since `fail` already decides its status.
+Decision (invariant 2): with `probability` at least 1e-3, a leg's result is also reused across
+levels with the same σ and fallback reason: `ok` at a level holds at any higher level and `fail`
+at any lower one. A query may stop at a tile whose P bound is below 1e-4 (`RISK_STOP_BELOW`), so
+a direct check can overstate P by up to that much; from 1e-3 up the reused status is the one a
+direct check gives, and below it every level is checked directly. One request
 repairs at most 10 legs, and the rest are listed with a reason. A corridor query costs about
 its area, so a route check, repair or window is refused when the route's length times its
 corridor width (2 × (xteLimit + planning buffer)) exceeds 200 km², and a window when its
