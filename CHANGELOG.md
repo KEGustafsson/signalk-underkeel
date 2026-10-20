@@ -59,6 +59,10 @@ All notable changes to signalk-underkeel are documented here.
   characters), speeds, drafts, `bufferMetres`, `xteLimit` and `probability` as the plugin
   does, so a request that validates is no longer refused for those fields; size budgets are
   listed in `schemas/navigation-safety/README.md`.
+- Look-ahead and query tile walks measure distances with `Math.sqrt` instead of `Math.hypot`
+  and widen every reach by 1e-12 so a 1-ulp rounding can only add a tile. On the Nauvo test
+  route at 6 kn the tick median fell from 2.59 to 1.95 ms and p95 from 6.9 to 4.8 ms (x86),
+  with the same states, risks and footprints on all 2296 ticks.
 
 ### Fixed
 

@@ -170,7 +170,7 @@ export function expandRect(rect: Rect, by: number): Rect {
 export function rectGap(a: Rect, b: Rect): number {
   const dx = Math.max(0, a.minX - b.maxX, b.minX - a.maxX);
   const dy = Math.max(0, a.minY - b.maxY, b.minY - a.maxY);
-  return Math.hypot(dx, dy);
+  return Math.sqrt(dx * dx + dy * dy);
 }
 
 /** Closed-interval overlap: touching edges count. */

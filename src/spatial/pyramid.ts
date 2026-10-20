@@ -158,6 +158,12 @@ function canStop(w: Walk, v: NodeValues): boolean {
   return probabilityBelowZero(v.dMin - w.risk.threshold, sigma) < RISK_STOP_BELOW;
 }
 
+/**
+ * Every reach is widened by this factor, so a distance that rounds 1 ulp
+ * above its exact value still counts and the walk stays conservative.
+ */
+export const REACH_SLACK = 1 + 1e-12;
+
 /** Mercator distance at which node i still counts; a split node's bounds its subtree's. */
 function reachOf(w: Walk, i: number): number {
   if (!w.survey || i < 0) {
@@ -255,7 +261,7 @@ function walkFor(store: NodeStore, geom: Geom, opts: QueryOptions): Walk {
   // Sized for the widest reach, so every narrower one is converted at a
   // latitude at least as far poleward as its own edge.
   const ground = bufferMetres + (survey ? chartReach(k, survey.max) : 0);
-  const maxReach = mercatorBuffer(bounds, ground);
+  const maxReach = mercatorBuffer(bounds, ground) * REACH_SLACK;
   const perMetre = ground > 0 ? maxReach / ground : 0;
   // Stopping early is only conservative for risk where the bound is at or
   // past the threshold: there P rises with σ, so the parent's widest σ

@@ -1,5 +1,7 @@
 import type { Rect } from "../../src/foundation/geo";
 import type { Geom, PolygonGeom } from "../../src/foundation/geometry";
+import { rectGap } from "../../src/foundation/geo";
+import { REACH_SLACK } from "../../src/spatial/pyramid";
 import fc from "fast-check";
 import {
   areasCoverRect,
@@ -43,6 +45,29 @@ describe("planar geometry", () => {
     expect(pointSegmentDistance([3, 4], [0, 0], [0, 0])).toBe(5);
     expect(pointRectDistance([13, 14], r(0, 0, 10, 10))).toBe(5);
     expect(pointRectDistance([5, 5], r(0, 0, 10, 10))).toBe(0);
+  });
+
+  test("sqrt distances stay within the query walk's slack of Math.hypot", () => {
+    // Below 1e-3 m a square can go subnormal; no Mercator distance is that small and nonzero.
+    const coord = fc
+      .double({ min: -2e7, max: 2e7, noNaN: true })
+      .filter((v) => v === 0 || Math.abs(v) > 1e-3);
+    fc.assert(
+      fc.property(coord, coord, coord, coord, (x, y, a, b) => {
+        const rect = r(Math.min(a, b), Math.min(a, b), Math.max(a, b), Math.max(a, b));
+        const dx = Math.max(rect.minX - x, 0, x - rect.maxX);
+        const dy = Math.max(rect.minY - y, 0, y - rect.maxY);
+        const exact = Math.hypot(dx, dy);
+        expect(pointRectDistance([x, y], rect)).toBeLessThanOrEqual(exact * REACH_SLACK);
+        expect(rectGap(r(x, y, x, y), rect)).toBeLessThanOrEqual(exact * REACH_SLACK);
+        const ex = x - a;
+        const ey = y - b;
+        expect(pointSegmentDistance([x, y], [a, b], [a, b])).toBeLessThanOrEqual(
+          Math.hypot(ex, ey) * REACH_SLACK
+        );
+      }),
+      { numRuns: 2000 }
+    );
   });
 
   test("segment-rect intersection and distance", () => {
