@@ -3,7 +3,7 @@ import { parseConfig } from "../src/config";
 import { SLOW_TICK_MS } from "../src/escape-search";
 import type { Clock } from "../src/monitor";
 import { Monitor } from "../src/monitor";
-import { KEEP_ALIVE_MS } from "../src/tick-publisher";
+import { KEEP_ALIVE_MS, ValuePublisher } from "../src/tick-publisher";
 import { NOTIFY_REFRESH_MS } from "../src/engine/notify";
 import { fixtureIndex, M_PER_DEG_LON, ROCK } from "./helpers/fixture-index";
 import { navDelta, T0, values } from "./helpers/plugin-harness";
@@ -107,6 +107,27 @@ describe("tick publishing", () => {
     // Once when it first changes, then at the keep-alive; the level was sent at start.
     expect(sent(r.deltas, "navigation.underKeel.clearance")).toBe(2);
     expect(sent(r.deltas, "navigation.underKeel.waterLevel")).toBe(1);
+  });
+
+  test("each value's keep-alive counts from when that value was last sent", () => {
+    const out: Partial<Delta>[] = [];
+    const p = new ValuePublisher({ handleMessage: (_id, d) => out.push(d) }, "p", new Set());
+    p.send(
+      [
+        { path: "a", value: 1 },
+        { path: "b", value: 1 }
+      ],
+      0
+    );
+    p.send([{ path: "a", value: 2 }], 5_000);
+    p.send(
+      [
+        { path: "a", value: 2 },
+        { path: "b", value: 1 }
+      ],
+      KEEP_ALIVE_MS
+    );
+    expect(values(out).map((v) => v.path)).toEqual(["a", "b", "a", "b"]);
   });
 
   test("a changed value is sent on the tick it changes", () => {

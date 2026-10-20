@@ -17,12 +17,11 @@ export interface PathValue {
 /**
  * Sends the values that changed since they were last sent, and the paths in
  * `always` every time: the state, so a client can tell the plugin is
- * running, and the envelope rev clients fetch on. Every KEEP_ALIVE_MS all
- * values go out.
+ * running, and the envelope rev clients fetch on. A value unchanged for
+ * KEEP_ALIVE_MS is sent again.
  */
 export class ValuePublisher {
-  private readonly sent = new Map<string, string>();
-  private fullAt = -Infinity;
+  private readonly sent = new Map<string, { json: string; at: number }>();
 
   constructor(
     private readonly app: Pick<ServerAPI, "handleMessage">,
@@ -31,15 +30,18 @@ export class ValuePublisher {
   ) {}
 
   send(values: PathValue[], now: number): void {
-    const full = now - this.fullAt >= KEEP_ALIVE_MS;
-    if (full) {
-      this.fullAt = now;
-    }
     const out = values.filter((v) => {
       const json = JSON.stringify(v.value);
-      const changed = this.sent.get(v.path) !== json;
-      this.sent.set(v.path, json);
-      return full || changed || this.always.has(v.path);
+      const last = this.sent.get(v.path);
+      const due =
+        last === undefined ||
+        last.json !== json ||
+        now - last.at >= KEEP_ALIVE_MS ||
+        this.always.has(v.path);
+      if (due) {
+        this.sent.set(v.path, { json, at: now });
+      }
+      return due;
     });
     if (out.length > 0) {
       this.app.handleMessage(this.pluginId, {
