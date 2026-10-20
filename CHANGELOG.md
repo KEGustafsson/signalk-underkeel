@@ -62,6 +62,10 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Fixed
 
+- `acks.json` and `livechart.json` are flushed to the disk before the rename that replaces
+  them, and their directory after it. Without the fsync a power cut could leave an empty
+  `livechart.json` on filesystems that do not flush on rename, and the plugin then started
+  without its confirmed shoals.
 - An index build stopped mid-write, by an abort or a crash, no longer leaves its half-written
   staging directory beside the chart index for good: an aborted WFS build removes its own once
   the worker has exited, and loading an index removes any staging directory left by a

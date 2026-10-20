@@ -25,6 +25,7 @@ import {
 import type { RawSounding, Sounding, SoundingSource } from "./livechart/soundings";
 import { reduce } from "./livechart/soundings";
 import type { NodeStore, NodeValues } from "./spatial/node-store";
+import { writeFileDurable } from "./foundation/durable-file";
 import { tileKey } from "./foundation/geo";
 import type { PluginConfig } from "./config";
 import type { Clock, Monitor } from "./monitor";
@@ -165,7 +166,7 @@ export class LivechartService {
   }
 
   /**
-   * Writes `livechart.json` when anything changed, atomically. A failed write
+   * Writes `livechart.json` when anything changed, atomically and flushed to the disk. A failed write
    * is reported, not thrown: it runs from plugin stop and from the delta
    * handler. The state stays dirty, so the next save tries again.
    */
@@ -183,8 +184,7 @@ export class LivechartService {
     const tmp = `${this.file}.tmp-${process.pid}`;
     try {
       fs.mkdirSync(path.dirname(this.file), { recursive: true });
-      fs.writeFileSync(tmp, JSON.stringify(saved));
-      fs.renameSync(tmp, this.file);
+      writeFileDurable(this.file, JSON.stringify(saved), tmp);
       this.dirty = false;
     } catch (err) {
       fs.rmSync(tmp, { force: true, recursive: true });

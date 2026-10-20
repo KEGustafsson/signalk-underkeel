@@ -784,7 +784,9 @@ current look-ahead footprints), checked like a `/query` polygon: a closed ring, 
 most 50 km across and not across ±180°; `sector` in degrees (default 20), `ttl` in seconds and
 `notificationId`; heading, water level and draft are taken from the plugin's current state.
 `GET /acks` is readonly; `POST` and `DELETE /acks/:id` need readwrite. They are stored in
-`acks.json` in the plugin data directory, so no database dependency is added; export as
+`acks.json` in the plugin data directory, so no database dependency is added; each write
+goes to a temporary file that is fsynced before the rename, with the directory fsynced after
+it, so a power cut leaves the old list or the new one. Export as
 Signal K notes is a follow-up. Suppression applies to the published state after hysteresis,
 because it changes the state, not P. It never suppresses a negative mean UKC within
 `certainWithin`: an acknowledgement covers an uncertain chart, not a charted depth shallower

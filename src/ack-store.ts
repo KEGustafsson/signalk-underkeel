@@ -1,12 +1,13 @@
 import fs from "fs";
 import path from "path";
 import type { Ack } from "./engine/acks";
+import { writeFileDurable } from "./foundation/durable-file";
 
 /**
  * Acknowledged passages kept in `acks.json` under the plugin data
- * directory. Writes go to a temporary file renamed over the old one, so a
- * crash leaves either the old list or the new one. Expired entries are
- * dropped on read.
+ * directory. Writes go to a temporary file, flushed to the disk and renamed
+ * over the old one, so a crash or power cut leaves either the old list or
+ * the new one. Expired entries are dropped on read.
  */
 
 function isAck(v: unknown): v is Ack {
@@ -70,8 +71,6 @@ export class AckStore {
 
   private save(list: Ack[]): void {
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
-    const tmp = `${this.file}.tmp-${process.pid}`;
-    fs.writeFileSync(tmp, JSON.stringify(list, null, 2));
-    fs.renameSync(tmp, this.file);
+    writeFileDurable(this.file, JSON.stringify(list, null, 2));
   }
 }
