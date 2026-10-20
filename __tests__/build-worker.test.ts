@@ -75,13 +75,24 @@ describe("workerBuilder (compiled lib/)", () => {
     const build = await builder();
     await expect(
       build(job([path.join(dir, "missing")]), new AbortController().signal)
-    ).rejects.toThrow(/./);
+    ).rejects.toThrow(/missing/);
   });
 
-  test("rejects when aborted", async () => {
+  test("rejects when aborted before the worker starts", async () => {
     const ctl = new AbortController();
     const pending = (await builder())(job(), ctl.signal);
     ctl.abort();
     await expect(pending).rejects.toThrow("aborted");
+  });
+
+  test("terminates a running worker on abort and leaves no index", async () => {
+    const ctl = new AbortController();
+    const j = job();
+    const pending = (await builder())(j, ctl.signal);
+    // One turn of the event loop lets the builder get past its wait and start the thread.
+    await new Promise((resolve) => setImmediate(resolve));
+    ctl.abort();
+    await expect(pending).rejects.toThrow("aborted");
+    expect(fs.existsSync(j.indexDir)).toBe(false);
   });
 });
