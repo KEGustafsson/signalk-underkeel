@@ -235,6 +235,10 @@ signalk-underkeel/
 3. **Unsurveyed-waterway depth data.** For example, SYKE lake and coastal data, explicitly
    _not for navigation_. Ingest it as **CATZOC U** with large σ, so it can only add caution,
    never confidence.
+4. **Crowdsourced depth cells** (proposal, not implemented). IHO CSB soundings aggregated by a
+   publisher into Web Mercator cells with counts, dates and σ
+   (`schemas/navigation-safety/csb-cell.json`, `docs/rfcs/crowdsourced-depth-cells.md`). They
+   may lower a leaf (flag `CSB_ADJUSTED`), never raise it, and never add coverage.
 
 **S-57 object classes used:**
 

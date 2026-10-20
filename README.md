@@ -416,8 +416,9 @@ heading. [CHANGELOG.md](CHANGELOG.md) records user-visible changes.
 - [Release checklist](docs/release-checklist.md): commands to run before publishing.
 - [Navigation-safety schemas](schemas/navigation-safety/README.md): the provider-neutral
   contract and its limits.
-- RFC drafts: [`navigation.underKeel.*` paths](docs/rfcs/signalk-navigation-underkeel.md) and
-  [Plotter Extensions `services`](docs/rfcs/plotter-extensions-services.md).
+- RFC drafts: [`navigation.underKeel.*` paths](docs/rfcs/signalk-navigation-underkeel.md),
+  [Plotter Extensions `services`](docs/rfcs/plotter-extensions-services.md) and
+  [crowdsourced depth cells](docs/rfcs/crowdsourced-depth-cells.md).
 - [AGENTS.md](AGENTS.md): contributor and AI-agent guide.
 
 ## License

@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "csb-cell.json",
+  "title": "One Web Mercator cell of aggregated crowdsourced depth soundings",
+  "description": "Depths are positive-down metres below the chart datum named by the set's verdat (csb-cell-set.json); a negative depth dries. A cell exists only where at least one accepted sounding lies in it: nothing is interpolated. dMin <= dShoal <= dMedian.",
+  "type": "object",
+  "required": [
+    "quadkey",
+    "dMin",
+    "dShoal",
+    "sigmaZ",
+    "sigmaXY",
+    "nSoundings",
+    "nPlatforms",
+    "nDays",
+    "tFirst",
+    "tLast",
+    "reduction",
+    "ref",
+    "providers"
+  ],
+  "properties": {
+    "quadkey": {
+      "description": "Web Mercator tile key of the cell; its length is the zoom.",
+      "type": "string",
+      "pattern": "^[0-3]{1,24}$"
+    },
+    "dMin": {
+      "description": "Shallowest reduced sounding; at a coarser zoom, the minimum of the children's dMin.",
+      "type": "number"
+    },
+    "dShoal": {
+      "description": "The set's shoalQuantile of the reduced soundings; at a coarser zoom, the minimum of the children's dShoal.",
+      "type": "number"
+    },
+    "dMedian": {
+      "description": "Median of the reduced soundings. Leaf zoom only.",
+      "type": "number"
+    },
+    "spread": {
+      "description": "Sample standard deviation of the reduced soundings, metres. Leaf zoom only.",
+      "type": "number",
+      "minimum": 0
+    },
+    "sigmaZ": {
+      "description": "1 sigma vertical uncertainty of one reduced sounding (sounder, vessel offsets, water-level reduction), metres; at a coarser zoom, the largest of the children's.",
+      "type": "number",
+      "minimum": 0
+    },
+    "sigmaXY": {
+      "description": "1 sigma horizontal uncertainty of one sounding position, metres; at a coarser zoom, the largest of the children's.",
+      "type": "number",
+      "minimum": 0
+    },
+    "nSoundings": {
+      "description": "Accepted soundings in the cell.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "nPlatforms": {
+      "description": "Distinct platforms (IHO CSB UNIQUE_ID) behind the soundings, counted from the soundings at every zoom.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "nDays": {
+      "description": "Distinct UTC dates with soundings, counted from the soundings at every zoom.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "tFirst": { "$ref": "defs.json#/$defs/isoTime" },
+    "tLast": { "$ref": "defs.json#/$defs/isoTime" },
+    "reduction": {
+      "description": "The weakest water-level reduction applied to any sounding in the cell, best first: gauge (observed water level), model (tide or surge model), none (depth below the surface at the time of the sounding, not on the set's datum).",
+      "enum": ["gauge", "model", "none"]
+    },
+    "ref": {
+      "description": "The least known depth reference of any sounding in the cell before reduction, best first: surface (transducer depth added), transducer, unknown. transducer and unknown read shallower than the depth below the surface.",
+      "enum": ["surface", "transducer", "unknown"]
+    },
+    "providers": {
+      "description": "IHO CSB trusted nodes (PROVIDER) behind the soundings.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string" }
+    },
+    "flags": { "type": "array", "items": { "type": "string" } }
+  }
+}

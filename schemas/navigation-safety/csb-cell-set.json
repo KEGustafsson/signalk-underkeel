@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "csb-cell-set.json",
+  "title": "A set of crowdsourced depth cells: an area extract with its cells, or the description of a vector tileset",
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "provider",
+    "licence",
+    "attribution",
+    "edition",
+    "issued",
+    "verdat",
+    "leafZoom",
+    "minZoom",
+    "shoalQuantile",
+    "bbox"
+  ],
+  "anyOf": [{ "required": ["cells"] }, { "required": ["tiles"] }],
+  "properties": {
+    "apiVersion": { "const": "1" },
+    "provider": { "description": "Organisation that publishes the set.", "type": "string" },
+    "licence": {
+      "description": "SPDX identifier of the data licence, for example CC0-1.0.",
+      "type": "string"
+    },
+    "attribution": { "type": "string" },
+    "edition": {
+      "description": "Increases whenever any cell in the set changes. A client rebuilds its index when the edition differs from the one it built from.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "issued": { "$ref": "defs.json#/$defs/isoTime" },
+    "verdat": {
+      "description": "S-57 VERDAT code of the chart datum the depths are reduced to, for example 23 (LAT) or 3 (MSL). Cells with reduction none are not on it.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 30
+    },
+    "leafZoom": {
+      "description": "Zoom of the cells built from soundings; 18 is about 76 m at 60 degrees N.",
+      "type": "integer",
+      "minimum": 10,
+      "maximum": 22
+    },
+    "minZoom": { "type": "integer", "minimum": 0, "maximum": 22 },
+    "shoalQuantile": {
+      "description": "Quantile of the reduced soundings that dShoal reports at the leaf zoom, for example 0.05.",
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 0.5
+    },
+    "bbox": {
+      "description": "[west, south, east, north] in degrees.",
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": { "type": "number" }
+    },
+    "sources": {
+      "description": "Upstream archives the soundings came from, for example the IHO DCDB.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": { "name": { "type": "string" }, "url": { "type": "string" } }
+      }
+    },
+    "cells": {
+      "description": "The cells of an area extract, every zoom from minZoom to leafZoom.",
+      "type": "array",
+      "items": { "$ref": "csb-cell.json" }
+    },
+    "tiles": {
+      "description": "Mapbox Vector Tiles whose features in layer are the cell polygons, each carrying the csb-cell.json properties.",
+      "type": "object",
+      "required": ["url", "layer"],
+      "properties": {
+        "url": { "type": "string", "pattern": "\\{z\\}.*\\{x\\}.*\\{y\\}" },
+        "layer": { "type": "string" }
+      }
+    }
+  }
+}
