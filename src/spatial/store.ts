@@ -238,6 +238,12 @@ function storeOn(p: Parsed, inflated: Buffer): NodeStore {
   if (inflated.length < p.bytes) {
     throw new Error("pyramid file is truncated");
   }
+  // The CRC covers the body only: a header count off by a digit would lay every column out wrong.
+  if (inflated.length !== p.bytes) {
+    throw new Error(
+      `pyramid file is corrupt (${inflated.length} bytes for ${p.header.count} nodes)`
+    );
+  }
   const cols = columnsOn(inflated, p.header.count);
   const body = new Uint8Array(cols.dMin.buffer, cols.dMin.byteOffset, p.bytes);
   return storeOnBody(p.header.minZoom, p.header.leafZoom, body, cols);
