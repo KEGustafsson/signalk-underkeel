@@ -19,7 +19,7 @@ Plotter Extensions manifest. `signalk-underkeel` is the first provider.
 | `notification.json`              | the value of `notifications.navigation.underKeel`                 |
 | `defs.json`                      | shared definitions                                                |
 | `csb-cell.json`                  | one cell of aggregated crowdsourced depth soundings (proposal)    |
-| `csb-cell-set.json`              | a published set of those cells: area extract or tileset           |
+| `csb-cell-set.json`              | a published set of those cells: area extract, tileset or both     |
 
 `csb-cell.json` and `csb-cell-set.json` are a data format for crowdsourced bathymetry
 publishers, outside the HTTP contract above and outside the plugin's configured inputs; see

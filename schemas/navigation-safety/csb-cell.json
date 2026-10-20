@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "csb-cell.json",
   "title": "One Web Mercator cell of aggregated crowdsourced depth soundings",
-  "description": "Depths are positive-down metres below the chart datum named by the set's verdat (csb-cell-set.json); a negative depth dries. A cell exists only where at least one accepted sounding lies in it: nothing is interpolated. dMin <= dShoal <= dMedian.",
+  "description": "Depths are positive-down metres below the chart datum named by the set's verdat (csb-cell-set.json); a negative depth dries. A cell exists only where at least one accepted sounding lies in it: nothing is interpolated. dMin <= dShoal <= dMedian and tFirst <= tLast.",
   "type": "object",
   "required": [
     "quadkey",
@@ -23,7 +23,7 @@
     "quadkey": {
       "description": "Web Mercator tile key of the cell; its length is the zoom.",
       "type": "string",
-      "pattern": "^[0-3]{1,24}$"
+      "pattern": "^[0-3]{1,22}$"
     },
     "dMin": {
       "description": "Shallowest reduced sounding; at a coarser zoom, the minimum of the children's dMin.",
@@ -78,11 +78,10 @@
       "enum": ["surface", "transducer", "unknown"]
     },
     "providers": {
-      "description": "IHO CSB trusted nodes (PROVIDER) behind the soundings.",
+      "description": "IHO CSB trusted nodes (PROVIDER) behind the soundings. In a vector tile, one string with the names joined by commas.",
       "type": "array",
       "minItems": 1,
       "items": { "type": "string" }
-    },
-    "flags": { "type": "array", "items": { "type": "string" } }
+    }
   }
 }

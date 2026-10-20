@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "csb-cell-set.json",
-  "title": "A set of crowdsourced depth cells: an area extract with its cells, or the description of a vector tileset",
+  "title": "A set of crowdsourced depth cells: an area extract with its cells, a vector tileset, or both",
   "type": "object",
   "required": [
     "apiVersion",
@@ -24,7 +24,7 @@
       "description": "SPDX identifier of the data licence, for example CC0-1.0.",
       "type": "string"
     },
-    "attribution": { "type": "string" },
+    "attribution": { "description": "Text a client shows with the data.", "type": "string" },
     "edition": {
       "description": "Increases whenever any cell in the set changes. A client rebuilds its index when the edition differs from the one it built from.",
       "type": "integer",
@@ -77,7 +77,7 @@
       "items": { "$ref": "csb-cell.json" }
     },
     "tiles": {
-      "description": "Mapbox Vector Tiles whose features in layer are the cell polygons, each carrying the csb-cell.json properties.",
+      "description": "Mapbox Vector Tiles whose features in layer are the cell polygons, each carrying the csb-cell.json properties; providers is one comma-separated string, since tile properties cannot hold arrays.",
       "type": "object",
       "required": ["url", "layer"],
       "properties": {

@@ -29,8 +29,9 @@ chart datum.
 | `ref`                               | least known reference: `surface`, `transducer` or `unknown`           |
 | `providers`                         | trusted nodes behind the soundings                                    |
 
-A cell exists only where an accepted sounding lies in it. The leaf zoom is the set's
-`leafZoom`; 18 (about 76 m at 60° N) matches the living chart's cells.
+All fields are required except `dMedian` and `spread`. Within a cell, `dMin ≤ dShoal ≤ dMedian`
+and `tFirst ≤ tLast`. A cell exists only where an accepted sounding lies in it. The leaf zoom is
+the set's `leafZoom`; 18 (about 76 m at 60° N) matches the living chart's cells.
 
 Coarser cells aggregate their children so that zooming out never reads deeper:
 
@@ -43,15 +44,17 @@ Coarser cells aggregate their children so that zooming out never reads deeper:
 
 ## Set
 
-`schemas/navigation-safety/csb-cell-set.json` describes one publication: `provider`,
-`licence` (SPDX), `attribution`, `edition`, `issued`, the chart datum as an S-57 `verdat`
-code, `leafZoom`, `minZoom` (`1 ≤ minZoom ≤ leafZoom`), `shoalQuantile`, `bbox` and `sources`.
+`schemas/navigation-safety/csb-cell-set.json` describes one publication. Required: `apiVersion`
+(`"1"`), `provider`, `licence` (SPDX), `attribution`, `edition`, `issued`, the chart datum as an
+S-57 `verdat` code, `leafZoom` (10–22), `minZoom` (`1 ≤ minZoom ≤ leafZoom`), `shoalQuantile`
+(above 0, at most 0.5) and `bbox` (`[west, south, east, north]`). Optional: `sources`.
 It carries `cells`, `tiles`, or both, which then describe the same cells:
 
 - `cells`: an area extract with every cell from `minZoom` to `leafZoom`, for download
   before a passage;
 - `tiles`: a Mapbox Vector Tiles URL template and layer name, whose features are the cell
-  polygons with the cell fields as properties.
+  polygons with the cell fields as properties; `providers` is one comma-separated string,
+  since tile properties cannot hold arrays.
 
 `edition` increases whenever any cell changes, so a client rebuilds as it does for a new ENC
 cell edition.

@@ -72,7 +72,7 @@ describe("crowdsourced depth cells", () => {
     expect(
       v.validate("csb-cell.json", { ...CELL, quadkey: "1204", nSoundings: 0, reduction: "tide" })
     ).toEqual([
-      '$.quadkey: "1204" does not match ^[0-3]{1,24}$',
+      '$.quadkey: "1204" does not match ^[0-3]{1,22}$',
       "$.nSoundings: 0 < 1",
       '$.reduction: "tide" not in ["gauge","model","none"]'
     ]);
