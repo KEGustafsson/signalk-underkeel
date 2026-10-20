@@ -542,7 +542,9 @@ for every tile it serves, and `GET /tiles/ukc/changes` lists the tiles whose ran
 water level, draft and wave allowance have left, or in which an own sounding changed a cell.
 The background runtime asks every 15 s and after each 1 cm water-level move, and Freeboard
 fetches only the tiles listed. With the tide rising 2 mm/s that is 2 tile fetches a minute in
-a z14 view instead of 108.
+a z14 view instead of 108. The cells of each tile and the reach of their neighbours are kept
+between requests (up to 8 MiB) and walked again when the index changes or an own sounding
+changes a cell in the tile, so a fetch after a water-level move only re-classes the cells.
 
 `GET /ukc-style.json` is a MapLibre style for these tiles. The plugin also registers a
 `plotterExtensions` resource that declares the overlay, so a plotter that supports the Plotter

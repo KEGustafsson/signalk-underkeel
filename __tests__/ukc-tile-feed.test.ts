@@ -1,6 +1,7 @@
 import { UkcTileChanges } from "../src/api/ukc-tile-changes";
 import type { TileChanges } from "../src/api/ukc-tile-changes";
 import { parseConfig } from "../src/config";
+import { UkcTileCache } from "../src/engine/ukc-tile-geometry";
 import { tileAt, toMercator } from "../src/foundation/geo";
 import type { WaterLevel } from "../src/model/uncertainty";
 import type { QueryServiceDeps } from "../src/query-service";
@@ -23,7 +24,8 @@ function feed(level: { h: number; waves?: number; degraded?: string }) {
       ...(level.degraded ? { degraded: level.degraded } : {})
     }),
     waveHeight: () => level.waves,
-    tileChanges
+    tileChanges,
+    tileCache: new UkcTileCache()
   };
   const held = new Map<string, Buffer>();
   const fetchTile = (z: number, x: number, y: number) => {

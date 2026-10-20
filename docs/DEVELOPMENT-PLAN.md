@@ -1064,6 +1064,16 @@ level, the index) changing, a restarted server or a cursor older than the 4096 t
 answers `all`. The runtime refreshes exactly those tiles. A tile left unlisted is byte for
 byte the tile the server draws now (`__tests__/ukc-tile-feed.test.ts`).
 
+**UKC tile geometry cache.** The cells of a tile and the reach-grid slots each reaching cell
+covers do not depend on the water level, draft or σ, so the tile route keeps them per tile in
+typed arrays (`UkcTileCache`, least recently used first out beyond 8 MiB) and a request only
+classes the tile's value kinds and draws. The cache holds for one `NodeStore`: another store
+(a handover or a WFS rebuild) empties it. Every write to `NodeStore.adjustments` bumps its
+`revision` in the same call; an entry whose revision is behind compares the living-chart
+cells in its tile with those it was walked with and is walked again when they differ, so a
+cached tile never shows water deeper than an own sounding (invariant 5). Cached and uncached
+tiles equal the walk they replaced byte for byte (`__tests__/engine/ukc-tile-cache.test.ts`).
+
 **Decision (BR3a, approved).** When the change list does not answer, the runtime refreshes
 every tile on a 1 cm fall of the water level but only on a 10 cm rise. A tile kept stale by a
 rise was drawn for lower water, so it shows equal or more danger than the truth.

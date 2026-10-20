@@ -66,6 +66,11 @@ All notable changes to signalk-underkeel are documented here.
   pyramid columns moved, not copied, instead of being read back from disk: the longest
   event-loop block at the handover fell from 52–61 to 21–23 ms for the Nauvo pair and a 10 km
   box at leaf zoom 20, and from 258–292 to 68–97 ms with 32 cells, on x86.
+- UKC tiles keep each tile's cells and neighbour reach between requests, in typed arrays up to
+  8 MiB, and re-class only the few value kinds of a tile after a water-level move; the cache
+  is emptied by a new index and a tile is walked again when an own sounding changes a cell in
+  it. A 40-tile z14 view over the Nauvo cells refreshes in 29 ms instead of 86 ms on x86, and
+  a tile the change feed lists after a 1 cm fall takes 0.74 ms instead of 2.35 ms (p50).
 - The index build in the worker builds the pyramid one z10 root at a time, from only the cells
   reaching it, on up to four threads, with output byte-identical to a build of all cells at
   once. Sixteen copies of the Nauvo pair (3.3 M nodes) on x86: peak RSS 817 → 481 MB on one

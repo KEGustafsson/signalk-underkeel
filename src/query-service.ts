@@ -6,6 +6,7 @@ import type { TileInputs, UkcTileChanges } from "./api/ukc-tile-changes";
 import type { PluginConfig } from "./config";
 import type { RequestQueue } from "./route-service";
 import { queryUkc } from "./engine/query";
+import type { UkcTileCache } from "./engine/ukc-tile-geometry";
 import type { UkcTileInput } from "./engine/ukc-tiles";
 import { ukcTileWithRange } from "./engine/ukc-tiles";
 import type { WaterLevel } from "./model/uncertainty";
@@ -25,6 +26,8 @@ export interface QueryServiceDeps {
   waveHeight(): number | undefined;
   /** Which served tiles changed, for `GET /tiles/ukc/changes`. */
   tileChanges?: UkcTileChanges;
+  /** The tiles' level-independent geometry, kept between requests. */
+  tileCache?: UkcTileCache;
 }
 
 function unavailable(deps: QueryServiceDeps): ApiReply | undefined {
@@ -96,7 +99,15 @@ export function ukcTileReply(z: number, x: number, y: number, deps: QueryService
   }
   const { input, inputs } = tileInput(vessel, deps);
   deps.tileChanges?.observe(inputs);
-  const { rects, range } = ukcTileWithRange(inputs.store, z, x, y, MVT_EXTENT, input);
+  const { rects, range } = ukcTileWithRange(
+    inputs.store,
+    z,
+    x,
+    y,
+    MVT_EXTENT,
+    input,
+    deps.tileCache
+  );
   deps.tileChanges?.serve(z, x, y, range);
   const byClass = new Map<string, [number, number][][]>();
   for (const r of rects) {

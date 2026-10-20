@@ -42,13 +42,14 @@ export function cellsInTile(
 }
 
 /** A living-chart cell at the store's `adjustZoom`. */
-interface Adjusted {
+export interface Adjusted {
   x: number;
   y: number;
   values: NodeValues;
 }
 
-function adjustmentsIn(store: NodeStore, z: number, x: number, y: number): Adjusted[] {
+/** The living-chart cells cellsInTile folds into tile (z, x, y): inside it, or covering it. */
+export function adjustmentsIn(store: NodeStore, z: number, x: number, y: number): Adjusted[] {
   const az = store.adjustZoom;
   if (store.adjustments.size === 0) {
     return [];
