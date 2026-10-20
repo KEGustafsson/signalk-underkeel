@@ -10,7 +10,7 @@ import { fixtureIndex, ROCK } from "./helpers/fixture-index";
 
 /** What a plotter holding the UKC tiles sees: GET /tiles/ukc/changes against the tiles served. */
 
-function feed(level: { h: number; waves?: number; degraded?: string }) {
+function feed(level: { h: number; sigma?: number; waves?: number; degraded?: string }) {
   const tileChanges = new UkcTileChanges();
   const deps: QueryServiceDeps = {
     index: fixtureIndex(),
@@ -19,7 +19,7 @@ function feed(level: { h: number; waves?: number; degraded?: string }) {
     vessel: () => ({ draft: 3.2, length: 12, beam: 4 }),
     waterLevel: (): WaterLevel => ({
       h: level.h,
-      sigma: 0.1,
+      sigma: level.sigma ?? 0.1,
       source: "manual",
       ...(level.degraded ? { degraded: level.degraded } : {})
     }),
@@ -83,6 +83,21 @@ describe("UKC tile change feed", () => {
     expect(f.poll().all).toBe(true);
     expect(f.poll()).toMatchObject({ all: false, tiles: [] });
     level.degraded = "FMI forecast unavailable";
+    expect(f.poll().all).toBe(true);
+  });
+
+  test("a forecast sigma growing by the millimetre lists no tile until it passes a centimetre", () => {
+    const level = { h: 0.3, sigma: 0.101 };
+    const f = feed(level);
+    for (let i = 1; i <= 8; i++) {
+      level.sigma = 0.101 + 0.001 * i;
+      expect(f.poll()).toMatchObject({ all: false, tiles: [] });
+      for (const [z, x, y] of f.tiles) {
+        const now = Buffer.from(ukcTileReply(z, x, y, f.deps).body as Uint8Array);
+        expect(now.equals(f.held.get(`${z}/${x}/${y}`) as Buffer)).toBe(true);
+      }
+    }
+    level.sigma = 0.111;
     expect(f.poll().all).toBe(true);
   });
 });
