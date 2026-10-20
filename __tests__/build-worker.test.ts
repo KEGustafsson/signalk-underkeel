@@ -56,30 +56,29 @@ describe("index build worker entry", () => {
 });
 
 describe("workerBuilder (compiled lib/)", () => {
-  const maybe = built ? test : test.skip;
   if (!built) {
-    console.warn("lib/ is not built: run `npm run build` to test the worker thread");
+    throw new Error("lib/ is not built: run `npm run build` before the tests");
   }
 
   async function builder(): Promise<IndexBuilder> {
     return ((await import(LIB_BUILDER)) as { workerBuilder: IndexBuilder }).workerBuilder;
   }
 
-  maybe("indexes the cells in a worker thread and loads the result", async () => {
+  test("indexes the cells in a worker thread and loads the result", async () => {
     const j = job();
     const index = await (await builder())(j, new AbortController().signal);
     expect(index.catalogue.cells.map((c) => c.name)).toEqual(["FI5SYNTH"]);
     expect(fs.existsSync(path.join(j.indexDir, "pyramid.bin"))).toBe(true);
   });
 
-  maybe("rejects with the worker's error when the build fails", async () => {
+  test("rejects with the worker's error when the build fails", async () => {
     const build = await builder();
     await expect(
       build(job([path.join(dir, "missing")]), new AbortController().signal)
     ).rejects.toThrow(/./);
   });
 
-  maybe("rejects when aborted", async () => {
+  test("rejects when aborted", async () => {
     const ctl = new AbortController();
     const pending = (await builder())(job(), ctl.signal);
     ctl.abort();
