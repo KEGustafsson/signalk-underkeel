@@ -60,6 +60,10 @@ All notable changes to signalk-underkeel are documented here.
   does, so a request that validates is no longer refused for those fields; size budgets are
   listed in `schemas/navigation-safety/README.md`.
 
+- The status widget changes the page only when a value it shows changes. With three Signal K
+  values a second and steady readings it made 549 DOM changes and 99 layouts a minute; now
+  none.
+
 ### Fixed
 
 - An index build stopped mid-write, by an abort or a crash, no longer leaves its half-written

@@ -18,6 +18,25 @@ describe("extension display logic", () => {
     expect(UKC.reason("Under-keel clearance normal")).toBe("Under-keel clearance normal");
   });
 
+  test("the widget shows the values, and a stale view as unknown with no numbers", () => {
+    const view = { state: "warn", clearance: 0.42, timeToShoal: 95, message: "shoal ahead: P 7 %" };
+    expect(UKC.widgetView({ ...view, stale: false }, "m")).toEqual({
+      colour: UKC.stateStyle("warn").colour,
+      state: "UKC Warning",
+      line: "min 0.4 m · shoal in 95 s",
+      reason: "shoal ahead"
+    });
+    expect(UKC.widgetView({ ...view, stale: true }, "m")).toEqual({
+      colour: UKC.stateStyle("unknown").colour,
+      state: "UKC Unknown",
+      line: "min —",
+      reason: "no data from the under-keel plugin"
+    });
+    expect(UKC.widgetView({ ...view, state: "normal", stale: true }, "m").state).toBe(
+      "UKC Unknown"
+    );
+  });
+
   test("an unknown state shows as unknown, never as normal", () => {
     expect(UKC.stateStyle("alarm").label).toBe("ALARM");
     expect(UKC.stateStyle("bogus")).toEqual(UKC.stateStyle("unknown"));

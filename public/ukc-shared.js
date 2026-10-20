@@ -34,6 +34,21 @@
     return seconds < 120 ? "in " + Math.round(seconds) + " s" : "in " + Math.round(seconds / 60) + " min";
   }
 
+  /**
+   * The status widget's texts and colour. A stale view reads Unknown with no
+   * numbers, whatever values it last held.
+   */
+  function widgetView(view, unit) {
+    const s = stateStyle(view.stale ? "unknown" : view.state);
+    const tts = view.stale ? "" : timeToShoal(view.timeToShoal);
+    return {
+      colour: s.colour,
+      state: "UKC " + s.label,
+      line: "min " + depth(view.stale ? null : view.clearance, unit) + (tts ? " · shoal " + tts : ""),
+      reason: view.stale ? "no data from the under-keel plugin" : reason(view.message)
+    };
+  }
+
   /** The reason part of a notification message: the text before the explanation sentence. */
   function reason(message) {
     if (typeof message !== "string") {
@@ -264,6 +279,7 @@
     depth: depth,
     timeToShoal: timeToShoal,
     reason: reason,
+    widgetView: widgetView,
     routeLine: routeLine,
     legFeatures: legFeatures,
     worstStatus: worstStatus,
