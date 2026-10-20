@@ -10,7 +10,12 @@ import { HazardIndex } from "./hazards";
 import type { NodeStore } from "./node-store";
 import type { BuildOptions } from "./pyramid-build";
 import { buildPyramid } from "./pyramid-build";
-import { deserializePyramid, isCurrentPyramid, serializePyramid } from "./store";
+import {
+  deserializePyramid,
+  deserializePyramidAsync,
+  isCurrentPyramid,
+  serializePyramid
+} from "./store";
 
 /** The queryable chart: provenance, the min-depth pyramid and the hazard tree. */
 export interface ChartIndex {
@@ -200,6 +205,11 @@ export function savedIndexIsCurrent(dir: string): boolean {
   }
 }
 
+const hazardsFrom = (json: string): HazardIndex =>
+  new HazardIndex(
+    (JSON.parse(json) as StoredHazard[]).map((h) => ({ ...h, depth: h.depth ?? -Infinity }))
+  );
+
 /** Loads a saved index, first recovering one that a crash during save left moved aside. */
 export function loadChartIndex(dir: string): ChartIndex {
   recoverChartIndex(dir);
@@ -207,9 +217,27 @@ export function loadChartIndex(dir: string): ChartIndex {
     JSON.parse(fs.readFileSync(path.join(dir, FILES.cells), "utf8"))
   );
   const pyramid = deserializePyramid(fs.readFileSync(path.join(dir, FILES.pyramid)));
-  const stored = JSON.parse(
-    fs.readFileSync(path.join(dir, FILES.hazards), "utf8")
-  ) as StoredHazard[];
-  const hazards = new HazardIndex(stored.map((h) => ({ ...h, depth: h.depth ?? -Infinity })));
+  const hazards = hazardsFrom(fs.readFileSync(path.join(dir, FILES.hazards), "utf8"));
   return { catalogue, pyramid, hazards };
+}
+
+/**
+ * `loadChartIndex` with the file reads and the pyramid's inflate off the
+ * event loop; parsing the catalogue and hazards and adopting the inflated
+ * columns stay on it.
+ */
+export async function loadChartIndexAsync(dir: string): Promise<ChartIndex> {
+  recoverChartIndex(dir);
+  const read = (f: string) => fs.promises.readFile(path.join(dir, f));
+  const [cells, pyramid, hazards] = await Promise.all([
+    read(FILES.cells),
+    read(FILES.pyramid),
+    read(FILES.hazards)
+  ]);
+  const catalogue = parseCatalogue(JSON.parse(cells.toString("utf8")));
+  return {
+    catalogue,
+    pyramid: await deserializePyramidAsync(pyramid),
+    hazards: hazardsFrom(hazards.toString("utf8"))
+  };
 }

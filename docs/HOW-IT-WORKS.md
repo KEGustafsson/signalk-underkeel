@@ -90,9 +90,9 @@ source picked under **Water level** (section 8).
 
 The index is built at the first start, in a worker thread so the server keeps running, and
 saved under the plugin data directory; until it is ready the engine is `off` with the reason
-`building chart index`. Later starts
-load the saved index unless a cell directory was added or removed or its `DSID` edition or
-update changed; then the index is rebuilt and the index reason in `/status` names the cells.
+`building chart index`. Later starts load the saved index (one over 1 MB in the background,
+`off` with `loading chart index` meanwhile) unless a cell directory was added or removed or its
+`DSID` edition or update changed; then the index is rebuilt and the index reason in `/status` names the cells.
 **Rebuild index at start** rebuilds it on every start. An index saved by an older plugin version
 whose index format differs is rebuilt too, and so is one whose files cannot be read, as a power
 cut during a save can leave them; the reason then names the read error.

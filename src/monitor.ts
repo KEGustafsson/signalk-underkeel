@@ -111,8 +111,8 @@ export class Monitor {
     this.levels.setIndex(index);
   }
 
-  /** Why the index awaited since construction did not arrive; the state stays `off`. */
-  indexFailed(reason: string): void {
+  /** Why there is still no index: being built or read, or failed. The state stays `off`. */
+  noIndex(reason: string): void {
     this.indexReason = reason;
   }
 

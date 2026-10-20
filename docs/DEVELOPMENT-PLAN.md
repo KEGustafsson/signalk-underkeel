@@ -340,6 +340,9 @@ CATZOC C sounding counts up to 1 km from its position.
 - The index is built in a worker thread, at start as for a new WFS box (§4.2); until the
   worker hands it over the look-ahead is `off` with the reason `building chart index`, and the
   WFS box starts only after the handover, so this build never replaces a newer box's index.
+  A saved `pyramid.bin` over 1 MB is read and inflated off the event loop the same way, `off`
+  with `loading chart index` meanwhile; a smaller one loads within `start()` (22 ms on x86 for
+  two Nauvo cells).
 - A save writes and fsyncs the three files and their staging directory, renames the staging
   directory into place and fsyncs the parent. A saved index that fails to read or parse at
   start (a power cut can still leave a file short) is rebuilt from the configured cells, with

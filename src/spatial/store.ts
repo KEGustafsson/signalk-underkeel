@@ -1,6 +1,6 @@
 import os from "os";
 import { tileKey } from "../foundation/geo";
-import { constants, gunzipSync, gzipSync } from "zlib";
+import { constants, gunzip, gunzipSync, gzipSync } from "zlib";
 import type { NodeColumns } from "./node-store";
 import { NodeStore } from "./node-store";
 
@@ -143,23 +143,29 @@ function columnsOn(body: Uint8Array, count: number): Columns {
   };
 }
 
-function inflate(body: Buffer, bytes: number): Buffer {
-  try {
-    // One output chunk of the expected size: the default 16 kB chunks are joined at the
-    // end, which held the 120 MB body of a 3.3 M-node index twice.
-    return gunzipSync(body, { chunkSize: Math.max(constants.Z_MIN_CHUNK, bytes + 64) });
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    // A short file ends the stream early; a changed byte fails the CRC or the data.
-    throw new Error(
-      code === "Z_BUF_ERROR" ? "pyramid file is truncated" : `pyramid file is corrupt (${code})`,
-      { cause: err }
-    );
-  }
+/** One output chunk of the expected size: 16 kB chunks are joined at the end, holding the body twice. */
+const inflateOptions = (bytes: number) => ({
+  chunkSize: Math.max(constants.Z_MIN_CHUNK, bytes + 64)
+});
+
+/** A short file ends the stream early; a changed byte fails the CRC or the data. */
+function inflateError(err: unknown): Error {
+  const code = (err as NodeJS.ErrnoException).code;
+  return new Error(
+    code === "Z_BUF_ERROR" ? "pyramid file is truncated" : `pyramid file is corrupt (${code})`,
+    { cause: err }
+  );
 }
 
-/** Reads a current-version file; refuses a foreign header or a truncated body. */
-export function deserializePyramid(buf: Buffer): NodeStore {
+interface Parsed {
+  header: Header;
+  /** The compressed columns. */
+  body: Buffer;
+  /** Their size inflated. */
+  bytes: number;
+}
+
+function parse(buf: Buffer): Parsed {
   requireLittleEndian();
   const nl = buf.indexOf(0x0a);
   if (nl < 0) {
@@ -169,10 +175,36 @@ export function deserializePyramid(buf: Buffer): NodeStore {
   if (header.magic !== MAGIC || header.version !== PYRAMID_VERSION) {
     throw new Error(`unsupported pyramid file ${header.magic} v${header.version}`);
   }
-  const body = inflate(buf.subarray(nl + 1), BYTES_PER_NODE * header.count);
-  if (body.length < BYTES_PER_NODE * header.count) {
+  return { header, body: buf.subarray(nl + 1), bytes: BYTES_PER_NODE * header.count };
+}
+
+function storeOn(p: Parsed, inflated: Buffer): NodeStore {
+  if (inflated.length < p.bytes) {
     throw new Error("pyramid file is truncated");
   }
-  const cols = columnsOn(body, header.count);
-  return NodeStore.fromColumns(header.minZoom, header.leafZoom, cols);
+  const cols = columnsOn(inflated, p.header.count);
+  return NodeStore.fromColumns(p.header.minZoom, p.header.leafZoom, cols);
+}
+
+/** Reads a current-version file; refuses a foreign header or a truncated body. */
+export function deserializePyramid(buf: Buffer): NodeStore {
+  const p = parse(buf);
+  let inflated: Buffer;
+  try {
+    inflated = gunzipSync(p.body, inflateOptions(p.bytes));
+  } catch (err) {
+    throw inflateError(err);
+  }
+  return storeOn(p, inflated);
+}
+
+/** `deserializePyramid` with the inflate on the libuv thread pool, off the event loop. */
+export async function deserializePyramidAsync(buf: Buffer): Promise<NodeStore> {
+  const p = parse(buf);
+  const inflated = await new Promise<Buffer>((resolve, reject) =>
+    gunzip(p.body, inflateOptions(p.bytes), (err, out) =>
+      err ? reject(inflateError(err)) : resolve(out)
+    )
+  );
+  return storeOn(p, inflated);
 }

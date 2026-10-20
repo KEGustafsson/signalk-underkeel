@@ -2,6 +2,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { buildManifest } from "../src/api/manifest";
+import * as loader from "../src/index-loader";
 import { loadOrBuildIndex } from "../src/index-loader";
 import { parseConfig } from "../src/config";
 import { stepFor, DEFAULT_LOOKAHEAD } from "../src/engine/lookahead";
@@ -127,6 +128,73 @@ describe("index build at start (plan §6: off the event loop)", () => {
     b.finish({ index: fixtureIndex() });
     await settle();
     expect(status(call).engine).toMatchObject({ state: "off", reason: "plugin stopped" });
+  });
+
+  /** Makes start() read any saved index off the event loop, as it does one over 1 MB. */
+  function readEverySavedIndex(): jest.SpyInstance {
+    const plan = loader.planIndex;
+    return jest
+      .spyOn(loader, "planIndex")
+      .mockImplementation((cfg, data, extra) => plan(cfg, data, extra, 0));
+  }
+
+  async function until(done: () => boolean): Promise<void> {
+    for (let i = 0; i < 200 && !done(); i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+  }
+
+  test("a large saved index is read off the event loop: off with the reason, then the index", async () => {
+    seedFixtureIndex(dataDir);
+    const spy = readEverySavedIndex();
+    try {
+      const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 3.2 } } });
+      const clock = fakeClock(T0);
+      const b = deferredBuilder();
+      const plugin = underkeel(f.app, clock, globalThis.fetch, b.build);
+      const { router, call } = fakeRouter();
+      plugin.registerWithRouter?.(router as never);
+      plugin.start({ cellsDir: FIXTURES, leafZoom: 18 }, () => undefined);
+      expect(status(call)).toMatchObject({
+        engine: { state: "off", reason: "loading chart index" },
+        index: { loaded: false }
+      });
+      await until(() => status(call).index.loaded);
+      expect(b.calls).toEqual([]);
+      f.send(navDelta(ROCK[0] - 110 / M_PER_DEG_LON, ROCK[1], 3, clock.now()));
+      clock.advance(1000);
+      expect(lastValue(f.deltas, "navigation.underKeel.state")).toBe("alarm");
+      plugin.stop();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("a large saved index that fails to read is rebuilt, off all along", async () => {
+    seedFixtureIndex(dataDir);
+    const file = path.join(dataDir, "index", "pyramid.bin");
+    fs.truncateSync(file, Math.floor(fs.statSync(file).size / 2));
+    const spy = readEverySavedIndex();
+    try {
+      const f = fakeApp(dataDir);
+      const clock = fakeClock(T0);
+      const b = deferredBuilder();
+      const plugin = underkeel(f.app, clock, globalThis.fetch, b.build);
+      const { router, call } = fakeRouter();
+      plugin.registerWithRouter?.(router as never);
+      plugin.start({ cellsDir: FIXTURES, leafZoom: 18 }, () => undefined);
+      await until(() => b.calls.length > 0);
+      clock.advance(1000);
+      expect(status(call).engine).toMatchObject({ state: "off", reason: "building chart index" });
+      b.finish({ index: await inlineBuilder(b.calls[0]!.job, new AbortController().signal) });
+      await until(() => status(call).index.loaded);
+      expect((call("/v1/status").body as { index: { reason: string } }).index.reason).toMatch(
+        /could not be read \(pyramid file is truncated\)/
+      );
+      plugin.stop();
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   test("a saved index that matches the cells is loaded at start without a build", () => {

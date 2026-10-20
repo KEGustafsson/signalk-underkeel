@@ -2,12 +2,11 @@ import type { Path, Plugin, PluginRouter, ServerAPI } from "@signalk/server-api"
 import { mountAssets } from "./api/assets";
 import { manifestProvider, PLUGIN_ID } from "./api/manifest";
 import { registerRoutes } from "./api/routes";
-import type { PluginConfig } from "./config";
 import { parseConfig, SCHEMA } from "./config";
 import type { EngineStatus } from "./foundation/state";
 import { createStatus, PATHS } from "./foundation/state";
-import type { IndexPlan } from "./index-loader";
-import { BUILDING_REASON, builtLoad, planIndex } from "./index-loader";
+import { planIndex } from "./index-loader";
+import { pendingLoad, settleAtStart } from "./index-startup";
 import type { Clock } from "./monitor";
 import { Monitor, SYSTEM_CLOCK } from "./monitor";
 import type { FetchLike } from "./model/fmi";
@@ -17,7 +16,7 @@ import { apiFor } from "./api-wiring";
 import { stoppedNotification } from "./notifications";
 import { loadZones } from "./zones";
 import { startLivechart } from "./livechart-service";
-import type { IndexBuilder, WfsService } from "./wfs-service";
+import type { IndexBuilder } from "./wfs-service";
 import { workerBuilder } from "./wfs-service";
 import { startWfs } from "./wfs-wiring";
 import fs from "fs";
@@ -63,50 +62,6 @@ function stopPlugin(app: ServerAPI, clock: Clock, state: PluginState): void {
   });
 }
 
-interface StartupBuild {
-  app: ServerAPI;
-  clock: Clock;
-  state: PluginState;
-  config: PluginConfig;
-  monitor: Monitor;
-  wfs: WfsService | undefined;
-}
-
-/**
- * Runs the start's index build off the event loop and hands the index to the
- * running services. The WFS box starts only after it, so a box rebuilt
- * meanwhile is never replaced by this older build.
- */
-function buildAtStart(
-  s: StartupBuild,
-  p: Extract<IndexPlan, { build: unknown }>,
-  build: IndexBuilder
-): AbortController {
-  const controller = new AbortController();
-  const current = (): boolean => !controller.signal.aborted && s.state.monitor === s.monitor;
-  build(p.build, controller.signal).then(
-    (index) => {
-      if (!current()) {
-        return;
-      }
-      s.state.load = builtLoad(p, index);
-      s.monitor.setIndex(index);
-      s.state.livechart = startLivechart(s.app, s.clock, s.config, index, s.monitor);
-      s.wfs?.start();
-    },
-    (err: Error) => {
-      if (!current()) {
-        return;
-      }
-      const reason = `chart index failed: ${err.message}`;
-      s.state.load = { indexDir: p.indexDir, built: false, reason };
-      s.monitor.indexFailed(reason);
-      s.wfs?.start();
-    }
-  );
-  return controller;
-}
-
 export = function underkeel(
   app: ServerAPI,
   clock: Clock = SYSTEM_CLOCK,
@@ -131,10 +86,7 @@ export = function underkeel(
       const config = parseConfig(options);
       const wfs = config.wfs && startWfs({ app, clock, state, config, fetch, build }, config.wfs);
       const plan = planIndex(config, app.getDataDirPath(), wfs?.savedCell() ? [wfs.cellDir] : []);
-      const load =
-        "load" in plan
-          ? plan.load
-          : { indexDir: plan.indexDir, built: false, reason: BUILDING_REASON };
+      const load = "load" in plan ? plan.load : pendingLoad(plan);
       const monitor = new Monitor(app, PLUGIN_ID, config, load.index, load.reason, clock, fetch);
       const acks = new AckStore(path.join(app.getDataDirPath(), "acks.json"));
       if (acks.error) {
@@ -144,10 +96,10 @@ export = function underkeel(
       const livechart = startLivechart(app, clock, config, load.index, monitor);
       monitor.start();
       Object.assign(state, { config, load, monitor, acks, livechart, wfs, zoneErrors: [] });
-      if ("build" in plan) {
-        startup = buildAtStart({ app, clock, state, config, monitor, wfs }, plan, build);
-      } else {
+      if ("load" in plan) {
         wfs?.start();
+      } else {
+        startup = settleAtStart({ app, clock, state, config, monitor, wfs }, plan, build);
       }
       void loadZones(config.mooringZones, (id) => app.resourcesApi.getResource("regions", id)).then(
         ({ zones, errors }) => {

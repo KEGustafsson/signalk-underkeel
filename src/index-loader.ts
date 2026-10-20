@@ -32,17 +32,34 @@ export interface IndexLoad {
   built: boolean;
 }
 
-/** The look-ahead reason, `off`, while the index is built at start (safety invariant 3). */
+/** The look-ahead reasons, `off`, while start builds or reads the index (safety invariant 3). */
 export const BUILDING_REASON = "building chart index";
+export const LOADING_REASON = "loading chart index";
 
-/** What start does: use `load` as it is, or run `build` and then use its index with `notes`. */
-export type IndexPlan =
-  | { load: IndexLoad }
-  | {
-      build: BuildJob;
-      indexDir: string;
-      /** Why it is rebuilt and what was skipped. */ notes: string[];
-    };
+/**
+ * A saved pyramid.bin larger than this is read and inflated off the event
+ * loop at start; two Nauvo cells (0.42 MB) load in 22 ms on x86, so a file
+ * this size blocks about 0.2 s on a Raspberry Pi 4.
+ */
+export const SYNC_LOAD_BYTES = 1_000_000;
+
+export type BuildPlan = {
+  build: BuildJob;
+  indexDir: string;
+  /** Why it is rebuilt and what was skipped. */
+  notes: string[];
+};
+
+export type ReadPlan = {
+  /** The saved index directory to load, too large to load on the event loop. */
+  read: string;
+  notes: string[];
+  /** What to do instead when the saved index fails to read. */
+  unreadable: (err: unknown) => IndexPlan;
+};
+
+/** What start does: use `load` as it is, run `build`, or `read` the saved index. */
+export type IndexPlan = { load: IndexLoad } | BuildPlan | ReadPlan;
 
 /** A saved index is present, after recovering one a crash during save left moved aside. */
 function exists(dir: string): boolean {
@@ -112,30 +129,45 @@ function withNotes(load: IndexLoad, notes: string[]): IndexLoad {
  * turned off is rebuilt without it, and one that lacks it once the source is
  * back on is rebuilt with it.
  */
-export function planIndex(cfg: PluginConfig, dataDir: string, extraDirs: string[] = []): IndexPlan {
+export function planIndex(
+  cfg: PluginConfig,
+  dataDir: string,
+  extraDirs: string[] = [],
+  syncLoadBytes = SYNC_LOAD_BYTES
+): IndexPlan {
   const indexDir = cfg.indexDir ?? path.join(dataDir, "index");
   try {
-    return plan(cfg, indexDir, extraDirs);
+    return plan(cfg, indexDir, extraDirs, syncLoadBytes);
   } catch (err) {
-    return { load: failed(indexDir, err) };
+    return { load: failedLoad(indexDir, err) };
   }
 }
 
-const failed = (indexDir: string, err: unknown): IndexLoad => ({
+export const failedLoad = (indexDir: string, err: unknown): IndexLoad => ({
   indexDir,
   built: false,
   reason: `chart index failed: ${(err as Error).message}`
 });
 
-/** The index as `planIndex` finds it, with any build run here, on the calling thread. */
+/** The index as `planIndex` finds it, with any build or read run here, on the calling thread. */
 export function loadOrBuildIndex(
   cfg: PluginConfig,
   dataDir: string,
   extraDirs: string[] = []
 ): IndexLoad {
-  const p = planIndex(cfg, dataDir, extraDirs);
+  return settle(planIndex(cfg, dataDir, extraDirs));
+}
+
+function settle(p: IndexPlan): IndexLoad {
   if ("load" in p) {
     return p.load;
+  }
+  if ("read" in p) {
+    try {
+      return savedLoad(p, loadChartIndex(p.read));
+    } catch (err) {
+      return settle(p.unreadable(err));
+    }
   }
   try {
     const index = buildChartIndex(
@@ -145,16 +177,18 @@ export function loadOrBuildIndex(
     saveChartIndex(p.indexDir, index);
     return builtLoad(p, index);
   } catch (err) {
-    return failed(p.indexDir, err);
+    return failedLoad(p.indexDir, err);
   }
 }
 
 /** The load of an index `p.build` produced. */
-export function builtLoad(
-  p: Extract<IndexPlan, { build: BuildJob }>,
-  index: ChartIndex
-): IndexLoad {
+export function builtLoad(p: BuildPlan, index: ChartIndex): IndexLoad {
   return withNotes({ index, indexDir: p.indexDir, built: true }, p.notes);
+}
+
+/** The load of the index `p.read` names. */
+export function savedLoad(p: ReadPlan, index: ChartIndex): IndexLoad {
+  return withNotes({ index, indexDir: p.read, built: false }, p.notes);
 }
 
 /** The saved catalogue, or why it could not be read; undefined when no index is saved. */
@@ -169,14 +203,23 @@ function readSaved(indexDir: string): { cells?: CellInfo[]; error?: Error } {
   }
 }
 
-function plan(cfg: PluginConfig, indexDir: string, extraDirs: string[]): IndexPlan {
+function plan(
+  cfg: PluginConfig,
+  indexDir: string,
+  extraDirs: string[],
+  syncLoadBytes: number
+): IndexPlan {
   const { cells: saved, error } = readSaved(indexDir);
   const { stale, mismatch } = savedMatches(cfg, indexDir, saved, extraDirs);
+  const fromSaved = (notes: string[], unreadable: (err: unknown) => IndexPlan): IndexPlan =>
+    stale
+      ? { load: { indexDir, built: false, reason: missingReason(cfg, indexDir, true) } }
+      : savedPlan(indexDir, notes, unreadable, syncLoadBytes);
   // An unmounted or moved cells directory says nothing about the saved index's cells.
   if (saved && cfg.cellsDir && !fs.existsSync(cfg.cellsDir)) {
-    return {
-      load: loadSaved(cfg, indexDir, stale, [`${cfg.cellsDir} not found; using the saved index`])
-    };
+    return fromSaved([`${cfg.cellsDir} not found; using the saved index`], (err) => ({
+      load: failedLoad(indexDir, err)
+    }));
   }
   const scan = scanCells(cfg.cellsDir);
   const change = cellsChange(cfg.cellsDir, saved, scan.dirs);
@@ -185,15 +228,13 @@ function plan(cfg: PluginConfig, indexDir: string, extraDirs: string[]): IndexPl
   const rebuild = (why: string[]): IndexPlan =>
     buildPlan(cfg, indexDir, [...scan.dirs, ...extraDirs], why);
   // A power cut during a save can leave a file empty or short; the cells are read again.
-  const unreadable = (err: unknown): IndexPlan => {
-    if (!sources) {
-      throw err;
-    }
-    return rebuild([
-      `rebuilt the index: the saved one could not be read (${(err as Error).message})`,
-      ...notes
-    ]);
-  };
+  const unreadable = (err: unknown): IndexPlan =>
+    sources
+      ? rebuild([
+          `rebuilt the index: the saved one could not be read (${(err as Error).message})`,
+          ...notes
+        ])
+      : { load: failedLoad(indexDir, err) };
   if (error) {
     return unreadable(error);
   }
@@ -203,23 +244,24 @@ function plan(cfg: PluginConfig, indexDir: string, extraDirs: string[]): IndexPl
   if (!saved) {
     return { load: { indexDir, built: false, reason: missingReason(cfg, indexDir, false) } };
   }
+  return fromSaved(notes, unreadable);
+}
+
+function savedPlan(
+  indexDir: string,
+  notes: string[],
+  unreadable: (err: unknown) => IndexPlan,
+  syncLoadBytes: number
+): IndexPlan {
+  const p: ReadPlan = { read: indexDir, notes, unreadable };
+  if (fs.statSync(path.join(indexDir, "pyramid.bin")).size > syncLoadBytes) {
+    return p;
+  }
   try {
-    return { load: loadSaved(cfg, indexDir, stale, notes) };
+    return { load: savedLoad(p, loadChartIndex(indexDir)) };
   } catch (err) {
     return unreadable(err);
   }
-}
-
-function loadSaved(
-  cfg: PluginConfig,
-  indexDir: string,
-  stale: boolean,
-  notes: string[]
-): IndexLoad {
-  if (stale) {
-    return { indexDir, built: false, reason: missingReason(cfg, indexDir, true) };
-  }
-  return withNotes({ index: loadChartIndex(indexDir), indexDir, built: false }, notes);
 }
 
 function buildPlan(
@@ -229,9 +271,8 @@ function buildPlan(
   notes: string[]
 ): IndexPlan {
   if (dirs.length === 0) {
-    return {
-      load: { indexDir, built: false, reason: `no cells in ${cfg.cellsDir ?? "cellsDir"}` }
-    };
+    const none = { indexDir, built: false, reason: `no cells in ${cfg.cellsDir ?? "cellsDir"}` };
+    return { load: withNotes(none, notes) };
   }
   return { build: { dirs, leafZoom: cfg.leafZoom, indexDir }, indexDir, notes };
 }
