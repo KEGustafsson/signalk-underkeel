@@ -110,9 +110,10 @@ refuses a non-empty output directory, so export each new edition into a new or e
 directory. A cell without an `M_COVR` coverage layer is rejected.
 
 Set **Exported ENC cells directory** to the parent directory (`~/charts/cells` above). At the
-first start the plugin builds a chart index and saves it under the plugin data directory,
-`~/.signalk/plugin-config-data/signalk-underkeel/index` unless **Chart index directory** says
-otherwise. Later starts load the saved index and rebuild it when a cell directory was added
+first start the plugin builds a chart index in a worker thread and saves it under the plugin
+data directory, `~/.signalk/plugin-config-data/signalk-underkeel/index` unless **Chart index
+directory** says otherwise. Until the index is ready the engine is `off` with the reason
+`building chart index`. Later starts load the saved index and rebuild it when a cell directory was added
 or removed, or a cell's edition or update changed; `GET /status` names the cells that caused
 the rebuild. **Rebuild index at start** forces a rebuild on every start. A cell directory may
 be a symbolic link.

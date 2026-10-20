@@ -174,10 +174,12 @@ describe("plugin with the Traficom WFS source", () => {
     // Off: the saved index is rebuilt from the ENC cells alone; the box stays on disk.
     const off = underkeel(fakeApp(dataDir).app, clock, fetch, build);
     off.start({ vessel: { draft: 2 }, cellsDir: FIXTURES }, () => undefined);
+    await settle();
     off.stop();
     const again = fakeApp(dataDir);
     const b = underkeel(again.app, clock, fetch, build);
     b.start(on, () => undefined);
+    await settle();
     expect(cells(again, b)).toContain("FI1WFS01");
     b.stop();
   });

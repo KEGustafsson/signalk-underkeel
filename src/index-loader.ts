@@ -5,6 +5,7 @@ import { readCellDirectory, readCellInfo } from "./ingest/cell-reader";
 import type { CellInfo } from "./ingest/cells";
 import { parseCatalogue, usageBandFromName } from "./ingest/cells";
 import { WFS_SOURCE } from "./ingest/wfs";
+import type { BuildJob } from "./spatial/build-worker";
 import type { ChartIndex } from "./spatial/chart-index";
 import {
   buildChartIndex,
@@ -18,7 +19,8 @@ import {
  * Finds the chart index at start: builds it from exported cells when asked
  * to, when none exists yet or when the cells changed since it was saved,
  * otherwise loads the saved one. Failure is reported as a reason, so the
- * engine can publish `off` with it.
+ * engine can publish `off` with it. A build is returned as a job, so the
+ * plugin runs it in a worker thread instead of blocking the server.
  */
 
 export interface IndexLoad {
@@ -29,6 +31,18 @@ export interface IndexLoad {
   reason?: string;
   built: boolean;
 }
+
+/** The look-ahead reason, `off`, while the index is built at start (safety invariant 3). */
+export const BUILDING_REASON = "building chart index";
+
+/** What start does: use `load` as it is, or run `build` and then use its index with `notes`. */
+export type IndexPlan =
+  | { load: IndexLoad }
+  | {
+      build: BuildJob;
+      indexDir: string;
+      /** Why it is rebuilt and what was skipped. */ notes: string[];
+    };
 
 /** A saved index is present, after recovering one a crash during save left moved aside. */
 function exists(dir: string): boolean {
@@ -98,17 +112,49 @@ function withNotes(load: IndexLoad, notes: string[]): IndexLoad {
  * turned off is rebuilt without it, and one that lacks it once the source is
  * back on is rebuilt with it.
  */
+export function planIndex(cfg: PluginConfig, dataDir: string, extraDirs: string[] = []): IndexPlan {
+  const indexDir = cfg.indexDir ?? path.join(dataDir, "index");
+  try {
+    return plan(cfg, indexDir, extraDirs);
+  } catch (err) {
+    return { load: failed(indexDir, err) };
+  }
+}
+
+const failed = (indexDir: string, err: unknown): IndexLoad => ({
+  indexDir,
+  built: false,
+  reason: `chart index failed: ${(err as Error).message}`
+});
+
+/** The index as `planIndex` finds it, with any build run here, on the calling thread. */
 export function loadOrBuildIndex(
   cfg: PluginConfig,
   dataDir: string,
   extraDirs: string[] = []
 ): IndexLoad {
-  const indexDir = cfg.indexDir ?? path.join(dataDir, "index");
-  try {
-    return loadOrBuild(cfg, indexDir, extraDirs);
-  } catch (err) {
-    return { indexDir, built: false, reason: `chart index failed: ${(err as Error).message}` };
+  const p = planIndex(cfg, dataDir, extraDirs);
+  if ("load" in p) {
+    return p.load;
   }
+  try {
+    const index = buildChartIndex(
+      p.build.dirs.map((d, i) => readCellDirectory(d, i)),
+      { leafZoom: p.build.leafZoom }
+    );
+    saveChartIndex(p.indexDir, index);
+    return builtLoad(p, index);
+  } catch (err) {
+    return failed(p.indexDir, err);
+  }
+}
+
+/** The load of an index `p.build` produced. */
+export function builtLoad(
+  p: Extract<IndexPlan, { build: BuildJob }>,
+  index: ChartIndex
+): IndexLoad {
+  return withNotes({ index, indexDir: p.indexDir, built: true }, p.notes);
 }
 
 /** The saved catalogue, or why it could not be read; undefined when no index is saved. */
@@ -123,21 +169,23 @@ function readSaved(indexDir: string): { cells?: CellInfo[]; error?: Error } {
   }
 }
 
-function loadOrBuild(cfg: PluginConfig, indexDir: string, extraDirs: string[]): IndexLoad {
+function plan(cfg: PluginConfig, indexDir: string, extraDirs: string[]): IndexPlan {
   const { cells: saved, error } = readSaved(indexDir);
   const { stale, mismatch } = savedMatches(cfg, indexDir, saved, extraDirs);
   // An unmounted or moved cells directory says nothing about the saved index's cells.
   if (saved && cfg.cellsDir && !fs.existsSync(cfg.cellsDir)) {
-    return loadSaved(cfg, indexDir, stale, [`${cfg.cellsDir} not found; using the saved index`]);
+    return {
+      load: loadSaved(cfg, indexDir, stale, [`${cfg.cellsDir} not found; using the saved index`])
+    };
   }
   const scan = scanCells(cfg.cellsDir);
   const change = cellsChange(cfg.cellsDir, saved, scan.dirs);
   const notes = [...(change ? [change] : []), ...skippedNote(cfg.cellsDir, scan)];
   const sources = Boolean(cfg.cellsDir) || extraDirs.length > 0;
+  const rebuild = (why: string[]): IndexPlan =>
+    buildPlan(cfg, indexDir, [...scan.dirs, ...extraDirs], why);
   // A power cut during a save can leave a file empty or short; the cells are read again.
-  const rebuild = (why: string[]): IndexLoad =>
-    withNotes(build(cfg, indexDir, [...scan.dirs, ...extraDirs]), why);
-  const unreadable = (err: unknown): IndexLoad => {
+  const unreadable = (err: unknown): IndexPlan => {
     if (!sources) {
       throw err;
     }
@@ -153,10 +201,10 @@ function loadOrBuild(cfg: PluginConfig, indexDir: string, extraDirs: string[]): 
     return rebuild(notes);
   }
   if (!saved) {
-    return { indexDir, built: false, reason: missingReason(cfg, indexDir, false) };
+    return { load: { indexDir, built: false, reason: missingReason(cfg, indexDir, false) } };
   }
   try {
-    return loadSaved(cfg, indexDir, stale, notes);
+    return { load: loadSaved(cfg, indexDir, stale, notes) };
   } catch (err) {
     return unreadable(err);
   }
@@ -174,16 +222,18 @@ function loadSaved(
   return withNotes({ index: loadChartIndex(indexDir), indexDir, built: false }, notes);
 }
 
-function build(cfg: PluginConfig, indexDir: string, dirs: string[]): IndexLoad {
+function buildPlan(
+  cfg: PluginConfig,
+  indexDir: string,
+  dirs: string[],
+  notes: string[]
+): IndexPlan {
   if (dirs.length === 0) {
-    return { indexDir, built: false, reason: `no cells in ${cfg.cellsDir ?? "cellsDir"}` };
+    return {
+      load: { indexDir, built: false, reason: `no cells in ${cfg.cellsDir ?? "cellsDir"}` }
+    };
   }
-  const index = buildChartIndex(
-    dirs.map((d, i) => readCellDirectory(d, i)),
-    { leafZoom: cfg.leafZoom }
-  );
-  saveChartIndex(indexDir, index);
-  return { index, indexDir, built: true };
+  return { build: { dirs, leafZoom: cfg.leafZoom, indexDir }, indexDir, notes };
 }
 
 function missingReason(cfg: PluginConfig, indexDir: string, stale: boolean): string {

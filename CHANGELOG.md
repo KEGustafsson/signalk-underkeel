@@ -62,6 +62,11 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Fixed
 
+- The chart index is built in a worker thread at start too, as it already was for Traficom
+  WFS boxes; meanwhile the engine is `off` with the reason `building chart index`. `start()`
+  built it on the main thread, which froze the whole Signal K server for 24 s with two Nauvo
+  cells at leaf zoom 20 on x86 (about 1.5 min on a Raspberry Pi 4) on the first start, after a
+  cell or format change and when the WFS source was toggled.
 - A saved chart index whose files cannot be read or parsed is rebuilt from the configured
   cells at start, with the read error in the index reason. An index left empty by a power cut
   during a save kept the engine `off` with "chart index failed: Unexpected end of JSON input"

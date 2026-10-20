@@ -111,6 +111,11 @@ export class Monitor {
     this.levels.setIndex(index);
   }
 
+  /** Why the index awaited since construction did not arrive; the state stays `off`. */
+  indexFailed(reason: string): void {
+    this.indexReason = reason;
+  }
+
   start(): void {
     this.subscribe([
       ...INPUT_PATHS,

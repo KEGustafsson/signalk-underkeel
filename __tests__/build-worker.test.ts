@@ -4,7 +4,9 @@ import path from "path";
 import type { BuildJob } from "../src/spatial/build-worker";
 import { commitChartIndex, loadChartIndex } from "../src/spatial/chart-index";
 import type { IndexBuilder } from "../src/wfs-service";
+import underkeel = require("../src/index");
 import { FIXTURES } from "./helpers/fixture-index";
+import { fakeApp, fakeClock, T0 } from "./helpers/plugin-harness";
 
 /**
  * The off-loop index build behind the Traficom WFS box (plan §4.2, §6).
@@ -94,5 +96,20 @@ describe("workerBuilder (compiled lib/)", () => {
     ctl.abort();
     await expect(pending).rejects.toThrow("aborted");
     expect(fs.readdirSync(dir)).toEqual([]);
+  });
+
+  test("stop() during the build at start terminates the worker and leaves no index or staging", async () => {
+    const build = await builder();
+    const dataDir = path.join(dir, "data");
+    fs.mkdirSync(dataDir);
+    const plugin = underkeel(fakeApp(dataDir).app, fakeClock(T0), globalThis.fetch, build);
+    plugin.start({ cellsDir: FIXTURES, leafZoom: 18 }, () => undefined);
+    await new Promise((resolve) => setImmediate(resolve));
+    plugin.stop();
+    // A build with an aborted signal settles only once every aborted worker has exited.
+    const done = new AbortController();
+    done.abort();
+    await expect(build(job(), done.signal)).rejects.toThrow("aborted");
+    expect(fs.readdirSync(dataDir)).toEqual([]);
   });
 });
