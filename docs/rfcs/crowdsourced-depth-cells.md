@@ -1,27 +1,15 @@
 # RFC draft: aggregated crowdsourced depth cells
 
-Status: draft for crowdsourced bathymetry publishers, first Open Waters
-([crowd-depth](https://github.com/openwatersio/crowd-depth), [seascape](https://github.com/openwatersio/seascape)).
-The schemas define a publisher format. They are not part of signalk-underkeel's HTTP contract
-or its configured inputs.
+Status: draft. The schemas define a publisher format; they are not part of signalk-underkeel's
+HTTP contract or its configured inputs.
 
 ## Motivation
 
-The IHO DCDB publishes crowdsourced bathymetry (CSB) as raw soundings: CSV rows of
-`UNIQUE_ID, FILE_UUID, LON, LAT, DEPTH, TIME, PLATFORM_NAME, PROVIDER`, stored by date, with
-no water-level reduction and no transducer offset in the S3 files. A boat cannot use that
-archive directly: area queries go through an asynchronous order API, and every sounding still
-needs reducing to chart datum.
-
-A gridded DEM of the same soundings does not serve a grounding-risk check either. It
-interpolates between survey tracks, so it reports depths where nobody sounded; a smoothed
-grid removes single shoal soundings; and one value per pixel cannot say how many soundings,
-platforms or dates stand behind it, which the living chart's discrepancy rule (plan §4.13:
-5 samples, 2 passes, more than 2σ shallower than charted) needs.
-
-This RFC proposes a cell format that keeps those counts: Web Mercator cells on the same grid
-as signalk-underkeel's min-depth pyramid (plan §4.3), carrying only measured depths and the
-statistics behind them.
+To let crowdsourced bathymetry (CSB) lower the chart, signalk-underkeel needs more than a depth
+per area: how many soundings, platforms and dates stand behind it, and their uncertainty, as
+the living chart's discrepancy rule does (plan §4.13). This RFC defines Web Mercator cells on
+the same grid as the min-depth pyramid (plan §4.3) that carry only measured depths and those
+statistics.
 
 ## Cell
 
@@ -73,7 +61,7 @@ cell edition.
 - No cell without a sounding in it; no interpolation, no smoothing.
 - Rounding of any field errs shallow; a coarser cell is never deeper than a finer one.
 - Soundings from waters a coastal state has not released (IHO B-12 positive list) are not
-  published. Data taken from the public DCDB archive has already been screened.
+  published.
 - A sounding not reduced to the set's datum is counted in `reduction: none`, never mixed in
   as reduced.
 

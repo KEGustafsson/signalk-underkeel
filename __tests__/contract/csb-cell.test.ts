@@ -28,9 +28,9 @@ const CELL = {
 
 const SET = {
   apiVersion: "1",
-  provider: "Open Waters",
+  provider: "Example publisher",
   licence: "CC0-1.0",
-  attribution: "Crowdsourced bathymetry via the IHO DCDB",
+  attribution: "Example attribution",
   edition: 7,
   issued: "2026-10-01T00:00:00Z",
   verdat: 23,
@@ -38,7 +38,7 @@ const SET = {
   minZoom: 12,
   shoalQuantile: 0.05,
   bbox: [10.5, 57.5, 11.0, 57.8],
-  sources: [{ name: "IHO DCDB", url: "https://noaa-dcdb-bathymetry-pds.s3.amazonaws.com/" }]
+  sources: [{ name: "Example archive", url: "https://archive.example.org/" }]
 };
 
 describe("crowdsourced depth cells", () => {

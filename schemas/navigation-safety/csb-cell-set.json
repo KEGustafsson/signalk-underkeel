@@ -63,7 +63,7 @@
       "items": { "type": "number" }
     },
     "sources": {
-      "description": "Upstream archives the soundings came from, for example the IHO DCDB.",
+      "description": "Upstream archives the soundings came from.",
       "type": "array",
       "items": {
         "type": "object",

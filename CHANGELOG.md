@@ -16,8 +16,7 @@ All notable changes to signalk-underkeel are documented here.
   zones takes the worse zone's σ instead of the unassessed σ and flag, when the zones share
   the edge vertex for vertex. Gaps, overlaps and differently split edges stay `UNASSESSED`.
 - Proposal: JSON Schemas `csb-cell.json` and `csb-cell-set.json` and an RFC draft for
-  aggregated crowdsourced depth cells that a publisher such as Open Waters could serve. This
-  release adds no crowdsourced-depth ingest.
+  aggregated crowdsourced depth cells. This release adds no crowdsourced-depth ingest.
 - Contract (M6): JSON Schemas of the navigation-safety contract in `schemas/navigation-safety/`,
   contract tests for this plugin and a stub second provider, and RFC drafts for the Signal K
   paths and the Plotter Extensions `services` section.
