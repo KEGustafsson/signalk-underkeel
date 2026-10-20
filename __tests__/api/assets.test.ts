@@ -1,11 +1,17 @@
 import fs from "fs";
+import os from "os";
 import path from "path";
 import { assetFile, assetMiddleware, mountAssets } from "../../src/api/assets";
 import { buildManifest, PLUGIN_ID } from "../../src/api/manifest";
 
 const PUBLIC = path.resolve(__dirname, "..", "..", "public");
 
-function serve(p: string, method = "GET") {
+function serve(
+  p: string,
+  method = "GET",
+  reqHeaders: Record<string, string> = {},
+  mw = assetMiddleware(PUBLIC)
+) {
   let next = false;
   const headers: Record<string, string> = {};
   const res = {
@@ -16,7 +22,7 @@ function serve(p: string, method = "GET") {
       this.body = b;
     }
   };
-  assetMiddleware(PUBLIC)({ method, path: p }, res, () => (next = true));
+  mw({ method, path: p, headers: reqHeaders }, res, () => (next = true));
   return { next, headers, res };
 }
 
@@ -57,6 +63,33 @@ describe("extension assets", () => {
     expect(page.headers["Cache-Control"]).toBe("no-cache");
     expect(serve("/missing.html").next).toBe(true);
     expect(serve("/widget.html", "POST").next).toBe(true);
+  });
+
+  test("a page the browser already holds is answered 304 by its ETag, a changed one in full", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "ukc-assets-"));
+    const file = path.join(root, "panel.js");
+    fs.writeFileSync(file, "one");
+    const mw = assetMiddleware(root);
+    const first = serve("/panel.js", "GET", {}, mw);
+    const etag = first.headers.ETag as string;
+    expect(first.res.statusCode).toBe(200);
+    expect(etag).toMatch(/^"[^"]+"$/);
+    expect(String(first.res.body)).toBe("one");
+    for (const inm of [etag, `W/${etag}`, `"other", ${etag}`, "*"]) {
+      const again = serve("/panel.js", "GET", { "if-none-match": inm }, mw);
+      expect(again.res.statusCode).toBe(304);
+      expect(again.res.body).toBeUndefined();
+      expect(again.headers.ETag).toBe(etag);
+      expect(again.headers["Cache-Control"]).toBe("no-cache");
+    }
+    expect(serve("/panel.js", "HEAD", { "if-none-match": etag }, mw).res.statusCode).toBe(304);
+    fs.writeFileSync(file, "two, longer");
+    const changed = serve("/panel.js", "GET", { "if-none-match": etag }, mw);
+    expect(changed.res.statusCode).toBe(200);
+    expect(String(changed.res.body)).toBe("two, longer");
+    expect(changed.headers.ETag).not.toBe(etag);
+    expect(serve("/panel.js", "GET", { "if-none-match": '"stale"' }, mw).res.statusCode).toBe(200);
+    fs.rmSync(root, { recursive: true, force: true });
   });
 
   test("paths outside public/ and unknown file types are refused", () => {

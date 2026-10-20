@@ -89,6 +89,13 @@ All notable changes to signalk-underkeel are documented here.
   characters), speeds, drafts, `bufferMetres`, `xteLimit` and `probability` as the plugin
   does, so a request that validates is no longer refused for those fields; size budgets are
   listed in `schemas/navigation-safety/README.md`.
+- The status widget changes the page only when a value it shows changes. With three Signal K
+  values a second and steady readings it made 549 DOM changes and 99 layouts a minute; now
+  none.
+- The extension pages, scripts and styles under `/plotterext/signalk-underkeel/` carry an ETag
+  and are answered 304 when the browser holds them, still with `Cache-Control: no-cache`. A
+  Freeboard reload fetched 56.2 kB of them and now 12.7 kB; a first load 57.5 kB and now
+  36.3 kB, since the three pages share four scripts.
 
 ### Fixed
 
@@ -298,3 +305,26 @@ All notable changes to signalk-underkeel are documented here.
   degraded, such as an FMI fallback, instead of the configured source.
 - "Check routes again" is hidden on a chart host without `events.publish`, `routes` or
   `background.iframe`, where pressing it did nothing.
+- The background runtime writes route-check results to host state in a compact form (per leg
+  only index, status, minimum UKC and P), once per re-check of all routes instead of once per
+  route. Freeboard keeps that state in localStorage: one 30-leg route wrote 17.6 kB a minute
+  and three routes 158 kB; one route now writes 1.9 kB.
+- A route check from the background runtime times out after 30 s and reads "not checked",
+  and a route is checked once at a time: a re-check asked for meanwhile runs after it. A hung
+  reply had no timeout, and each re-check opened another connection beside it.
+- The runtime checks the visible routes one after another and, when the server answers 503
+  busy with `Retry-After`, checks again after it (at most five times). With six routes it
+  sent six checks at once, and those the server queue refused showed "busy" as the result.
+- The details panel and the runtime poll `GET /status?summary`, which leaves out the cell
+  catalogue and datum mappings.
+- The extension pages fetch nothing while Freeboard is in a hidden tab or minimised window.
+  On return the runtime withdraws the look-ahead envelope until a current one arrives and
+  asks for tile changes and route checks at once; the widget reads Unknown if its data aged
+  out meanwhile, even when its timer fired late. With the panel open they made 139 requests
+  in 65 s hidden.
+- UKC tiles follow the wave allowance and the water level also without a Signal K stream: the
+  runtime asks the new `GET /tiles/ukc/changes` which tiles changed class, every 15 s and
+  after each 1 cm water-level move. A wave height change left tiles drawn for calmer water,
+  and without a stream the tiles never followed the tide. Freeboard now fetches only the tiles
+  whose classes changed: 2 tile fetches a minute instead of 108 with the tide rising 2 mm/s.
+  When that list does not answer, every tile is fetched again on a 1 cm fall or a 10 cm rise.

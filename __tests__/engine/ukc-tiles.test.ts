@@ -3,7 +3,7 @@ import { tileAt, tileKey, tileRect, toMercator, fromMercator } from "../../src/f
 import type { Thresholds } from "../../src/engine/lookahead";
 import { DEFAULT_LOOKAHEAD } from "../../src/engine/lookahead";
 import type { UkcTileInput } from "../../src/engine/ukc-tiles";
-import { classify, ukcTile } from "../../src/engine/ukc-tiles";
+import { classify, ukcTile, ukcTileWithRange } from "../../src/engine/ukc-tiles";
 import { FLAGS, NO_DATA } from "../../src/spatial/node-store";
 import { footprintGeom, minDepthOver } from "../../src/spatial/pyramid";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
@@ -247,5 +247,78 @@ describe("UKC classes", () => {
       ),
       { numRuns: 150 }
     );
+  });
+});
+
+describe("the threshold range of a tile", () => {
+  const fixture = fixtureIndex().pyramid;
+  const adjusted = buildPyramid(basin([22.0, 60.0, 22.4, 60.2], 7), { minZoom: 12, leafZoom: 18 });
+  const spot = tileOf(adjusted.adjustZoom, [22.2, 60.1]);
+  adjusted.adjustments.set(tileKey(spot.z, spot.x, spot.y), {
+    dMin: 3,
+    sigmaD: 0.01,
+    sigmaP: 0,
+    flags: FLAGS.LIVECHART_ADJUSTED,
+    cellRef: -1
+  });
+  const variants: Record<string, (t: number) => UkcTileInput> = {
+    plain: (t) => input(t),
+    degraded: (t) => input(t, true),
+    // A warn level above one half takes the bound branch past the threshold.
+    high: (t) => ({ ...input(t), thresholds: { alert: 0.5, warn: 0.62, alarm: 0.9 } }),
+    exact: (t) => ({ ...input(t), sigmaExtra: 0 })
+  };
+
+  test("a tile drawn at any threshold in its range is the same tile", () => {
+    fc.assert(
+      fc.property(
+        fc.constantFrom(...Object.keys(variants)),
+        fc.boolean(),
+        fc.integer({ min: 11, max: 18 }),
+        fc.double({ min: 0, max: 1, noNaN: true }),
+        fc.double({ min: 0, max: 1, noNaN: true }),
+        evenly(0, 12),
+        fc.double({ min: 0, max: 1, noNaN: true }),
+        (variant, useFixture, z, u, w, threshold, frac) => {
+          const make = variants[variant] as (t: number) => UkcTileInput;
+          const store = useFixture ? fixture : adjusted;
+          const lonLat: [number, number] = useFixture
+            ? [22.001 + 0.036 * u, 60.001 + 0.018 * w]
+            : [22.19 + 0.02 * u, 60.09 + 0.02 * w];
+          const t = tileOf(z, lonLat);
+          const { rects, range } = ukcTileWithRange(store, t.z, t.x, t.y, EXTENT, make(threshold));
+          expect(rects).toEqual(ukcTile(store, t.z, t.x, t.y, EXTENT, make(threshold)));
+          expect(range.lo).toBeLessThanOrEqual(threshold);
+          expect(range.hi).toBeGreaterThanOrEqual(threshold);
+          const lo = Math.max(range.lo, threshold - 20);
+          const hi = Math.min(range.hi, threshold + 20);
+          for (const at of [lo, hi, lo + (hi - lo) * frac]) {
+            expect(ukcTile(store, t.z, t.x, t.y, EXTENT, make(at))).toEqual(rects);
+          }
+        }
+      ),
+      { numRuns: 300 }
+    );
+  });
+
+  test("the range ends a micrometre short of where a cell changes class", () => {
+    const store = buildPyramid(basin([22.0, 60.0, 22.4, 60.2], 7), { minZoom: 12, leafZoom: 16 });
+    const t = tileOf(16, [22.2, 60.1]);
+    const { rects, range } = ukcTileWithRange(store, t.z, t.x, t.y, EXTENT, input(5));
+    expect(rects.map((r) => r.class)).toEqual(["clear"]);
+    expect(range.lo).toBe(-Infinity);
+    const beyond = ukcTile(store, t.z, t.x, t.y, EXTENT, input(range.hi + 2e-6));
+    expect(beyond.map((r) => r.class)).toEqual(["caution"]);
+    const next = ukcTileWithRange(store, t.z, t.x, t.y, EXTENT, input(range.hi + 2e-6)).range;
+    expect(next.lo).toBeGreaterThan(range.hi);
+    expect(next.lo - range.hi).toBeLessThan(1e-5);
+  });
+
+  test("a tile with only land and no data holds at every threshold", () => {
+    const t = tileOf(14, [25, 61]);
+    expect(ukcTileWithRange(fixture, t.z, t.x, t.y, EXTENT, input(3)).range).toEqual({
+      lo: -Infinity,
+      hi: Infinity
+    });
   });
 });

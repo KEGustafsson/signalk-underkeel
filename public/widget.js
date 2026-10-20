@@ -18,16 +18,23 @@ function armStale(ms) {
   }, ms);
 }
 
+/** What the page shows now: three values arrive each second, mostly unchanged. */
+const shown = {};
+
 function render() {
-  const s = UKC.stateStyle(view.stale ? "unknown" : view.state);
-  document.body.style.background = s.colour;
-  document.getElementById("state").textContent = `UKC ${s.label}`;
-  const tts = view.stale ? "" : UKC.timeToShoal(view.timeToShoal);
-  document.getElementById("line").textContent =
-    `min ${UKC.depth(view.stale ? null : view.clearance, unit)}` + (tts ? ` · shoal ${tts}` : "");
-  document.getElementById("reason").textContent = view.stale
-    ? "no data from the under-keel plugin"
-    : UKC.reason(view.message);
+  if (document.hidden) {
+    return;
+  }
+  const next = UKC.widgetView(view, unit, Date.now());
+  if (next.colour !== shown.colour) {
+    document.body.style.background = next.colour;
+  }
+  for (const id of ["state", "line", "reason"]) {
+    if (next[id] !== shown[id]) {
+      document.getElementById(id).textContent = next[id];
+    }
+  }
+  Object.assign(shown, next);
 }
 
 if (client.hasCapability("units")) {
@@ -60,6 +67,7 @@ if (!client.hasCapability("signalk.stream")) {
       }
       view[KEYS[ev.path]] = ev.value;
       view.stale = false;
+      view.freshUntil = Date.now() + left;
       armStale(left);
       render();
     }
@@ -71,4 +79,6 @@ document.body.addEventListener("click", () => {
     void client.call("ui.togglePanel", { panel: "details" });
   }
 });
+// Values that arrived while hidden were not drawn, and an aged-out reading reads Unknown on return.
+document.addEventListener("visibilitychange", render);
 render();

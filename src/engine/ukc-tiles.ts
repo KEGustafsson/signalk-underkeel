@@ -1,6 +1,6 @@
 import type { Rect } from "../foundation/geo";
 import { rectGap, tileRect, tileSize } from "../foundation/geo";
-import { probabilityBelowZero } from "../foundation/stats";
+import { normalCdf, probabilityBelowZero } from "../foundation/stats";
 import { reachersOf } from "../spatial/chart-position";
 import type { NodeStore, NodeValues } from "../spatial/node-store";
 import { FLAGS } from "../spatial/node-store";
@@ -43,36 +43,131 @@ export const DETAIL_ZOOMS = 6;
 const UNVERIFIED = FLAGS.NO_COVERAGE | FLAGS.UNASSESSED | FLAGS.NO_DEPTH | FLAGS.NOT_FOR_NAVIGATION;
 
 /**
+ * Thresholds, metres, at all of which a tile is drawn the same, both ends
+ * included; the other inputs held. A tile drawn at a threshold inside the
+ * range is byte for byte the tile drawn at any other inside it.
+ */
+export interface ThresholdRange {
+  lo: number;
+  hi: number;
+}
+
+/**
  * The class of one cell, or undefined outside every chart. A bound cell
  * (`bound`) whose shallowest part is land or a gap may also hold charted
  * water, so it is drawn as danger or unverified, never hidden.
  */
 export function classify(v: NodeValues, input: UkcTileInput, bound = false): UkcClass | undefined {
+  return classed(v, input, bound, undefined);
+}
+
+/**
+ * P rises with the threshold (invariant 2), so one class holds from the
+ * threshold where P crosses a level to the next such threshold. `range`,
+ * when given, is narrowed to those around the input's.
+ */
+function classed(
+  v: NodeValues,
+  input: UkcTileInput,
+  bound: boolean,
+  range: ThresholdRange | undefined
+): UkcClass | undefined {
   if (v.dMin === -Infinity) {
     if (bound) {
       return v.flags & FLAGS.NO_COVERAGE ? "unverified" : "danger";
     }
     return v.flags & FLAGS.NO_COVERAGE ? undefined : "land";
   }
+  const t = input.threshold;
   // Past the threshold a wider σ lowers P, so a bound's widest σ no longer
   // bounds its children's P from above: some child is at P ≥ 0.5.
-  if (bound && v.dMin <= input.threshold) {
+  if (bound && v.dMin <= t) {
+    if (range) {
+      range.lo = Math.max(range.lo, v.dMin);
+    }
     return "danger";
   }
-  const risk = probabilityBelowZero(
-    v.dMin - input.threshold,
-    Math.hypot(v.sigmaD, input.sigmaExtra)
-  );
-  if (risk >= input.thresholds.warn) {
+  const sigma = Math.hypot(v.sigmaD, input.sigmaExtra);
+  const risk = probabilityBelowZero(v.dMin - t, sigma);
+  const { warn, alert } = input.thresholds;
+  if (range) {
+    narrowAll(range, v, bound, input, sigma, risk);
+  }
+  if (risk >= warn) {
     return "danger";
   }
   if (v.flags & UNVERIFIED) {
     return "unverified";
   }
-  if (risk >= input.thresholds.alert) {
+  if (risk >= alert) {
     return "caution";
   }
   return input.degraded ? "unverified" : "clear";
+}
+
+/** The levels this cell's class changes at: warn, alert unless unverified, and dMin for a bound. */
+function narrowAll(
+  range: ThresholdRange,
+  v: NodeValues,
+  bound: boolean,
+  input: UkcTileInput,
+  sigma: number,
+  risk: number
+): void {
+  const t = input.threshold;
+  const { warn, alert } = input.thresholds;
+  narrow(range, v.dMin, sigma, t, risk, warn);
+  if (!(v.flags & UNVERIFIED)) {
+    narrow(range, v.dMin, sigma, t, risk, alert);
+  }
+  if (bound && risk < warn) {
+    range.hi = Math.min(range.hi, Math.max(t, v.dMin - SLACK));
+  }
+}
+
+/** Metres kept clear of a threshold where P crosses a level: far beyond its rounding error. */
+const SLACK = 1e-6;
+
+const CROSSINGS = new Map<number, number>();
+
+/** The least x with normalCdf(x) ≥ p, searched on normalCdf itself rather than an inverse. */
+function crossing(p: number): number {
+  let x = CROSSINGS.get(p);
+  if (x === undefined) {
+    let lo = -40;
+    let hi = 40;
+    for (let mid = (lo + hi) / 2; mid !== lo && mid !== hi; mid = (lo + hi) / 2) {
+      if (normalCdf(mid) >= p) {
+        hi = mid;
+      } else {
+        lo = mid;
+      }
+    }
+    x = hi;
+    CROSSINGS.set(p, x);
+  }
+  return x;
+}
+
+/**
+ * Narrows `range` to the side of level `p` that threshold `t` is on. The
+ * crossing is dMin + x·σ; with σ 0, P steps from 0 to 1 at dMin. A side
+ * reaches at least to `t`, since P is monotonic in the threshold.
+ */
+function narrow(
+  range: ThresholdRange,
+  dMin: number,
+  sigma: number,
+  t: number,
+  risk: number,
+  p: number
+): void {
+  const at = dMin + (sigma > 0 ? crossing(p) * sigma : 0);
+  if (risk >= p) {
+    range.lo = Math.max(range.lo, Math.min(t, at + SLACK));
+  } else {
+    range.hi = Math.min(range.hi, Math.max(t, at - SLACK));
+  }
 }
 
 /** Severity of a class reaching a cell, as the look-ahead and query order them. */
@@ -93,14 +188,15 @@ function reachGrid(
   store: NodeStore,
   tile: Rect,
   z: number,
-  input: UkcTileInput
+  input: UkcTileInput,
+  range: ThresholdRange | undefined
 ): Uint8Array | undefined {
   const reachers = reachersOf(store, tile, DEFAULT_BUILD.k, z + DETAIL_ZOOMS);
   let grid: Uint8Array | undefined;
   const slot = tileSize(z) / SLOTS;
   const clamp = (v: number): number => Math.max(0, Math.min(SLOTS - 1, Math.floor(v)));
   for (const r of reachers) {
-    const cls = classify(r.values, input, r.bound);
+    const cls = classed(r.values, input, r.bound, range);
     const rank = cls === undefined ? 0 : cls === "land" ? RANK.danger : RANK[cls];
     if (rank === 0) {
       continue;
@@ -184,10 +280,35 @@ export function ukcTile(
   extent: number,
   input: UkcTileInput
 ): UkcRect[] {
-  const grid = reachGrid(store, tileRect(z, x, y), z, input);
+  return drawTile(store, z, x, y, extent, input, undefined);
+}
+
+/** ukcTile and the thresholds over which it is drawn the same. */
+export function ukcTileWithRange(
+  store: NodeStore,
+  z: number,
+  x: number,
+  y: number,
+  extent: number,
+  input: UkcTileInput
+): { rects: UkcRect[]; range: ThresholdRange } {
+  const range = { lo: -Infinity, hi: Infinity };
+  return { rects: drawTile(store, z, x, y, extent, input, range), range };
+}
+
+function drawTile(
+  store: NodeStore,
+  z: number,
+  x: number,
+  y: number,
+  extent: number,
+  input: UkcTileInput,
+  range: ThresholdRange | undefined
+): UkcRect[] {
+  const grid = reachGrid(store, tileRect(z, x, y), z, input, range);
   const rects: UkcRect[] = [];
   for (const c of cellsInTile(store, z, x, y, z + DETAIL_ZOOMS)) {
-    const cls = classify(c.values, input, c.bound);
+    const cls = classed(c.values, input, c.bound, range);
     if (cls !== undefined) {
       rects.push(...cellRects(c, cls, z, x, y, extent, grid));
     }

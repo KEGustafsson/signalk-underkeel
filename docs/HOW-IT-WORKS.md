@@ -517,6 +517,14 @@ of that cell's assessed survey, 50 m at CATZOC B and 500 m at C, the reach a rou
 The style draws `clear` at 25 % opacity and the other classes at 55 %, so over the chart's blue
 water `danger` looks purple-red and `caution` looks grey-tan.
 
+A tile's classes stay the same while the threshold depth moves within a range: each cell
+changes class only where its P crosses the alert or warn level. The plugin records that range
+for every tile it serves, and `GET /tiles/ukc/changes` lists the tiles whose range the current
+water level, draft and wave allowance have left, or in which an own sounding changed a cell.
+The background runtime asks every 15 s and after each 1 cm water-level move, and Freeboard
+fetches only the tiles listed. With the tide rising 2 mm/s that is 2 tile fetches a minute in
+a z14 view instead of 108.
+
 `GET /ukc-style.json` is a MapLibre style for these tiles. The plugin also registers a
 `plotterExtensions` resource that declares the overlay, so a plotter that supports the Plotter
 Extensions API can offer it as a layer.

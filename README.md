@@ -352,6 +352,7 @@ deleting acknowledgements needs a readwrite user. Errors are `{ "errors": [strin
 | `GET /livechart/discrepancies`                | living-chart cells shallower than charted                                                         |
 | `GET /livechart/csb.geojson`                  | own soundings in the IHO CSB format                                                               |
 | `GET /tiles/ukc/{z}/{x}/{y}.pbf`              | Mapbox vector tiles from zoom 11, one `ukc` layer, `Cache-Control: no-cache`, gzipped on request  |
+| `GET /tiles/ukc/changes?epoch=&rev=`          | the tiles served since that cursor whose classes changed, or `all`; a new cursor                  |
 | `GET /ukc-style.json`                         | a MapLibre style for the tiles                                                                    |
 
 A route-check body carries `route` (a GeoJSON LineString) or `routeRef`

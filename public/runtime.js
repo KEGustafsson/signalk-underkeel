@@ -38,6 +38,8 @@ let generation = 0;
 let engineState;
 let lastRev;
 let watchdog;
+/** When the last envelopeRev stops being current. */
+let revFreshUntil = 0;
 let fetching = false;
 /** A bump that arrives mid-fetch may be newer than the reply in flight: fetch again after it. */
 let refreshQueued = false;
@@ -51,6 +53,9 @@ function clearEnvelope() {
 }
 
 async function refreshEnvelope() {
+  if (document.hidden) {
+    return;
+  }
   if (fetching) {
     refreshQueued = true;
     return;
@@ -92,7 +97,7 @@ onPath["navigation.underKeel.state"] = (state) => {
   if (engineState === "off" && state !== "off") {
     onRestart();
   } else if (engineState !== undefined && isDown(engineState) !== isDown(state)) {
-    refreshTiles();
+    refreshTiles("all");
   }
   engineState = state;
   if (isDown(state)) {
@@ -107,6 +112,7 @@ onPath["navigation.underKeel.envelopeRev"] = (rev, left) => {
     onRestart();
   }
   lastRev = rev;
+  revFreshUntil = Date.now() + left;
   clearTimeout(watchdog);
   watchdog = setTimeout(clearEnvelope, left);
   if (isDown(engineState)) {
@@ -116,55 +122,89 @@ onPath["navigation.underKeel.envelopeRev"] = (rev, left) => {
   }
 };
 
-// ---- UKC tiles: classed at fetch time, so fetched again when what classed them changes ----
-const LEVEL_STEP_M = 0.01;
-const WATER_SOURCE_EVERY_MS = 60000;
-let levelSeen = false;
-let tileLevel;
-let tileWaterSource;
+// ---- UKC tiles: classed at fetch time; the plugin lists the tiles whose classes changed ----
+/** The list also covers wave height and a fallback water level, which the stream does not show. */
+const TILE_POLL_MS = 15000;
+const tiles = UKC.tileRefresh();
+let waterLevel;
+let tilePolling = false;
+let tilePollQueued = false;
 
-function refreshTiles() {
-  if (!has("overlays.data")) {
+function refreshTiles(which) {
+  if (!which || which === "poll" || !has("overlays.data")) {
     return;
   }
-  client
-    .call("overlay.refresh", { overlayId: "ukc", source: "ukc" })
-    .catch((err) => console.warn("under-keel ukc tiles", err));
+  const params = { overlayId: "ukc", source: "ukc", ...(which === "all" ? {} : { tiles: which }) };
+  client.call("overlay.refresh", params).catch((err) => console.warn("under-keel ukc tiles", err));
 }
 
-onPath["navigation.underKeel.waterLevel"] = (h) => {
-  if (!levelSeen) {
-    levelSeen = true;
-    tileLevel = h;
-  } else if (UKC.levelMoved(tileLevel, h, LEVEL_STEP_M)) {
-    tileLevel = h;
-    refreshTiles();
+function onTileLevel(h, sourceKey) {
+  const which = tiles.level(h, sourceKey);
+  if (which === "poll") {
+    void pollTiles();
+  } else {
+    refreshTiles(which);
   }
-};
+}
 
-/** A fallback can keep the same height while it marks clear water unverified; only /status shows it. */
-async function checkWaterSource() {
+async function pollTiles() {
+  if (!has("overlays.data") || document.hidden) {
+    return;
+  }
+  if (tilePolling) {
+    tilePollQueued = true;
+    return;
+  }
+  tilePolling = true;
+  const h = waterLevel;
   try {
-    const res = await fetch(`${UKC.API}/status`, {
+    const res = await fetch(`${UKC.API}/tiles/ukc/changes${tiles.query()}`, {
       credentials: "same-origin",
+      cache: "no-store",
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
     });
     if (!res.ok) {
-      return;
+      throw new Error(`HTTP ${res.status}`);
     }
-    const key = UKC.waterSourceKey(await res.json());
-    if (tileWaterSource !== undefined && key !== tileWaterSource) {
-      refreshTiles();
+    refreshTiles(tiles.polled(await res.json(), h));
+  } catch (err) {
+    console.warn("under-keel ukc tile changes", err);
+    refreshTiles(tiles.lost());
+    await levelFromStatus();
+  } finally {
+    tilePolling = false;
+    if (tilePollQueued) {
+      tilePollQueued = false;
+      void pollTiles();
     }
-    tileWaterSource = key;
+  }
+}
+
+/** Without the change list the level rule decides, from /status when there is no stream. */
+async function levelFromStatus() {
+  try {
+    const res = await fetch(`${UKC.API}/status?summary`, {
+      credentials: "same-origin",
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
+    });
+    if (res.ok) {
+      const status = await res.json();
+      const applied = status.waterLevel && status.waterLevel.applied;
+      onTileLevel(applied ? applied.h : null, UKC.waterSourceKey(status));
+    }
   } catch (err) {
     console.warn("under-keel status", err);
   }
 }
 
+onPath["navigation.underKeel.waterLevel"] = (h) => {
+  waterLevel = h;
+  onTileLevel(h);
+};
+
 if (has("overlays.data")) {
-  void checkWaterSource();
-  setInterval(() => void checkWaterSource(), WATER_SOURCE_EVERY_MS);
+  void pollTiles();
+  setInterval(() => void pollTiles(), TILE_POLL_MS);
 }
 
 // ---- route check: every visible route, again after each edit ----
@@ -179,14 +219,70 @@ function nextSeq(routeId) {
   return n;
 }
 
-/** The panel reads the results from state, so they go there first, whatever the overlay does. */
+/**
+ * The panel reads the results from state, so they go there first, whatever the overlay does.
+ * The host may persist every state write, so state gets the compact form, once per change.
+ */
+let publishedState;
+let publishedLegs;
+let publishTimer;
+const PUBLISH_DELAY_MS = 250;
+
 async function publish() {
-  await client.state.set({ routeCheck: Object.fromEntries(results) }, "extension");
-  const features = [...results].flatMap(([id, r]) => UKC.legFeatures(id, r.legs));
-  await setOverlay("routecheck", "legs", { type: "FeatureCollection", features });
+  clearTimeout(publishTimer);
+  const routeCheck = Object.fromEntries([...results].map(([id, r]) => [id, UKC.compactResult(r)]));
+  const state = JSON.stringify(routeCheck);
+  if (state !== publishedState) {
+    await client.state.set({ routeCheck }, "extension");
+    publishedState = state;
+  }
+  const legs = {
+    type: "FeatureCollection",
+    features: [...results].flatMap(([id, r]) => UKC.legFeatures(id, r.legs))
+  };
+  const json = JSON.stringify(legs);
+  if (json !== publishedLegs) {
+    publishedLegs = (await setOverlay("routecheck", "legs", legs)) ? json : undefined;
+  }
+}
+
+/** Edits and single checks arrive one by one: write them together once they pause. */
+function publishSoon() {
+  clearTimeout(publishTimer);
+  publishTimer = setTimeout(() => void publish(), PUBLISH_DELAY_MS);
+}
+
+/** A stalled reply would hold one of the browser's few connections to the server. */
+const ROUTE_CHECK_TIMEOUT_MS = 30000;
+const checking = UKC.oneAtATime();
+/** A busy server answers 503 with Retry-After; the old result ages out meanwhile. */
+const BUSY_RETRIES = 5;
+
+/** POST /route-check, again after Retry-After while the server is busy; null once superseded. */
+async function postCheck(line, current) {
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(`${UKC.API}/route-check`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ route: line }),
+      signal: AbortSignal.timeout(ROUTE_CHECK_TIMEOUT_MS)
+    });
+    const wait = res.status === 503 ? UKC.retryAfterMs(res.headers.get("retry-after")) : null;
+    if (wait === null || attempt >= BUSY_RETRIES) {
+      return res;
+    }
+    await new Promise((resolve) => setTimeout(resolve, wait));
+    if (!current()) {
+      return null;
+    }
+  }
 }
 
 async function check(routeId) {
+  if (!checking.start(routeId)) {
+    return;
+  }
   const n = nextSeq(routeId);
   const current = () => seq.get(routeId) === n;
   try {
@@ -198,22 +294,9 @@ async function check(routeId) {
     if (!line) {
       results.delete(routeId);
     } else {
-      const res = await fetch(`${UKC.API}/route-check`, {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ route: line })
-      });
-      // The plugin queues heavy requests and refuses the overflow; the earlier
-      // result keeps its age meanwhile, so it still reads out of date in time.
-      // A 503 without Retry-After (no chart index yet, plugin stopped) is shown, not retried.
-      const retryAfter = res.headers.get("retry-after");
-      if (res.status === 503 && retryAfter !== null && current()) {
-        schedule(routeId, 1000 * (Number(retryAfter) || 2));
-        return;
-      }
-      const body = await res.json();
-      if (!current()) {
+      const res = await postCheck(line, current);
+      const body = res && (await res.json());
+      if (!res || !current()) {
         return;
       }
       results.set(
@@ -234,29 +317,50 @@ async function check(routeId) {
       return;
     }
     const prev = results.get(routeId);
+    const why =
+      err && err.name === "TimeoutError"
+        ? `no answer within ${ROUTE_CHECK_TIMEOUT_MS / 1000} s`
+        : err && err.message
+          ? err.message
+          : String(err);
     results.set(routeId, {
       name: prev && prev.name,
       rev: prev && prev.rev,
       legs: [],
-      error: `route check failed: ${err && err.message ? err.message : String(err)}`
+      error: `route check failed: ${why}`
     });
     console.warn("under-keel route check", err);
+  } finally {
+    if (checking.end(routeId)) {
+      schedule(routeId);
+    }
   }
-  await publish();
 }
 
 /** Edits come in bursts while the user drags a point: check once they settle. */
-function schedule(routeId, delay = 1000) {
+function schedule(routeId) {
   clearTimeout(timers.get(routeId));
-  timers.set(routeId, setTimeout(() => void check(routeId), delay));
+  timers.set(routeId, setTimeout(() => void check(routeId).then(publishSoon), 1000));
 }
 
+/** One route at a time: the server queues at most five heavy requests and refuses more. */
 async function checkAll() {
+  if (!checking.start(checkAll)) {
+    return;
+  }
   try {
     const { routes } = await client.call("route.list");
-    routes.forEach((r) => schedule(r.routeId));
+    routes.forEach((r) => clearTimeout(timers.get(r.routeId)));
+    for (const r of routes) {
+      await check(r.routeId);
+    }
+    await publish();
   } catch (err) {
     console.warn("under-keel route list", err);
+  } finally {
+    if (checking.end(checkAll)) {
+      void checkAll();
+    }
   }
 }
 
@@ -267,7 +371,7 @@ async function checkAll() {
 const RECHECK_MS = 60000;
 
 function onRestart() {
-  refreshTiles();
+  refreshTiles("all");
   if (has("routes")) {
     void checkAll();
   }
@@ -282,7 +386,7 @@ if (has("routes")) {
       clearTimeout(timers.get(params.routeId));
       nextSeq(params.routeId);
       results.delete(params.routeId);
-      void publish();
+      publishSoon();
     } else if (params && params.routeId) {
       // The old legs describe the old geometry: drop them until the check comes back.
       nextSeq(params.routeId);
@@ -293,13 +397,17 @@ if (has("routes")) {
         legs: [],
         error: "checking the edited route"
       });
-      void publish();
+      publishSoon();
       schedule(params.routeId);
     }
   });
   await client.subscribe(["ukc.checkRoutes"], () => void checkAll());
-  await checkAll();
-  setInterval(() => void checkAll(), RECHECK_MS);
+  void checkAll();
+  setInterval(() => {
+    if (!document.hidden) {
+      void checkAll();
+    }
+  }, RECHECK_MS);
 }
 
 if (has("signalk.stream")) {
@@ -313,3 +421,22 @@ if (has("signalk.stream")) {
   setInterval(() => void refreshEnvelope(), POLL_MS);
   void refreshEnvelope();
 }
+
+/**
+ * A hidden page fetches nothing. Back on screen, the envelope shown is
+ * withdrawn until a current one arrives, and tiles and routes are asked for
+ * at once.
+ */
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    return;
+  }
+  clearEnvelope();
+  if (!has("signalk.stream") || (!isDown(engineState) && Date.now() < revFreshUntil)) {
+    void refreshEnvelope();
+  }
+  void pollTiles();
+  if (has("routes")) {
+    void checkAll();
+  }
+});
