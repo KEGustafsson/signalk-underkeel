@@ -62,6 +62,11 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Fixed
 
+- A saved chart index whose files cannot be read or parsed is rebuilt from the configured
+  cells at start, with the read error in the index reason. An index left empty by a power cut
+  during a save kept the engine `off` with "chart index failed: Unexpected end of JSON input"
+  on every later start until **Rebuild index at start** was set. Index files and their
+  directories are now fsynced before and after the rename that commits them.
 - An index build stopped mid-write, by an abort or a crash, no longer leaves its half-written
   staging directory beside the chart index for good: an aborted WFS build removes its own once
   the worker has exited, and loading an index removes any staging directory left by a

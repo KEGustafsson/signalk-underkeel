@@ -325,6 +325,10 @@ CATZOC C sounding counts up to 1 km from its position.
   cell reference, tile address, split bit). It is loaded into typed arrays at start; memory
   mapping per zoom level is the follow-up if the full Finnish coast exceeds the RAM budget.
 - `cells.json` (provenance) and `hazards.json` (exact hazard geometry) sit beside it.
+- A save writes and fsyncs the three files and their staging directory, renames the staging
+  directory into place and fsyncs the parent. A saved index that fails to read or parse at
+  start (a power cut can still leave a file short) is rebuilt from the configured cells, with
+  the read error in the index reason; without cells the read error is the reason.
 - The same data is also exported as UKC tiles (§4.10).
 
 **Invariant, tested by property-based tests:** for any polygon,

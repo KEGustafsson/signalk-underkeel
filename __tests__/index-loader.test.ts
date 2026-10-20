@@ -138,3 +138,40 @@ describe("saved index against the cells directory", () => {
     expect(r.reason).toBeUndefined();
   });
 });
+
+describe("a saved index that cannot be read", () => {
+  const indexFile = (name: string): string => path.join(dataDir, "index", name);
+  const halve = (name: string): void =>
+    fs.truncateSync(indexFile(name), Math.floor(fs.statSync(indexFile(name)).size / 2));
+
+  test.each([
+    ["an empty cells.json", () => fs.truncateSync(indexFile("cells.json"), 0)],
+    ["a half-written pyramid.bin", () => halve("pyramid.bin")],
+    ["a half-written hazards.json", () => halve("hazards.json")],
+    [
+      "an empty cells.json and pyramid.bin",
+      () => ["cells.json", "pyramid.bin"].forEach((f) => fs.truncateSync(indexFile(f), 0))
+    ]
+  ])("%s is rebuilt from the cells, naming the read error", (_what, tear) => {
+    copyCell("FI4SYNTH");
+    load();
+    tear();
+    const r = load();
+    expect(r.built).toBe(true);
+    expect(names(r)).toEqual(["FI4SYNTH"]);
+    expect(r.reason).toMatch(/rebuilt the index: the saved one could not be read \(.+\)/);
+    // The next start loads the rebuilt index again.
+    const again = load();
+    expect(again.built).toBe(false);
+    expect(again.reason).toBeUndefined();
+  });
+
+  test("without cells to rebuild from, the read error is the reason", () => {
+    copyCell("FI4SYNTH");
+    load();
+    halve("pyramid.bin");
+    const r = loadOrBuildIndex(parseConfig({ leafZoom: 16 }), dataDir);
+    expect(r.index).toBeUndefined();
+    expect(r.reason).toMatch(/chart index failed: .*truncated/);
+  });
+});

@@ -92,7 +92,8 @@ The index is built at the first start and saved under the plugin data directory.
 load the saved index unless a cell directory was added or removed or its `DSID` edition or
 update changed; then the index is rebuilt and the index reason in `/status` names the cells.
 **Rebuild index at start** rebuilds it on every start. An index saved by an older plugin version
-whose index format differs is rebuilt too.
+whose index format differs is rebuilt too, and so is one whose files cannot be read, as a power
+cut during a save can leave them; the reason then names the read error.
 
 The status line at the top of the plugin's page shows the engine state and its reason, for
 example `Monitoring: unknown — position stale`.

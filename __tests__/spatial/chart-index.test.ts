@@ -214,3 +214,43 @@ describe("hazard tree", () => {
     expect(new HazardIndex([]).near(geom, 1000)).toEqual([]);
   });
 });
+
+describe("durable save", () => {
+  test("every file and both directories are flushed to disk, the staging before its rename", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-fsync-"));
+    const real = { open: fs.openSync, fsync: fs.fsyncSync, rename: fs.renameSync };
+    const events: string[] = [];
+    const fds = new Map<number, string>();
+    const name = (p: fs.PathLike) => path.relative(dir, String(p)).replace(/\.tmp-[^/]+/, ".tmp");
+    const open = jest.spyOn(fs, "openSync").mockImplementation(((
+      p: fs.PathLike,
+      flags: fs.OpenMode
+    ) => {
+      const fd = real.open(p, flags);
+      fds.set(fd, name(p));
+      return fd;
+    }) as typeof fs.openSync);
+    const fsync = jest.spyOn(fs, "fsyncSync").mockImplementation((fd: number) => {
+      events.push(`fsync ${fds.get(fd) ?? fd}`);
+      real.fsync(fd);
+    });
+    const rename = jest.spyOn(fs, "renameSync").mockImplementation((from, to) => {
+      events.push(`rename ${name(from)}`);
+      real.rename(from, to);
+    });
+    try {
+      saveChartIndex(path.join(dir, "index"), fixtureIndex());
+      expect(events).toEqual([
+        "fsync index.tmp/cells.json",
+        "fsync index.tmp/pyramid.bin",
+        "fsync index.tmp/hazards.json",
+        "fsync index.tmp",
+        "rename index.tmp",
+        "fsync "
+      ]);
+    } finally {
+      [open, fsync, rename].forEach((s) => s.mockRestore());
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

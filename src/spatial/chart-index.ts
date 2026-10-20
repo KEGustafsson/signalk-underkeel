@@ -56,6 +56,34 @@ interface StoredHazard extends Omit<DepthFeature, "depth"> {
 }
 
 /**
+ * With delayed allocation a power cut after a rename can leave the renamed
+ * directory holding empty files, so each file is on disk before the rename.
+ */
+function writeDurable(file: string, data: string | Buffer): void {
+  const fd = fs.openSync(file, "w");
+  try {
+    fs.writeFileSync(fd, data);
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/** Makes a rename or a new entry in `dir` survive a power cut. */
+function syncDirectory(dir: string): void {
+  // Windows cannot open a directory; NTFS journals the rename itself.
+  if (process.platform === "win32") {
+    return;
+  }
+  const fd = fs.openSync(dir, "r");
+  try {
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
  * Writes the three index files into a new staging directory beside `dir`
  * and returns its path; `commitChartIndex` swaps it in.
  */
@@ -65,13 +93,14 @@ export function stageChartIndex(dir: string, index: ChartIndex): string {
   const suffix = `${process.pid}-${threadId}-${randomBytes(4).toString("hex")}`;
   const staging = `${dir}.tmp-${suffix}`;
   fs.mkdirSync(staging, { recursive: true });
-  fs.writeFileSync(path.join(staging, FILES.cells), JSON.stringify(index.catalogue, null, 2));
-  fs.writeFileSync(path.join(staging, FILES.pyramid), serializePyramid(index.pyramid));
+  writeDurable(path.join(staging, FILES.cells), JSON.stringify(index.catalogue, null, 2));
+  writeDurable(path.join(staging, FILES.pyramid), serializePyramid(index.pyramid));
   const hazards: StoredHazard[] = index.hazards.features.map((f) => ({
     ...f,
     depth: Number.isFinite(f.depth) ? f.depth : null
   }));
-  fs.writeFileSync(path.join(staging, FILES.hazards), JSON.stringify(hazards));
+  writeDurable(path.join(staging, FILES.hazards), JSON.stringify(hazards));
+  syncDirectory(staging);
   return staging;
 }
 
@@ -87,6 +116,7 @@ export function commitChartIndex(dir: string, staging: string): void {
     fs.renameSync(dir, previous);
   }
   fs.renameSync(staging, dir);
+  syncDirectory(path.dirname(dir));
   if (hadIndex) {
     fs.rmSync(previous, { recursive: true, force: true });
   }

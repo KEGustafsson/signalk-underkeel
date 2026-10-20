@@ -111,8 +111,20 @@ export function loadOrBuildIndex(
   }
 }
 
+/** The saved catalogue, or why it could not be read; undefined when no index is saved. */
+function readSaved(indexDir: string): { cells?: CellInfo[]; error?: Error } {
+  if (!exists(indexDir)) {
+    return {};
+  }
+  try {
+    return { cells: savedCells(indexDir) };
+  } catch (err) {
+    return { error: err as Error };
+  }
+}
+
 function loadOrBuild(cfg: PluginConfig, indexDir: string, extraDirs: string[]): IndexLoad {
-  const saved = exists(indexDir) ? savedCells(indexDir) : undefined;
+  const { cells: saved, error } = readSaved(indexDir);
   const { stale, mismatch } = savedMatches(cfg, indexDir, saved, extraDirs);
   // An unmounted or moved cells directory says nothing about the saved index's cells.
   if (saved && cfg.cellsDir && !fs.existsSync(cfg.cellsDir)) {
@@ -122,13 +134,32 @@ function loadOrBuild(cfg: PluginConfig, indexDir: string, extraDirs: string[]): 
   const change = cellsChange(cfg.cellsDir, saved, scan.dirs);
   const notes = [...(change ? [change] : []), ...skippedNote(cfg.cellsDir, scan)];
   const sources = Boolean(cfg.cellsDir) || extraDirs.length > 0;
+  // A power cut during a save can leave a file empty or short; the cells are read again.
+  const rebuild = (why: string[]): IndexLoad =>
+    withNotes(build(cfg, indexDir, [...scan.dirs, ...extraDirs]), why);
+  const unreadable = (err: unknown): IndexLoad => {
+    if (!sources) {
+      throw err;
+    }
+    return rebuild([
+      `rebuilt the index: the saved one could not be read (${(err as Error).message})`,
+      ...notes
+    ]);
+  };
+  if (error) {
+    return unreadable(error);
+  }
   if (sources && (cfg.rebuildIndex || mismatch || !saved || change)) {
-    return withNotes(build(cfg, indexDir, [...scan.dirs, ...extraDirs]), notes);
+    return rebuild(notes);
   }
   if (!saved) {
     return { indexDir, built: false, reason: missingReason(cfg, indexDir, false) };
   }
-  return loadSaved(cfg, indexDir, stale, notes);
+  try {
+    return loadSaved(cfg, indexDir, stale, notes);
+  } catch (err) {
+    return unreadable(err);
+  }
 }
 
 function loadSaved(
