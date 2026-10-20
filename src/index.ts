@@ -13,6 +13,7 @@ import type { FetchLike } from "./model/fmi";
 import { AckStore } from "./ack-store";
 import type { PluginState } from "./api-wiring";
 import { apiFor } from "./api-wiring";
+import { RequestQueue } from "./route-service";
 import { stoppedNotification } from "./notifications";
 import { loadZones } from "./zones";
 import { startLivechart } from "./livechart-service";
@@ -30,6 +31,7 @@ const VERSION = (
 ).version;
 
 function stopPlugin(app: ServerAPI, clock: Clock, state: PluginState): void {
+  state.requests.abortAll("plugin stopped");
   state.wfs?.stop();
   state.wfs = undefined;
   // A save that throws must not leave the monitor running or REST answering on the old index.
@@ -70,7 +72,8 @@ export = function underkeel(
 ): Plugin {
   const state: PluginState = {
     zoneErrors: [],
-    stopped: createStatus("off", "plugin not started", new Date(clock.now()))
+    stopped: createStatus("off", "plugin not started", new Date(clock.now())),
+    requests: new RequestQueue()
   };
 
   return {

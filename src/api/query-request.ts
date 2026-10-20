@@ -14,12 +14,15 @@ export const QUERY_LIMITS = {
   maxSpeed: 30,
   /** Polygon bounding-box diagonal, metres. */
   maxPolygonMetres: 50_000,
+  /** Bounding box widened by the buffer, km². */
+  maxAreaKm2: 25,
   /**
-   * Bounding box widened by the buffer, km². The query walks every pyramid
-   * tile under it on the event loop, testing each against every vertex, so
-   * this bounds its cost: a 500-vertex ring over 25 km² takes about 60 ms.
+   * Vertices times that area. The query runs on the event loop and tests
+   * every pyramid tile under the box against every vertex, so this bounds
+   * its cost: at most about 15 ms on a laptop over the Nauvo cells, where a
+   * 499-vertex ring over 25 km² took 0.47 s.
    */
-  maxAreaKm2: 25
+  maxVertexKm2: 150
 } as const;
 
 export interface QueryRequest {
@@ -126,8 +129,13 @@ export function parseQueryRequest(body: unknown): Parsed<QueryRequest> {
   optional("bufferMetres", 0, QUERY_LIMITS.maxBuffer);
   optional("draft", 0.1, QUERY_LIMITS.maxDraft);
   optional("speed", 0, QUERY_LIMITS.maxSpeed);
-  if (errors.length === 0 && areaKm2(out.ring, out.bufferMetres ?? 0) > QUERY_LIMITS.maxAreaKm2) {
+  const km2 = errors.length === 0 ? areaKm2(out.ring, out.bufferMetres ?? 0) : 0;
+  if (km2 > QUERY_LIMITS.maxAreaKm2) {
     errors.push(`geometry and buffer must fit in ${QUERY_LIMITS.maxAreaKm2} km²`);
+  } else if (out.ring.length * km2 > QUERY_LIMITS.maxVertexKm2) {
+    errors.push(
+      `polygon vertices × km² of box and buffer must be at most ${QUERY_LIMITS.maxVertexKm2}: use fewer vertices or a smaller buffer`
+    );
   }
   return errors.length > 0 ? { ok: false, errors } : { ok: true, value: out };
 }

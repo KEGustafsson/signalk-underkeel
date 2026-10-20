@@ -6,6 +6,9 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Added
 
+- `GET /status?summary` leaves out `index.cells` and `waterLevel.datums`, which grow with the
+  cells: 22.7 kB with 300 cells against 237 B. It keeps every field the Freeboard panel and
+  runtime read.
 - Freeboard UI as Plotter Extensions contributions, served from `/plotterext/signalk-underkeel/`:
   a background runtime, look-ahead and route-check data overlays, a status widget, a details
   panel and a toolbar button. Freeboard core is unchanged.
@@ -78,12 +81,44 @@ All notable changes to signalk-underkeel are documented here.
   rises a 1 cm step, at most once per cell every 5 minutes (the latest values after that, and
   on stop), and show the depth floored to 5 cm and σ raised to the next cm. Before, every
   change of the adjustment rewrote the note: 6 240 note writes in a 2 h simulated run.
+- UKC vector tiles of 1 kB or more are sent gzipped with `Content-Encoding: gzip` when the client
+  accepts it, and every tile carries `Vary: Accept-Encoding`; Signal K's compression skips the
+  vector-tile type. A 40-tile z14 viewport over the Nauvo cells went from 279 kB to 52 kB, at
+  0.19 ms of gzip per tile on a laptop.
+- Route checks, repairs, departure windows and `POST /query` run one at a time, with at most four
+  waiting and 503 with `Retry-After` beyond that; a request whose client disconnects, or that is
+  running when the plugin stops, is abandoned at its next pause. Ten concurrent repairs of a
+  100-leg route over the Nauvo cells delayed the event loop by up to 264 ms on a laptop (about
+  1 s on a Raspberry Pi 4) and now by at most 28 ms; abandoned requests ran to the end, holding
+  the old chart index after a stop.
+- Route repair yields to the event loop every 256 cells its search expands and after each
+  simplification check, not only between legs. A search that exhausts its grid around an
+  enclosed goal blocked the server for 105–109 ms on a laptop (about 0.4 s on a Raspberry Pi 4);
+  its longest slice is now 3.4–5.2 ms.
+- Route checks split a leg into pieces of max(1 km, 4 × corridor half-width) instead of 1 km,
+  and check the great circle separately only where it strays more than max(10 m, r/4) from the
+  rhumb line. A 12 km leg at xteLimit 2000 took 129 ms on a laptop and takes 39 ms; four such
+  legs 402 → 115 ms. Corridors at the default width are unchanged in number.
+- The departure window stops checking a departure at its first failing leg, whose status the
+  remaining legs cannot change. On a 100-leg route over the Nauvo cells that fails early,
+  9 991 leg checks and 1.9 s became 91 checks and 54 ms on a laptop, with the same steps.
+- The departure window reuses a leg's `ok` at any higher water level and its `fail` at any lower
+  one, with the same σ, when `probability` is at least 1e-3; below that each level is checked
+  directly. A 60-leg route over a 24 h ramp went from 3 793 leg checks and 347 ms to 2 219 and
+  212 ms on a laptop, with the same steps.
 - The navigation-safety contract schemas in `schemas/navigation-safety/` are licensed under
   Apache-2.0, so other plotters and providers can adopt the contract; the plugin stays EUPL-1.2.
 - The request schemas bound `sector` (1..90°), `ttl` (1 s..30 days), `notificationId` (200
   characters), speeds, drafts, `bufferMetres`, `xteLimit` and `probability` as the plugin
   does, so a request that validates is no longer refused for those fields; size budgets are
   listed in `schemas/navigation-safety/README.md`.
+- The status widget changes the page only when a value it shows changes. With three Signal K
+  values a second and steady readings it made 549 DOM changes and 99 layouts a minute; now
+  none.
+- The extension pages, scripts and styles under `/plotterext/signalk-underkeel/` carry an ETag
+  and are answered 304 when the browser holds them, still with `Cache-Control: no-cache`. A
+  Freeboard reload fetched 56.2 kB of them and now 12.7 kB; a first load 57.5 kB and now
+  36.3 kB, since the three pages share four scripts.
 
 ### Fixed
 
@@ -96,6 +131,15 @@ All notable changes to signalk-underkeel are documented here.
   them, and their directory after it. Without the fsync a power cut could leave an empty
   `livechart.json` on filesystems that do not flush on rename, and the plugin then started
   without its confirmed shoals.
+- Route-check corridors contain every point within the corridor half-width of the leg. They
+  were drawn with a spherical bearing in the ellipsoid's tangent plane and missed points at the
+  edge by up to 0.3 % of the width (0.12 m at the default ±40 m at the equator); they are now
+  drawn on the ellipsoid's bearing and 1/256 wider. Over the Nauvo cells 1 of 609 legs at the
+  default width went from `marginal` to `fail` (a 0 m depth area now in reach).
+- `POST /query` is also refused when the polygon's vertices times its box widened by the buffer
+  exceed 150 km². A 499-vertex ring with a 2 km buffer fitted the 25 km² limit and blocked the
+  server for 0.47 s on a laptop (about 2 s on a Raspberry Pi 4); within both limits the slowest
+  query measured over the Nauvo cells took 16 ms.
 - An index build stopped mid-write, by an abort or a crash, no longer leaves its half-written
   staging directory beside the chart index for good: an aborted WFS build removes its own once
   the worker has exited, and loading an index removes any staging directory left by a
@@ -294,3 +338,26 @@ All notable changes to signalk-underkeel are documented here.
   degraded, such as an FMI fallback, instead of the configured source.
 - "Check routes again" is hidden on a chart host without `events.publish`, `routes` or
   `background.iframe`, where pressing it did nothing.
+- The background runtime writes route-check results to host state in a compact form (per leg
+  only index, status, minimum UKC and P), once per re-check of all routes instead of once per
+  route. Freeboard keeps that state in localStorage: one 30-leg route wrote 17.6 kB a minute
+  and three routes 158 kB; one route now writes 1.9 kB.
+- A route check from the background runtime times out after 30 s and reads "not checked",
+  and a route is checked once at a time: a re-check asked for meanwhile runs after it. A hung
+  reply had no timeout, and each re-check opened another connection beside it.
+- The runtime checks the visible routes one after another and, when the server answers 503
+  busy with `Retry-After`, checks again after it (at most five times). With six routes it
+  sent six checks at once, and those the server queue refused showed "busy" as the result.
+- The details panel and the runtime poll `GET /status?summary`, which leaves out the cell
+  catalogue and datum mappings.
+- The extension pages fetch nothing while Freeboard is in a hidden tab or minimised window.
+  On return the runtime withdraws the look-ahead envelope until a current one arrives and
+  asks for tile changes and route checks at once; the widget reads Unknown if its data aged
+  out meanwhile, even when its timer fired late. With the panel open they made 139 requests
+  in 65 s hidden.
+- UKC tiles follow the wave allowance and the water level also without a Signal K stream: the
+  runtime asks the new `GET /tiles/ukc/changes` which tiles changed class, every 15 s and
+  after each 1 cm water-level move. A wave height change left tiles drawn for calmer water,
+  and without a stream the tiles never followed the tide. Freeboard now fetches only the tiles
+  whose classes changed: 2 tile fetches a minute instead of 108 with the tide rising 2 mm/s.
+  When that list does not answer, every tile is fetched again on a 1 cm fall or a 10 cm rise.

@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import fs from "fs";
 import path from "path";
 import { ASSET_BASE } from "./manifest";
@@ -21,6 +22,7 @@ const TYPES: Record<string, string> = {
 interface Req {
   method?: string;
   path: string;
+  headers?: Record<string, string | string[] | undefined>;
 }
 interface Res {
   setHeader(name: string, value: string): void;
@@ -30,8 +32,8 @@ interface Res {
 type Next = () => void;
 export type Middleware = (req: Req, res: Res, next: Next) => void;
 
-/** The file under `root` that `urlPath` names, or undefined when it is outside or missing. */
-export function assetFile(root: string, urlPath: string): string | undefined {
+/** The path under `root` that `urlPath` names, or undefined when it is outside or of no served type. */
+function assetPath(root: string, urlPath: string): string | undefined {
   let rel: string;
   try {
     rel = decodeURIComponent(urlPath);
@@ -39,24 +41,71 @@ export function assetFile(root: string, urlPath: string): string | undefined {
     return undefined;
   }
   const file = path.resolve(root, `.${rel.startsWith("/") ? rel : `/${rel}`}`);
-  if (!file.startsWith(root + path.sep) || !TYPES[path.extname(file)]) {
-    return undefined;
-  }
-  return fs.existsSync(file) && fs.statSync(file).isFile() ? file : undefined;
+  return file.startsWith(root + path.sep) && TYPES[path.extname(file)] ? file : undefined;
 }
 
+/** The file under `root` that `urlPath` names, or undefined when it is outside or missing. */
+export function assetFile(root: string, urlPath: string): string | undefined {
+  const file = assetPath(root, urlPath);
+  return file && fs.statSync(file, { throwIfNoEntry: false })?.isFile() ? file : undefined;
+}
+
+interface Cached {
+  mtimeMs: number;
+  size: number;
+  body: Buffer;
+  etag: string;
+}
+
+/** Whether an If-None-Match header names `etag`; weak and strong forms match alike. */
+function holds(header: string | string[] | undefined, etag: string): boolean {
+  const list = Array.isArray(header) ? header.join(",") : (header ?? "");
+  return list.split(",").some((t) => {
+    const tag = t.trim().replace(/^W\//, "");
+    return tag === "*" || tag === etag;
+  });
+}
+
+/**
+ * Each page load fetches every page and script of the extension, three
+ * iframes each loading the shared ones, so a copy the browser holds is
+ * revalidated by ETag. `no-cache` keeps an updated plugin's pages current.
+ */
 export function assetMiddleware(root = PUBLIC_DIR): Middleware {
+  const cache = new Map<string, Cached>();
+  const read = (file: string): Cached | undefined => {
+    const st = fs.statSync(file, { throwIfNoEntry: false });
+    if (!st?.isFile()) {
+      return undefined;
+    }
+    const hit = cache.get(file);
+    if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) {
+      return hit;
+    }
+    const body = fs.readFileSync(file);
+    const etag = `"${createHash("sha1").update(body).digest("base64url")}"`;
+    const entry = { mtimeMs: st.mtimeMs, size: st.size, body, etag };
+    cache.set(file, entry);
+    return entry;
+  };
   return (req, res, next) => {
     const file =
-      req.method === "GET" || req.method === "HEAD" ? assetFile(root, req.path) : undefined;
-    if (!file) {
+      req.method === "GET" || req.method === "HEAD" ? assetPath(root, req.path) : undefined;
+    const entry = file ? read(file) : undefined;
+    if (!file || !entry) {
       next();
       return;
     }
-    res.statusCode = 200;
     res.setHeader("Content-Type", TYPES[path.extname(file)] as string);
     res.setHeader("Cache-Control", "no-cache");
-    res.end(req.method === "HEAD" ? undefined : fs.readFileSync(file));
+    res.setHeader("ETag", entry.etag);
+    if (holds(req.headers?.["if-none-match"], entry.etag)) {
+      res.statusCode = 304;
+      res.end();
+      return;
+    }
+    res.statusCode = 200;
+    res.end(req.method === "HEAD" ? undefined : entry.body);
   };
 }
 
