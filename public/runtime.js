@@ -204,6 +204,12 @@ async function check(routeId) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ route: line })
       });
+      // The plugin queues heavy requests and refuses the overflow; the earlier
+      // result keeps its age meanwhile, so it still reads out of date in time.
+      if (res.status === 503 && current()) {
+        schedule(routeId, 1000 * (Number(res.headers.get("retry-after")) || 2));
+        return;
+      }
       const body = await res.json();
       if (!current()) {
         return;
@@ -238,9 +244,9 @@ async function check(routeId) {
 }
 
 /** Edits come in bursts while the user drags a point: check once they settle. */
-function schedule(routeId) {
+function schedule(routeId, delay = 1000) {
   clearTimeout(timers.get(routeId));
-  timers.set(routeId, setTimeout(() => void check(routeId), 1000));
+  timers.set(routeId, setTimeout(() => void check(routeId), delay));
 }
 
 async function checkAll() {
