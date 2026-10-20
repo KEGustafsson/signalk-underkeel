@@ -12,7 +12,7 @@ import { checkLeg } from "./route-check";
  * one step after it leaves, so a sampled departure answers for every
  * departure up to the next one. A leg's result depends on the departure
  * only through its water level, so legs are re-checked only when that
- * level changes.
+ * level changes, and not at all after the departure's first failing leg.
  * Levels are rounded down to the centimetre and σ up, so the reuse is never
  * optimistic.
  */
@@ -57,7 +57,8 @@ export async function departureWindow(
   for (let t = from; t <= to; t += stepMs) {
     let start = t;
     let worst: LegStatus = "ok";
-    for (let i = 0; i < legs; i++) {
+    // `fail` ranks highest, so the legs after one cannot change the departure's status.
+    for (let i = 0; i < legs && worst !== "fail"; i++) {
       const a = input.coordinates[i] as LonLat;
       const b = input.coordinates[i + 1] as LonLat;
       const end = start + (haversine(a, b) / (input.speeds[i] as number)) * 1000;

@@ -1,8 +1,9 @@
 import { departureWindow } from "../../src/engine/departure-window";
 import type { RouteCheckInput } from "../../src/engine/route-check";
-import { checkRoute } from "../../src/engine/route-check";
+import { checkLeg, checkRoute } from "../../src/engine/route-check";
 import { DEFAULT_REPAIR, repairLeg, repairRoute, simplify } from "../../src/engine/route-repair";
 import type { LonLat } from "../../src/foundation/geo";
+import { haversine } from "../../src/foundation/geo";
 import { DEFAULT_DYNAMICS } from "../../src/model/vessel";
 import type { WaterLevel } from "../../src/model/uncertainty";
 import type { ChartIndex } from "../../src/spatial/chart-index";
@@ -232,6 +233,23 @@ describe("departure window", () => {
     expect(w.checks).toBeLessThanOrEqual(3);
   });
 
+  test("a departure checks no leg after its first failing one, and its status is unchanged", async () => {
+    // The shoal leg first, then three legs in open water; the level falls 1 cm per departure.
+    const route: LonLat[] = [...LEG, [22.05, 60.025], [22.01, 60.025], [22.01, 60.005]];
+    const falling = (s: number): WaterLevel => ({
+      h: -0.5 - Math.floor((s - NOW) / (15 * 60_000)) / 100,
+      sigma: 0.05,
+      source: "manual"
+    });
+    const r = input(route, { waterLevel: falling });
+    const w = await departureWindow(index, r, NOW, NOW + 4 * HOUR, 15 * 60_000);
+    expect(w.steps.map((s) => s.status)).toEqual(
+      directStatuses(index, r, NOW, NOW + 4 * HOUR, 15 * 60_000)
+    );
+    expect(w.steps.every((s) => s.status === "fail")).toBe(true);
+    expect(w.checks).toBeLessThanOrEqual(w.steps.length);
+  });
+
   test("a fallback water level is never a window", async () => {
     const fallback = {
       h: 0,
@@ -243,3 +261,36 @@ describe("departure window", () => {
     expect((await departureWindow(index, route, NOW, NOW + HOUR, 15 * 60_000)).windows).toEqual([]);
   });
 });
+
+const RANK = { ok: 0, marginal: 1, unverified: 2, fail: 3 } as const;
+
+/** Each departure's worst leg status, every leg checked at its own level, rounded as the window rounds it. */
+function directStatuses(
+  index: ChartIndex,
+  route: RouteCheckInput,
+  from: number,
+  to: number,
+  stepMs: number
+): string[] {
+  const out: string[] = [];
+  for (let t = from; t <= to; t += stepMs) {
+    let start = t;
+    let worst: keyof typeof RANK = "ok";
+    for (let i = 0; i + 1 < route.coordinates.length; i++) {
+      const a = route.coordinates[i] as LonLat;
+      const b = route.coordinates[i + 1] as LonLat;
+      const end = start + (haversine(a, b) / (route.speeds[i] as number)) * 1000;
+      const wl = route.waterLevel(start, end + stepMs, [a, b]);
+      const level = {
+        ...wl,
+        h: Math.floor(wl.h * 100) / 100,
+        sigma: Math.ceil(wl.sigma * 100) / 100
+      };
+      const status = checkLeg(index, { ...route, waterLevel: () => level }, i, start).leg.status;
+      worst = RANK[status] > RANK[worst] ? status : worst;
+      start = end;
+    }
+    out.push(worst);
+  }
+  return out;
+}
