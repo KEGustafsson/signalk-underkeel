@@ -54,16 +54,17 @@ export function discrepancyOf(c: CellPosterior): Discrepancy {
  * note never shows the cell deeper or surer than the posterior.
  */
 export function noteValues(c: CellPosterior): { measured: number; sigma: number } {
-  let measured = Math.floor(c.mean * 20) / 20;
-  let sigma = Math.ceil(c.sigma * 100) / 100;
-  // The products can round across a step; one step more keeps the bound.
-  if (measured > c.mean) {
-    measured -= 0.05;
+  let depth = Math.floor(c.mean * 20);
+  let sigma = Math.ceil(c.sigma * 100);
+  // The products can round across a step; one step more keeps the bound. Steps are counted
+  // whole so a shown value is never a long decimal.
+  if (depth / 20 > c.mean) {
+    depth -= 1;
   }
-  if (sigma < c.sigma) {
-    sigma += 0.01;
+  if (sigma / 100 < c.sigma) {
+    sigma += 1;
   }
-  return { measured, sigma };
+  return { measured: depth / 20, sigma: sigma / 100 };
 }
 
 /** The Signal K note for a discrepancy cell. */

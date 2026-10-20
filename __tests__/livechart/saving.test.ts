@@ -138,6 +138,34 @@ describe("living-chart save schedule", () => {
     expect(saved().cells).toHaveLength(1);
   });
 
+  test("a state file that could not be set aside does not bring the log save forward", () => {
+    fs.writeFileSync(file, "not json");
+    const rename = jest.spyOn(fs, "renameSync").mockImplementation(() => {
+      throw new Error("read-only");
+    });
+    let h: ReturnType<typeof service>;
+    try {
+      h = service();
+    } finally {
+      rename.mockRestore();
+    }
+    expect(h.errors.join()).toMatch(/not moved aside/);
+    // Shoal soundings over two passes make adjustments, which would save the state within 10 s.
+    let lines = 0;
+    for (let s = 0; s < 1800; s += 10) {
+      h.t.now = T0 + s * 1000;
+      h.svc.onSounding(raw(5, h.t.now));
+      h.svc.flush();
+      const now = fs.existsSync(log) ? logLines().length : 0;
+      if (now !== lines) {
+        lines = now;
+        expect(s % 60).toBe(0);
+      }
+    }
+    expect(lines).toBeGreaterThan(0);
+    expect(fs.readFileSync(file, "utf8")).toBe("not json");
+  });
+
   test("a version-1 file with samples still loads, and its samples move to soundings.ndjson", () => {
     const sample = (at: number) => ({
       at,
