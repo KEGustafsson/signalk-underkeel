@@ -14,8 +14,7 @@ function armStale(ms) {
   clearTimeout(staleTimer);
   staleTimer = setTimeout(() => {
     view.stale = true;
-    document.addEventListener("visibilitychange", render);
-render();
+    render();
   }, ms);
 }
 
@@ -80,4 +79,6 @@ document.body.addEventListener("click", () => {
     void client.call("ui.togglePanel", { panel: "details" });
   }
 });
+// Values that arrived while hidden were not drawn, and an aged-out reading reads Unknown on return.
+document.addEventListener("visibilitychange", render);
 render();
