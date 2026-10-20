@@ -138,7 +138,7 @@ describe("signalk-underkeel satisfies the contract", () => {
         parseAckRequest,
         { notificationId: "" },
         ["x".repeat(200)],
-        ["x".repeat(201)]
+        ["x".repeat(201), 123]
       ],
       ["query-request.json", parseQueryRequest, { bufferMetres: 0 }, [0, 2000], [-1, 2001]],
       ["query-request.json", parseQueryRequest, { draft: 0.1 }, [0.1, 30], [0.05, 31]],
@@ -157,7 +157,7 @@ describe("signalk-underkeel satisfies the contract", () => {
         parseRouteRequest,
         { speed: 0.1 },
         [0.1, 30, [0.1, 30], { default: 30 }, { legs: [0.1] }],
-        [0, 31, [3, 31], { default: 0 }, { legs: [0] }, {}]
+        [0, 31, [3, 31], { default: 0 }, { legs: [0] }, {}, [], { legs: [] }]
       ]
     ];
     for (const [schema, parse, field, inside, outside] of cases) {

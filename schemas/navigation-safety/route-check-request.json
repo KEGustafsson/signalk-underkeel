@@ -23,13 +23,13 @@
       "description": "m/s: one value, a per-leg array, or { default } / { legs }.",
       "anyOf": [
         { "$ref": "#/$defs/speed" },
-        { "type": "array", "items": { "$ref": "#/$defs/speed" } },
+        { "type": "array", "items": { "$ref": "#/$defs/speed" }, "minItems": 1 },
         {
           "type": "object",
           "anyOf": [{ "required": ["default"] }, { "required": ["legs"] }],
           "properties": {
             "default": { "$ref": "#/$defs/speed" },
-            "legs": { "type": "array", "items": { "$ref": "#/$defs/speed" } }
+            "legs": { "type": "array", "items": { "$ref": "#/$defs/speed" }, "minItems": 1 }
           }
         }
       ]
