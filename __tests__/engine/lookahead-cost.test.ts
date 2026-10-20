@@ -1,6 +1,7 @@
 import fc from "fast-check";
 import type { FootprintResult, NavState } from "../../src/engine/lookahead";
 import { DEFAULT_LOOKAHEAD, evaluateLookahead } from "../../src/engine/lookahead";
+import { MAX_POSITION_BUFFER } from "../../src/engine/fan";
 import type { VesselModel } from "../../src/model/vessel";
 import type { ChartIndex } from "../../src/spatial/chart-index";
 import { fromMercator, tileAt, tileRect, toMercator } from "../../src/foundation/geo";
@@ -177,5 +178,46 @@ describe("coarse steps beyond the warn window", () => {
     expect(gaps.slice(0, 40).every((g) => Math.abs(g - step) < 1e-9)).toBe(true);
     expect(gaps.slice(40, -1).every((g) => Math.abs(g - 21 * step) < 1e-9)).toBe(true);
     expect(r.footprints.length).toBe(59);
+  });
+});
+
+describe("position uncertainty beyond the buffer cap", () => {
+  const index = indexOf([...basin([21.9, 59.97, CHART[2], 60.04], 20), land(STRIP)]);
+  const inputs = (positionSigma: number, positionReason?: string) => ({
+    ...ctx(KEEL),
+    positionSigma,
+    positionReason,
+    escape: true
+  });
+  const open = nav(westOfStrip(1500));
+
+  test("below the cap the buffer is k_p · σ_pos and open water is normal", () => {
+    const r = evaluateLookahead(open, inputs(200), index, NOW);
+    expect(r.state).toBe("normal");
+    expect(r.footprints.every((f) => f.buffer === 400)).toBe(true);
+  });
+
+  test("above it the buffer stops at the cap and the state is warn with the reason", () => {
+    const why = "GNSS and dead reckoning differ by 1996 m";
+    const r = evaluateLookahead(open, inputs(1996, why), index, NOW);
+    expect(r.footprints.every((f) => f.buffer === MAX_POSITION_BUFFER)).toBe(true);
+    expect(r.state).toBe("warn");
+    expect(r.reason).toBe(`position uncertainty 1996 m: ${why}`);
+    expect(r.escapeHeading).toBeNull();
+  });
+
+  test("land within the capped buffer still alarms", () => {
+    const r = evaluateLookahead(nav(westOfStrip(300)), inputs(1996), index, NOW);
+    expect(r.state).toBe("alarm");
+  });
+
+  test("σ_pos above the cap never publishes normal or alert", () => {
+    fc.assert(
+      fc.property(uniform(0, 3000), uniform(250.5, 5000), (metres, sigma) => {
+        const r = evaluateLookahead(nav(westOfStrip(metres)), inputs(sigma), index, NOW);
+        expect(["warn", "alarm"]).toContain(r.state);
+      }),
+      { numRuns: 30 }
+    );
   });
 });

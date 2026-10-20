@@ -320,13 +320,15 @@ export class Monitor {
     }
     const now = this.clock.now();
     const escape = now - this.escapeAt >= ESCAPE_EVERY_MS;
+    const integrity = this.checkIntegrity(now);
     const r = evaluateLookahead(
       this.nav,
       {
         vessel: this.vessel(),
         dynamics: this.config.dynamics,
         waterLevel: this.waterLevel(),
-        positionSigma: this.checkIntegrity(now).sigmaPos,
+        positionSigma: integrity.sigmaPos,
+        positionReason: integrity.reasons.join("; ") || undefined,
         escape
       },
       this.index,

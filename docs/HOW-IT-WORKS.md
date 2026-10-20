@@ -426,6 +426,10 @@ uncertainty allows, as when GNSS is jammed or spoofed:
 - the position σ is raised to the distance between them, so every footprint grows;
 - `notifications.navigation.positionIntegrity` is raised as `warn` with the reason.
 
+A footprint grows by at most 500 m. When 2 × σ is more than that, the chart beyond 500 m is not
+read, and the look-ahead state is at least `warn` with the reason, for example "position
+uncertainty 1996 m: GNSS and dead reckoning differ by 1996 m"; no escape heading is searched.
+
 A fix that is not a satellite fix sets the position σ to at least 50 m, and an HDOP above 4 is
 reported the same way. Without speed through water the check cannot run; the notification and
 `/status` say so.

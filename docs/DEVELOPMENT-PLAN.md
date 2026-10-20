@@ -547,6 +547,13 @@ has the same TTS, or none is clear past the first step, publish null.
 This is cheap, and it directly addresses Baltic jamming and spoofing, the same gap that
 TimeZero 5.4's "Ghost Ship" now fills.
 
+**Decision (buffer ceiling): k_p · σ_pos is capped at 500 m.** σ_pos has no upper bound: a
+2 km GNSS jump made each footprint read the chart 4 km around it, 0.4 to 3.2 s per tick (x86)
+in water without land. The buffer stops at `MAX_POSITION_BUFFER` (500 m). A tick whose
+k_p · σ_pos exceeds it is at least `warn`, with the reason "position uncertainty N m" and the
+integrity monitor's reasons, never `normal` or `alert`, since a shoal beyond 500 m may be under
+the boat; `alarm` from the capped footprints stays `alarm`. The escape fan is not searched.
+
 **Suppression rules.** None of these is ever silent; each publishes the reason it is
 suppressing.
 

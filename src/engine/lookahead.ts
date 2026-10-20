@@ -19,10 +19,10 @@ import type { Explanation } from "./explain";
 import { explain, sentence } from "./explain";
 import { escapeHeading } from "./escape";
 import type { Motion, Scoring } from "./fan";
-import { footprint } from "./fan";
+import { bufferCapped, footprint } from "./fan";
 import { scheduleFor, scoreSchedule } from "./schedule";
 import { fanMembers } from "./trajectory";
-import { classify, degrade } from "./verdict";
+import { classify, degrade, uncertainPosition } from "./verdict";
 
 /**
  * Look-ahead (plan §4.7–§4.8): a CTRV fan of five tracks from COG, SOG and
@@ -193,6 +193,8 @@ export interface LookaheadInputs {
   waterLevel: WaterLevel;
   /** 1σ position uncertainty now, metres; from HDOP when not given. */
   positionSigma?: number;
+  /** Why `positionSigma` is inflated, for the reason when it exceeds the buffer cap. */
+  positionReason?: string;
   /** Search the escape fan when not normal; it costs up to 37 extra tracks. */
   escape?: boolean;
 }
@@ -361,18 +363,18 @@ function scoringFor(
   };
 }
 
-export function evaluateLookahead(
+/** The result when an input the look-ahead needs is missing, stale or invalid. */
+function missingInput(
   nav: NavState,
   inputs: LookaheadInputs,
   index: ChartIndex | undefined,
   now: number,
-  opts: LookaheadOptions = DEFAULT_LOOKAHEAD
-): LookaheadResult {
+  opts: LookaheadOptions
+): LookaheadResult | undefined {
   if (!index) {
     return degraded("off", "no chart index loaded");
   }
-  const vessel = inputs.vessel;
-  if (!vessel) {
+  if (!inputs.vessel) {
     return degraded("unknown", "vessel draft not configured");
   }
   if (!nav.position) {
@@ -384,10 +386,27 @@ export function evaluateLookahead(
   if (!finiteNav(nav)) {
     return degraded("unknown", "non-finite navigation input");
   }
+  return undefined;
+}
+
+export function evaluateLookahead(
+  nav: NavState,
+  inputs: LookaheadInputs,
+  index: ChartIndex | undefined,
+  now: number,
+  opts: LookaheadOptions = DEFAULT_LOOKAHEAD
+): LookaheadResult {
+  const missing = missingInput(nav, inputs, index, now, opts);
+  if (missing) {
+    return missing;
+  }
+  const vessel = inputs.vessel as VesselModel;
+  const chart = index as ChartIndex;
+  const position = nav.position as Sample<LonLat>;
   const m = motionOf(nav, now, opts);
   const wl = inputs.waterLevel;
   const s = scoringFor(nav, inputs, vessel, now, opts);
-  const origin = nav.position.value;
+  const origin = position.value;
   const { times, step } = scheduleFor(m, vessel, opts);
   const tracks = fanMembers(
     m.cog,
@@ -397,13 +416,19 @@ export function evaluateLookahead(
     opts.turnFor
   );
   const scored = scoreSchedule(times, step, (t, stop) =>
-    footprint(t, origin, tracks, m, vessel, index, s, opts, stop)
+    footprint(t, origin, tracks, m, vessel, chart, s, opts, stop)
   );
   const fps = scored.footprints;
-  const verdict = degrade(classify(fps, opts, scored), m, wl, fps);
+  const capped = bufferCapped(s, opts);
+  const assessed = degrade(classify(fps, opts, scored), m, wl, fps);
+  const verdict = capped
+    ? uncertainPosition(assessed, s.sigmaPos, inputs.positionReason)
+    : assessed;
+  // A position this uncertain makes any heading a guess.
+  const searched = inputs.escape === true && m.moving && !capped;
   const escape =
-    inputs.escape === true && m.moving && verdict.state !== "normal" && verdict.state !== "unknown"
-      ? escapeHeading(times, origin, m, vessel, index, s, opts)
+    searched && verdict.state !== "normal" && verdict.state !== "unknown"
+      ? escapeHeading(times, origin, m, vessel, chart, s, opts)
       : null;
   const shallowest = shallowestOf(fps);
   return {
@@ -417,7 +442,7 @@ export function evaluateLookahead(
     escapeHeading: escape,
     horizon: times[times.length - 1] as number,
     footprints: fps,
-    worst: worstOf(fps, index, s, wl, opts.kp),
+    worst: worstOf(fps, chart, s, wl, opts.kp),
     waterLevel: wl
   };
 }

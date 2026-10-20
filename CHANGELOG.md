@@ -74,6 +74,10 @@ All notable changes to signalk-underkeel are documented here.
   scores 57 footprints instead of 361, the median fell from 30 to 2.7 ms and the envelope from
   17 to 5 kB (x86); states, risks, clearances, times to shoal, reasons and escape headings were
   the same on every tick at 1 kn, 6 kn and with a 5 NM horizon (90 → 20 ms).
+- The look-ahead buffer k_p · σ_pos stops at 500 m. Beyond that the state is at least `warn`
+  with the reason "position uncertainty N m" and the integrity monitor's reasons, and no escape
+  heading is searched. After a 2 km GNSS jump in water without land a tick took 0.4 to 3.2 s
+  (x86) and could still read `normal`; it now takes 3 to 27 ms and reads `warn`.
 - A depth query no longer tests the tiles under a tile that lies wholly within its buffer of
   the footprint or polygon. A 499-vertex `POST /query` polygon of 500 m radius with a 2 km
   buffer took 198 ms, now 48 ms (x86); jagged polygons gain nothing (124 → 128 ms).

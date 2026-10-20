@@ -33,9 +33,22 @@ export interface Scoring {
   sigmaPos: number;
 }
 
+/**
+ * The most k_p · σ_pos widens a footprint, metres (decision, plan §4.8). A
+ * 2 km GNSS jump set σ_pos to 2 km, and each tick then read the chart 4 km
+ * around every footprint for 1.5 s; beyond this the state is at least warn.
+ */
+export const MAX_POSITION_BUFFER = 500;
+
 /** Ground buffer around every footprint: k_p · σ_pos, never below the configured floor. */
 export function bufferAt(s: Scoring, opts: LookaheadOptions): number {
-  return Math.max(opts.positionBuffer, opts.kp * s.sigmaPos);
+  const floor = opts.positionBuffer;
+  return Math.max(floor, Math.min(opts.kp * s.sigmaPos, MAX_POSITION_BUFFER));
+}
+
+/** k_p · σ_pos exceeds the buffer the footprints get. */
+export function bufferCapped(s: Scoring, opts: LookaheadOptions): boolean {
+  return opts.kp * s.sigmaPos > bufferAt(s, opts);
 }
 
 /**

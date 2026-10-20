@@ -109,3 +109,16 @@ export function degrade(c: Verdict, m: Motion, wl: WaterLevel, fps: FootprintRes
   }
   return c;
 }
+
+/**
+ * With the buffer capped (MAX_POSITION_BUFFER) the chart beyond it is not
+ * read, so a footprint may miss a shoal the position could be over: the
+ * state is at least warn, with the integrity monitor's reason.
+ */
+export function uncertainPosition(c: Verdict, sigmaPos: number, why?: string): Verdict {
+  if (c.state === "warn" || c.state === "alarm") {
+    return c;
+  }
+  const reason = `position uncertainty ${sigmaPos.toFixed(0)} m${why ? `: ${why}` : ""}`;
+  return { ...c, state: "warn", reason };
+}
