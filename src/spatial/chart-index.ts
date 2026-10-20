@@ -102,6 +102,16 @@ function isCompleteIndex(dir: string): boolean {
 
 const STAGING_WRITER = /^(\d+)-(\d+)-/;
 
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // EPERM: the process exists but belongs to someone else.
+    return (err as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
+
 /** Removes the staging directories beside `dir` whose writer `owned` claims. */
 export function removeStaging(dir: string, owned: (pid: number, thread: number) => boolean): void {
   const parent = path.dirname(dir);
@@ -121,12 +131,12 @@ export function removeStaging(dir: string, owned: (pid: number, thread: number) 
  * A crash between the two renames in saveChartIndex leaves `dir` absent and
  * the previous index at `<dir>.old-<suffix>`. Moves the newest complete one
  * back so that build is used again; returns whether it did. Staging that a
- * dead process left half-written is removed first.
+ * process which has since exited left half-written is removed first.
  */
 export function recoverChartIndex(dir: string): boolean {
-  // One server owns a data directory, so staging from another process was
-  // left by one that died mid-build.
-  removeStaging(dir, (pid) => pid !== process.pid);
+  // The index directory is configurable and may be shared, so only staging
+  // whose writer has gone is removed; another live server may still commit it.
+  removeStaging(dir, (pid) => pid !== process.pid && !isAlive(pid));
   if (fs.existsSync(dir)) {
     return false;
   }

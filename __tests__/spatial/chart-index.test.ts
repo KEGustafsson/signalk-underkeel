@@ -1,3 +1,4 @@
+import { spawnSync } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -161,12 +162,14 @@ describe("index persistence", () => {
     }
   });
 
-  test("staging a dead process left is removed; this process's and other names stay", () => {
+  test("staging a dead process left is removed; a live one's, this one's and other names stay", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-index-"));
     try {
       const target = path.join(dir, "index");
+      const exited = spawnSync(process.execPath, ["-e", ""]).pid;
       const names = [
-        `index.tmp-${process.pid + 1}-0-aa`,
+        `index.tmp-${exited}-0-aa`,
+        `index.tmp-${process.ppid}-0-ee`,
         `index.tmp-${process.pid}-3-bb`,
         `index.tmp-${process.pid}-4-cc`,
         "index.tmp-notes",
@@ -175,7 +178,7 @@ describe("index persistence", () => {
       names.forEach((n) => fs.mkdirSync(path.join(dir, n)));
       expect(recoverChartIndex(target)).toBe(false);
       removeStaging(target, (pid, thread) => pid === process.pid && thread === 3);
-      expect(fs.readdirSync(dir).sort()).toEqual(names.slice(2).sort());
+      expect(fs.readdirSync(dir).sort()).toEqual([names[1], ...names.slice(3)].sort());
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

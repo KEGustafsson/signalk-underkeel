@@ -64,7 +64,8 @@ All notable changes to signalk-underkeel are documented here.
 
 - An index build stopped mid-write, by an abort or a crash, no longer leaves its half-written
   staging directory beside the chart index for good: an aborted WFS build removes its own once
-  the worker has exited, and loading an index removes any a dead process left.
+  the worker has exited, and loading an index removes any staging directory left by a
+  process that has exited.
 - Route check: long legs are checked along the rhumb line as the chart draws it, and along
   the great circle where that strays more than 10 m from it. Pieces were stepped on a fixed
   flat-earth bearing, which drifted 75 m off the drawn line on a 78 km leg at 60° N and left a
