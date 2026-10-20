@@ -53,6 +53,9 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Changed
 
+- The index build tests each area against a tile through a per-polygon box and edge grid and
+  decides "reaches" and "contains" in one boundary pass, with the same nodes byte for byte:
+  two Nauvo cells at leaf zoom 20 build in 1.9 s instead of 23.4 s on x86.
 - The navigation-safety contract schemas in `schemas/navigation-safety/` are licensed under
   Apache-2.0, so other plotters and providers can adopt the contract; the plugin stays EUPL-1.2.
 - The request schemas bound `sector` (1..90°), `ttl` (1 s..30 days), `notificationId` (200

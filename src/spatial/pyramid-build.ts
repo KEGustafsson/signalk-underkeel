@@ -18,6 +18,15 @@ import {
 } from "../foundation/geometry";
 import type { ChartFeature, QualityFeature } from "../ingest/features";
 import type { NodeValues } from "./node-store";
+import type { PolygonIndex } from "./polygon-index";
+import {
+  FULL,
+  indexPolygon,
+  MISS,
+  polygonsContainRect,
+  polygonsRectDistance,
+  polygonsRectRelation
+} from "./polygon-index";
 import { combine, EMPTY, FLAGS, NO_DATA, NodeStore } from "./node-store";
 import type { QualityOptions } from "./quality";
 import { DEFAULT_QUALITY, sigmaFor, SWEPT_SIGMA_D } from "./quality";
@@ -50,6 +59,10 @@ interface Item {
   bbox: Rect;
   /** Burn radius in ground metres (0 for areas). */
   radius: number;
+  /** The feature's polygons, indexed for the tile tests. */
+  shape: PolygonIndex[] | undefined;
+  /** The feature contains an ancestor tile, and so every tile below it. */
+  full?: boolean;
 }
 
 interface Hit {
@@ -96,7 +109,12 @@ function prepare(features: ChartFeature[], opts: BuildOptions): Item[] {
   }
   return features.map((f) => {
     const bbox = geomBounds(f.geom);
-    return { f, bbox, radius: burnRadius(f, bbox, zonesByCell.get(f.cellRef) ?? [], opts) };
+    return {
+      f,
+      bbox,
+      radius: burnRadius(f, bbox, zonesByCell.get(f.cellRef) ?? [], opts),
+      shape: f.geom.type === "polygon" ? f.geom.polygons.map(indexPolygon) : undefined
+    };
   });
 }
 
@@ -119,18 +137,42 @@ function inWorld(rect: Rect): Rect {
   };
 }
 
+function rectDistance(item: Item, rect: Rect, limit: number): number {
+  return item.shape
+    ? polygonsRectDistance(item.shape, rect, limit)
+    : geomRectDistance(item.f.geom, rect, limit);
+}
+
+function containsRect(item: Item, rect: Rect): boolean {
+  return item.shape ? polygonsContainRect(item.shape, rect) : geomContainsRect(item.f.geom, rect);
+}
+
 function classify(items: Item[], rect: Rect): Hit[] {
   const scale = groundToMercator(1, maxAbsLat(rect));
+  const world = inWorld(rect);
+  // Away from ±180° containment sees the tile itself, so one pass decides both tests.
+  const onePass = world.minX === rect.minX && world.maxX === rect.maxX;
   const hits: Hit[] = [];
   for (const item of items) {
+    if (item.full) {
+      hits.push({ item, full: true });
+      continue;
+    }
     const r = item.radius * scale;
     if (!rectsOverlap(expandRect(rect, r), item.bbox)) {
       continue;
     }
-    if (geomRectDistance(item.f.geom, rect, r) > r) {
+    if (item.shape && item.radius === 0 && onePass) {
+      const rel = polygonsRectRelation(item.shape, rect);
+      if (rel !== MISS) {
+        hits.push({ item, full: rel === FULL });
+      }
       continue;
     }
-    hits.push({ item, full: item.radius === 0 && geomContainsRect(item.f.geom, inWorld(rect)) });
+    if (rectDistance(item, rect, r) > r) {
+      continue;
+    }
+    hits.push({ item, full: item.radius === 0 && containsRect(item, world) });
   }
   return hits;
 }
@@ -232,12 +274,14 @@ function analyse(all: Hit[], rect: Rect, tileGround: number): Analysis {
  * switch to that cell and drop the current areas, so nothing is pruned.
  */
 function forChildren(all: Hit[], a: Analysis): Item[] {
-  const coverageItems = all.filter((h) => h.item.f.role === "coverage").map((h) => h.item);
+  const coverage = all.filter((h) => h.item.f.role === "coverage");
   const kept = a.hits.filter((h) => {
     const f = h.item.f;
     return a.coverageEdge || h.full || f.role !== "depth" || f.dredged || f.depth < a.shallowest;
   });
-  return [...coverageItems, ...kept.map((h) => h.item)];
+  // A child lies inside its parent, so what contains the parent contains it.
+  const pass = (h: Hit): Item => (h.full && !h.item.full ? { ...h.item, full: true } : h.item);
+  return [...coverage.map(pass), ...kept.map(pass)];
 }
 
 function isQuality(h: Hit): h is Hit & { item: { f: QualityFeature } } {

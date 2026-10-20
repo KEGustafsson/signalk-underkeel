@@ -292,6 +292,13 @@ wide does not by itself subdivide a tile: the tile takes the disc's depth over i
 which is pessimistic by at most one tile width and keeps CATZOC C soundings (σP 250 m) from
 splitting every tile down to the leaf zoom.
 
+**Build cost.** Each area polygon keeps its bounding box and, for rings of 64 or more
+vertices, a uniform grid of its edges, so a tile test reads only the edges near the tile and
+the edges that span the corner's row; one boundary pass and four corner tests decide both "the
+area reaches the tile" and "the area contains the tile", and an area containing a tile is
+passed to its children as containing them. The tests return exactly what the per-vertex walk
+returns (`src/spatial/polygon-index.ts`), so the pyramid is unchanged.
+
 **Query: `minDepthOver(polygon, zoomCap)`.**
 
 1. Start at the coarsest tiles that cover the polygon's bounding box.
