@@ -88,11 +88,14 @@ Signal K `design.draft.maximum`; length and beam fall back to `design.length.ove
 `design.beam`. Without a draft the engine stays `unknown`. The water level comes from the
 source picked under **Water level** (section 8).
 
-The index is built at the first start and saved under the plugin data directory. Later starts
-load the saved index unless a cell directory was added or removed or its `DSID` edition or
-update changed; then the index is rebuilt and the index reason in `/status` names the cells.
+The index is built at the first start, in a worker thread so the server keeps running, and
+saved under the plugin data directory; until it is ready the engine is `off` with the reason
+`building chart index`. Later starts load the saved index (one over 1 MB in the background,
+`off` with `loading chart index` meanwhile) unless a cell directory was added or removed or its
+`DSID` edition or update changed; then the index is rebuilt and the index reason in `/status` names the cells.
 **Rebuild index at start** rebuilds it on every start. An index saved by an older plugin version
-whose index format differs is rebuilt too.
+whose index format differs is rebuilt too, and so is one whose files cannot be read, as a power
+cut during a save can leave them; the reason then names the read error.
 
 The status line at the top of the plugin's page shows the engine state and its reason, for
 example `Monitoring: unknown — position stale`.
@@ -166,13 +169,16 @@ and keeps a running estimate of the depth in each cell of the index, about 76 m 
 4. **Discrepancy.** After at least 5 soundings on at least 2 separate passes, a cell whose
    estimate is more than 2σ shallower than the chart is marked shallower. Every check then
    uses the shallower depth: look-ahead, route check, query and the UKC overlay. A Signal K
-   note marks the place on the chart with the evidence.
+   note marks the place on the chart with the evidence, its depth rounded down to 5 cm; it is
+   rewritten at most every 5 minutes as the estimate drops.
 
 Own soundings only ever make the chart shallower. Deeper readings never raise a charted depth,
 so a faulty transducer cannot switch off a hazard. The shallower cells survive a change of the
-index's leaf zoom: each new cell takes the shallowest depth of the old cells it holds. A state
-file that does not load whole is renamed to `livechart.json.bad-<time>` and reported, so it is
-never saved over. The accepted soundings can be exported as
+index's leaf zoom: each new cell takes the shallowest depth of the old cells it holds. The
+cells are saved to `livechart.json` every 10 minutes, and within 10 s of a cell being marked
+shallower; the soundings are appended to `soundings.ndjson` every minute. A state file that
+does not load whole is renamed to `livechart.json.bad-<time>` (or `soundings.ndjson.bad-<time>`)
+and reported, so it is never saved over. The accepted soundings can be exported as
 IHO crowd-sourced bathymetry (CSB) GeoJSON from `GET /livechart/csb.geojson`; nothing is
 uploaded anywhere.
 
@@ -530,6 +536,14 @@ of that cell's assessed survey, 50 m at CATZOC B and 500 m at C, the reach a rou
 The style draws `clear` at 25 % opacity and the other classes at 55 %, so over the chart's blue
 water `danger` looks purple-red and `caution` looks grey-tan.
 
+A tile's classes stay the same while the threshold depth moves within a range: each cell
+changes class only where its P crosses the alert or warn level. The plugin records that range
+for every tile it serves, and `GET /tiles/ukc/changes` lists the tiles whose range the current
+water level, draft and wave allowance have left, or in which an own sounding changed a cell.
+The background runtime asks every 15 s and after each 1 cm water-level move, and Freeboard
+fetches only the tiles listed. With the tide rising 2 mm/s that is 2 tile fetches a minute in
+a z14 view instead of 108.
+
 `GET /ukc-style.json` is a MapLibre style for these tiles. The plugin also registers a
 `plotterExtensions` resource that declares the overlay, so a plotter that supports the Plotter
 Extensions API can offer it as a layer.
@@ -619,7 +633,8 @@ every 15 minutes over the next 48 hours. It checks the route for each departure 
 level the forecast gives for the time each leg is sailed, up to one step later so a departure
 between two samples is covered too, and returns the intervals in which
 every leg is `ok`, with the worst status of each departure. A leg is checked again only when
-its water level changes. A window over a long route or one of many legs is refused when it
+its water level changes; a leg that passed at one level is not checked again at a higher one,
+nor a leg that failed at a lower one, since more water never makes a leg worse. A window over a long route or one of many legs is refused when it
 would cost one request too much work; a longer step or a shorter horizon fits it. The limits
 are in [plan §4.11](DEVELOPMENT-PLAN.md). In Finnish waters this matters during low-water spells; in tidal waters it works as a tide-gate
 planner.
@@ -638,16 +653,19 @@ data is not for navigational purposes**: Traficom licenses it for non-navigation
 
 ```mermaid
 flowchart TD
-  P[vessel position, checked periodically] --> D{more than half the box radius<br/>from the box centre?}
+  P[vessel position, checked periodically] --> D{more than half the box radius from<br/>the box centre, or the edge ahead<br/>closer than a rebuild's run?}
   D -- no --> KEEP[keep the current index]
-  D -- yes, and no download<br/>in the last minute or so --> W[download the box around the vessel<br/>DepthArea_A, DredgedArea_A, Sounding_P]
-  W --> B[rebuild the index in a worker thread:<br/>ENC cells first, then the WFS cell]
+  D -- yes, and no download<br/>in the last minute or so --> W[in a worker thread: download the box<br/>centred ahead along the course<br/>DepthArea_A, DredgedArea_A, Sounding_P]
+  W --> B[rebuild the index in the same thread:<br/>ENC cells first, then the WFS cell]
   B --> S[swap the new index in;<br/>the look-ahead keeps running]
   W -- fails --> E[keep the old index, report the error,<br/>retry after a longer back-off]
 ```
 
 - **Box:** radius 10 km by default (2–25 km). With the default, a new box is fetched once the
-  vessel is 5 km from the centre, so at least 5 km of WFS data lies ahead.
+  vessel is 5 km from the centre, or earlier at speed: once the edge ahead is closer than 1.5
+  times the distance the vessel covered during the last download and rebuild, plus the
+  look-ahead distance. The new box is centred where the vessel will be when it is ready, at
+  most 8 km ahead, so a slow Raspberry Pi at planing speed is not left at the old box's edge.
 - **Priority:** the WFS cell is usage band 1, so any ENC cell wins where both cover.
 - **Land:** the WFS has no land objects. Water that no depth area reaches is land, so a gap in
   the data never reads as open water.

@@ -3,7 +3,7 @@ import os from "os";
 import path from "path";
 import underkeel = require("../src/index");
 import { LivechartService } from "../src/livechart-service";
-import { FIXTURES, M_PER_DEG_LON, ROCK } from "./helpers/fixture-index";
+import { FIXTURES, M_PER_DEG_LON, ROCK, seedFixtureIndex } from "./helpers/fixture-index";
 import { fakeApp, fakeClock, fakeRouter, lastValue, navDelta, T0 } from "./helpers/plugin-harness";
 
 /** What the plugin answers and publishes once it is stopped or restarted. */
@@ -24,6 +24,7 @@ describe("after stop", () => {
       const plugin = underkeel(f.app, fakeClock(T0));
       const { router, post } = fakeRouter();
       plugin.registerWithRouter?.(router as never);
+      seedFixtureIndex(dataDir);
       plugin.start(
         { cellsDir: FIXTURES, leafZoom: 18, livechart: { enabled: true } },
         () => undefined
@@ -42,6 +43,7 @@ describe("after stop", () => {
     const plugin = underkeel(f.app, fakeClock(T0));
     const { router, call, post } = fakeRouter();
     plugin.registerWithRouter?.(router as never);
+    seedFixtureIndex(dataDir);
     plugin.start(
       {
         cellsDir: FIXTURES,
@@ -86,6 +88,7 @@ describe("after stop", () => {
     const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 3.2 } } });
     const clock = fakeClock(T0);
     const plugin = underkeel(f.app, clock);
+    seedFixtureIndex(dataDir);
     plugin.start(
       { cellsDir: FIXTURES, leafZoom: 18, waterLevel: { source: "manual", height: 0.4 } },
       () => undefined
@@ -168,6 +171,7 @@ describe("restart", () => {
     const { router, call } = fakeRouter();
     plugin.registerWithRouter?.(router as never);
     const run = (lon: number) => {
+      seedFixtureIndex(dataDir);
       plugin.start({ cellsDir: FIXTURES, leafZoom: 18 }, () => undefined);
       f.send(navDelta(lon, ROCK[1], 3, clock.now()));
       clock.advance(1000);

@@ -18,6 +18,33 @@ describe("extension display logic", () => {
     expect(UKC.reason("Under-keel clearance normal")).toBe("Under-keel clearance normal");
   });
 
+  test("the widget shows the values, and a stale view as unknown with no numbers", () => {
+    const view = { state: "warn", clearance: 0.42, timeToShoal: 95, message: "shoal ahead: P 7 %" };
+    const now = Date.parse("2026-10-19T12:00:00Z");
+    expect(UKC.widgetView({ ...view, stale: false }, "m", now)).toEqual({
+      colour: UKC.stateStyle("warn").colour,
+      state: "UKC Warning",
+      line: "min 0.4 m · shoal in 95 s",
+      reason: "shoal ahead"
+    });
+    expect(UKC.widgetView({ ...view, stale: true }, "m", now)).toEqual({
+      colour: UKC.stateStyle("unknown").colour,
+      state: "UKC Unknown",
+      line: "min —",
+      reason: "no data from the under-keel plugin"
+    });
+    expect(UKC.widgetView({ ...view, state: "normal", stale: true }, "m", now).state).toBe(
+      "UKC Unknown"
+    );
+    // Back from a hidden page whose stale timer has not fired: the deadline still holds.
+    const normal = { ...view, state: "normal", stale: false };
+    expect(UKC.widgetView({ ...normal, freshUntil: now + 1 }, "m", now).state).toBe("UKC Normal");
+    expect(UKC.widgetView({ ...normal, freshUntil: now }, "m", now)).toMatchObject({
+      state: "UKC Unknown",
+      reason: "no data from the under-keel plugin"
+    });
+  });
+
   test("an unknown state shows as unknown, never as normal", () => {
     expect(UKC.stateStyle("alarm").label).toBe("ALARM");
     expect(UKC.stateStyle("bogus")).toEqual(UKC.stateStyle("unknown"));
@@ -115,6 +142,76 @@ describe("extension display logic", () => {
     expect(UKC.checkedAgo(undefined, now)).toBe("");
   });
 
+  test("the compact route result gives the same badge and leg rows as the full one", () => {
+    const now = Date.parse("2026-10-19T12:00:00Z");
+    const at = (s: number) => new Date(now - s * 1000).toISOString();
+    const leg = (index: number, status: string, minUkc: number | null, risk: number) => ({
+      index,
+      status,
+      from: [22 + index / 100, 60],
+      to: [22 + (index + 1) / 100, 60],
+      length: 560,
+      eta: { start: at(0), end: at(-60) },
+      minUkc,
+      sigma: 0.4,
+      risk,
+      charted: minUkc === null ? null : minUkc + 2,
+      flags: ["UNASSESSED"],
+      worst: { position: [22, 60], hazard: { class: "SOUNDG", valsou: 2.1 } },
+      explanation: { terms: [{ name: "draft", value: 1.8 }], text: "draft 1.8 m" }
+    });
+    const legs = [
+      leg(0, "ok", 4.2, 0),
+      leg(1, "marginal", 0.9, 0.012),
+      leg(2, "unverified", null, 0)
+    ];
+    const results = [
+      { name: "A", rev: 3, legs, checkedAt: at(5), receivedAt: at(4) },
+      { name: "B", rev: 1, legs: [...legs, leg(3, "fail", -0.4, 0.93)], receivedAt: at(10) },
+      { name: "C", rev: 2, legs, receivedAt: at(600) },
+      { name: "D", rev: 2, legs: [], error: "route check failed: timeout" },
+      { name: "E", legs: [], pending: true },
+      { name: "F", legs: [leg(0, "ok", 4.2, 0)] }
+    ];
+    for (const full of results) {
+      const compact: Record<string, unknown> & { legs: object[] } = UKC.compactResult(full);
+      expect(UKC.routeBadge(compact, now, 180000)).toEqual(UKC.routeBadge(full, now, 180000));
+      expect(UKC.checkedAgo(compact.receivedAt, now)).toBe(UKC.checkedAgo(full.receivedAt, now));
+      expect(compact.error).toBe(full.error);
+      expect(compact.pending).toBe(full.pending);
+      for (const unit of ["m", "foot"]) {
+        expect(compact.legs.map((l: object) => UKC.legRow(l, unit))).toEqual(
+          full.legs.map((l: object) => UKC.legRow(l, unit))
+        );
+      }
+    }
+    const [first] = results;
+    expect(JSON.stringify(UKC.compactResult(first)).length).toBeLessThan(
+      JSON.stringify(first).length / 4
+    );
+    expect(UKC.legRow(legs[1], "m")).toEqual(["2", "marginal", "0.9 m", "1.2 %"]);
+  });
+
+  test("a route check asked for while one runs waits and runs once after it", () => {
+    const gate = UKC.oneAtATime();
+    expect(gate.start("r1")).toBe(true);
+    expect(gate.start("r1")).toBe(false);
+    expect(gate.start("r1")).toBe(false);
+    expect(gate.start("r2")).toBe(true);
+    expect(gate.end("r1")).toBe(true);
+    expect(gate.start("r1")).toBe(true);
+    expect(gate.end("r1")).toBe(false);
+    expect(gate.end("r2")).toBe(false);
+  });
+
+  test("a busy server's Retry-After sets the wait before a route is checked again", () => {
+    expect(UKC.retryAfterMs("2")).toBe(2000);
+    expect(UKC.retryAfterMs(" 0 ")).toBe(1000);
+    expect(UKC.retryAfterMs("3600")).toBe(30000);
+    expect(UKC.retryAfterMs(null)).toBeNull();
+    expect(UKC.retryAfterMs("Wed, 21 Oct 2026 07:28:00 GMT")).toBeNull();
+  });
+
   test("an envelopeRev that does not step by one means a restart or missed deltas", () => {
     expect(UKC.revJumped(undefined, 7)).toBe(false);
     expect(UKC.revJumped(7, 7)).toBe(false);
@@ -130,6 +227,59 @@ describe("extension display logic", () => {
     expect(UKC.levelMoved(0.3, null, 0.01)).toBe(true);
     expect(UKC.levelMoved(null, 0, 0.01)).toBe(true);
     expect(UKC.levelMoved(null, null, 0.01)).toBe(false);
+  });
+
+  test("the plugin's change list says which UKC tiles to fetch again", () => {
+    const tiles = UKC.tileRefresh();
+    expect(tiles.query()).toBe("");
+    const reply = (rev: number, more: object) => ({
+      epoch: "e 1",
+      rev,
+      all: false,
+      tiles: [],
+      ...more
+    });
+    expect(tiles.polled(reply(3, {}), 0.5)).toBeNull();
+    expect(tiles.query()).toBe("?epoch=e%201&rev=3");
+    expect(tiles.polled(reply(4, { tiles: [[14, 1, 2]] }), 0.5)).toEqual([[14, 1, 2]]);
+    // A wave height, σ, risk level or fallback change: every tile.
+    expect(tiles.polled(reply(5, { all: true }), 0.5)).toBe("all");
+    expect(tiles.query()).toBe("?epoch=e%201&rev=5");
+  });
+
+  test("a water level 1 cm from the last poll asks the change list again", () => {
+    const tiles = UKC.tileRefresh();
+    tiles.polled({ epoch: "e", rev: 0, all: false, tiles: [] }, 0.5);
+    expect(tiles.level(0.505)).toBeNull();
+    expect(tiles.level(0.512)).toBe("poll");
+    expect(tiles.level(0.515)).toBeNull();
+    expect(tiles.level(0.5)).toBe("poll");
+    expect(tiles.level(null)).toBe("poll");
+  });
+
+  test("without the change list every tile is fetched on a 1 cm fall or a 10 cm rise", () => {
+    const tiles = UKC.tileRefresh();
+    tiles.polled({ epoch: "e", rev: 0, all: false, tiles: [] }, 0.5);
+    // What changed since the last answer is unknown.
+    expect(tiles.lost()).toBe("all");
+    expect(tiles.lost()).toBeNull();
+    expect(tiles.level(0.495)).toBeNull();
+    expect(tiles.level(0.485)).toBe("all");
+    // Higher water makes a stale tile show more danger, never less.
+    expect(tiles.level(0.55)).toBeNull();
+    expect(tiles.level(0.584)).toBeNull();
+    expect(tiles.level(0.586)).toBe("all");
+    expect(tiles.level(0.6, "fmi:forecast|")).toBeNull();
+    expect(tiles.level(0.6, "fallback|FMI down")).toBe("all");
+    expect(tiles.level(null)).toBe("all");
+    expect(tiles.level(null)).toBeNull();
+    expect(tiles.level(0)).toBe("all");
+    // Once the list answers again, it decides.
+    expect(tiles.polled({ epoch: "e", rev: 2, all: false, tiles: [[14, 1, 1]] }, 0)).toEqual([
+      [14, 1, 1]
+    ]);
+    expect(tiles.level(0.05)).toBe("poll");
+    expect(tiles.lost()).toBe("all");
   });
 
   test("the applied water level is keyed by its source and degraded reason", () => {

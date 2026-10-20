@@ -2,9 +2,13 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import type { BuildJob } from "../src/spatial/build-worker";
-import { commitChartIndex, loadChartIndex } from "../src/spatial/chart-index";
+import { readCellDirectory } from "../src/ingest/cell-reader";
+import { buildChartIndex, commitChartIndex, loadChartIndex } from "../src/spatial/chart-index";
 import type { IndexBuilder } from "../src/wfs-service";
+import underkeel = require("../src/index");
 import { FIXTURES } from "./helpers/fixture-index";
+import { fakeApp, fakeClock, T0 } from "./helpers/plugin-harness";
+import { spreadCells } from "./helpers/shifted-cells";
 
 /**
  * The off-loop index build behind the Traficom WFS box (plan §4.2, §6).
@@ -14,6 +18,7 @@ import { FIXTURES } from "./helpers/fixture-index";
 
 const LIB_BUILDER = path.resolve(__dirname, "..", "lib", "wfs-service.js");
 const LIB_WORKER = path.resolve(__dirname, "..", "lib", "spatial", "build-worker.js");
+const LIB_STORE = path.resolve(__dirname, "..", "lib", "spatial", "store.js");
 const built = fs.existsSync(LIB_BUILDER) && fs.existsSync(LIB_WORKER);
 
 let dir: string;
@@ -26,31 +31,35 @@ function job(dirs = [path.join(FIXTURES, "FI5SYNTH")]): BuildJob {
   return { dirs, leafZoom: 16, indexDir: path.join(dir, "index") };
 }
 
-function runWorkerEntry(data: BuildJob): unknown[] {
+/** Runs the worker entry in-process and resolves with what it posted once it has. */
+async function runWorkerEntry(data: BuildJob): Promise<unknown[]> {
   const messages: unknown[] = [];
   jest.isolateModules(() => {
     jest.doMock("worker_threads", () => ({
       parentPort: { postMessage: (m: unknown) => messages.push(m) },
-      workerData: data
+      workerData: { ...data, threads: 1 }
     }));
     require("../src/spatial/build-worker");
   });
   jest.dontMock("worker_threads");
+  for (let i = 0; i < 100 && messages.length === 0; i++) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
   return messages;
 }
 
 describe("index build worker entry", () => {
-  test("builds and stages the index, leaving the index directory to the main thread", () => {
+  test("builds and stages the index, leaving the index directory to the main thread", async () => {
     const j = job();
-    const messages = runWorkerEntry(j);
+    const messages = await runWorkerEntry(j);
     expect(messages).toEqual([{ ok: true, staging: expect.any(String) }]);
     expect(fs.existsSync(j.indexDir)).toBe(false);
     commitChartIndex(j.indexDir, (messages[0] as { staging: string }).staging);
     expect(loadChartIndex(j.indexDir).catalogue.cells.map((c) => c.name)).toEqual(["FI5SYNTH"]);
   });
 
-  test("reports a failed build as a message instead of throwing", () => {
-    const messages = runWorkerEntry(job([path.join(dir, "missing")]));
+  test("reports a failed build as a message instead of throwing", async () => {
+    const messages = await runWorkerEntry(job([path.join(dir, "missing")]));
     expect(messages).toEqual([{ ok: false, error: expect.any(String) }]);
   });
 });
@@ -94,5 +103,48 @@ describe("workerBuilder (compiled lib/)", () => {
     ctl.abort();
     await expect(pending).rejects.toThrow("aborted");
     expect(fs.readdirSync(dir)).toEqual([]);
+  });
+
+  test("stop() during the build at start terminates the worker and leaves no index or staging", async () => {
+    const build = await builder();
+    const dataDir = path.join(dir, "data");
+    fs.mkdirSync(dataDir);
+    const plugin = underkeel(fakeApp(dataDir).app, fakeClock(T0), globalThis.fetch, build);
+    plugin.start({ cellsDir: FIXTURES, leafZoom: 18 }, () => undefined);
+    await new Promise((resolve) => setImmediate(resolve));
+    plugin.stop();
+    // A build with an aborted signal settles only once every aborted worker has exited.
+    const done = new AbortController();
+    done.abort();
+    await expect(build(job(), done.signal)).rejects.toThrow("aborted");
+    expect(fs.readdirSync(dataDir)).toEqual([]);
+  });
+
+  test("columns built on several threads join into the single-thread index, byte for byte", async () => {
+    const lib = (await import(LIB_WORKER)) as { runBuild: (j: BuildJob) => Promise<string> };
+    const cells = spreadCells(path.join(dir, "cells"));
+    const staged = (threads: number) =>
+      lib.runBuild({
+        dirs: cells,
+        leafZoom: 16,
+        indexDir: path.join(dir, `index-${threads}`),
+        threads
+      });
+    const [one, three] = await Promise.all([staged(1), staged(3)]);
+    for (const file of ["pyramid.bin", "hazards.json", "cells.json"]) {
+      expect(
+        fs.readFileSync(path.join(three, file)).equals(fs.readFileSync(path.join(one, file)))
+      ).toBe(true);
+    }
+    const { serializePyramid } = (await import(LIB_STORE)) as {
+      serializePyramid: (s: unknown) => Buffer;
+    };
+    const whole = buildChartIndex(
+      cells.map((d, i) => readCellDirectory(d, i)),
+      { leafZoom: 16 }
+    );
+    expect(
+      fs.readFileSync(path.join(one, "pyramid.bin")).equals(serializePyramid(whole.pyramid))
+    ).toBe(true);
   });
 });

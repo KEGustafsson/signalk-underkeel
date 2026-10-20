@@ -10,17 +10,20 @@ import {
   tileRange,
   tileRect
 } from "../foundation/geo";
-import {
-  areasCoverRect,
-  geomBounds,
-  geomContainsRect,
-  geomRectDistance
-} from "../foundation/geometry";
+import { areasCoverRect, geomContainsRect, geomRectDistance } from "../foundation/geometry";
 import type { ChartFeature, QualityFeature } from "../ingest/features";
+import type { BuildOptions, Item } from "./build-items";
+import { DEFAULT_BUILD, prepareItems } from "./build-items";
 import type { NodeValues } from "./node-store";
 import { combine, EMPTY, FLAGS, NO_DATA, NodeStore } from "./node-store";
-import type { QualityOptions } from "./quality";
-import { DEFAULT_QUALITY, sigmaFor, SWEPT_SIGMA_D } from "./quality";
+import {
+  FULL,
+  MISS,
+  polygonsContainRect,
+  polygonsRectDistance,
+  polygonsRectRelation
+} from "./polygon-index";
+import { sigmaFor, SWEPT_SIGMA_D } from "./quality";
 
 /**
  * Builds the min-depth pyramid top-down (plan §4.3). A tile is subdivided
@@ -30,74 +33,9 @@ import { DEFAULT_QUALITY, sigmaFor, SWEPT_SIGMA_D } from "./quality";
  * feature that reaches it.
  */
 
-export interface BuildOptions {
-  minZoom: number;
-  leafZoom: number;
-  /** Point hazards and soundings are burned within k·σP of their position. */
-  k: number;
-  quality: QualityOptions;
-}
-
-export const DEFAULT_BUILD: BuildOptions = {
-  minZoom: 10,
-  leafZoom: 20,
-  k: 2,
-  quality: DEFAULT_QUALITY
-};
-
-interface Item {
-  f: ChartFeature;
-  bbox: Rect;
-  /** Burn radius in ground metres (0 for areas). */
-  radius: number;
-}
-
 interface Hit {
   item: Item;
   full: boolean;
-}
-
-interface Zone {
-  q: QualityFeature;
-  bbox: Rect;
-}
-
-/**
- * Burn radius of a point hazard or sounding: k·σP of the quality zones of
- * its own cell that contain it. Lines and areas are not widened; the query
- * buffer (plan §4.7) carries their position uncertainty.
- */
-function burnRadius(f: ChartFeature, bbox: Rect, zones: Zone[], opts: BuildOptions): number {
-  if (f.role !== "depth" || !f.hazard || f.geom.type !== "point") {
-    return 0;
-  }
-  let sigmaP = 0;
-  let covered = false;
-  for (const { q, bbox: qb } of zones) {
-    if (rectsOverlap(qb, bbox) && geomRectDistance(q.geom, bbox, 0) === 0) {
-      covered = true;
-      sigmaP = Math.max(sigmaP, sigmaFor(q.catzoc, 0, q, opts.quality).sigmaP);
-    }
-  }
-  if (!covered) {
-    sigmaP = sigmaFor(undefined, 0, {}, opts.quality).sigmaP;
-  }
-  return opts.k * sigmaP;
-}
-
-function prepare(features: ChartFeature[], opts: BuildOptions): Item[] {
-  const zonesByCell = new Map<number, Zone[]>();
-  for (const f of features) {
-    if (f.role === "quality") {
-      const zones = zonesByCell.get(f.cellRef) ?? [];
-      zones.push({ q: f, bbox: geomBounds(f.geom) });
-      zonesByCell.set(f.cellRef, zones);
-    }
-  }
-  return features.map((f) => {
-    const bbox = geomBounds(f.geom);
-    return { f, bbox, radius: burnRadius(f, bbox, zonesByCell.get(f.cellRef) ?? [], opts) };
-  });
 }
 
 /** Containment is tested this far, in Mercator metres, inside the world's ±180° edge. */
@@ -119,18 +57,42 @@ function inWorld(rect: Rect): Rect {
   };
 }
 
+function rectDistance(item: Item, rect: Rect, limit: number): number {
+  return item.shape
+    ? polygonsRectDistance(item.shape, rect, limit)
+    : geomRectDistance(item.f.geom, rect, limit);
+}
+
+function containsRect(item: Item, rect: Rect): boolean {
+  return item.shape ? polygonsContainRect(item.shape, rect) : geomContainsRect(item.f.geom, rect);
+}
+
 function classify(items: Item[], rect: Rect): Hit[] {
   const scale = groundToMercator(1, maxAbsLat(rect));
+  const world = inWorld(rect);
+  // Away from ±180° containment sees the tile itself, so one pass decides both tests.
+  const onePass = world.minX === rect.minX && world.maxX === rect.maxX;
   const hits: Hit[] = [];
   for (const item of items) {
+    if (item.full) {
+      hits.push({ item, full: true });
+      continue;
+    }
     const r = item.radius * scale;
     if (!rectsOverlap(expandRect(rect, r), item.bbox)) {
       continue;
     }
-    if (geomRectDistance(item.f.geom, rect, r) > r) {
+    if (item.shape && item.radius === 0 && onePass) {
+      const rel = polygonsRectRelation(item.shape, rect);
+      if (rel !== MISS) {
+        hits.push({ item, full: rel === FULL });
+      }
       continue;
     }
-    hits.push({ item, full: item.radius === 0 && geomContainsRect(item.f.geom, inWorld(rect)) });
+    if (rectDistance(item, rect, r) > r) {
+      continue;
+    }
+    hits.push({ item, full: item.radius === 0 && containsRect(item, world) });
   }
   return hits;
 }
@@ -232,12 +194,14 @@ function analyse(all: Hit[], rect: Rect, tileGround: number): Analysis {
  * switch to that cell and drop the current areas, so nothing is pruned.
  */
 function forChildren(all: Hit[], a: Analysis): Item[] {
-  const coverageItems = all.filter((h) => h.item.f.role === "coverage").map((h) => h.item);
+  const coverage = all.filter((h) => h.item.f.role === "coverage");
   const kept = a.hits.filter((h) => {
     const f = h.item.f;
     return a.coverageEdge || h.full || f.role !== "depth" || f.dredged || f.depth < a.shallowest;
   });
-  return [...coverageItems, ...kept.map((h) => h.item)];
+  // A child lies inside its parent, so what contains the parent contains it.
+  const pass = (h: Hit): Item => (h.full && !h.item.full ? { ...h.item, full: true } : h.item);
+  return [...coverage.map(pass), ...kept.map(pass)];
 }
 
 function isQuality(h: Hit): h is Hit & { item: { f: QualityFeature } } {
@@ -419,6 +383,44 @@ function evaluate(
   return { v, survey };
 }
 
+export type { BuildOptions } from "./build-items";
+export { DEFAULT_BUILD } from "./build-items";
+
+/** A rectangle of minZoom root tiles: columns minX..maxX, rows minY..maxY. */
+export interface RootRange {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+}
+
+/** The root tiles over the extent of the coverage items, or undefined without coverage. */
+export function rootRange(items: readonly Item[], minZoom: number): RootRange | undefined {
+  const extent = emptyRect();
+  for (const it of items) {
+    if (it.f.role === "coverage") {
+      extendRect(extent, it.bbox.minX, it.bbox.minY);
+      extendRect(extent, it.bbox.maxX, it.bbox.maxY);
+    }
+  }
+  return extent.minX > extent.maxX ? undefined : tileRange(minZoom, extent);
+}
+
+/**
+ * Evaluates the roots of `range`, column by column. Each root depends only on
+ * the items that reach it, so the roots of any part of the range come out as
+ * they do in a build of the whole.
+ */
+export function buildRoots(items: Item[], opts: BuildOptions, range: RootRange): NodeStore {
+  const store = new NodeStore(opts.minZoom, opts.leafZoom);
+  for (let x = range.minX; x <= range.maxX; x++) {
+    for (let y = range.minY; y <= range.maxY; y++) {
+      evaluate(store, opts, opts.minZoom, x, y, items);
+    }
+  }
+  return store;
+}
+
 /**
  * Builds the pyramid over the extent of all coverage features, one root per
  * minZoom tile. Without coverage the store is empty and every query is
@@ -429,23 +431,7 @@ export function buildPyramid(
   options: Partial<BuildOptions> = {}
 ): NodeStore {
   const opts = { ...DEFAULT_BUILD, ...options };
-  const store = new NodeStore(opts.minZoom, opts.leafZoom);
-  const items = prepare(features, opts);
-  const extent = emptyRect();
-  for (const it of items) {
-    if (it.f.role === "coverage") {
-      extendRect(extent, it.bbox.minX, it.bbox.minY);
-      extendRect(extent, it.bbox.maxX, it.bbox.maxY);
-    }
-  }
-  if (extent.minX > extent.maxX) {
-    return store;
-  }
-  const range = tileRange(opts.minZoom, extent);
-  for (let x = range.minX; x <= range.maxX; x++) {
-    for (let y = range.minY; y <= range.maxY; y++) {
-      evaluate(store, opts, opts.minZoom, x, y, items);
-    }
-  }
-  return store;
+  const items = prepareItems(features, opts);
+  const range = rootRange(items, opts.minZoom);
+  return range ? buildRoots(items, opts, range) : new NodeStore(opts.minZoom, opts.leafZoom);
 }

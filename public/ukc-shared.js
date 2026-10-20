@@ -34,6 +34,23 @@
     return seconds < 120 ? "in " + Math.round(seconds) + " s" : "in " + Math.round(seconds / 60) + " min";
   }
 
+  /**
+   * The status widget's texts and colour at `now`. A stale view, or one past
+   * its `freshUntil`, reads Unknown with no numbers, whatever values it last
+   * held: a timer can fire late in a hidden page, the clock cannot.
+   */
+  function widgetView(view, unit, now) {
+    const stale = view.stale || (typeof view.freshUntil === "number" && !(now < view.freshUntil));
+    const s = stateStyle(stale ? "unknown" : view.state);
+    const tts = stale ? "" : timeToShoal(view.timeToShoal);
+    return {
+      colour: s.colour,
+      state: "UKC " + s.label,
+      line: "min " + depth(stale ? null : view.clearance, unit) + (tts ? " · shoal " + tts : ""),
+      reason: stale ? "no data from the under-keel plugin" : reason(view.message)
+    };
+  }
+
   /** The reason part of a notification message: the text before the explanation sentence. */
   function reason(message) {
     if (typeof message !== "string") {
@@ -170,6 +187,68 @@
     return prev !== next;
   }
 
+  /**
+   * Which UKC tiles the runtime fetches again. While the plugin's change list
+   * (`GET /tiles/ukc/changes`) answers, the tiles it lists; the runtime asks
+   * it again once the water level has moved 1 cm. Without it, every tile when
+   * the level falls 1 cm or rises 10 cm or its source changes: a tile left
+   * stale by a rise shows more danger than the truth, never less.
+   *
+   * `polled` takes a change list reply and `level` a water level (with the
+   * source key from `/status`, when known); each answers "all", a list of
+   * [z, x, y], "poll" (ask the list) or null.
+   */
+  function tileRefresh() {
+    const STEP = 0.01;
+    const RISE = 0.1;
+    let cursor = null;
+    let live = false;
+    let ref;
+    let key;
+    return {
+      query: function () {
+        return cursor ? "?epoch=" + encodeURIComponent(cursor.epoch) + "&rev=" + cursor.rev : "";
+      },
+      polled: function (reply, h) {
+        cursor = { epoch: reply.epoch, rev: reply.rev };
+        live = true;
+        ref = h;
+        if (reply.all) {
+          return "all";
+        }
+        return reply.tiles && reply.tiles.length > 0 ? reply.tiles : null;
+      },
+      lost: function () {
+        const was = live;
+        live = false;
+        return was ? "all" : null;
+      },
+      level: function (h, sourceKey) {
+        if (live) {
+          if (!levelMoved(ref, h, STEP)) {
+            return null;
+          }
+          ref = h;
+          return "poll";
+        }
+        const keyMoved = sourceKey !== undefined && key !== undefined && sourceKey !== key;
+        if (sourceKey !== undefined) {
+          key = sourceKey;
+        }
+        const both = typeof ref === "number" && typeof h === "number";
+        const moved = both ? ref - h > STEP || h - ref > RISE : ref !== undefined && ref !== h;
+        if (ref === undefined) {
+          ref = h;
+        }
+        if (!keyMoved && !moved) {
+          return null;
+        }
+        ref = h;
+        return "all";
+      }
+    };
+  }
+
   /** The applied water level's source and degraded reason from `GET /status`; "" without one. */
   function waterSourceKey(status) {
     const applied = status && status.waterLevel && status.waterLevel.applied;
@@ -209,22 +288,83 @@
     });
   }
 
+  /**
+   * A route result as the runtime keeps it in host state, which a host may
+   * persist on every write: the panel and its badges read only these fields.
+   * The leg geometry and explanations stay in the runtime for the overlay.
+   */
+  function compactResult(r) {
+    const out = {
+      name: r.name,
+      rev: r.rev,
+      legs: (r.legs || []).map(function (leg) {
+        return { index: leg.index, status: leg.status, minUkc: leg.minUkc, risk: leg.risk };
+      })
+    };
+    ["receivedAt", "checkedAt", "error", "pending"].forEach(function (k) {
+      if (r[k] !== undefined) {
+        out[k] = r[k];
+      }
+    });
+    return out;
+  }
+
+  /** One row of the panel's leg table: leg number, status, minimum UKC and P(UKC < 0). */
+  function legRow(leg, unit) {
+    return [String(leg.index + 1), leg.status, depth(leg.minUkc, unit), (leg.risk * 100).toFixed(1) + " %"];
+  }
+
+  /**
+   * At most one run per key. A start while one runs is refused and
+   * remembered, and `end` says whether to run once more for it.
+   */
+  function oneAtATime() {
+    const running = new Set();
+    const again = new Set();
+    return {
+      start: function (key) {
+        if (running.has(key)) {
+          again.add(key);
+          return false;
+        }
+        running.add(key);
+        return true;
+      },
+      end: function (key) {
+        running.delete(key);
+        return again.delete(key);
+      }
+    };
+  }
+
+  /** A Retry-After of whole seconds as ms, held to 1–30 s; null when there is none. */
+  function retryAfterMs(header) {
+    const s = typeof header === "string" && /^\s*\d+\s*$/.test(header) ? Number(header) : NaN;
+    return isFinite(s) ? Math.min(30, Math.max(1, s)) * 1000 : null;
+  }
+
   const api = {
     API: API,
     stateStyle: stateStyle,
     depth: depth,
     timeToShoal: timeToShoal,
     reason: reason,
+    widgetView: widgetView,
     routeLine: routeLine,
     legFeatures: legFeatures,
     worstStatus: worstStatus,
     routeEntries: routeEntries,
+    compactResult: compactResult,
+    legRow: legRow,
+    oneAtATime: oneAtATime,
+    retryAfterMs: retryAfterMs,
     freshFor: freshFor,
     freshness: freshness,
     routeBadge: routeBadge,
     checkedAgo: checkedAgo,
     revJumped: revJumped,
     levelMoved: levelMoved,
+    tileRefresh: tileRefresh,
     waterSourceKey: waterSourceKey,
     statusLines: statusLines
   };

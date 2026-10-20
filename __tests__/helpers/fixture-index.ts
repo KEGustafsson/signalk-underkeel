@@ -1,7 +1,9 @@
 import path from "path";
+import { cellDirectories } from "../../src/index-loader";
 import { readCellDirectory } from "../../src/ingest/cell-reader";
 import type { ChartIndex } from "../../src/spatial/chart-index";
-import { buildChartIndex } from "../../src/spatial/chart-index";
+import { buildChartIndex, loadChartIndex, saveChartIndex } from "../../src/spatial/chart-index";
+import type { IndexBuilder } from "../../src/wfs-service";
 
 export const FIXTURES = path.resolve(__dirname, "..", "..", "fixtures", "enc");
 
@@ -26,3 +28,29 @@ export const FAIRWAY_LAT = 60.01;
 
 /** Metres per degree of longitude at the fixture latitude. */
 export const M_PER_DEG_LON = 111320 * Math.cos((60.01 * Math.PI) / 180);
+
+/** The build worker's job run in-process: ts-jest has no compiled worker file. */
+export const inlineBuilder: IndexBuilder = (job) => {
+  saveChartIndex(
+    job.indexDir,
+    buildChartIndex(
+      job.dirs.map((d, i) => readCellDirectory(d, i)),
+      { leafZoom: job.leafZoom }
+    )
+  );
+  return Promise.resolve(loadChartIndex(job.indexDir));
+};
+
+let seeded: ChartIndex | undefined;
+
+/**
+ * Saves the index start() would build from `cellsDir: FIXTURES` at leafZoom 18
+ * into `<dataDir>/index`, so start() loads it instead of building one.
+ */
+export function seedFixtureIndex(dataDir: string): void {
+  seeded ??= buildChartIndex(
+    cellDirectories(FIXTURES).map((d, i) => readCellDirectory(d, i)),
+    { leafZoom: 18 }
+  );
+  saveChartIndex(path.join(dataDir, "index"), seeded);
+}

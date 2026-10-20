@@ -125,6 +125,11 @@ export class Monitor {
     this.levels.setIndex(index);
   }
 
+  /** Why there is still no index: being built or read, or failed. The state stays `off`. */
+  noIndex(reason: string): void {
+    this.indexReason = reason;
+  }
+
   start(): void {
     this.subscribe([
       ...INPUT_PATHS,

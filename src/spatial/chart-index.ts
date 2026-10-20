@@ -10,7 +10,12 @@ import { HazardIndex } from "./hazards";
 import type { NodeStore } from "./node-store";
 import type { BuildOptions } from "./pyramid-build";
 import { buildPyramid } from "./pyramid-build";
-import { deserializePyramid, isCurrentPyramid, serializePyramid } from "./store";
+import {
+  deserializePyramid,
+  deserializePyramidAsync,
+  isCurrentPyramid,
+  serializePyramid
+} from "./store";
 
 /** The queryable chart: provenance, the min-depth pyramid and the hazard tree. */
 export interface ChartIndex {
@@ -22,7 +27,7 @@ export interface ChartIndex {
 /** Object classes kept in the hazard tree so results can name what they hit. */
 const HAZARD_CLASSES = new Set(["UWTROC", "WRECKS", "OBSTRN", "SOUNDG"]);
 
-function isNamedHazard(f: ChartFeature): f is DepthFeature {
+export function isNamedHazard(f: ChartFeature): f is DepthFeature {
   return f.role === "depth" && HAZARD_CLASSES.has(f.objectClass);
 }
 
@@ -56,6 +61,34 @@ interface StoredHazard extends Omit<DepthFeature, "depth"> {
 }
 
 /**
+ * With delayed allocation a power cut after a rename can leave the renamed
+ * directory holding empty files, so each file is on disk before the rename.
+ */
+function writeDurable(file: string, data: string | Buffer): void {
+  const fd = fs.openSync(file, "w");
+  try {
+    fs.writeFileSync(fd, data);
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/** Makes a rename or a new entry in `dir` survive a power cut. */
+function syncDirectory(dir: string): void {
+  // Windows cannot open a directory; NTFS journals the rename itself.
+  if (process.platform === "win32") {
+    return;
+  }
+  const fd = fs.openSync(dir, "r");
+  try {
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
  * Writes the three index files into a new staging directory beside `dir`
  * and returns its path; `commitChartIndex` swaps it in.
  */
@@ -65,13 +98,14 @@ export function stageChartIndex(dir: string, index: ChartIndex): string {
   const suffix = `${process.pid}-${threadId}-${randomBytes(4).toString("hex")}`;
   const staging = `${dir}.tmp-${suffix}`;
   fs.mkdirSync(staging, { recursive: true });
-  fs.writeFileSync(path.join(staging, FILES.cells), JSON.stringify(index.catalogue, null, 2));
-  fs.writeFileSync(path.join(staging, FILES.pyramid), serializePyramid(index.pyramid));
+  writeDurable(path.join(staging, FILES.cells), JSON.stringify(index.catalogue, null, 2));
+  writeDurable(path.join(staging, FILES.pyramid), serializePyramid(index.pyramid));
   const hazards: StoredHazard[] = index.hazards.features.map((f) => ({
     ...f,
     depth: Number.isFinite(f.depth) ? f.depth : null
   }));
-  fs.writeFileSync(path.join(staging, FILES.hazards), JSON.stringify(hazards));
+  writeDurable(path.join(staging, FILES.hazards), JSON.stringify(hazards));
+  syncDirectory(staging);
   return staging;
 }
 
@@ -87,6 +121,7 @@ export function commitChartIndex(dir: string, staging: string): void {
     fs.renameSync(dir, previous);
   }
   fs.renameSync(staging, dir);
+  syncDirectory(path.dirname(dir));
   if (hadIndex) {
     fs.rmSync(previous, { recursive: true, force: true });
   }
@@ -170,6 +205,11 @@ export function savedIndexIsCurrent(dir: string): boolean {
   }
 }
 
+const hazardsFrom = (json: string): HazardIndex =>
+  new HazardIndex(
+    (JSON.parse(json) as StoredHazard[]).map((h) => ({ ...h, depth: h.depth ?? -Infinity }))
+  );
+
 /** Loads a saved index, first recovering one that a crash during save left moved aside. */
 export function loadChartIndex(dir: string): ChartIndex {
   recoverChartIndex(dir);
@@ -177,9 +217,27 @@ export function loadChartIndex(dir: string): ChartIndex {
     JSON.parse(fs.readFileSync(path.join(dir, FILES.cells), "utf8"))
   );
   const pyramid = deserializePyramid(fs.readFileSync(path.join(dir, FILES.pyramid)));
-  const stored = JSON.parse(
-    fs.readFileSync(path.join(dir, FILES.hazards), "utf8")
-  ) as StoredHazard[];
-  const hazards = new HazardIndex(stored.map((h) => ({ ...h, depth: h.depth ?? -Infinity })));
+  const hazards = hazardsFrom(fs.readFileSync(path.join(dir, FILES.hazards), "utf8"));
   return { catalogue, pyramid, hazards };
+}
+
+/**
+ * `loadChartIndex` with the file reads and the pyramid's inflate off the
+ * event loop; parsing the catalogue and hazards and adopting the inflated
+ * columns stay on it.
+ */
+export async function loadChartIndexAsync(dir: string): Promise<ChartIndex> {
+  recoverChartIndex(dir);
+  const read = (f: string) => fs.promises.readFile(path.join(dir, f));
+  const [cells, pyramid, hazards] = await Promise.all([
+    read(FILES.cells),
+    read(FILES.pyramid),
+    read(FILES.hazards)
+  ]);
+  const catalogue = parseCatalogue(JSON.parse(cells.toString("utf8")));
+  return {
+    catalogue,
+    pyramid: await deserializePyramidAsync(pyramid),
+    hazards: hazardsFrom(hazards.toString("utf8"))
+  };
 }

@@ -207,7 +207,11 @@ signalk-underkeel/
 - `@turf/*`, only for buffers and planning-time geometry. The hot path uses its own
   local-tangent-plane math.
 - `better-sqlite3` for soundings and acknowledgements.
-- `worker_threads` for the index build.
+- `worker_threads` for the index build. The worker's old-generation heap is capped at a
+  quarter of the RAM (256 MB to 2 GB), so a build too large for the machine ends the worker
+  with an error in the status and the previous index stays in use, instead of growing until
+  the kernel ends the server. A server started with `--max-old-space-size` overrides the cap,
+  because V8 flags apply to every isolate in the process.
 - GDAL/OGR, run in a container through `signalk-container`, for reading S-57. This keeps the
   same container approach as `signalk-charts-provider-simple`.
 - Must run on a Raspberry Pi 4 as well as on the Jetson Orin. Budget: index RAM under 150 MB,
@@ -226,8 +230,23 @@ signalk-underkeel/
    non-navigational use only, and it has no land, rocks, wrecks, obstructions or `M_QUAL`.
    Decision (safety invariants 3 and 4): the plugin downloads a box of configurable radius
    (default 10 km) around the vessel and a new one once the vessel is more than half the radius
-   from its centre, checked every 10 s, at most once a minute and 5 minutes after a failed
-   download; the index is rebuilt in a worker thread and swapped in. The box is one cell
+   from its centre, or once the distance to the box edge along COG is under SOG × 1.5 × the
+   last download-and-build time plus the look-ahead's reach (the last time is saved with the
+   box; 10 minutes until one is measured). Checks run every 10 s, at most once a minute and
+   5 minutes after a failed download. The new box is centred SOG × the last time ahead along
+   COG, at most 0.8 × the radius, so the vessel is near its centre when it is handed over; at
+   25 kn with 10-minute rebuilds the half-radius rule alone handed a box over with the vessel
+   5.4 km past the old box's edge. A box centred ahead covers less water astern, which route
+   checks of legs behind the vessel see as uncovered (`unverified`, invariant 4). A worker thread downloads the box, parses, clips and writes the cell, rebuilds
+   the index and stages it; the main thread moves it into place and swaps it in. Each page is
+   read as a stream: more than 64 MB, or 30 s without a byte, fails the download, which then
+   waits 5 minutes as after any failure, and the previous index stays. The living chart is
+   moved onto the new index in slices of 1 000 cells, each its own turn of the event loop, and
+   the index is swapped in during the turn that finishes the move, so no query sees the new
+   index without the living chart's adjustments (invariant 5). When only the WFS cell differs
+   from the index in use, only the living-chart cells within 1 km and one cell of the old or
+   new box are re-judged: the chart prior of any other cell reads the same tiles in both; a
+   property test checks that this equals re-judging every cell. The box is one cell
    of usage band 1, so every ENC cell wins where both cover. Water no depth area reaches is
    land. Survey quality is an assumed CATZOC (configurable, default B). Every tile from the cell
    carries `NOT_FOR_NAVIGATION`: the look-ahead is never `normal` there (at most `alert`, with
@@ -292,6 +311,18 @@ wide does not by itself subdivide a tile: the tile takes the disc's depth over i
 which is pessimistic by at most one tile width and keeps CATZOC C soundings (σP 250 m) from
 splitting every tile down to the leaf zoom.
 
+**Build cost.** Each area polygon keeps its bounding box and, for rings of 64 or more
+vertices, a uniform grid of its edges, so a tile test reads only the edges near the tile and
+the edges that span the corner's row; one boundary pass and four corner tests decide both "the
+area reaches the tile" and "the area contains the tile", and an area containing a tile is
+passed to its children as containing them. The tests return exactly what the per-vertex walk
+returns (`src/spatial/polygon-index.ts`), so the pyramid is unchanged. The index build in the
+worker evaluates one minZoom root at a time from only the cells whose features reach it (a
+survey pass keeps each cell's extent and widest burn radius), on up to four threads (one per
+core but one and per GiB of RAM), and joins the roots in key order; each root depends only on
+the features reaching it, so the pyramid is byte-identical to a build of all cells at once
+whatever the thread count, and only one neighbourhood's features are held per thread.
+
 **Query: `minDepthOver(polygon, zoomCap)`.**
 
 1. Start at the coarsest tiles that cover the polygon's bounding box.
@@ -324,9 +355,26 @@ CATZOC C sounding counts up to 1 km from its position.
 **Storage.**
 
 - `pyramid.bin`: a JSON header line, then one typed column per node field (depth, σ, flags,
-  cell reference, tile address, split bit). It is loaded into typed arrays at start; memory
-  mapping per zoom level is the follow-up if the full Finnish coast exceeds the RAM budget.
-- `cells.json` (provenance) and `hazards.json` (exact hazard geometry) sit beside it.
+  cell reference, tile key, zoom, split bit), the columns together gzip-compressed at level 1
+  (7.5 MB → 0.56 MB for two Nauvo cells at z20; the CRC also refuses a torn body). Nodes are
+  written by zoom and then tile key, so at start the inflated columns are the store as they
+  are, and a lookup bisects its zoom's key column: 36 bytes per node resident, against
+  110–160 with a Map per zoom (which V8 also caps at 16.7 M entries). `dMin` stays a 64-bit
+  float, so a stored depth is never rounded deeper. Loading only the leaf blocks near the
+  vessel and the route is the follow-up if the full Finnish coast exceeds the RAM budget.
+- `cells.json` (provenance) and `hazards.json` (exact hazard geometry) sit beside it. The
+  hazard R-tree is rebuilt from `hazards.json` at load, packed in typed arrays (about 47 bytes
+  per hazard).
+- The index is built in a worker thread, at start as for a new WFS box (§4.2); until the
+  worker hands it over the look-ahead is `off` with the reason `building chart index`, and the
+  WFS box starts only after the handover, so this build never replaces a newer box's index.
+  A saved `pyramid.bin` over 1 MB is read and inflated off the event loop the same way, `off`
+  with `loading chart index` meanwhile; a smaller one loads within `start()` (22 ms on x86 for
+  two Nauvo cells).
+- A save writes and fsyncs the three files and their staging directory, renames the staging
+  directory into place and fsyncs the parent. A saved index that fails to read or parse at
+  start (a power cut can still leave a file short) is rebuilt from the configured cells, with
+  the read error in the index reason; without cells the read error is the reason.
 - The same data is also exported as UKC tiles (§4.10).
 
 **Invariant, tested by property-based tests:** for any polygon,
@@ -658,6 +706,7 @@ pulled only on change.
 | POST            | `/departure-window`          | safe departure intervals over a horizon                                             |
 | POST            | `/query`                     | point or polygon UKC with explanation (cursor readout, popovers)                    |
 | GET             | `/tiles/ukc/{z}/{x}/{y}.pbf` | vector tiles: cells classed by P at current water level and draft                   |
+| GET             | `/tiles/ukc/changes`         | the served tiles to fetch again since a cursor (§4.14)                              |
 | GET/PUT         | `/vessel`                    | vessel model                                                                        |
 | GET/POST/DELETE | `/acks`                      | acknowledged passages                                                               |
 | GET             | `/livechart/discrepancies`   | suspected shoals                                                                    |
@@ -752,11 +801,17 @@ the full forecast horizon), re-checking only the legs whose water level changed.
 intervals in which every leg passes. In Finnish waters this matters during low-water episodes
 with high pressure and easterly winds; in tidal waters it becomes a full tide-gate planner.
 
-**As built (M2).** A leg is checked in pieces of about 1 km taken at equal fractions of the
-rhumb line, the line a Mercator chart plotter draws between the waypoints, so the corridor
-follows the leg as drawn and the last piece ends on its end point. A course computer may
-steer the great circle instead: where the great circle strays more than 10 m from the rhumb
-line, its own pieces are checked too; below that the rhumb corridor is widened by the gap.
+**As built (M2).** A leg is checked in pieces of about max(1 km, 4r), r the corridor half-width,
+taken at equal fractions of the rhumb line, the line a Mercator chart plotter draws between the
+waypoints, so the corridor follows the leg as drawn and the last piece ends on its end point.
+Each piece's rectangle reaches r past both ends, so 1 km pieces of a ±2 km corridor queried the
+same water about five times. A course computer may steer the great circle instead: where the
+great circle strays more than max(10 m, r/4) from the rhumb line, its own pieces are checked
+too, widened by how far it strays from their chords; below that the rhumb corridor is widened
+by the gap. Every rectangle is 1/256 wider than asked, since the Mercator chart and the tangent
+plane the rectangle is drawn in drift apart over a piece (up to 0.15 % of r, measured to 84°);
+a fast-check property holds every point exactly r from either line inside the corridor
+(invariant 4).
 
 **As built (M5).** The repair grid has at most 120 cells on its longer side, at least 10 m
 each, and reaches half the leg's length (at least 300 m) beyond it. A cell is blocked when the
@@ -771,17 +826,29 @@ the `/route-check` body; the window adds `horizon` (default 48 h, at most 7 days
 (default 15 min, at least 5 min, at most 1000 departures). Each leg takes the lowest level from
 its arrival until one step after it leaves, so a sampled `ok` departure also holds for every
 departure until the next sample and a coarse step cannot skip a low water. Leg results are reused across
-departures for the same water level rounded down to the centimetre (σ rounded up). One request
+departures for the same water level rounded down to the centimetre (σ rounded up), and a
+departure's legs after its first `fail` are not checked, since `fail` already decides its status.
+Decision (invariant 2): with `probability` at least 1e-3, a leg's result is also reused across
+levels with the same σ and fallback reason: `ok` at a level holds at any higher level and `fail`
+at any lower one. A query may stop at a tile whose P bound is below 1e-4 (`RISK_STOP_BELOW`), so
+a direct check can overstate P by up to that much; from 1e-3 up the reused status is the one a
+direct check gives, and below it every level is checked directly. One request
 repairs at most 10 legs, and the rest are listed with a reason. A corridor query costs about
 its area, so a route check, repair or window is refused when the route's length times its
 corridor width (2 × (xteLimit + planning buffer)) exceeds 200 km², and a window when its
 departures times that area exceed 1600 km² or its departures times legs exceed 20 000, since a
 leg check costs a corridor query however short the leg is. All three yield to the event loop
 after each corridor query (the route check and the repaired route's re-check), each leg check
-or each departure, so look-ahead ticks keep running during a long request. On a laptop a
+or each departure, and route repair also every 256 cells its search expands and after each
+simplification check, so look-ahead ticks keep running during a long request. They and
+`POST /query` run through one queue after validation: one at a time, at most 4 waiting, and 503
+with `Retry-After: 2` beyond that, so concurrent requests do not interleave their slices. A
+request is aborted at its next pause when its client disconnects or the plugin stops, and
+answers 503 with the reason, never a partial result. On a laptop a
 corridor over 3000 shoals costs 1–3.5 ms per km². `POST /query` is refused when its bounding
-box widened by the buffer exceeds 25 km²: a 500-vertex ring tests every tile against every
-vertex, about 60 ms at that size. Measured under Jest on the synthetic archipelago: 52 ms per
+box widened by the buffer exceeds 25 km², or when its vertices times that area exceed 150 km²:
+every tile is tested against every vertex, and a 499-vertex ring over 25 km² took 0.47 s on a
+laptop over the Nauvo cells, against at most 16 ms within both limits. Measured under Jest on the synthetic archipelago: 52 ms per
 repaired leg.
 
 ### 4.12 Acknowledged passages
@@ -813,7 +880,9 @@ current look-ahead footprints), checked like a `/query` polygon: a closed ring, 
 most 50 km across and not across ±180°; `sector` in degrees (default 20), `ttl` in seconds and
 `notificationId`; heading, water level and draft are taken from the plugin's current state.
 `GET /acks` is readonly; `POST` and `DELETE /acks/:id` need readwrite. They are stored in
-`acks.json` in the plugin data directory, so no database dependency is added; export as
+`acks.json` in the plugin data directory, so no database dependency is added; each write
+goes to a temporary file that is fsynced before the rename, with the directory fsynced after
+it, so a power cut leaves the old list or the new one. Export as
 Signal K notes is a follow-up. Suppression applies to the published state after hysteresis,
 because it changes the state, not P. It never suppresses a negative mean UKC within
 `certainWithin`: an acknowledgement covers an uncertain chart, not a charted depth shallower
@@ -857,15 +926,32 @@ leaf is coarser); the prior is the cell's charted depth and σD without adjustme
 starts after a 10-minute gap. A confirmed discrepancy sets a z18 adjustment that every query
 takes beside the chart, through `minDepthOver` and the UKC tiles, so look-ahead, route check,
 `/query` and the overlay all see it. Adjustments only ever lower a cell; later deeper
-readings leave it as it is. Notes are written with `resourcesApi.setResource("notes", …)` and
-rewritten as evidence grows. Posteriors, adjustments and the last 20 000 accepted soundings are
-kept in `livechart.json` beside the index (no database dependency) and saved at most once a
-minute and on stop. A failed save is reported and retried at the next one, and a malformed file
-is skipped entry by entry rather than stopping the plugin; a file that did not load whole (bad
-JSON, another version, malformed entries, cells at another zoom) is first renamed to
-`livechart.json.bad-<ms>` and reported, so no save overwrites it, and if it cannot be renamed
-it is not saved over at all. The file records its living-chart zoom; after a leaf-zoom change
-the adjustments are mapped onto the new zoom (a coarser cell takes the lowest `dMin` and largest
+readings leave it as it is. Notes are written with `resourcesApi.setResource("notes", …)`.
+A note is rewritten when the cell's adjusted depth drops to a lower 5 cm step or its σ rises
+to a higher 1 cm step, at most once per cell every 5 minutes: a change inside the 5 minutes is
+written with the latest values once they are over, and on stop. The note shows the depth
+floored to 5 cm and σ raised to the next cm, so it never shows the cell deeper or surer than
+the posterior; the adjustment itself keeps the exact values. Posteriors and adjustments are kept
+in `livechart.json` beside the index and the last 20 000 accepted soundings in
+`soundings.ndjson` (no database dependency). Decision (user, PL1): the save schedule is no
+longer "at most once a minute" for one file holding everything, which rewrote 3.2 MB per save
+once the soundings filled, 192 MB/h of SD-card writes. Soundings are appended to
+`soundings.ndjson`, one per line, every minute; once the file would hold more than 40 000 lines
+it is rewritten with the newest 20 000. `livechart.json` (cells and adjustments) is written
+every 10 minutes, and within 10 s of an adjustment being added or moving a 5 cm depth or 1 cm σ
+step; everything is written on stop. The saves run on a 10 s timer, not in the depth-delta
+callback. A power cut can lose up to 10 minutes of posterior evidence that is not yet a
+discrepancy and up to 1 minute of soundings, and an adjustment's lowering within its 5 cm step,
+never an adjustment added or moved a step more than 10 s before. Each write is fsynced, file
+then directory. A `livechart.json` from a version that kept the soundings in it still loads; its
+soundings move to `soundings.ndjson` at the next save. A failed save is reported and retried at
+the next scheduled one, and a malformed file is skipped entry by entry rather than stopping the
+plugin; a file that did not load whole (bad JSON, another version, malformed entries, cells at
+another zoom, malformed `soundings.ndjson` lines) is first renamed to `<name>.bad-<ms>` and
+reported, so no save overwrites it, and if it cannot be renamed it is not saved over at all. A
+last `soundings.ndjson` line cut short by a power cut is skipped and reported, and the file is
+rewritten whole at the next save. `livechart.json` records its living-chart zoom; after a leaf-zoom
+change the adjustments are mapped onto the new zoom (a coarser cell takes the lowest `dMin` and largest
 σ of the cells in it, a finer cell copies its parent's) and the posteriors are dropped. The CSB export
 (`GET /livechart/csb.geojson`) is B-12 GeoJSON of depths below the transducer, with the
 transducer depth as the sounder's `draft`; it is never uploaded.
@@ -939,18 +1025,32 @@ are served from `public/` at `/plotterext/signalk-underkeel/`: the `/plugins/*` 
 admin login, and an extension page must load without one. The bus client is copied from
 `signalk-plotterext-bus` into `public/vendor/` at build time.
 
-| Contribution                       | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| background `live` (runtime.html)   | fetches `/envelope` on each new `envelopeRev`, clears it after 10 s without one, on `off`/`unknown` or a failed fetch, and polls every 3 s without a Signal K stream; checks the routes on the chart on each `route.*` event (debounced 1 s), every 60 s and after a plugin restart; refreshes the `ukc` tiles when the water level moves over 1 cm, the applied water-level source or its degraded reason changes, the state enters or leaves `off`/`unknown`, and after a restart |
-| overlay `lookahead`                | envelope fill, outline, dashed central track and the worst footprint, coloured by state                                                                                                                                                                                                                                                                                                                                                                                             |
-| overlay `routecheck`               | route legs coloured `ok` / `marginal` / `fail` / `unverified`                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| overlay `ukc`                      | the M3 UKC tiles, off by default                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| widget `status` (2×1)              | state colour, minimum clearance in the host's depth unit, time to shoal and the reason; a tap opens the panel                                                                                                                                                                                                                                                                                                                                                                       |
-| panel `details`                    | advisory note, state, water level, the WFS notice when that source is on, and a leg table per route with its age and re-check; a result older than 3 min reads "out of date"                                                                                                                                                                                                                                                                                                        |
-| button `open-details` (mapToolbar) | toggles the panel                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Contribution                       | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| background `live` (runtime.html)   | fetches `/envelope` on each new `envelopeRev`, clears it after 10 s without one, on `off`/`unknown` or a failed fetch, and polls every 3 s without a Signal K stream; checks the routes on the chart on each `route.*` event (debounced 1 s), every 60 s and after a plugin restart, one route at a time with a 30 s timeout and again after `Retry-After` when the server answers 503 busy, and writes the results to host state in compact form (per leg index, status, minimum UKC and P) once per re-check of all routes; refreshes the `ukc` tiles the plugin's change list names, polled every 15 s and after each 1 cm water-level move, all of them when the state enters or leaves `off`/`unknown` and after a restart, and while the list does not answer all of them on a 1 cm fall or 10 cm rise of the water level or a change of its source; fetches nothing while the page is hidden, and on return withdraws the envelope until a current one arrives and asks for tile changes and route checks at once |
+| overlay `lookahead`                | envelope fill, outline, dashed central track and the worst footprint, coloured by state                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| overlay `routecheck`               | route legs coloured `ok` / `marginal` / `fail` / `unverified`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| overlay `ukc`                      | the M3 UKC tiles, off by default                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| widget `status` (2×1)              | state colour, minimum clearance in the host's depth unit, time to shoal and the reason; a tap opens the panel                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| panel `details`                    | advisory note, state, water level, the WFS notice when that source is on, and a leg table per route with its age and re-check; a result older than 3 min reads "out of date"                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| button `open-details` (mapToolbar) | toggles the panel                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
 `requires` is empty: on a host without a capability, the page that needs it shows less and
 says so.
+
+**UKC tile refresh.** A tile's classes hold over a range of the threshold depth: each cell's
+class changes only where P crosses the alert or warn level, and P rises with the threshold
+(invariant 2). The tile route records, per tile served, the range over which every copy
+served is right (to 1 µm short of each crossing). `GET /tiles/ukc/changes?epoch=&rev=` lists
+the tiles whose range the current threshold has left, or in which an own sounding changed a
+cell, since the client's cursor; any other tile input (σ, risk levels, a fallback water
+level, the index) changing, a restarted server or a cursor older than the 4096 tiles kept
+answers `all`. The runtime refreshes exactly those tiles. A tile left unlisted is byte for
+byte the tile the server draws now (`__tests__/ukc-tile-feed.test.ts`).
+
+**Decision (BR3a, approved).** When the change list does not answer, the runtime refreshes
+every tile on a 1 cm fall of the water level but only on a 10 cm rise. A tile kept stale by a
+rise was drawn for lower water, so it shows equal or more danger than the truth.
 
 ---
 

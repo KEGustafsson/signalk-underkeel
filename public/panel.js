@@ -33,7 +33,7 @@ let statusAt = 0;
 async function refreshStatus() {
   const id = ++statusRequest;
   try {
-    const res = await fetch(`${UKC.API}/status`, {
+    const res = await fetch(`${UKC.API}/status?summary`, {
       credentials: "same-origin",
       signal: AbortSignal.timeout(STATUS_TIMEOUT_MS)
     });
@@ -101,16 +101,14 @@ function renderRoutes(entries) {
       table.innerHTML = "<tr><th>Leg</th><th>Status</th><th>Min UKC</th><th>P(UKC&lt;0)</th></tr>";
       r.legs.forEach((leg) => {
         const tr = document.createElement("tr");
-        [String(leg.index + 1), leg.status, UKC.depth(leg.minUkc, unit), `${(leg.risk * 100).toFixed(1)} %`].forEach(
-          (v, i) => {
-            const td = document.createElement("td");
-            td.textContent = v;
-            if (i === 1) {
-              td.className = leg.status;
-            }
-            tr.append(td);
+        UKC.legRow(leg, unit).forEach((v, i) => {
+          const td = document.createElement("td");
+          td.textContent = v;
+          if (i === 1) {
+            td.className = leg.status;
           }
-        );
+          tr.append(td);
+        });
         table.append(tr);
       });
       box.append(table);
@@ -134,7 +132,9 @@ async function refreshRoutes() {
 if (client.hasCapability("signalk.stream")) {
   await client.signalk.subscribe(["notifications.navigation.underKeel"], (ev) => {
     text("message", ev.value && typeof ev.value === "object" ? ev.value.message : "");
-    void refreshStatus();
+    if (!document.hidden) {
+      void refreshStatus();
+    }
   });
 }
 await client.subscribe(["state.changed"], (_name, params) => {
@@ -150,13 +150,32 @@ recheck.addEventListener("click", () => {
 });
 await refreshStatus();
 await refreshRoutes();
-/** Notifications arrive only on change and the stream is optional, so the panel also polls. */
-setInterval(() => {
+function checkStatusAge() {
   if (Date.now() - statusAt > STATUS_MAX_AGE_MS) {
     showUnknownStatus("no status from the plugin for over 20 s");
   }
-}, 1000);
-setInterval(() => {
+}
+
+/** Notifications arrive only on change and the stream is optional, so the panel also polls. */
+function poll() {
   void refreshStatus();
   void refreshRoutes();
+}
+
+// A hidden page polls nothing; back on screen an old status reads unknown until the poll answers.
+setInterval(() => {
+  if (!document.hidden) {
+    checkStatusAge();
+  }
+}, 1000);
+setInterval(() => {
+  if (!document.hidden) {
+    poll();
+  }
 }, 10000);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) {
+    checkStatusAge();
+    poll();
+  }
+});

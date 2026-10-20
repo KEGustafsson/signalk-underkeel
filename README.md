@@ -110,9 +110,10 @@ refuses a non-empty output directory, so export each new edition into a new or e
 directory. A cell without an `M_COVR` coverage layer is rejected.
 
 Set **Exported ENC cells directory** to the parent directory (`~/charts/cells` above). At the
-first start the plugin builds a chart index and saves it under the plugin data directory,
-`~/.signalk/plugin-config-data/signalk-underkeel/index` unless **Chart index directory** says
-otherwise. Later starts load the saved index and rebuild it when a cell directory was added
+first start the plugin builds a chart index in a worker thread and saves it under the plugin
+data directory, `~/.signalk/plugin-config-data/signalk-underkeel/index` unless **Chart index
+directory** says otherwise. Until the index is ready the engine is `off` with the reason
+`building chart index`. Later starts load the saved index and rebuild it when a cell directory was added
 or removed, or a cell's edition or update changed; `GET /status` names the cells that caused
 the rebuild. **Rebuild index at start** forces a rebuild on every start. A cell directory may
 be a symbolic link.
@@ -342,6 +343,7 @@ deleting acknowledgements needs a readwrite user. Errors are `{ "errors": [strin
 | Route                                         | Purpose                                                                                           |
 | --------------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | `GET /status`                                 | engine state, index and cell editions, look-ahead summary, water-level health, datum mapping      |
+| `GET /status?summary`                         | the same without the per-cell lists (`index.cells`, `waterLevel.datums`), for frequent polls      |
 | `GET /envelope?rev=`                          | the look-ahead as GeoJSON; 304 when the client already has that revision                          |
 | `POST /route-check`                           | each leg `ok`, `marginal`, `fail` or `unverified`, with P(UKC < 0), explanation and cell editions |
 | `POST /route-repair`                          | waypoints to insert around failing legs, and the whole route re-checked with them                 |
@@ -350,7 +352,8 @@ deleting acknowledgements needs a readwrite user. Errors are `{ "errors": [strin
 | `GET /acks`, `POST /acks`, `DELETE /acks/:id` | acknowledged passages; `POST` answers 409 while the water level is a fallback                     |
 | `GET /livechart/discrepancies`                | living-chart cells shallower than charted                                                         |
 | `GET /livechart/csb.geojson`                  | own soundings in the IHO CSB format                                                               |
-| `GET /tiles/ukc/{z}/{x}/{y}.pbf`              | Mapbox vector tiles from zoom 11, one `ukc` layer, `Cache-Control: no-cache`                      |
+| `GET /tiles/ukc/{z}/{x}/{y}.pbf`              | Mapbox vector tiles from zoom 11, one `ukc` layer, `Cache-Control: no-cache`, gzipped on request  |
+| `GET /tiles/ukc/changes?epoch=&rev=`          | the tiles served since that cursor whose classes changed, or `all`; a new cursor                  |
 | `GET /ukc-style.json`                         | a MapLibre style for the tiles                                                                    |
 
 A route-check body carries `route` (a GeoJSON LineString) or `routeRef`
@@ -360,7 +363,10 @@ one per leg, `{ "default": … }` or `{ "legs": […] }`), `xteLimit` (m), `prob
 planning buffer at the lowest water level expected while on it. The request and response
 schemas are in [`schemas/navigation-safety/`](schemas/navigation-safety/README.md), which also
 lists the size limits that can refuse a valid request (for example route length times corridor
-width at most 200 km²).
+width at most 200 km²). Route checks, repairs, departure windows and queries run one at a time
+with at most four more waiting; beyond that a request gets 503 with `Retry-After`, and a request
+whose client disconnects, or that is running when the plugin stops, is abandoned between two of
+its steps.
 
 ## Plotter Extensions
 
