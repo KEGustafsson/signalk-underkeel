@@ -1,13 +1,13 @@
 import type { Delta, Path, ServerAPI, Unsubscribes } from "@signalk/server-api";
 import type { PluginConfig } from "./config";
 import { buildEnvelope, ENVELOPE_DEADBAND, EnvelopeTracker } from "./engine/envelope";
-import type { LookaheadResult, NavState, Sample } from "./engine/lookahead";
+import type { LookaheadInputs, LookaheadResult, NavState, Sample } from "./engine/lookahead";
 import type { AckStore } from "./ack-store";
 import type { Zone } from "./engine/acks";
 import { suppress } from "./engine/acks";
 import { GroundingDetector } from "./engine/grounding-detect";
 import { Hysteresis } from "./engine/hysteresis";
-import { evaluateLookahead } from "./engine/lookahead";
+import { escapeFor, evaluateLookahead } from "./engine/lookahead";
 import { notificationFor, notificationKey, NOTIFY_REFRESH_MS } from "./engine/notify";
 import type { LonLat } from "./foundation/geo";
 import { PATHS, publishable } from "./foundation/state";
@@ -23,6 +23,8 @@ import type { WaterLevelStatus } from "./water-level-service";
 import { WaterLevelService } from "./water-level-service";
 import { ChangeNotifier, groundingNotification, integrityNotification } from "./notifications";
 import { asNumber, INPUT_PATHS, NavInputs, sampleTime, selfValue } from "./nav-inputs";
+import type { Deferral } from "./escape-search";
+import { EscapeSearch } from "./escape-search";
 import { StatusReporter, ValuePublisher } from "./tick-publisher";
 
 /**
@@ -40,7 +42,7 @@ type App = Pick<
   | "error"
 >;
 
-export interface Clock {
+export interface Clock extends Deferral {
   now(): number;
   setInterval(fn: () => void, ms: number): unknown;
   clearInterval(handle: unknown): void;
@@ -49,11 +51,10 @@ export interface Clock {
 export const SYSTEM_CLOCK: Clock = {
   now: () => Date.now(),
   setInterval: (fn, ms) => setInterval(fn, ms),
-  clearInterval: (h) => clearInterval(h as NodeJS.Timeout)
+  clearInterval: (h) => clearInterval(h as NodeJS.Timeout),
+  defer: (fn) => setImmediate(fn),
+  cancel: (h) => clearImmediate(h as NodeJS.Immediate)
 };
-
-/** The escape fan is searched at most once in this many ms. */
-const ESCAPE_EVERY_MS = 3000;
 
 /** Sent every tick: the state shows the plugin is alive, and clients fetch on a new rev. */
 const EVERY_TICK = new Set<string>([PATHS.state, PATHS.envelopeRev]);
@@ -84,9 +85,9 @@ export class Monitor {
     fn: (path: string, value: unknown, at: number) => void;
   }[] = [];
   private readonly hysteresis: Hysteresis;
-  /** The escape fan is searched at most this often; the heading is held between. */
-  private escape: number | null = null;
-  private escapeAt = -Infinity;
+  private readonly escape: EscapeSearch;
+  /** The inputs of the last evaluation, which the escape search after it reuses. */
+  private inputsAt?: { inputs: LookaheadInputs; now: number };
   private readonly values: ValuePublisher;
   private readonly status: StatusReporter;
 
@@ -107,6 +108,12 @@ export class Monitor {
     this.hysteresis = new Hysteresis(config.lookahead);
     this.values = new ValuePublisher(app, pluginId, EVERY_TICK);
     this.status = new StatusReporter(app);
+    this.escape = new EscapeSearch(
+      clock,
+      () => this.searchEscape(),
+      (heading) =>
+        this.values.send([{ path: PATHS.escapeHeading, value: publishable(heading) }], clock.now())
+    );
     this.last = this.evaluate();
     this.since = clock.now();
   }
@@ -140,6 +147,7 @@ export class Monitor {
     }
     this.subscribed.clear();
     this.levels.stop();
+    this.escape.stop();
     // A raised integrity or grounding notification must not outlive the plugin.
     this.notifier.clear(PATHS.positionIntegrity, "UKC monitoring stopped");
     this.notifier.clear(PATHS.grounding, "UKC monitoring stopped");
@@ -326,35 +334,30 @@ export class Monitor {
       };
     }
     const now = this.clock.now();
-    const escape = now - this.escapeAt >= ESCAPE_EVERY_MS;
     const integrity = this.checkIntegrity(now);
-    const r = evaluateLookahead(
-      this.nav,
-      {
-        vessel: this.vessel(),
-        dynamics: this.config.dynamics,
-        waterLevel: this.waterLevel(),
-        positionSigma: integrity.sigmaPos,
-        positionReason: integrity.reasons.join("; ") || undefined,
-        escape
-      },
-      this.index,
-      now,
-      this.config.lookahead
-    );
-    if (r.state === "normal" || r.state === "unknown") {
-      this.escape = null;
-      this.escapeAt = -Infinity;
-    } else if (escape) {
-      this.escapeAt = now;
-      this.escape = r.escapeHeading;
-    }
-    return { ...r, escapeHeading: this.escape };
+    const inputs: LookaheadInputs = {
+      vessel: this.vessel(),
+      dynamics: this.config.dynamics,
+      waterLevel: this.waterLevel(),
+      positionSigma: integrity.sigmaPos,
+      positionReason: integrity.reasons.join("; ") || undefined
+    };
+    this.inputsAt = { inputs, now };
+    return evaluateLookahead(this.nav, inputs, this.index, now, this.config.lookahead);
+  }
+
+  private searchEscape(): number | null {
+    const at = this.inputsAt;
+    return at ? escapeFor(this.nav, at.inputs, this.index, at.now, this.config.lookahead) : null;
   }
 
   tick(): void {
-    this.levels.refresh(this.nav.position?.value, this.clock.now());
-    const next = this.suppressed(this.hysteresis.next(this.evaluate()));
+    const t0 = this.clock.now();
+    this.levels.refresh(this.nav.position?.value, t0);
+    const raw = this.evaluate();
+    const next = this.suppressed(
+      this.hysteresis.next({ ...raw, escapeHeading: this.escape.heading })
+    );
     if (next.state !== this.last.state) {
       this.since = this.clock.now();
     }
@@ -381,6 +384,7 @@ export class Monitor {
       this.notifier.send(PATHS.positionIntegrity, integrityNotification(this.integrityResult));
     }
     this.checkGrounding(r);
+    this.escape.after(raw.state, this.clock.now() - t0);
     this.report(r);
   }
 
@@ -392,6 +396,7 @@ export class Monitor {
     }
     const notes = [
       r.state === "normal" ? "Monitoring: normal" : `Monitoring: ${r.state} — ${r.reason}`,
+      this.escape.skipped,
       // The WFS licence allows non-navigational use only; say so while it is on.
       this.config.wfs && r.reason !== WFS_NOTICE ? WFS_NOTICE : undefined
     ];

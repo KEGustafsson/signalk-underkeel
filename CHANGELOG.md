@@ -77,6 +77,10 @@ All notable changes to signalk-underkeel are documented here.
 - `GET /envelope` drops outline vertices within 1 cm of the line through their neighbours. With
   a 5 NM horizon (400 footprints) the envelope fell from 19.5 to 3.5 kB median and 21.4 to
   5.6 kB at most, back within the 15 kB budget; at 6 kn from 4.1 to 2.5 kB.
+- The escape heading is searched after the tick's deltas are published, so a tick blocks the
+  server in two shorter pieces; after a tick or search over 250 ms the next search is skipped
+  and the plugin status says so. With a 5 NM horizon the longest tick fell from 264 to 185 ms
+  (x86), the search following in up to 27 ms.
 - `notifications.navigation.underKeel` is sent at once when its state, the kind of reason or the
   named hazard changes, and while those hold its message with a new countdown at most every 30 s.
   The countdown in the message made it go out every 3 s: on the Nauvo route at 6 kn 365

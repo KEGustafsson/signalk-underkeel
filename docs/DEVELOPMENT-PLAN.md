@@ -578,7 +578,10 @@ suppressing.
   assessed survey (§4.3), on top of the burn around point hazards.
 - The escape fan uses the maximum turn rate (default 3°/s) and stops at the first heading,
   smallest change first, that stays clear over the whole horizon. The monitor searches it at
-  most every 3 s and holds the heading in between.
+  most every 3 s and holds the heading in between. The search runs after the tick's deltas are
+  published (`setImmediate`), so the event loop is blocked in two shorter pieces, and its heading
+  is published when it is found. After a tick or a search longer than 250 ms the next search is
+  skipped, the heading is null, and the plugin status says so.
 - Integrity: dead reckoning runs on each fix's own timestamp, so a GNSS feed slower than the
   1 Hz tick is not read as divergence. σ_DR = √(σ_anchor² + σ_GNSS² + (0.2 m/s · run)²);
   a consistent run re-anchors every 60 s; a diverged one is not re-anchored, and clears

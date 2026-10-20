@@ -389,6 +389,55 @@ function missingInput(
   return undefined;
 }
 
+/** One tick's motion, scoring and footprint times, shared by the fan and the escape search. */
+interface Setup {
+  vessel: VesselModel;
+  chart: ChartIndex;
+  origin: LonLat;
+  m: Motion;
+  s: Scoring;
+  times: number[];
+  step: number;
+  /** k_p · σ_pos exceeds the buffer cap. */
+  capped: boolean;
+}
+
+function setupOf(
+  nav: NavState,
+  inputs: LookaheadInputs,
+  index: ChartIndex,
+  now: number,
+  opts: LookaheadOptions
+): Setup {
+  const vessel = inputs.vessel as VesselModel;
+  const m = motionOf(nav, now, opts);
+  const s = scoringFor(nav, inputs, vessel, now, opts);
+  const { times, step } = scheduleFor(m, vessel, opts);
+  const origin = (nav.position as Sample<LonLat>).value;
+  return { vessel, chart: index, origin, m, s, times, step, capped: bufferCapped(s, opts) };
+}
+
+/**
+ * The escape heading for a tick (plan §4.8), or null when none is searched:
+ * at low speed, with the buffer capped (a position this uncertain makes any
+ * heading a guess), or when an input is missing.
+ */
+export function escapeFor(
+  nav: NavState,
+  inputs: LookaheadInputs,
+  index: ChartIndex | undefined,
+  now: number,
+  opts: LookaheadOptions = DEFAULT_LOOKAHEAD
+): number | null {
+  if (!index || missingInput(nav, inputs, index, now, opts)) {
+    return null;
+  }
+  const u = setupOf(nav, inputs, index, now, opts);
+  return u.m.moving && !u.capped
+    ? escapeHeading(u.times, u.origin, u.m, u.vessel, u.chart, u.s, opts)
+    : null;
+}
+
 export function evaluateLookahead(
   nav: NavState,
   inputs: LookaheadInputs,
@@ -400,14 +449,9 @@ export function evaluateLookahead(
   if (missing) {
     return missing;
   }
-  const vessel = inputs.vessel as VesselModel;
-  const chart = index as ChartIndex;
-  const position = nav.position as Sample<LonLat>;
-  const m = motionOf(nav, now, opts);
+  const u = setupOf(nav, inputs, index as ChartIndex, now, opts);
+  const { m, s, times } = u;
   const wl = inputs.waterLevel;
-  const s = scoringFor(nav, inputs, vessel, now, opts);
-  const origin = position.value;
-  const { times, step } = scheduleFor(m, vessel, opts);
   const tracks = fanMembers(
     m.cog,
     m.sog,
@@ -415,20 +459,18 @@ export function evaluateLookahead(
     { cog: opts.sigmaCog, rot: opts.sigmaRot },
     opts.turnFor
   );
-  const scored = scoreSchedule(times, step, (t, stop) =>
-    footprint(t, origin, tracks, m, vessel, chart, s, opts, stop)
+  const scored = scoreSchedule(times, u.step, (t, stop) =>
+    footprint(t, u.origin, tracks, m, u.vessel, u.chart, s, opts, stop)
   );
   const fps = scored.footprints;
-  const capped = bufferCapped(s, opts);
   const assessed = degrade(classify(fps, opts, scored), m, wl, fps);
-  const verdict = capped
+  const verdict = u.capped
     ? uncertainPosition(assessed, s.sigmaPos, inputs.positionReason)
     : assessed;
-  // A position this uncertain makes any heading a guess.
-  const searched = inputs.escape === true && m.moving && !capped;
+  const searched = inputs.escape === true && m.moving && !u.capped;
   const escape =
     searched && verdict.state !== "normal" && verdict.state !== "unknown"
-      ? escapeHeading(times, origin, m, vessel, chart, s, opts)
+      ? escapeHeading(times, u.origin, m, u.vessel, u.chart, s, opts)
       : null;
   const shallowest = shallowestOf(fps);
   return {
@@ -442,7 +484,7 @@ export function evaluateLookahead(
     escapeHeading: escape,
     horizon: times[times.length - 1] as number,
     footprints: fps,
-    worst: worstOf(fps, chart, s, wl, opts.kp),
+    worst: worstOf(fps, u.chart, s, wl, opts.kp),
     waterLevel: wl
   };
 }

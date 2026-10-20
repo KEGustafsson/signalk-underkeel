@@ -1,5 +1,6 @@
 import type { Delta } from "@signalk/server-api";
 import { parseConfig } from "../src/config";
+import { SLOW_TICK_MS } from "../src/escape-search";
 import type { Clock } from "../src/monitor";
 import { Monitor } from "../src/monitor";
 import { KEEP_ALIVE_MS } from "../src/tick-publisher";
@@ -9,8 +10,9 @@ import { navDelta, T0, values } from "./helpers/plugin-harness";
 
 /**
  * What a tick publishes: values on change with a keep-alive, the status on
- * change, and the look-ahead notification at once on a state or reason
- * change and its countdown at most every NOTIFY_REFRESH_MS.
+ * change, the look-ahead notification at once on a state or reason change
+ * and its countdown at most every NOTIFY_REFRESH_MS, and the escape search
+ * after the tick, skipped after a slow one.
  */
 
 const NOTIFICATION = "notifications.navigation.underKeel";
@@ -156,5 +158,46 @@ describe("tick publishing", () => {
     }
     expect(r.monitor.last.state).toBe("alarm");
     expect(states().at(-1)).toBe("alarm");
+  });
+});
+
+describe("escape search after the tick", () => {
+  test("runs once the tick's result is out and publishes its heading", () => {
+    const r = rig(true);
+    r.tick(approach(40, T0 + 1000));
+    r.tick(approach(39, T0 + 2000));
+    expect(r.monitor.last.state).toBe("alarm");
+    expect(r.deferred.length).toBe(1);
+    r.deltas.length = 0;
+    r.flush();
+    const heading = values(r.deltas).find((v) => v.path === "navigation.underKeel.escapeHeading");
+    expect(heading?.value).toEqual(expect.any(Number));
+  });
+
+  test("a tick slower than the limit skips the search and says so in the status", () => {
+    const r = rig(true);
+    r.tick(approach(40, T0 + 1000));
+    r.flush();
+    r.lookupMs = SLOW_TICK_MS;
+    r.tick(approach(39, T0 + 2000));
+    r.flush();
+    r.tick(approach(38, T0 + 3000));
+    expect(r.deferred.length).toBe(0);
+    expect(r.statuses.at(-1)).toMatch(/escape search skipped: a tick took \d+ ms/);
+    r.lookupMs = 0;
+    r.tick(approach(37, T0 + 5000));
+    r.tick(approach(36, T0 + 6000));
+    expect(r.statuses.at(-1)).not.toMatch(/skipped/);
+  });
+
+  test("stop cancels a pending search", () => {
+    const r = rig(true);
+    r.tick(approach(40, T0 + 1000));
+    r.tick(approach(39, T0 + 2000));
+    expect(r.deferred.length).toBe(1);
+    r.monitor.stop();
+    r.deltas.length = 0;
+    r.flush();
+    expect(sent(r.deltas, "navigation.underKeel.escapeHeading")).toBe(0);
   });
 });
