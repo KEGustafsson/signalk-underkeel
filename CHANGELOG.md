@@ -53,6 +53,11 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Changed
 
+- The living chart moves onto a rebuilt WFS index in slices of 1 000 cells, one turn of the
+  event loop each, with the index swapped in during the turn that finishes the move; when only
+  the WFS cell changed, only the cells near the old and new box are re-judged. With 19 574
+  cells the handover blocked the event loop for 123–153 ms on x86 at leaf zoom 18; the longest
+  block is now 53–71 ms.
 - The next Traficom WFS box is fetched once the edge ahead is closer than SOG × 1.5 × the last
   download-and-build time plus the look-ahead's reach, as well as at half the radius, and is
   centred that far ahead along COG (at most 0.8 × the radius). With 10-minute rebuilds at

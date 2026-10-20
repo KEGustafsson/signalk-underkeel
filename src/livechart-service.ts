@@ -15,17 +15,14 @@ import {
   rebasePrior
 } from "./livechart/posterior";
 import {
-  isCell,
-  isNodeValues,
   isRecord,
   isSounding,
   listOf,
   MAX_ZOOM_STEPS,
-  mergeAdjustments,
   moveAside,
-  savedZoom,
-  tilesAt
+  savedZoom
 } from "./livechart/saved-state";
+import { cellRefAt, restoreAdjustments, restoreCells } from "./livechart/restore";
 import { SampleLog } from "./livechart/sample-log";
 import type { RawSounding, Sounding, SoundingSource } from "./livechart/soundings";
 import { reduce } from "./livechart/soundings";
@@ -69,6 +66,15 @@ export const SAVE_CHECK_MS = 10_000;
 const SAMPLES_EVERY_MS = 60_000;
 const STATE_EVERY_MS = 10 * 60_000;
 
+/** Cells rebased per slice of prepareRebind(): 1 000 chart priors take about 11 ms on x86. */
+const REBIND_SLICE = 1000;
+
+/** A cell rebased onto a new prior, and its sample count then. */
+interface Rebased {
+  samples: number;
+  c: CellPosterior;
+}
+
 interface Saved {
   version: 1;
   /** The living-chart zoom the cells and adjustment keys are at. */
@@ -110,12 +116,51 @@ export class LivechartService {
    * a saved state: each cell is rebased onto the new chart prior and judged again.
    */
   rebind(store: NodeStore): void {
+    this.applyRebind(store, () => true, new Map());
+  }
+
+  /**
+   * rebind() for a running plugin, without one long block: the cells for which `affected` is
+   * true are rebased in slices with `pause` after each, and the returned function, run
+   * once the caller swaps the index in, moves the living chart over. A cell `affected`
+   * leaves out keeps its prior, which the caller vouches is unchanged (invariant 5); a cell
+   * that got a sounding meanwhile is rebased again then.
+   */
+  async prepareRebind(
+    store: NodeStore,
+    affected: (c: CellPosterior) => boolean,
+    pause: () => Promise<void>
+  ): Promise<() => void> {
+    const done = new Map<number, Rebased>();
+    let n = 0;
+    for (const [key, c] of [...this.posteriors.cells]) {
+      if (affected(c)) {
+        done.set(key, { samples: c.samples, c: rebasePrior(c, chartPrior(store, c.z, c.x, c.y)) });
+        if (++n % REBIND_SLICE === 0) {
+          await pause();
+        }
+      }
+    }
+    await pause();
+    return () => this.applyRebind(store, affected, done);
+  }
+
+  private applyRebind(
+    store: NodeStore,
+    affected: (c: CellPosterior) => boolean,
+    done: Map<number, Rebased>
+  ): void {
     for (const [key, c] of this.posteriors.cells) {
-      this.posteriors.cells.set(key, rebasePrior(c, chartPrior(store, c.z, c.x, c.y)));
+      const d = done.get(key);
+      if (d && d.samples === c.samples) {
+        this.posteriors.cells.set(key, d.c);
+      } else if (affected(c)) {
+        this.posteriors.cells.set(key, rebasePrior(c, chartPrior(store, c.z, c.x, c.y)));
+      }
     }
     const z = this.store.adjustZoom;
     for (const [key, v] of this.store.adjustments) {
-      store.adjustments.set(key, { ...v, cellRef: this.cellRefAt(store, z, key) });
+      store.adjustments.set(key, { ...v, cellRef: cellRefAt(store, this.posteriors, z, key) });
     }
     this.store = store;
     this.posteriors.rebind(store);
@@ -300,8 +345,8 @@ export class LivechartService {
     ).length;
     const malformed =
       notLists +
-      this.restoreCells(cells) +
-      this.restoreAdjustments(saved.adjustments, from) +
+      restoreCells(cells, this.store, this.posteriors) +
+      restoreAdjustments(saved.adjustments, from, this.store, this.posteriors) +
       samples.filter((v) => !isSounding(v)).length;
     // Against a rebuilt chart a cell may qualify that did not before; adjust() only lowers.
     for (const c of this.posteriors.cells.values()) {
@@ -378,66 +423,6 @@ export class LivechartService {
     const moved = moveAside(this.log.file, reason, this.deps.error);
     this.log.keep ||= !moved;
     this.log.rewrite ||= moved;
-  }
-
-  /**
-   * Restores the cells at the current living-chart zoom and returns how many were malformed.
-   * Cells at another zoom are keyed at that zoom and dropped; their adjustments are mapped.
-   * The index may have been rebuilt since the save, so each cell is moved onto the current
-   * chart's prior and cell reference; a saved cellRef indexes the catalogue it was saved with.
-   */
-  private restoreCells(cells: unknown[]): number {
-    const z = this.store.adjustZoom;
-    let malformed = 0;
-    for (const c of cells) {
-      if (!isCell(c)) {
-        malformed++;
-      } else if (c.z === z) {
-        // An uncharted cell's NaN prior is saved as null.
-        const chartDepth = typeof c.chartDepth === "number" ? c.chartDepth : NaN;
-        const current = chartPrior(this.store, c.z, c.x, c.y);
-        this.posteriors.cells.set(
-          tileKey(c.z, c.x, c.y),
-          rebasePrior({ ...c, chartDepth }, current)
-        );
-      }
-    }
-    return malformed;
-  }
-
-  /**
-   * Restores saved adjustments at the current zoom and returns how many were malformed. They
-   * keep their depths, since they only ever lower a cell: onto a coarser zoom a cell takes the
-   * shallowest depth and largest σ of the saved cells in it, onto a finer one every cell inside
-   * a saved one takes its values.
-   */
-  private restoreAdjustments(adjustments: unknown, from: number): number {
-    const z = this.store.adjustZoom;
-    let malformed = 0;
-    for (const entry of listOf(adjustments)) {
-      const [key, v] = Array.isArray(entry) ? (entry as unknown[]) : [];
-      const valid =
-        Number.isSafeInteger(key) && (key as number) >= 0 && (key as number) < 4 ** from;
-      if (!(valid && isNodeValues(v))) {
-        malformed++;
-        continue;
-      }
-      for (const t of tilesAt(key as number, from, z)) {
-        const k = tileKey(z, t.x, t.y);
-        const next = { ...v, cellRef: this.cellRefAt(this.store, z, k) };
-        this.store.adjustments.set(k, mergeAdjustments(this.store.adjustments.get(k), next));
-      }
-    }
-    return malformed;
-  }
-
-  /** The current chart's cell reference for living-chart cell `key`. */
-  private cellRefAt(store: NodeStore, z: number, key: number): number {
-    const n = 2 ** z;
-    return (
-      this.posteriors.cells.get(key)?.cellRef ??
-      chartPrior(store, z, Math.floor(key / n), key % n).cellRef
-    );
   }
 }
 

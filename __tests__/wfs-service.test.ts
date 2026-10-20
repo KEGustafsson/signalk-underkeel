@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import type { LonLat } from "../src/foundation/geo";
 import { haversine, project } from "../src/foundation/geo";
-import type { WfsFetch } from "../src/ingest/wfs";
+import type { Bbox, WfsFetch } from "../src/ingest/wfs";
 import type { ChartIndex } from "../src/spatial/chart-index";
 import { WFS_LIMITS } from "../src/ingest/wfs";
 import type { IndexBuilder, WfsServiceDeps } from "../src/wfs-service";
@@ -28,6 +28,7 @@ function harness(fetch: WfsFetch = okReply) {
   const fetched: string[] = [];
   const built: string[][] = [];
   const indexes: ChartIndex[] = [];
+  const handed: (Bbox[] | undefined)[] = [];
   const errors: string[] = [];
   const builder = {
     build: ((job) => {
@@ -52,10 +53,23 @@ function harness(fetch: WfsFetch = okReply) {
     position: () => t.pos,
     motion: () => t.motion,
     lookahead: { distance: 555.6, minHorizon: 60 },
-    onIndex: (i) => indexes.push(i),
+    onIndex: (i, changed) => {
+      indexes.push(i);
+      handed.push(changed);
+    },
     error: (m) => errors.push(m)
   };
-  return { t, fetched, built, indexes, errors, deps, builder, service: new WfsService(deps) };
+  return {
+    t,
+    fetched,
+    built,
+    indexes,
+    handed,
+    errors,
+    deps,
+    builder,
+    service: new WfsService(deps)
+  };
 }
 
 beforeEach(() => {
@@ -116,6 +130,17 @@ describe("WFS box around the vessel", () => {
     h.t.now += 200_000;
     await h.service.check();
     expect(h.fetched).toHaveLength(2);
+  });
+
+  test("the old and new boxes come with an index only when this run built both", async () => {
+    const h = harness();
+    h.t.pos = [22.08, 60.07];
+    await h.service.check();
+    const first = h.service.status().box?.bbox;
+    h.t.now += 120_000;
+    h.t.pos = [22.08 + 6 * KM_LON_60, 60.07];
+    await h.service.check();
+    expect(h.handed).toEqual([undefined, [first, h.service.status().box?.bbox]]);
   });
 
   test("a failed index build is reported in the status and the previous box and index stay", async () => {

@@ -240,7 +240,13 @@ signalk-underkeel/
    checks of legs behind the vessel see as uncovered (`unverified`, invariant 4). A worker thread downloads the box, parses, clips and writes the cell, rebuilds
    the index and stages it; the main thread moves it into place and swaps it in. Each page is
    read as a stream: more than 64 MB, or 30 s without a byte, fails the download, which then
-   waits 5 minutes as after any failure, and the previous index stays. The box is one cell
+   waits 5 minutes as after any failure, and the previous index stays. The living chart is
+   moved onto the new index in slices of 1 000 cells, each its own turn of the event loop, and
+   the index is swapped in during the turn that finishes the move, so no query sees the new
+   index without the living chart's adjustments (invariant 5). When only the WFS cell differs
+   from the index in use, only the living-chart cells within 1 km and one cell of the old or
+   new box are re-judged: the chart prior of any other cell reads the same tiles in both; a
+   property test checks that this equals re-judging every cell. The box is one cell
    of usage band 1, so every ENC cell wins where both cover. Water no depth area reaches is
    land. Survey quality is an assumed CATZOC (configurable, default B). Every tile from the cell
    carries `NOT_FOR_NAVIGATION`: the look-ahead is never `normal` there (at most `alert`, with

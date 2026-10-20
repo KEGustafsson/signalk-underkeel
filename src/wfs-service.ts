@@ -199,7 +199,11 @@ export interface WfsServiceDeps {
   motion: () => { sog: number; cog: number } | undefined;
   /** The look-ahead's reach: `distance`, or `minHorizon` seconds at the current speed. */
   lookahead: { distance: number; minHorizon: number };
-  onIndex: (index: ChartIndex) => void;
+  /**
+   * Hands a rebuilt index over. `changed` holds the boxes of the index in use and the new
+   * one when this service built both, so only the WFS cell differs between them.
+   */
+  onIndex: (index: ChartIndex, changed?: Bbox[]) => void | Promise<void>;
   error: (message: string) => void;
 }
 
@@ -217,6 +221,8 @@ const MAX_LEAD = 0.8;
 
 export class WfsService {
   private box?: WfsBox;
+  /** The box of the last index this service handed over in this run. */
+  private handed?: Bbox;
   private busy = false;
   private lastAttempt = -Infinity;
   private lastError?: string;
@@ -341,7 +347,9 @@ export class WfsService {
       fs.writeFileSync(path.join(this.deps.dir, "box.json"), JSON.stringify(box));
       this.box = box;
       this.lastError = undefined;
-      this.deps.onIndex(index);
+      const changed = this.handed && [this.handed, bbox];
+      this.handed = bbox;
+      await this.deps.onIndex(index, changed);
     } catch (err) {
       if (controller.signal.aborted) {
         return;
