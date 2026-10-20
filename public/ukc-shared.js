@@ -335,6 +335,12 @@
     };
   }
 
+  /** A Retry-After of whole seconds as ms, held to 1–30 s; null when there is none. */
+  function retryAfterMs(header) {
+    const s = typeof header === "string" && /^\s*\d+\s*$/.test(header) ? Number(header) : NaN;
+    return isFinite(s) ? Math.min(30, Math.max(1, s)) * 1000 : null;
+  }
+
   const api = {
     API: API,
     stateStyle: stateStyle,
@@ -349,6 +355,7 @@
     compactResult: compactResult,
     legRow: legRow,
     oneAtATime: oneAtATime,
+    retryAfterMs: retryAfterMs,
     freshFor: freshFor,
     freshness: freshness,
     routeBadge: routeBadge,

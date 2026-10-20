@@ -196,6 +196,14 @@ describe("extension display logic", () => {
     expect(gate.end("r2")).toBe(false);
   });
 
+  test("a busy server's Retry-After sets the wait before a route is checked again", () => {
+    expect(UKC.retryAfterMs("2")).toBe(2000);
+    expect(UKC.retryAfterMs(" 0 ")).toBe(1000);
+    expect(UKC.retryAfterMs("3600")).toBe(30000);
+    expect(UKC.retryAfterMs(null)).toBeNull();
+    expect(UKC.retryAfterMs("Wed, 21 Oct 2026 07:28:00 GMT")).toBeNull();
+  });
+
   test("an envelopeRev that does not step by one means a restart or missed deltas", () => {
     expect(UKC.revJumped(undefined, 7)).toBe(false);
     expect(UKC.revJumped(7, 7)).toBe(false);

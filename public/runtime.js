@@ -249,6 +249,29 @@ function publishSoon() {
 /** A stalled reply would hold one of the browser's few connections to the server. */
 const ROUTE_CHECK_TIMEOUT_MS = 30000;
 const checking = UKC.oneAtATime();
+/** A busy server answers 503 with Retry-After; the old result ages out meanwhile. */
+const BUSY_RETRIES = 5;
+
+/** POST /route-check, again after Retry-After while the server is busy; null once superseded. */
+async function postCheck(line, current) {
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(`${UKC.API}/route-check`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ route: line }),
+      signal: AbortSignal.timeout(ROUTE_CHECK_TIMEOUT_MS)
+    });
+    const wait = res.status === 503 ? UKC.retryAfterMs(res.headers.get("retry-after")) : null;
+    if (wait === null || attempt >= BUSY_RETRIES) {
+      return res;
+    }
+    await new Promise((resolve) => setTimeout(resolve, wait));
+    if (!current()) {
+      return null;
+    }
+  }
+}
 
 async function check(routeId) {
   if (!checking.start(routeId)) {
@@ -265,15 +288,9 @@ async function check(routeId) {
     if (!line) {
       results.delete(routeId);
     } else {
-      const res = await fetch(`${UKC.API}/route-check`, {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ route: line }),
-        signal: AbortSignal.timeout(ROUTE_CHECK_TIMEOUT_MS)
-      });
-      const body = await res.json();
-      if (!current()) {
+      const res = await postCheck(line, current);
+      const body = res && (await res.json());
+      if (!res || !current()) {
         return;
       }
       results.set(
@@ -320,14 +337,24 @@ function schedule(routeId) {
   timers.set(routeId, setTimeout(() => void check(routeId).then(publishSoon), 1000));
 }
 
+/** One route at a time: the server queues at most five heavy requests and refuses more. */
 async function checkAll() {
+  if (!checking.start(checkAll)) {
+    return;
+  }
   try {
     const { routes } = await client.call("route.list");
     routes.forEach((r) => clearTimeout(timers.get(r.routeId)));
-    await Promise.all(routes.map((r) => check(r.routeId)));
+    for (const r of routes) {
+      await check(r.routeId);
+    }
     await publish();
   } catch (err) {
     console.warn("under-keel route list", err);
+  } finally {
+    if (checking.end(checkAll)) {
+      void checkAll();
+    }
   }
 }
 
