@@ -3,8 +3,9 @@ import path from "path";
 import type { LonLat } from "../src/foundation/geo";
 import type { WfsFetch } from "../src/ingest/wfs";
 import type { ChartIndex } from "../src/spatial/chart-index";
+import { WFS_LIMITS } from "../src/ingest/wfs";
 import type { IndexBuilder, WfsServiceDeps } from "../src/wfs-service";
-import { WfsService } from "../src/wfs-service";
+import { inThreadRefresher, WfsService } from "../src/wfs-service";
 
 const TMP = path.join(__dirname, "temp", "wfs-service");
 const KM_LON_60 = 1 / (111.195 * Math.cos(Math.PI / 3));
@@ -23,9 +24,11 @@ function harness(fetch: WfsFetch = okReply) {
   const built: string[][] = [];
   const indexes: ChartIndex[] = [];
   const errors: string[] = [];
-  const build: IndexBuilder = (job) => {
-    built.push(job.dirs);
-    return Promise.resolve({ catalogue: { version: 1, cells: [] } } as unknown as ChartIndex);
+  const builder = {
+    build: ((job) => {
+      built.push(job.dirs);
+      return Promise.resolve({ catalogue: { version: 1, cells: [] } } as unknown as ChartIndex);
+    }) as IndexBuilder
   };
   const deps: WfsServiceDeps = {
     config: { url: "https://wfs.test/wfs", radiusKm: 10, catzoc: 3 },
@@ -33,17 +36,19 @@ function harness(fetch: WfsFetch = okReply) {
     indexDir: path.join(TMP, "index"),
     leafZoom: 20,
     encDirs: () => ["/charts/FI5ENC01"],
-    fetch: (url, init) => {
-      fetched.push(url);
-      return fetch(url, init);
-    },
-    build,
+    refresh: inThreadRefresher(
+      (url, init) => {
+        fetched.push(url);
+        return fetch(url, init);
+      },
+      (job, signal) => builder.build(job, signal)
+    ),
     clock: { now: () => t.now, setInterval: () => 1, clearInterval: () => undefined },
     position: () => t.pos,
     onIndex: (i) => indexes.push(i),
     error: (m) => errors.push(m)
   };
-  return { t, fetched, built, indexes, errors, deps, service: new WfsService(deps) };
+  return { t, fetched, built, indexes, errors, deps, builder, service: new WfsService(deps) };
 }
 
 beforeEach(() => {
@@ -111,7 +116,7 @@ describe("WFS box around the vessel", () => {
     h.t.pos = [22.08, 60.07];
     await h.service.check();
     const box = h.service.status().box;
-    h.deps.build = () =>
+    h.builder.build = () =>
       Promise.reject(new Error("index build stopped at the 256 MB worker heap limit"));
     h.t.now += 120_000;
     h.t.pos = [22.08 + 6 * KM_LON_60, 60.07];
@@ -141,31 +146,19 @@ describe("WFS box around the vessel", () => {
     expect(h.indexes).toHaveLength(0);
   });
 
-  test("a stalled server ends the download with a timeout error in the status", async () => {
-    const timeout = jest
-      .spyOn(AbortSignal, "timeout")
-      .mockImplementation(() => AbortSignal.abort(new DOMException("timed out", "TimeoutError")));
-    const stalled: WfsFetch = (_url, init) =>
-      new Promise((_resolve, reject) => {
-        const signal = init?.signal;
-        if (signal?.aborted) {
-          reject(signal.reason as Error);
-        }
-        signal?.addEventListener("abort", () => reject(signal.reason as Error));
-      });
+  test("a stalled server ends the download with the idle timeout in the status", async () => {
+    jest.useFakeTimers({ doNotFake: ["nextTick", "queueMicrotask", "setImmediate"] });
     try {
-      const h = harness(stalled);
+      const h = harness(() => new Promise(() => undefined));
       h.t.pos = [22.08, 60.07];
-      await h.service.check();
-      expect(h.service.status()).toMatchObject({
-        busy: false,
-        lastError: "rajoitettu:DepthArea_A: no response within 120 s"
-      });
-      expect(h.errors).toEqual([
-        "Traficom WFS depths: rajoitettu:DepthArea_A: no response within 120 s"
-      ]);
+      const running = h.service.check();
+      await jest.advanceTimersByTimeAsync(WFS_LIMITS.idleTimeoutMs + 100);
+      await running;
+      const why = `rajoitettu:DepthArea_A: no data for ${WFS_LIMITS.idleTimeoutMs / 1000} s`;
+      expect(h.service.status()).toMatchObject({ busy: false, lastError: why });
+      expect(h.errors).toEqual([`Traficom WFS depths: ${why}`]);
     } finally {
-      timeout.mockRestore();
+      jest.useRealTimers();
     }
   });
 

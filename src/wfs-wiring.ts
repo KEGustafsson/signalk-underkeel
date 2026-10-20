@@ -9,7 +9,7 @@ import type { FetchLike } from "./model/fmi";
 import type { Clock } from "./monitor";
 import type { ChartIndex } from "./spatial/chart-index";
 import type { IndexBuilder } from "./wfs-service";
-import { WfsService } from "./wfs-service";
+import { inThreadRefresher, workerBuilder, workerRefresher, WfsService } from "./wfs-service";
 
 /** What the Traficom WFS box needs from the running plugin. */
 export interface WfsWiring {
@@ -45,8 +45,9 @@ export function startWfs(w: WfsWiring, wfs: WfsConfig): WfsService {
     indexDir: w.config.indexDir ?? path.join(w.app.getDataDirPath(), "index"),
     leafZoom: w.config.leafZoom,
     encDirs: () => cellDirectories(w.config.cellsDir),
-    fetch: w.fetch,
-    build: w.build,
+    // The worker fetches with its own global fetch; an injected builder, as in the tests,
+    // gets the download on this thread with the injected fetch.
+    refresh: w.build === workerBuilder ? workerRefresher : inThreadRefresher(w.fetch, w.build),
     clock: w.clock,
     position: () => w.state.monitor?.nav.position?.value,
     onIndex: (index) => useIndex(w, index),

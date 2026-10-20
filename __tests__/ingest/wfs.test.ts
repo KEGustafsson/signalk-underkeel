@@ -202,32 +202,117 @@ describe("Traficom WFS ingest", () => {
     expect(fs.readFileSync(path.join(dir, "marker"), "utf8")).toBe("old");
   });
 
-  test("a page that never answers fails with a timeout after 120 s", async () => {
-    const timeout = jest
-      .spyOn(AbortSignal, "timeout")
-      .mockImplementation(() => AbortSignal.abort(new DOMException("timed out", "TimeoutError")));
-    const stalled: WfsFetch = (_url, init) =>
-      new Promise((_resolve, reject) => {
-        const signal = init?.signal;
-        if (signal?.aborted) {
-          reject(signal.reason as Error);
-        }
-        signal?.addEventListener("abort", () => reject(signal.reason as Error));
+  describe("page bodies are streamed with a byte cap and an idle timeout", () => {
+    const BOX: [number, number, number, number] = [21.95, 59.95, 22.05, 60.05];
+    const download = (fetch: WfsFetch, dir: string, signal?: AbortSignal) =>
+      downloadWfsCell({
+        fetch,
+        url: "https://wfs.test/wfs",
+        bbox: BOX,
+        dir: path.join(TMP, dir),
+        now: new Date(),
+        signal
       });
-    try {
-      await expect(
-        downloadWfsCell({
-          fetch: stalled,
-          url: "https://wfs.test/wfs",
-          bbox: [21.95, 59.95, 22.05, 60.05],
-          dir: path.join(TMP, "stalled"),
-          now: new Date(),
-          signal: new AbortController().signal
-        })
-      ).rejects.toThrow("rajoitettu:DepthArea_A: no response within 120 s");
-      expect(timeout).toHaveBeenCalledWith(120_000);
-    } finally {
-      timeout.mockRestore();
-    }
+    /** A body sending `chunks` pieces of `text`, each `everyMs` apart, then open or closed. */
+    const streamed = (text: string, chunks: number, everyMs: number, close = true) => {
+      const bytes = new TextEncoder().encode(text);
+      let sent = 0;
+      return new ReadableStream<Uint8Array>({
+        pull: (c) =>
+          new Promise<void>((resolve) => {
+            if (sent === chunks) {
+              if (close) {
+                c.close();
+              }
+              return;
+            }
+            setTimeout(() => {
+              const step = Math.ceil(bytes.length / chunks);
+              c.enqueue(bytes.subarray(sent * step, (sent + 1) * step));
+              sent++;
+              resolve();
+            }, everyMs);
+          })
+      });
+    };
+    const body = (stream: ReadableStream<Uint8Array>) => ({
+      ok: true,
+      status: 200,
+      body: stream,
+      text: () => Promise.reject(new Error("read the body stream instead"))
+    });
+    const empty = () => JSON.stringify({ type: "FeatureCollection", features: [] });
+
+    afterEach(() => jest.useRealTimers());
+
+    test("a page larger than the cap fails the download and leaves the previous cell", async () => {
+      const dir = path.join(TMP, "capped-page");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, "marker"), "old");
+      // 1 MB chunks of one shared buffer, never closed: only the cap ends it.
+      const mb = new Uint8Array(2 ** 20).fill(32);
+      let cancelled = false;
+      const huge = new ReadableStream<Uint8Array>({
+        pull: (c) => c.enqueue(mb),
+        cancel: () => {
+          cancelled = true;
+        }
+      });
+      await expect(download(() => Promise.resolve(body(huge)), "capped-page")).rejects.toThrow(
+        `rajoitettu:DepthArea_A: page larger than ${WFS_LIMITS.maxPageBytes / 2 ** 20} MB; use a smaller box`
+      );
+      expect(cancelled).toBe(true);
+      expect(fs.readFileSync(path.join(dir, "marker"), "utf8")).toBe("old");
+    });
+
+    test("a body that stops sending fails after the idle timeout", async () => {
+      jest.useFakeTimers({ doNotFake: ["nextTick", "queueMicrotask", "setImmediate"] });
+      const running = download(
+        () => Promise.resolve(body(streamed('{"type":"FeatureCollection",', 2, 10, false))),
+        "idle"
+      );
+      const failed = expect(running).rejects.toThrow(
+        `rajoitettu:DepthArea_A: no data for ${WFS_LIMITS.idleTimeoutMs / 1000} s`
+      );
+      await jest.advanceTimersByTimeAsync(WFS_LIMITS.idleTimeoutMs + 100);
+      await failed;
+    });
+
+    test("a server that does not answer at all fails after the idle timeout", async () => {
+      jest.useFakeTimers({ doNotFake: ["nextTick", "queueMicrotask", "setImmediate"] });
+      // Ignores the signal, as a hung proxy might.
+      const running = download(() => new Promise(() => undefined), "silent");
+      const failed = expect(running).rejects.toThrow(
+        `rajoitettu:DepthArea_A: no data for ${WFS_LIMITS.idleTimeoutMs / 1000} s`
+      );
+      await jest.advanceTimersByTimeAsync(WFS_LIMITS.idleTimeoutMs + 100);
+      await failed;
+    });
+
+    test("a slow body that keeps sending is read to the end, however long it takes", async () => {
+      jest.useFakeTimers({ doNotFake: ["nextTick", "queueMicrotask", "setImmediate"] });
+      const text = JSON.stringify({ type: "FeatureCollection", features: [area] });
+      // 12 pieces 20 s apart: 4 minutes for the page, never 30 s without data.
+      const fetch: WfsFetch = (url) =>
+        Promise.resolve(
+          url.includes("DepthArea_A") && new URL(url).searchParams.get("startIndex") === "0"
+            ? body(streamed(text, 12, 20_000))
+            : body(streamed(empty(), 1, 0))
+        );
+      const running = download(fetch, "slow");
+      await jest.advanceTimersByTimeAsync(5 * 60_000);
+      await expect(running).resolves.toMatchObject({ depthAreas: 1 });
+    });
+
+    test("stop aborts a body being read without the idle reason", async () => {
+      const stop = new AbortController();
+      const running = download(
+        () => Promise.resolve(body(streamed("{", 2, 5, false))),
+        "stopped",
+        stop.signal
+      );
+      setTimeout(() => stop.abort(new Error("aborted")), 30);
+      await expect(running).rejects.toThrow("aborted");
+    });
   });
 });

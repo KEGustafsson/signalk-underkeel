@@ -7,6 +7,7 @@ import { haversine } from "./foundation/geo";
 import type { WfsConfig } from "./config";
 import type { Bbox, WfsFetch } from "./ingest/wfs";
 import { boxAround, downloadWfsCell, WFS_CELL_NAME, WFS_NOTICE } from "./ingest/wfs";
+import type { WfsCounts, WfsJob, WfsReply } from "./wfs-worker";
 import type { Clock } from "./monitor";
 import type { BuildJob } from "./spatial/build-worker";
 import type { ChartIndex } from "./spatial/chart-index";
@@ -15,11 +16,17 @@ import { commitChartIndex, loadChartIndex, removeStaging } from "./spatial/chart
 /**
  * Keeps a Traficom WFS box around the vessel (plan §4.2). When the vessel
  * is more than half the box radius from its centre, the box around the
- * current position is downloaded, the index is rebuilt off the event loop
- * and handed over; until then the previous index stays in use.
+ * current position is downloaded and the index rebuilt off the event loop,
+ * then handed over; until then the previous index stays in use.
  */
 
 export type IndexBuilder = (job: BuildJob, signal: AbortSignal) => Promise<ChartIndex>;
+
+/** Downloads the box, writes the cell and rebuilds the index with it. */
+export type WfsRefresher = (
+  job: WfsJob,
+  signal: AbortSignal
+) => Promise<{ index: ChartIndex; features: WfsCounts }>;
 
 /** Settles once every worker aborted so far has exited. */
 let exits: Promise<unknown> = Promise.resolve();
@@ -50,6 +57,7 @@ export async function runWorker<R extends WorkerReply>(
   script: string,
   data: object,
   signal: AbortSignal,
+  indexDir?: string,
   heapMb = workerHeapLimitMb()
 ): Promise<R & { staging: string }> {
   await exits;
@@ -62,8 +70,6 @@ export async function runWorker<R extends WorkerReply>(
       resourceLimits: { maxOldGenerationSizeMb: heapMb }
     });
     const thread = worker.threadId;
-    const indexDir =
-      "indexDir" in data && typeof data.indexDir === "string" ? data.indexDir : undefined;
     const abort = (): void => {
       // A worker stopped mid-write leaves its staging behind; once it has
       // exited nothing else writes there.
@@ -116,16 +122,46 @@ export async function runWorker<R extends WorkerReply>(
   });
 }
 
-/** Builds in a worker thread from the compiled `lib/spatial/build-worker.js`. */
-export const workerBuilder: IndexBuilder = async (job, signal) => {
-  const m = await runWorker(path.join(__dirname, "spatial", "build-worker.js"), job, signal);
+/** Moves a staged index into `indexDir` and loads it, unless the run was aborted meanwhile. */
+function commit(indexDir: string, staging: string, signal: AbortSignal): ChartIndex {
   if (signal.aborted) {
-    fs.rmSync(m.staging, { recursive: true, force: true });
+    fs.rmSync(staging, { recursive: true, force: true });
     throw new Error("aborted");
   }
-  commitChartIndex(job.indexDir, m.staging);
-  return loadChartIndex(job.indexDir);
+  commitChartIndex(indexDir, staging);
+  return loadChartIndex(indexDir);
+}
+
+/** Builds in a worker thread from the compiled `lib/spatial/build-worker.js`. */
+export const workerBuilder: IndexBuilder = async (job, signal) => {
+  const script = path.join(__dirname, "spatial", "build-worker.js");
+  const m = await runWorker(script, job, signal, job.indexDir);
+  return commit(job.indexDir, m.staging, signal);
 };
+
+/**
+ * The whole refresh in a worker thread from the compiled `lib/wfs-worker.js`, which fetches
+ * with its own global fetch.
+ */
+export const workerRefresher: WfsRefresher = async (job, signal) => {
+  const script = path.join(__dirname, "wfs-worker.js");
+  const m = await runWorker<WfsReply>(script, job, signal, job.build.indexDir);
+  const features = m.features ?? { depthAreas: 0, dredgedAreas: 0, soundings: 0 };
+  return { index: commit(job.build.indexDir, m.staging, signal), features };
+};
+
+/** The download on this thread with `fetch`, then `build`: for an injected fetch or builder. */
+export function inThreadRefresher(fetch: WfsFetch, build: IndexBuilder): WfsRefresher {
+  return async (job, signal) => {
+    const features = await downloadWfsCell({
+      ...job.download,
+      now: new Date(job.download.now),
+      fetch,
+      signal
+    });
+    return { index: await build(job.build, signal), features };
+  };
+}
 
 /** The box in use, as saved in `<data dir>/wfs/box.json`. */
 export interface WfsBox {
@@ -152,8 +188,7 @@ export interface WfsServiceDeps {
   leafZoom: number;
   /** ENC cell directories, built before the WFS cell so they keep their catalogue order. */
   encDirs: () => string[];
-  fetch: WfsFetch;
-  build: IndexBuilder;
+  refresh: WfsRefresher;
   clock: Pick<Clock, "now" | "setInterval" | "clearInterval">;
   position: () => LonLat | undefined;
   onIndex: (index: ChartIndex) => void;
@@ -232,20 +267,20 @@ export class WfsService {
     const radiusKm = this.deps.config.radiusKm;
     const bbox = boxAround(pos, radiusKm);
     try {
-      const features = await downloadWfsCell({
-        fetch: this.deps.fetch,
-        url: this.deps.config.url,
-        bbox,
-        dir: this.cellDir,
-        now: new Date(now),
-        catzoc: this.deps.config.catzoc,
-        signal: controller.signal
-      });
-      const index = await this.deps.build(
+      const { index, features } = await this.deps.refresh(
         {
-          dirs: [...this.deps.encDirs(), this.cellDir],
-          leafZoom: this.deps.leafZoom,
-          indexDir: this.deps.indexDir
+          download: {
+            url: this.deps.config.url,
+            bbox,
+            dir: this.cellDir,
+            now: new Date(now).toISOString(),
+            catzoc: this.deps.config.catzoc
+          },
+          build: {
+            dirs: [...this.deps.encDirs(), this.cellDir],
+            leafZoom: this.deps.leafZoom,
+            indexDir: this.deps.indexDir
+          }
         },
         controller.signal
       );

@@ -53,6 +53,10 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Changed
 
+- The Traficom WFS download, parse, clip and cell write run in the index build worker with the
+  build, so the main thread only moves the staged index into place and loads it. With the
+  10 km box (one 22 MB page) the server's event loop was blocked for 336–420 ms and 209–277 ms
+  per refresh on x86; now the longest block is the 67–83 ms handover.
 - Living-chart saves: the accepted soundings are appended to `soundings.ndjson` every minute
   (rewritten with the newest 20 000 when it reaches twice that), and `livechart.json` holds the
   cells and adjustments, written every 10 minutes and within 10 s of an adjustment being added
@@ -184,9 +188,10 @@ All notable changes to signalk-underkeel are documented here.
 - The lowest water level over a leg's ETA interval is also sampled at every FMI forecast point
   inside it. Samples every 10 minutes from the start could miss a forecast trough by up to
   half a sample step of its slope (−0.375 m for a −0.40 m trough at 30 cm/h).
-- A Traficom WFS page that has not arrived within 120 s fails the download with that reason in
-  `GET /status`, and the download is retried as after any failure. A stalled server left the
-  download busy for good, with no error.
+- A Traficom WFS response or page body that sends nothing for 30 s fails the download with
+  that reason in `GET /status`, and the download is retried as after any failure. A stalled
+  server left the download busy for good, with no error. A slow link that keeps sending is read
+  to the end; a page over 64 MB fails the download.
 - A WFS index build aborted by plugin stop no longer overlaps the next build: the next worker
   starts only after the aborted one has exited. Stop still returns at once.
 - The WFS build worker only stages its index; the main thread moves it into the index

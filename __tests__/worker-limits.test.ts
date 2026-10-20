@@ -32,7 +32,7 @@ describe("build worker limits", () => {
           "while (process.memoryUsage().heapUsed < 512 * 2 ** 20) keep.push({ a: Math.random() });" +
           'require("worker_threads").parentPort.postMessage({ ok: false, error: "no limit" });'
       );
-      await expect(runWorker(hog, {}, new AbortController().signal, 16)).rejects.toThrow(
+      await expect(runWorker(hog, {}, new AbortController().signal, undefined, 16)).rejects.toThrow(
         /index build stopped at the 16 MB worker heap limit/
       );
     },

@@ -231,7 +231,10 @@ signalk-underkeel/
    Decision (safety invariants 3 and 4): the plugin downloads a box of configurable radius
    (default 10 km) around the vessel and a new one once the vessel is more than half the radius
    from its centre, checked every 10 s, at most once a minute and 5 minutes after a failed
-   download; the index is rebuilt in a worker thread and swapped in. The box is one cell
+   download. A worker thread downloads the box, parses, clips and writes the cell, rebuilds
+   the index and stages it; the main thread moves it into place and swaps it in. Each page is
+   read as a stream: more than 64 MB, or 30 s without a byte, fails the download, which then
+   waits 5 minutes as after any failure, and the previous index stays. The box is one cell
    of usage band 1, so every ENC cell wins where both cover. Water no depth area reaches is
    land. Survey quality is an assumed CATZOC (configurable, default B). Every tile from the cell
    carries `NOT_FOR_NAVIGATION`: the look-ahead is never `normal` there (at most `alert`, with

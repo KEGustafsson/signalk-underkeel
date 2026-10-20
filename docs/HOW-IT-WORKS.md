@@ -630,8 +630,8 @@ data is not for navigational purposes**: Traficom licenses it for non-navigation
 flowchart TD
   P[vessel position, checked periodically] --> D{more than half the box radius<br/>from the box centre?}
   D -- no --> KEEP[keep the current index]
-  D -- yes, and no download<br/>in the last minute or so --> W[download the box around the vessel<br/>DepthArea_A, DredgedArea_A, Sounding_P]
-  W --> B[rebuild the index in a worker thread:<br/>ENC cells first, then the WFS cell]
+  D -- yes, and no download<br/>in the last minute or so --> W[in a worker thread: download the box<br/>DepthArea_A, DredgedArea_A, Sounding_P]
+  W --> B[rebuild the index in the same thread:<br/>ENC cells first, then the WFS cell]
   B --> S[swap the new index in;<br/>the look-ahead keeps running]
   W -- fails --> E[keep the old index, report the error,<br/>retry after a longer back-off]
 ```
