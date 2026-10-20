@@ -154,7 +154,8 @@ describe("restart", () => {
     const plugin = underkeel(f.app, clock);
     plugin.start({ cellsDir: "/nonexistent/cells" }, () => undefined);
     clock.advance(1000);
-    expect(reports.length).toBeGreaterThan(1);
+    clock.advance(1000);
+    expect(reports.length).toBeGreaterThanOrEqual(1);
     expect(reports.every(([kind]) => kind === "error")).toBe(true);
     expect(reports.at(-1)?.[1]).toMatch(/chart index failed/);
     plugin.stop();

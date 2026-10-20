@@ -24,6 +24,7 @@ import type { WaterLevelStatus } from "./water-level-service";
 import { WaterLevelService } from "./water-level-service";
 import { ChangeNotifier, groundingNotification, integrityNotification } from "./notifications";
 import { asNumber, INPUT_PATHS, NavInputs, sampleTime, selfValue } from "./nav-inputs";
+import { StatusReporter, ValuePublisher } from "./tick-publisher";
 
 /**
  * Signal K wiring for the look-ahead: keeps the latest navigation inputs,
@@ -55,6 +56,9 @@ export const SYSTEM_CLOCK: Clock = {
 /** The escape fan is searched at most once in this many ms. */
 const ESCAPE_EVERY_MS = 3000;
 
+/** Sent every tick: the state shows the plugin is alive, and clients fetch on a new rev. */
+const EVERY_TICK = new Set<string>([PATHS.state, PATHS.envelopeRev]);
+
 export class Monitor {
   private readonly inputs = new NavInputs();
   readonly nav: NavState = this.inputs.nav;
@@ -84,6 +88,8 @@ export class Monitor {
   /** The escape fan is searched at most this often; the heading is held between. */
   private escape: number | null = null;
   private escapeAt = -Infinity;
+  private readonly values: ValuePublisher;
+  private readonly status: StatusReporter;
 
   constructor(
     private readonly app: App,
@@ -100,6 +106,8 @@ export class Monitor {
       this.grounding = new GroundingDetector(config.groundingDetector);
     }
     this.hysteresis = new Hysteresis(config.lookahead);
+    this.values = new ValuePublisher(app, pluginId, EVERY_TICK);
+    this.status = new StatusReporter(app);
     this.last = this.evaluate();
     this.since = clock.now();
   }
@@ -356,38 +364,39 @@ export class Monitor {
     const still = this.last.footprints.length === 1 ? ENVELOPE_DEADBAND : 0;
     this.envelope.update(buildEnvelope(this.last, this.config.lookahead.thresholds), still);
     const r = this.last;
-    this.app.handleMessage(this.pluginId, {
-      updates: [
-        {
-          values: [
-            { path: PATHS.state as Path, value: r.state },
-            { path: PATHS.clearance as Path, value: publishable(r.clearance) },
-            { path: PATHS.clearanceSigma as Path, value: publishable(r.clearanceSigma) },
-            { path: PATHS.risk as Path, value: publishable(r.risk) },
-            { path: PATHS.timeToShoal as Path, value: publishable(r.timeToShoal) },
-            { path: PATHS.escapeHeading as Path, value: publishable(r.escapeHeading) },
-            { path: PATHS.envelopeRev as Path, value: this.envelope.rev },
-            { path: PATHS.waterLevel as Path, value: publishable(this.waterLevel().h) }
-          ]
-        }
-      ]
-    });
+    this.values.send(
+      [
+        { path: PATHS.state, value: r.state },
+        { path: PATHS.clearance, value: publishable(r.clearance) },
+        { path: PATHS.clearanceSigma, value: publishable(r.clearanceSigma) },
+        { path: PATHS.risk, value: publishable(r.risk) },
+        { path: PATHS.timeToShoal, value: publishable(r.timeToShoal) },
+        { path: PATHS.escapeHeading, value: publishable(r.escapeHeading) },
+        { path: PATHS.envelopeRev, value: this.envelope.rev },
+        { path: PATHS.waterLevel, value: publishable(this.waterLevel().h) }
+      ],
+      this.clock.now()
+    );
     this.notify(notificationFor(r));
     if (this.integrityResult) {
       this.notifier.send(PATHS.positionIntegrity, integrityNotification(this.integrityResult));
     }
     this.checkGrounding(r);
-    const status =
-      r.state === "normal" ? "Monitoring: normal" : `Monitoring: ${r.state} — ${r.reason}`;
+    this.report(r);
+  }
+
+  private report(r: LookaheadResult): void {
     if (this.indexReason !== undefined) {
       // A status would replace the error the server shows for a failed index load.
-      this.app.setPluginError(this.indexReason);
+      this.status.error(this.indexReason);
       return;
     }
-    // The WFS licence allows non-navigational use only; say so while it is on.
-    this.app.setPluginStatus(
-      this.config.wfs && r.reason !== WFS_NOTICE ? `${status} · ${WFS_NOTICE}` : status
-    );
+    const notes = [
+      r.state === "normal" ? "Monitoring: normal" : `Monitoring: ${r.state} — ${r.reason}`,
+      // The WFS licence allows non-navigational use only; say so while it is on.
+      this.config.wfs && r.reason !== WFS_NOTICE ? WFS_NOTICE : undefined
+    ];
+    this.status.status(notes.filter((n) => n !== undefined).join(" · "));
   }
 
   /** Publishes the look-ahead notification only when its state or message changes. */

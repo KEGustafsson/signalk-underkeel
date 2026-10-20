@@ -77,6 +77,10 @@ All notable changes to signalk-underkeel are documented here.
 - `GET /envelope` drops outline vertices within 1 cm of the line through their neighbours. With
   a 5 NM horizon (400 footprints) the envelope fell from 19.5 to 3.5 kB median and 21.4 to
   5.6 kB at most, back within the 15 kB budget; at 6 kn from 4.1 to 2.5 kB.
+- `navigation.underKeel.*` values other than `state` and `envelopeRev` are sent when they change
+  and at least every 10 s, and the plugin status only when its text changes. On the Nauvo route
+  at 6 kn the values sent fell from 18 733 to 7 063 in 2296 ticks (507 → 203 B per tick), and
+  `setPluginStatus` calls from 2297 to 329.
 - Below the low speed `navigation.underKeel.envelopeRev` no longer bumps while GPS noise moves
   the drawn envelope less than 5 m and no class or number in it changes. At rest with 1 m of
   position noise it bumped on 599 of 600 ticks, so every Freeboard fetched the envelope and

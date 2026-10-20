@@ -344,7 +344,8 @@ The thresholds and time windows are set under **Look-ahead**:
 
 ![navigation.underKeel in the Data Browser](images/how-it-works/databrowser.png)
 
-Published every second:
+Published once a second: `state` and `envelopeRev` on every tick, the other values when they
+change and every 10 s:
 
 | Path                                         | Unit  | Meaning                                                                                                                                                                                                           |
 | -------------------------------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
