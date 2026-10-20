@@ -237,6 +237,7 @@ describe("plugin lifecycle", () => {
       "POST /v1/departure-window": "readonly",
       "POST /v1/query": "readonly",
       "GET /v1/tiles/ukc/:z/:x/:file": "readonly",
+      "GET /v1/tiles/ukc/changes": "readonly",
       "GET /v1/ukc-style.json": "readonly",
       "GET /v1/acks": "readonly",
       "GET /v1/livechart/discrepancies": "readonly",
@@ -759,6 +760,11 @@ describe("plugin lifecycle", () => {
     expect(tile("16", String(t.x), `${t.y}.png`).code).toBe(400);
     expect(tile("16", String(2 ** 16), "0.pbf").code).toBe(400);
     expect(decodeMvt(tile("8", "0", "0.pbf").body as Uint8Array)[0]?.features).toEqual([]);
+    const head = call("/v1/tiles/ukc/changes").body as { epoch: string; rev: number };
+    expect(head).toMatchObject({ all: false, tiles: [] });
+    expect(
+      call("/v1/tiles/ukc/changes", { epoch: head.epoch, rev: String(head.rev) }).body
+    ).toMatchObject({ all: false, tiles: [] });
 
     const style = call("/v1/ukc-style.json").body as { sources: { ukc: { tiles: string[] } } };
     expect(style.sources.ukc.tiles).toEqual([

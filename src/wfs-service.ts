@@ -1,11 +1,13 @@
 import fs from "fs";
+import os from "os";
 import path from "path";
 import { Worker } from "worker_threads";
 import type { LonLat } from "./foundation/geo";
-import { haversine } from "./foundation/geo";
+import { haversine, project } from "./foundation/geo";
 import type { WfsConfig } from "./config";
 import type { Bbox, WfsFetch } from "./ingest/wfs";
-import { boxAround, downloadWfsCell, WFS_CELL_NAME, WFS_NOTICE } from "./ingest/wfs";
+import { boxAround, downloadWfsCell, edgeAhead, WFS_CELL_NAME, WFS_NOTICE } from "./ingest/wfs";
+import type { WfsCounts, WfsJob, WfsReply } from "./wfs-worker";
 import type { Clock } from "./monitor";
 import type { BuildJob } from "./spatial/build-worker";
 import type { ChartIndex } from "./spatial/chart-index";
@@ -13,32 +15,61 @@ import { commitChartIndex, loadChartIndex, removeStaging } from "./spatial/chart
 
 /**
  * Keeps a Traficom WFS box around the vessel (plan §4.2). When the vessel
- * is more than half the box radius from its centre, the box around the
- * current position is downloaded, the index is rebuilt off the event loop
- * and handed over; until then the previous index stays in use.
+ * is more than half the box radius from its centre, or at its speed would
+ * reach the box edge less the look-ahead before another refresh could
+ * arrive, a box centred ahead along its course is downloaded and the index
+ * rebuilt off the event loop, then handed over; until then the previous
+ * index stays in use.
  */
 
 export type IndexBuilder = (job: BuildJob, signal: AbortSignal) => Promise<ChartIndex>;
+
+/** Downloads the box, writes the cell and rebuilds the index with it. */
+export type WfsRefresher = (
+  job: WfsJob,
+  signal: AbortSignal
+) => Promise<{ index: ChartIndex; features: WfsCounts }>;
 
 /** Settles once every worker aborted so far has exited. */
 let exits: Promise<unknown> = Promise.resolve();
 
 /**
- * Builds in a worker thread from the compiled `lib/spatial/build-worker.js`.
- * The worker only stages the index; it is moved into the index directory
- * here, on the main thread, and never for an aborted build, so a worker
- * still exiting cannot replace an index saved after it was aborted. An
- * aborted worker runs until terminate() resolves, so its build rejects only
- * then and the next build starts only then; stop() itself returns at once.
+ * Old-generation heap for a build worker: a quarter of the RAM, 256 MB to 2 GB. The ENC pair
+ * plus a 10 km WFS box at leaf zoom 20 builds in under 96 MB; without a limit an oversized
+ * build grows until the kernel ends the whole Signal K server on a 1 GB Pi 3 or Cerbo GX.
  */
-export const workerBuilder: IndexBuilder = async (job, signal) => {
+export function workerHeapLimitMb(totalBytes = os.totalmem()): number {
+  return Math.min(2048, Math.max(256, Math.floor(totalBytes / 4 / 2 ** 20)));
+}
+
+interface WorkerReply {
+  ok: boolean;
+  staging?: string;
+  error?: string;
+}
+
+/**
+ * Runs `script` in a worker thread with `data` and resolves with its staged reply. The
+ * worker only stages; the caller moves the result into place on the main thread, and never
+ * for an aborted run, so a worker still exiting cannot replace an index saved after it was
+ * aborted. An aborted worker runs until terminate() resolves, so its run rejects only then
+ * and the next run starts only then; stop() itself returns at once.
+ */
+export async function runWorker<R extends WorkerReply>(
+  script: string,
+  data: object,
+  signal: AbortSignal,
+  indexDir?: string,
+  heapMb = workerHeapLimitMb()
+): Promise<R & { staging: string }> {
   await exits;
   if (signal.aborted) {
     throw new Error("aborted");
   }
   return new Promise((resolve, reject) => {
-    const worker = new Worker(path.join(__dirname, "spatial", "build-worker.js"), {
-      workerData: job
+    const worker = new Worker(script, {
+      workerData: data,
+      resourceLimits: { maxOldGenerationSizeMb: heapMb }
     });
     const thread = worker.threadId;
     const abort = (): void => {
@@ -47,13 +78,17 @@ export const workerBuilder: IndexBuilder = async (job, signal) => {
       const exit = worker
         .terminate()
         .catch(() => undefined)
-        .then(() => removeStaging(job.indexDir, (p, t) => p === process.pid && t === thread))
+        .then(() =>
+          indexDir === undefined
+            ? undefined
+            : removeStaging(indexDir, (p, t) => p === process.pid && t === thread)
+        )
         .catch(() => undefined);
       exits = Promise.all([exits, exit]);
       void exit.then(() => reject(new Error("aborted")));
     };
     signal.addEventListener("abort", abort, { once: true });
-    worker.once("message", (m: { ok: boolean; staging?: string; error?: string }) => {
+    worker.once("message", (m: R) => {
       if (signal.aborted) {
         if (m.staging) {
           fs.rmSync(m.staging, { recursive: true, force: true });
@@ -63,25 +98,73 @@ export const workerBuilder: IndexBuilder = async (job, signal) => {
       signal.removeEventListener("abort", abort);
       void worker.terminate();
       if (m.ok && m.staging) {
-        try {
-          commitChartIndex(job.indexDir, m.staging);
-          resolve(loadChartIndex(job.indexDir));
-        } catch (err) {
-          reject(err as Error);
-        }
+        resolve(m as R & { staging: string });
       } else {
         reject(new Error(m.error ?? "index build failed"));
       }
     });
-    worker.once("error", (err) => {
+    worker.once("error", (err: Error & { code?: string }) => {
       if (signal.aborted) {
         return;
       }
       signal.removeEventListener("abort", abort);
-      reject(err);
+      reject(
+        err.code === "ERR_WORKER_OUT_OF_MEMORY"
+          ? new Error(`index build stopped at the ${heapMb} MB worker heap limit: ${err.message}`)
+          : err
+      );
+    });
+    // Settles a worker that ended without a message or an error; after either it is a no-op.
+    worker.once("exit", (code: number) => {
+      if (!signal.aborted) {
+        signal.removeEventListener("abort", abort);
+        reject(new Error(`index build worker exited with code ${code} without a result`));
+      }
     });
   });
+}
+
+/** Moves a staged index into `indexDir` and loads it, unless the run was aborted meanwhile. */
+function commit(indexDir: string, staging: string, signal: AbortSignal): ChartIndex {
+  if (signal.aborted) {
+    fs.rmSync(staging, { recursive: true, force: true });
+    throw new Error("aborted");
+  }
+  commitChartIndex(indexDir, staging);
+  return loadChartIndex(indexDir);
+}
+
+/** Builds in a worker thread from the compiled `lib/spatial/build-worker.js`. */
+export const workerBuilder: IndexBuilder = async (job, signal) => {
+  const script = path.join(__dirname, "spatial", "build-worker.js");
+  const heapMb = workerHeapLimitMb();
+  const m = await runWorker(script, { ...job, heapMb }, signal, job.indexDir, heapMb);
+  return commit(job.indexDir, m.staging, signal);
 };
+
+/**
+ * The whole refresh in a worker thread from the compiled `lib/wfs-worker.js`, which fetches
+ * with its own global fetch.
+ */
+export const workerRefresher: WfsRefresher = async (job, signal) => {
+  const script = path.join(__dirname, "wfs-worker.js");
+  const m = await runWorker<WfsReply>(script, job, signal, job.build.indexDir);
+  const features = m.features ?? { depthAreas: 0, dredgedAreas: 0, soundings: 0 };
+  return { index: commit(job.build.indexDir, m.staging, signal), features };
+};
+
+/** The download on this thread with `fetch`, then `build`: for an injected fetch or builder. */
+export function inThreadRefresher(fetch: WfsFetch, build: IndexBuilder): WfsRefresher {
+  return async (job, signal) => {
+    const features = await downloadWfsCell({
+      ...job.download,
+      now: new Date(job.download.now),
+      fetch,
+      signal
+    });
+    return { index: await build(job.build, signal), features };
+  };
+}
 
 /** The box in use, as saved in `<data dir>/wfs/box.json`. */
 export interface WfsBox {
@@ -91,6 +174,8 @@ export interface WfsBox {
   catzoc: number;
   fetchedAt: string;
   features: { depthAreas: number; dredgedAreas: number; soundings: number };
+  /** How long its download and index build took; the next box is planned on it. */
+  durationMs?: number;
 }
 
 export interface WfsStatus {
@@ -108,11 +193,18 @@ export interface WfsServiceDeps {
   leafZoom: number;
   /** ENC cell directories, built before the WFS cell so they keep their catalogue order. */
   encDirs: () => string[];
-  fetch: WfsFetch;
-  build: IndexBuilder;
+  refresh: WfsRefresher;
   clock: Pick<Clock, "now" | "setInterval" | "clearInterval">;
   position: () => LonLat | undefined;
-  onIndex: (index: ChartIndex) => void;
+  /** Fresh speed (m/s) and course (radians) over ground, when both are known. */
+  motion: () => { sog: number; cog: number } | undefined;
+  /** The look-ahead's reach: `distance`, or `minHorizon` seconds at the current speed. */
+  lookahead: { distance: number; minHorizon: number };
+  /**
+   * Hands a rebuilt index over. `changed` holds the boxes of the index in use and the new
+   * one when this service built both, so only the WFS cell differs between them.
+   */
+  onIndex: (index: ChartIndex, changed?: Bbox[]) => void | Promise<void>;
   error: (message: string) => void;
 }
 
@@ -121,9 +213,17 @@ const CHECK_EVERY_MS = 10_000;
 /** No two downloads start closer together than this, and after a failure the wait is longer. */
 const MIN_INTERVAL_MS = 60_000;
 const RETRY_AFTER_ERROR_MS = 300_000;
+/** A refresh is assumed to take this long until one is measured: a z20 rebuild on a Pi 3. */
+const DEFAULT_REFRESH_MS = 600_000;
+/** A refresh is started this many of the last one's durations before the edge comes in reach. */
+const REFRESH_MARGIN = 1.5;
+/** The next box is centred at most this share of the radius ahead of the vessel. */
+const MAX_LEAD = 0.8;
 
 export class WfsService {
   private box?: WfsBox;
+  /** The box of the last index this service handed over in this run. */
+  private handed?: Bbox;
   private busy = false;
   private lastAttempt = -Infinity;
   private lastError?: string;
@@ -171,8 +271,38 @@ export class WfsService {
       b === undefined ||
       b.radiusKm !== this.deps.config.radiusKm ||
       b.catzoc !== this.deps.config.catzoc ||
-      haversine(pos, b.centre) > (b.radiusKm * 1000) / 2
+      haversine(pos, b.centre) > (b.radiusKm * 1000) / 2 ||
+      this.edgeSoon(pos, b)
     );
+  }
+
+  /**
+   * Whether the vessel would reach the box edge, less the look-ahead's reach, before a
+   * refresh started now, with the margin, could be handed over. At 15 kn the half-radius
+   * rule left 10.8 min of the 10 km box ahead, and a Pi 3 takes 11–14 min.
+   */
+  private edgeSoon(pos: LonLat, b: WfsBox): boolean {
+    const m = this.deps.motion();
+    if (!m || !(m.sog > 0)) {
+      return false;
+    }
+    const reach = Math.max(this.deps.lookahead.distance, m.sog * this.deps.lookahead.minHorizon);
+    const travel = (m.sog * REFRESH_MARGIN * this.refreshMs()) / 1000;
+    return edgeAhead(pos, m.cog, b.bbox) < travel + reach;
+  }
+
+  private refreshMs(): number {
+    return this.box?.durationMs ?? DEFAULT_REFRESH_MS;
+  }
+
+  /** Where the vessel will be when a refresh started now is handed over, kept inside the box. */
+  private centreAhead(pos: LonLat, radiusKm: number): LonLat {
+    const m = this.deps.motion();
+    if (!m || !(m.sog > 0)) {
+      return pos;
+    }
+    const lead = Math.min((m.sog * this.refreshMs()) / 1000, MAX_LEAD * radiusKm * 1000);
+    return project(pos, m.cog, lead);
   }
 
   async check(): Promise<void> {
@@ -186,37 +316,41 @@ export class WfsService {
     const controller = new AbortController();
     this.controller = controller;
     const radiusKm = this.deps.config.radiusKm;
-    const bbox = boxAround(pos, radiusKm);
+    const centre = this.centreAhead(pos, radiusKm);
+    const bbox = boxAround(centre, radiusKm);
     try {
-      const features = await downloadWfsCell({
-        fetch: this.deps.fetch,
-        url: this.deps.config.url,
-        bbox,
-        dir: this.cellDir,
-        now: new Date(now),
-        catzoc: this.deps.config.catzoc,
-        signal: controller.signal
-      });
-      const index = await this.deps.build(
+      const { index, features } = await this.deps.refresh(
         {
-          dirs: [...this.deps.encDirs(), this.cellDir],
-          leafZoom: this.deps.leafZoom,
-          indexDir: this.deps.indexDir
+          download: {
+            url: this.deps.config.url,
+            bbox,
+            dir: this.cellDir,
+            now: new Date(now).toISOString(),
+            catzoc: this.deps.config.catzoc
+          },
+          build: {
+            dirs: [...this.deps.encDirs(), this.cellDir],
+            leafZoom: this.deps.leafZoom,
+            indexDir: this.deps.indexDir
+          }
         },
         controller.signal
       );
       const box: WfsBox = {
         bbox,
-        centre: pos,
+        centre,
         radiusKm,
         catzoc: this.deps.config.catzoc,
         fetchedAt: new Date(now).toISOString(),
-        features
+        features,
+        durationMs: this.deps.clock.now() - now
       };
       fs.writeFileSync(path.join(this.deps.dir, "box.json"), JSON.stringify(box));
       this.box = box;
       this.lastError = undefined;
-      this.deps.onIndex(index);
+      const changed = this.handed && [this.handed, bbox];
+      this.handed = bbox;
+      await this.deps.onIndex(index, changed);
     } catch (err) {
       if (controller.signal.aborted) {
         return;

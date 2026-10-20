@@ -37,6 +37,8 @@ export interface BuildJob {
   indexDir: string;
   /** Threads building roots; `defaultThreads()` when absent. */
   threads?: number;
+  /** Heap limit shared by the root threads (MB); none when absent. */
+  heapMb?: number;
 }
 
 /** One region of roots and the cells that reach it, by directory and catalogue index. */
@@ -124,8 +126,14 @@ type Reply = { cols?: NodeColumns; error?: string };
  */
 export function regionPool(
   size: number,
-  file = __filename
+  file = __filename,
+  heapMb?: number
 ): { run: RegionRunner; close: () => void } {
+  // The threads run at once, so each gets its share of the build's limit.
+  const resourceLimits =
+    heapMb === undefined
+      ? undefined
+      : { maxOldGenerationSizeMb: Math.max(64, Math.floor(heapMb / size)) };
   const queue: { job: RegionJob; done: (r: Reply) => void }[] = [];
   const idle: Worker[] = [];
   const busy = new Map<Worker, (r: Reply) => void>();
@@ -149,7 +157,7 @@ export function regionPool(
     queue.splice(0).forEach((t) => t.done({ error: failure }));
   };
   const workers = Array.from({ length: size }, () => {
-    const w = new Worker(file, { workerData: { regions: true } });
+    const w = new Worker(file, { workerData: { regions: true }, resourceLimits });
     w.on("message", (r: Reply) => {
       const done = busy.get(w);
       busy.delete(w);
@@ -190,7 +198,7 @@ export async function runBuild(job: BuildJob): Promise<string> {
       await buildByRegion(job, (j) => Promise.resolve(runRegion(j)))
     );
   }
-  const pool = regionPool(threads);
+  const pool = regionPool(threads, __filename, job.heapMb);
   try {
     return stageChartIndex(job.indexDir, await buildByRegion(job, pool.run));
   } finally {

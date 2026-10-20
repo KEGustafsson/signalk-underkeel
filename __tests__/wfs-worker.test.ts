@@ -4,7 +4,8 @@ import os from "os";
 import path from "path";
 import { runBuild } from "../src/spatial/build-worker";
 import { loadChartIndex, saveChartIndex, stageChartIndex } from "../src/spatial/chart-index";
-import { workerBuilder } from "../src/wfs-service";
+import { Worker } from "worker_threads";
+import { workerBuilder, workerHeapLimitMb } from "../src/wfs-service";
 import { FIXTURES, fixtureIndex } from "./helpers/fixture-index";
 
 /** A worker thread that exits only when the test lets it. */
@@ -45,6 +46,28 @@ test("a build after an abort waits for the aborted worker to exit, and the abort
   await expect(aborted).rejects.toThrow("aborted");
   await settle();
   expect(mockWorkers).toHaveLength(2);
+});
+
+test("the worker runs under a heap limit, and running out of it fails the build with the limit", async () => {
+  mockWorkers.length = 0;
+  const built = workerBuilder(job, new AbortController().signal);
+  await settle();
+  const options = (Worker as unknown as jest.Mock).mock.calls.at(-1)?.[1] as {
+    resourceLimits: { maxOldGenerationSizeMb: number };
+  };
+  expect(options.resourceLimits.maxOldGenerationSizeMb).toBe(workerHeapLimitMb());
+  mockWorkers[0]?.emit(
+    "error",
+    Object.assign(
+      new Error("Worker terminated due to reaching memory limit: JS heap out of memory"),
+      {
+        code: "ERR_WORKER_OUT_OF_MEMORY"
+      }
+    )
+  );
+  await expect(built).rejects.toThrow(
+    `index build stopped at the ${workerHeapLimitMb()} MB worker heap limit`
+  );
 });
 
 describe("only the main thread writes the index directory", () => {

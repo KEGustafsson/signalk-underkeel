@@ -114,6 +114,69 @@ describe("plugin with the Traficom WFS source", () => {
     plugin.stop();
   });
 
+  test("a confirmed shoal survives the handover to the next box's index (invariant 5)", async () => {
+    const clock = fakeClock(T0);
+    const h = fakeApp(dataDir);
+    const plugin = underkeel(h.app, clock, fetch, build);
+    plugin.start(
+      {
+        vessel: { draft: 2 },
+        wfs: { enabled: true, radiusKm: 3 },
+        livechart: { enabled: true, writeNotes: false }
+      },
+      () => undefined
+    );
+    const { router, call, post } = fakeRouter();
+    plugin.registerWithRouter?.(router as never);
+    const drain = async () => {
+      for (let i = 0; i < 20; i++) {
+        await settle();
+      }
+    };
+    const fix = (lon: number) => {
+      const d = navDelta(lon, 60.0, 0, clock.now());
+      d.updates[0]?.values.push(
+        { path: "navigation.gnss.methodQuality" as never, value: "GNSS Fix" },
+        { path: "navigation.gnss.horizontalDilution" as never, value: 0.8 }
+      );
+      h.send(d);
+    };
+    fix(22.0);
+    clock.advance(10_000);
+    await drain();
+    // Two passes reading 6 m over water the WFS charts at 10 m.
+    for (const pass of [0, 20 * 60_000]) {
+      clock.advance(pass);
+      for (let k = 0; k < 3; k++) {
+        clock.advance(1000);
+        fix(22.0);
+        h.send({
+          updates: [
+            {
+              timestamp: new Date(clock.now()).toISOString() as never,
+              values: [{ path: "environment.depth.belowSurface" as never, value: 6 }]
+            }
+          ]
+        });
+      }
+    }
+    const shoal = { geometry: { type: "Point", coordinates: [22.0, 60.0] }, draft: 2 };
+    const before = (await post("/v1/query", shoal)).body as { charted: number; flags: string[] };
+    expect(before.flags).toContain("LIVECHART_ADJUSTED");
+    expect(before.charted).toBeLessThan(10);
+    const box = (call("/v1/status").body as { wfs: { box: { fetchedAt: string } } }).wfs.box;
+    // 2 km east is past half the 3 km radius: the next box is fetched and handed over.
+    fix(22.036);
+    clock.advance(10_000);
+    await drain();
+    const status = call("/v1/status").body as { wfs: { box: { fetchedAt: string } } };
+    expect(status.wfs.box.fetchedAt).not.toBe(box.fetchedAt);
+    const after = (await post("/v1/query", shoal)).body as { charted: number; flags: string[] };
+    expect(after.flags).toContain("LIVECHART_ADJUSTED");
+    expect(after.charted).toBe(before.charted);
+    plugin.stop();
+  });
+
   test("a depth path the grounding detector already has is not subscribed again", async () => {
     const clock = fakeClock(T0);
     const h = fakeApp(dataDir);

@@ -18,7 +18,7 @@ import type { VesselModel } from "./model/vessel";
 import { FALLBACK_HULL } from "./model/vessel";
 import type { ChartIndex } from "./spatial/chart-index";
 
-/** `POST /route-check`: validates the request, resolves the route and vessel, runs the check. */
+/** `POST /route-check`, `/route-repair` and `/departure-window`: validation, then the work in a queue. */
 
 export interface RouteServiceDeps {
   index: ChartIndex | undefined;
@@ -31,6 +31,7 @@ export interface RouteServiceDeps {
   waveHeight(): number | undefined;
   getRoute(id: string): Promise<unknown>;
   now(): number;
+  queue: RequestQueue;
 }
 
 async function coordinatesOf(
@@ -104,33 +105,146 @@ async function prepare(
 
 const isReply = (v: unknown): v is ApiReply => typeof (v as ApiReply).status === "number";
 
-/** Lets look-ahead ticks and other requests run between the steps of a long request. */
-const yieldToEventLoop = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+/** Requests the queue holds beside the one running; more are refused. */
+export const MAX_WAITING = 4;
 
-export async function routeCheck(body: unknown, deps: RouteServiceDeps): Promise<ApiReply> {
+/**
+ * One request's heavy work at a time (route check, repair, departure
+ * window, query), at most MAX_WAITING more in line and the rest refused
+ * with 503. Each job runs with a signal that aborts when its client goes
+ * away or the plugin stops; it is checked at every pause, so an abandoned
+ * request stops within one slice and never answers with a partial result.
+ */
+export class RequestQueue {
+  private running = false;
+  private readonly waiting: (() => void)[] = [];
+  private stopped = new AbortController();
+
+  /** Aborts the running and every waiting job; later jobs run as usual. */
+  abortAll(reason: string): void {
+    this.stopped.abort(new Error(reason));
+    this.stopped = new AbortController();
+  }
+
+  async run(
+    client: AbortSignal,
+    job: (signal: AbortSignal) => Promise<ApiReply>
+  ): Promise<ApiReply> {
+    const signal = AbortSignal.any([client, this.stopped.signal]);
+    if (this.running && this.waiting.length >= MAX_WAITING) {
+      return {
+        status: 503,
+        body: { errors: [`busy: ${MAX_WAITING} requests are waiting; try again shortly`] },
+        headers: { "Retry-After": "2" }
+      };
+    }
+    if (this.running && !(await this.turn(signal))) {
+      return aborted(signal);
+    }
+    this.running = true;
+    try {
+      signal.throwIfAborted();
+      return await job(signal);
+    } catch (err) {
+      if (signal.aborted) {
+        return aborted(signal);
+      }
+      throw err;
+    } finally {
+      // The next job inherits `running`, so a request arriving now cannot run beside it.
+      const next = this.waiting.shift();
+      if (next) {
+        next();
+      } else {
+        this.running = false;
+      }
+    }
+  }
+
+  /** True when this job's turn comes, false when its signal aborts first. */
+  private turn(signal: AbortSignal): Promise<boolean> {
+    return new Promise((resolve) => {
+      const start = () => resolve(true);
+      this.waiting.push(start);
+      signal.addEventListener(
+        "abort",
+        () => {
+          const i = this.waiting.indexOf(start);
+          if (i >= 0) {
+            this.waiting.splice(i, 1);
+            resolve(false);
+          }
+        },
+        { once: true }
+      );
+    });
+  }
+}
+
+function aborted(signal: AbortSignal): ApiReply {
+  return { status: 503, body: { errors: [abortReason(signal)] } };
+}
+
+/** For callers whose work no client can abandon. */
+const NEVER = new AbortController().signal;
+
+function abortReason(signal: AbortSignal): string {
+  return signal.reason instanceof Error ? signal.reason.message : "request aborted";
+}
+
+/**
+ * Lets look-ahead ticks and other requests run between the steps of a long
+ * request, and ends the request there once its signal aborts.
+ */
+function pauseFor(signal: AbortSignal): () => Promise<void> {
+  return () =>
+    new Promise((resolve, reject) =>
+      setImmediate(() => (signal.aborted ? reject(signal.reason) : resolve()))
+    );
+}
+
+export async function routeCheck(
+  body: unknown,
+  deps: RouteServiceDeps,
+  client: AbortSignal = NEVER
+): Promise<ApiReply> {
   const p = await prepare(body, deps);
   if (isReply(p)) {
     return p;
   }
-  const result = await checkRouteYielding(p.index, p.input, deps.now(), yieldToEventLoop);
-  return { status: 200, body: result };
+  return deps.queue.run(client, async (signal) => ({
+    status: 200,
+    body: await checkRouteYielding(p.index, p.input, deps.now(), pauseFor(signal))
+  }));
 }
 
 /** `POST /route-repair`: suggested waypoints for each failing or marginal leg. */
-export async function routeRepair(body: unknown, deps: RouteServiceDeps): Promise<ApiReply> {
+export async function routeRepair(
+  body: unknown,
+  deps: RouteServiceDeps,
+  client: AbortSignal = NEVER
+): Promise<ApiReply> {
   const p = await prepare(body, deps);
   if (isReply(p)) {
     return p;
   }
-  const checkedAt = new Date(deps.now()).toISOString();
-  const { repairs, route } = await repairRoute(p.index, p.input, DEFAULT_REPAIR, yieldToEventLoop);
-  return { status: 200, body: { checkedAt, repairs, route } };
+  return deps.queue.run(client, async (signal) => {
+    const checkedAt = new Date(deps.now()).toISOString();
+    const { repairs, route } = await repairRoute(
+      p.index,
+      p.input,
+      DEFAULT_REPAIR,
+      pauseFor(signal)
+    );
+    return { status: 200, body: { checkedAt, repairs, route } };
+  });
 }
 
 /** `POST /departure-window`: departures over the horizon in which every leg is ok. */
 export async function departureWindowReply(
   body: unknown,
-  deps: RouteServiceDeps
+  deps: RouteServiceDeps,
+  client: AbortSignal = NEVER
 ): Promise<ApiReply> {
   const opts = parseWindowOptions(body);
   if (!opts.ok) {
@@ -149,13 +263,16 @@ export async function departureWindowReply(
     return { status: 400, body: { errors: [budget] } };
   }
   const from = p.input.departure;
-  const result = await departureWindow(
-    p.index,
-    p.input,
-    from,
-    from + opts.value.horizon * 1000,
-    opts.value.step * 1000,
-    yieldToEventLoop
-  );
-  return { status: 200, body: result };
+  const to = from + opts.value.horizon * 1000;
+  return deps.queue.run(client, async (signal) => ({
+    status: 200,
+    body: await departureWindow(
+      p.index,
+      p.input,
+      from,
+      to,
+      opts.value.step * 1000,
+      pauseFor(signal)
+    )
+  }));
 }

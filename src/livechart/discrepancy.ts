@@ -49,8 +49,30 @@ export function discrepancyOf(c: CellPosterior): Discrepancy {
   };
 }
 
+/**
+ * The depth and σ a note shows: the depth floored to 5 cm and σ raised to the next cm, so a
+ * note never shows the cell deeper or surer than the posterior.
+ */
+export function noteValues(c: CellPosterior): { measured: number; sigma: number } {
+  let measured = Math.floor(c.mean * 20) / 20;
+  let sigma = Math.ceil(c.sigma * 100) / 100;
+  // The products can round across a step; one step more keeps the bound.
+  if (measured > c.mean) {
+    measured -= 0.05;
+  }
+  if (sigma < c.sigma) {
+    sigma += 0.01;
+  }
+  return { measured, sigma };
+}
+
+/** The Signal K note for a discrepancy cell. */
+export function noteOf(c: CellPosterior): Record<string, unknown> {
+  return noteFor({ ...discrepancyOf(c), ...noteValues(c) });
+}
+
 /** The Signal K note body for a discrepancy. */
-export function noteFor(d: Discrepancy): Record<string, unknown> {
+function noteFor(d: Discrepancy): Record<string, unknown> {
   return {
     name: `Suspected shoal ${d.measured} m (charted ${d.charted} m)`,
     description:
