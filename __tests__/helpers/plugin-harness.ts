@@ -4,6 +4,7 @@ import type { Clock } from "../../src/monitor";
 /** A fake Signal K app, router and clock for plugin-level tests. */
 
 interface FakeRes {
+  on?: (event: "close", listener: () => void) => void;
   json: (body: unknown) => void;
   send: (body: unknown) => void;
   type: (t: string) => FakeRes;
@@ -164,22 +165,32 @@ export function fakeRouter(withAccess = true) {
       };
       routes.get(`DELETE ${p}`)?.({ params }, res);
     });
+  /** A POST whose client can go away before the reply, as `close` does. */
+  const open = (p: string, reqBody: unknown) => {
+    const closed: (() => void)[] = [];
+    const headers: Record<string, string> = {};
+    const reply = new Promise<{ code: number; body: unknown; headers: Record<string, string> }>(
+      (resolve) => {
+        let code = 200;
+        const res: FakeRes = {
+          on: (_event, listener) => closed.push(listener),
+          json: (b) => resolve({ code, body: b, headers }),
+          send: (b) => resolve({ code, body: b, headers }),
+          type: () => res,
+          setHeader: (name, value) => (headers[name.toLowerCase()] = value),
+          status: (c) => {
+            code = c;
+            return { ...res, end: () => resolve({ code, body: undefined, headers }) };
+          }
+        };
+        routes.get(`POST ${p}`)?.({ body: reqBody }, res);
+      }
+    );
+    return { reply, close: () => closed.forEach((f) => f()) };
+  };
   const post = (p: string, reqBody: unknown) =>
-    new Promise<{ code: number; body: unknown }>((resolve) => {
-      let code = 200;
-      const res: FakeRes = {
-        json: (b) => resolve({ code, body: b }),
-        send: (b) => resolve({ code, body: b }),
-        type: () => res,
-        setHeader: () => undefined,
-        status: (c) => {
-          code = c;
-          return { ...res, end: () => resolve({ code, body: undefined }) };
-        }
-      };
-      routes.get(`POST ${p}`)?.({ body: reqBody }, res);
-    });
-  return { router, call, post, del, levels };
+    open(p, reqBody).reply.then(({ code, body }) => ({ code, body }));
+  return { router, call, post, open, del, levels };
 }
 
 export function values(deltas: Partial<Delta>[]) {

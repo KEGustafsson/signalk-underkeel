@@ -360,7 +360,10 @@ one per leg, `{ "default": … }` or `{ "legs": […] }`), `xteLimit` (m), `prob
 planning buffer at the lowest water level expected while on it. The request and response
 schemas are in [`schemas/navigation-safety/`](schemas/navigation-safety/README.md), which also
 lists the size limits that can refuse a valid request (for example route length times corridor
-width at most 200 km²).
+width at most 200 km²). Route checks, repairs, departure windows and queries run one at a time
+with at most four more waiting; beyond that a request gets 503 with `Retry-After`, and a request
+whose client disconnects, or that is running when the plugin stops, is abandoned between two of
+its steps.
 
 ## Plotter Extensions
 

@@ -6,6 +6,7 @@ export const API_BASE = "/v1";
 export interface ApiReply {
   status: number;
   body: unknown;
+  headers?: Record<string, string>;
 }
 
 export interface TileReply {
@@ -17,10 +18,11 @@ export interface TileReply {
 export interface ApiProvider {
   status(): unknown;
   envelope(): { rev: number; envelope: Envelope };
-  routeCheck(body: unknown): Promise<ApiReply>;
-  routeRepair(body: unknown): Promise<ApiReply>;
-  departureWindow(body: unknown): Promise<ApiReply>;
-  query(body: unknown): ApiReply;
+  /** `signal` aborts when the client goes away. */
+  routeCheck(body: unknown, signal: AbortSignal): Promise<ApiReply>;
+  routeRepair(body: unknown, signal: AbortSignal): Promise<ApiReply>;
+  departureWindow(body: unknown, signal: AbortSignal): Promise<ApiReply>;
+  query(body: unknown, signal: AbortSignal): Promise<ApiReply>;
   ukcTile(z: number, x: number, y: number): TileReply;
   ukcStyle(): unknown;
   acks(): ApiReply;
@@ -105,6 +107,9 @@ function fail(res: Response, err: unknown, log: (message: string) => void): void
 }
 
 function send(res: Response, reply: ApiReply): void {
+  for (const [name, value] of Object.entries(reply.headers ?? {})) {
+    res.setHeader(name, value);
+  }
   if (reply.body === undefined) {
     res.status(reply.status).end();
   } else {
@@ -137,31 +142,22 @@ export function registerRoutes(
     }
     res.json(current);
   });
-  r.post(`${API_BASE}/route-check`, (req: Request, res: Response) => {
-    readJsonBody(req)
-      .then((body) => api.routeCheck(body))
-      .then((reply) => res.status(reply.status).json(reply.body))
-      .catch((err: unknown) => fail(res, err, log));
-  });
   for (const [route, handler] of [
+    ["route-check", api.routeCheck],
     ["route-repair", api.routeRepair],
-    ["departure-window", api.departureWindow]
+    ["departure-window", api.departureWindow],
+    ["query", api.query]
   ] as const) {
     r.post(`${API_BASE}/${route}`, (req: Request, res: Response) => {
+      const client = new AbortController();
+      // Also after the reply is sent, when nothing is left to abort.
+      res.on("close", () => client.abort(new Error("client disconnected")));
       readJsonBody(req)
-        .then((body) => handler(body))
+        .then((body) => handler(body, client.signal))
         .then((reply) => send(res, reply))
         .catch((err: unknown) => fail(res, err, log));
     });
   }
-  r.post(`${API_BASE}/query`, (req: Request, res: Response) => {
-    readJsonBody(req)
-      .then((body) => {
-        const reply = api.query(body);
-        res.status(reply.status).json(reply.body);
-      })
-      .catch((err: unknown) => fail(res, err, log));
-  });
   r.get(`${API_BASE}/tiles/ukc/:z/:x/:file`, (req: Request, res: Response) => {
     const p = (req.params ?? {}) as Record<string, string | undefined>;
     const y = /^(\d{1,8})\.pbf$/.exec(p.file ?? "")?.[1];

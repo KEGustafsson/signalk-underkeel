@@ -762,7 +762,11 @@ departures times that area exceed 1600 km² or its departures times legs exceed 
 leg check costs a corridor query however short the leg is. All three yield to the event loop
 after each corridor query (the route check and the repaired route's re-check), each leg check
 or each departure, and route repair also every 256 cells its search expands and after each
-simplification check, so look-ahead ticks keep running during a long request. On a laptop a
+simplification check, so look-ahead ticks keep running during a long request. They and
+`POST /query` run through one queue after validation: one at a time, at most 4 waiting, and 503
+with `Retry-After: 2` beyond that, so concurrent requests do not interleave their slices. A
+request is aborted at its next pause when its client disconnects or the plugin stops, and
+answers 503 with the reason, never a partial result. On a laptop a
 corridor over 3000 shoals costs 1–3.5 ms per km². `POST /query` is refused when its bounding
 box widened by the buffer exceeds 25 km², or when its vertices times that area exceed 150 km²:
 every tile is tested against every vertex, and a 499-vertex ring over 25 km² took 0.47 s on a

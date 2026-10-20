@@ -53,6 +53,12 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Changed
 
+- Route checks, repairs, departure windows and `POST /query` run one at a time, with at most four
+  waiting and 503 with `Retry-After` beyond that; a request whose client disconnects, or that is
+  running when the plugin stops, is abandoned at its next pause. Ten concurrent repairs of a
+  100-leg route over the Nauvo cells delayed the event loop by up to 264 ms on a laptop (about
+  1 s on a Raspberry Pi 4) and now by at most 28 ms; abandoned requests ran to the end, holding
+  the old chart index after a stop.
 - Route repair yields to the event loop every 256 cells its search expands and after each
   simplification check, not only between legs. A search that exhausts its grid around an
   enclosed goal blocked the server for 105–109 ms on a laptop (about 0.4 s on a Raspberry Pi 4);
