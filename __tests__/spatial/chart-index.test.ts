@@ -104,13 +104,24 @@ describe("index persistence", () => {
     expect(() => deserializePyramid(good.subarray(0, good.length - 1))).toThrow(/truncated/);
   });
 
+  test("a header count that disagrees with the body is refused, not laid out wrong", () => {
+    const good = serializePyramid(fixtureIndex().pyramid);
+    const nl = good.indexOf(0x0a);
+    const header = JSON.parse(good.subarray(0, nl).toString("utf8")) as { count: number };
+    const short = Buffer.concat([
+      Buffer.from(JSON.stringify({ ...header, count: header.count - 1 })),
+      good.subarray(nl)
+    ]);
+    expect(() => deserializePyramid(short)).toThrow(/corrupt/);
+  });
+
   test("the columns are gzip-compressed and a flipped byte is refused", () => {
     const store = fixtureIndex().pyramid;
     const file = serializePyramid(store);
     const body = file.subarray(file.indexOf(0x0a) + 1);
     expect([body[0], body[1]]).toEqual([0x1f, 0x8b]);
-    // 37 bytes of columns per node uncompressed.
-    expect(body.length).toBeLessThan((store.count * 37) / 4);
+    // 36 bytes of columns per node uncompressed.
+    expect(body.length).toBeLessThan((store.count * 36) / 4);
     const torn = Buffer.from(file);
     torn[torn.length - 100] = (torn[torn.length - 100] as number) ^ 0xff;
     expect(() => deserializePyramid(torn)).toThrow(/corrupt/);
