@@ -76,8 +76,9 @@ export function apiFor(
     });
   };
   return {
-    status: () =>
+    status: (summary) =>
       statusReport({
+        summary,
         load: s.load,
         monitor: s.monitor,
         stopped: s.stopped,

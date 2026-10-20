@@ -6,6 +6,9 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Added
 
+- `GET /status?summary` leaves out `index.cells` and `waterLevel.datums`, which grow with the
+  cells: 22.7 kB with 300 cells against 237 B. It keeps every field the Freeboard panel and
+  runtime read.
 - Freeboard UI as Plotter Extensions contributions, served from `/plotterext/signalk-underkeel/`:
   a background runtime, look-ahead and route-check data overlays, a status widget, a details
   panel and a toolbar button. Freeboard core is unchanged.

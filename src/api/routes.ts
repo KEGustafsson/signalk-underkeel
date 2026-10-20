@@ -17,7 +17,7 @@ export interface TileReply {
 }
 
 export interface ApiProvider {
-  status(): unknown;
+  status(summary: boolean): unknown;
   envelope(): { rev: number; envelope: Envelope };
   /** `signal` aborts when the client goes away. */
   routeCheck(body: unknown, signal: AbortSignal): Promise<ApiReply>;
@@ -131,8 +131,8 @@ export function registerRoutes(
   log: (message: string) => void = console.error
 ): void {
   const r = readonly(router);
-  r.get(`${API_BASE}/status`, (_req: Request, res: Response) => {
-    res.json(api.status());
+  r.get(`${API_BASE}/status`, (req: Request, res: Response) => {
+    res.json(api.status(req.query?.summary !== undefined));
   });
   r.get(`${API_BASE}/envelope`, (req: Request, res: Response) => {
     const current = api.envelope();

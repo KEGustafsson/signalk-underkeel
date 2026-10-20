@@ -342,6 +342,7 @@ deleting acknowledgements needs a readwrite user. Errors are `{ "errors": [strin
 | Route                                         | Purpose                                                                                           |
 | --------------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | `GET /status`                                 | engine state, index and cell editions, look-ahead summary, water-level health, datum mapping      |
+| `GET /status?summary`                         | the same without the per-cell lists (`index.cells`, `waterLevel.datums`), for frequent polls      |
 | `GET /envelope?rev=`                          | the look-ahead as GeoJSON; 304 when the client already has that revision                          |
 | `POST /route-check`                           | each leg `ok`, `marginal`, `fail` or `unverified`, with P(UKC < 0), explanation and cell editions |
 | `POST /route-repair`                          | waypoints to insert around failing legs, and the whole route re-checked with them                 |
