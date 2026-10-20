@@ -839,14 +839,27 @@ A note is rewritten when the cell's adjusted depth drops to a lower 5 cm step or
 to a higher 1 cm step, at most once per cell every 5 minutes: a change inside the 5 minutes is
 written with the latest values once they are over, and on stop. The note shows the depth
 floored to 5 cm and σ raised to the next cm, so it never shows the cell deeper or surer than
-the posterior; the adjustment itself keeps the exact values. Posteriors, adjustments and the last 20 000 accepted soundings are
-kept in `livechart.json` beside the index (no database dependency) and saved at most once a
-minute and on stop. A failed save is reported and retried at the next one, and a malformed file
-is skipped entry by entry rather than stopping the plugin; a file that did not load whole (bad
-JSON, another version, malformed entries, cells at another zoom) is first renamed to
-`livechart.json.bad-<ms>` and reported, so no save overwrites it, and if it cannot be renamed
-it is not saved over at all. The file records its living-chart zoom; after a leaf-zoom change
-the adjustments are mapped onto the new zoom (a coarser cell takes the lowest `dMin` and largest
+the posterior; the adjustment itself keeps the exact values. Posteriors and adjustments are kept
+in `livechart.json` beside the index and the last 20 000 accepted soundings in
+`soundings.ndjson` (no database dependency). Decision (user, PL1): the save schedule is no
+longer "at most once a minute" for one file holding everything, which rewrote 3.2 MB per save
+once the soundings filled, 192 MB/h of SD-card writes. Soundings are appended to
+`soundings.ndjson`, one per line, every minute; once the file would hold more than 40 000 lines
+it is rewritten with the newest 20 000. `livechart.json` (cells and adjustments) is written
+every 10 minutes, and within 10 s of an adjustment being added or moving a 5 cm depth or 1 cm σ
+step; everything is written on stop. The saves run on a 10 s timer, not in the depth-delta
+callback. A power cut can lose up to 10 minutes of posterior evidence that is not yet a
+discrepancy and up to 1 minute of soundings, and an adjustment's lowering within its 5 cm step,
+never an adjustment added or moved a step more than 10 s before. Each write is fsynced, file
+then directory. A `livechart.json` from a version that kept the soundings in it still loads; its
+soundings move to `soundings.ndjson` at the next save. A failed save is reported and retried at
+the next scheduled one, and a malformed file is skipped entry by entry rather than stopping the
+plugin; a file that did not load whole (bad JSON, another version, malformed entries, cells at
+another zoom, malformed `soundings.ndjson` lines) is first renamed to `<name>.bad-<ms>` and
+reported, so no save overwrites it, and if it cannot be renamed it is not saved over at all. A
+last `soundings.ndjson` line cut short by a power cut is skipped and reported, and the file is
+rewritten whole at the next save. `livechart.json` records its living-chart zoom; after a leaf-zoom
+change the adjustments are mapped onto the new zoom (a coarser cell takes the lowest `dMin` and largest
 σ of the cells in it, a finer cell copies its parent's) and the posteriors are dropped. The CSB export
 (`GET /livechart/csb.geojson`) is B-12 GeoJSON of depths below the transducer, with the
 transducer depth as the sounder's `draft`; it is never uploaded.

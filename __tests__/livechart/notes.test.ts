@@ -71,10 +71,10 @@ describe("living-chart notes", () => {
     expect(h.notes).toHaveLength(1);
     expect(h.svc.discrepancies()).toHaveLength(1);
     h.t.now += 4 * 60_000;
-    h.svc.flushNotes();
+    h.svc.flush();
     expect(h.notes).toHaveLength(1);
     h.t.now += 60_000;
-    h.svc.flushNotes();
+    h.svc.flush();
     expect(h.notes).toHaveLength(2);
     const measured = h.svc.discrepancies()[0]?.measured as number;
     const shown = Number(
@@ -85,7 +85,7 @@ describe("living-chart notes", () => {
     expect(shown).toBeLessThan(Number(/shoal ([\d.]+) m/.exec(h.notes[0]?.name ?? "")?.[1]));
     // Nothing changed since: nothing more to write.
     h.t.now += 10 * 60_000;
-    h.svc.flushNotes();
+    h.svc.flush();
     expect(h.notes).toHaveLength(2);
   });
 
@@ -110,7 +110,7 @@ describe("living-chart notes", () => {
     }
     expect(h.dMin()).toBeLessThan(before);
     expect(h.dMin()).toBeGreaterThan(5.4);
-    h.svc.flushNotes();
+    h.svc.flush();
     expect(h.notes).toHaveLength(1);
   });
 

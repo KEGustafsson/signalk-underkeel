@@ -11,7 +11,8 @@ import type { NodeValues } from "../spatial/node-store";
 export const NOTE_EVERY_MS = 5 * 60_000;
 
 /** The 5 cm depth step and 1 cm σ step of an adjustment. */
-const steps = (v: NodeValues): string => `${Math.floor(v.dMin * 20)}/${Math.ceil(v.sigmaD * 100)}`;
+export const adjustmentSteps = (v: NodeValues): string =>
+  `${Math.floor(v.dMin * 20)}/${Math.ceil(v.sigmaD * 100)}`;
 
 export class NoteSchedule {
   private readonly written = new Map<number, { at: number; steps: string }>();
@@ -22,7 +23,7 @@ export class NoteSchedule {
 
   /** Cell `key`'s adjustment changed to `v`. */
   changed(key: number, v: NodeValues, now: number): void {
-    const s = steps(v);
+    const s = adjustmentSteps(v);
     const last = this.written.get(key);
     if (last?.steps === s) {
       this.waiting.delete(key);

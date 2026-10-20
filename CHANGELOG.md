@@ -53,6 +53,13 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Changed
 
+- Living-chart saves: the accepted soundings are appended to `soundings.ndjson` every minute
+  (rewritten with the newest 20 000 when it reaches twice that), and `livechart.json` holds the
+  cells and adjustments, written every 10 minutes and within 10 s of an adjustment being added
+  or moving a 5 cm or 1 cm σ step. Saves run on a timer instead of inside the depth-delta
+  callback. Before, `livechart.json` with all 20 000 soundings was rewritten every minute:
+  192 MB/h of SD-card writes and a 20–46 ms save in the delta callback. A `livechart.json`
+  that still holds soundings loads, and they move to `soundings.ndjson` at the next save.
 - Living-chart notes are rewritten when the cell's adjusted depth drops a 5 cm step or its σ
   rises a 1 cm step, at most once per cell every 5 minutes (the latest values after that, and
   on stop), and show the depth floored to 5 cm and σ raised to the next cm. Before, every
