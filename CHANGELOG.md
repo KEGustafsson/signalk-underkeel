@@ -62,6 +62,10 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Fixed
 
+- `POST /query` is also refused when the polygon's vertices times its box widened by the buffer
+  exceed 150 km². A 499-vertex ring with a 2 km buffer fitted the 25 km² limit and blocked the
+  server for 0.47 s on a laptop (about 2 s on a Raspberry Pi 4); within both limits the slowest
+  query measured over the Nauvo cells took 16 ms.
 - An index build stopped mid-write, by an abort or a crash, no longer leaves its half-written
   staging directory beside the chart index for good: an aborted WFS build removes its own once
   the worker has exited, and loading an index removes any staging directory left by a

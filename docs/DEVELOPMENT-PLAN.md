@@ -751,8 +751,9 @@ leg check costs a corridor query however short the leg is. All three yield to th
 after each corridor query (the route check and the repaired route's re-check), each leg check
 or each departure, so look-ahead ticks keep running during a long request. On a laptop a
 corridor over 3000 shoals costs 1–3.5 ms per km². `POST /query` is refused when its bounding
-box widened by the buffer exceeds 25 km²: a 500-vertex ring tests every tile against every
-vertex, about 60 ms at that size. Measured under Jest on the synthetic archipelago: 52 ms per
+box widened by the buffer exceeds 25 km², or when its vertices times that area exceed 150 km²:
+every tile is tested against every vertex, and a 499-vertex ring over 25 km² took 0.47 s on a
+laptop over the Nauvo cells, against at most 16 ms within both limits. Measured under Jest on the synthetic archipelago: 52 ms per
 repaired leg.
 
 ### 4.12 Acknowledged passages
