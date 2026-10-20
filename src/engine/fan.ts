@@ -47,6 +47,14 @@ export function lengthAt(t: number, vessel: VesselModel, opts: LookaheadOptions)
   return vessel.length + 2 * opts.kp * opts.sigmaSog * t;
 }
 
+/**
+ * Scores the hull of `tracks` at `t`. With `certainStops` the chart walk
+ * ends at the first charted land at P = 1, leaving `flags` and `uncovered`
+ * partial: callers pass it only where such a footprint decides the result
+ * whatever those say (inside the warn window, where P ≥ warn sets warn or
+ * alarm before coverage is looked at, and on escape tracks, which stop at
+ * P ≥ warn).
+ */
 export function footprint(
   t: number,
   origin: LonLat,
@@ -55,7 +63,8 @@ export function footprint(
   vessel: VesselModel,
   index: ChartIndex,
   s: Scoring,
-  opts: LookaheadOptions
+  opts: LookaheadOptions,
+  certainStops = false
 ): FootprintResult {
   // The hull keeps its drift angle to the track as the track turns.
   const hulls = tracks.map((track) => {
@@ -76,7 +85,8 @@ export function footprint(
     bufferMetres: buffer,
     chartReachK: opts.kp,
     clearAbove: s.threshold + CLEARANCE_RESOLUTION,
-    risk: { threshold: s.threshold, sigmaExtra: s.sigmaExtra }
+    risk: { threshold: s.threshold, sigmaExtra: s.sigmaExtra },
+    stopWhenCertain: certainStops
   });
   // A query that visited no tile (a degenerate footprint) proved nothing.
   const examined = r.visits > 0;

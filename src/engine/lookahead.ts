@@ -422,7 +422,9 @@ export function evaluateLookahead(
     { cog: opts.sigmaCog, rot: opts.sigmaRot },
     opts.turnFor
   );
-  const fps = times.map((t) => footprint(t, origin, tracks, m, vessel, index, s, opts));
+  const fps = times.map((t) =>
+    footprint(t, origin, tracks, m, vessel, index, s, opts, t <= opts.warnWithin)
+  );
   const verdict = degrade(classify(fps, opts), m, wl, fps);
   const escape =
     inputs.escape === true && m.moving && verdict.state !== "normal" && verdict.state !== "unknown"

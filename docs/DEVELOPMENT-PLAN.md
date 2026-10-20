@@ -571,6 +571,11 @@ suppressing.
   through at once, so stale input is never held as an earlier state. The risk state before
   them stays held: after the gap a lower state still needs the 5 lowering ticks, and a higher
   one is taken at once.
+- A footprint inside the warn window, and every escape-track footprint, stops reading the
+  chart at the first charted land at P = 1: no later tile can change its depth, P or worst
+  tile, and P ≥ warn there sets warn or alarm (or ends the escape track) before coverage is
+  looked at. Footprints beyond the warn window read every tile in reach, so a coverage gap
+  next to land there is still reported. Route checks always read every tile.
 - Measured on the synthetic archipelago at leaf z20 (`npm run bench`, x86, plain Node):
   median 1.2 ms and p95 4 ms per tick, escape fan included. Under Jest the same run is about
   15× slower.

@@ -64,6 +64,9 @@ All notable changes to signalk-underkeel are documented here.
   rectangle and result per walk. On the Nauvo test route at 6 kn the tick median fell from
   2.6 to 1.7 ms and p95 from 7 to 3.9 ms (x86), with the same states, risks and footprints on
   all 2296 ticks.
+- A look-ahead footprint inside the warn window, and an escape-track footprint, stop reading
+  the chart once they find charted land at P = 1. Alarm ticks on the Nauvo route fell from 2.6
+  to 2.2 ms median, and a tick after a 2 km GNSS jump from 770 to 270 ms (x86).
 
 ### Fixed
 

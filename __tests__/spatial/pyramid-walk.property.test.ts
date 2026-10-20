@@ -72,6 +72,33 @@ function ring(f: { x: number; y: number; heading: number; length: number; beam: 
   return [side(bow, 1), side(stern, 1), side(stern, -1), side(bow, -1)];
 }
 
+type Chart = typeof chart extends fc.Arbitrary<infer T> ? T : never;
+
+function storeOf(c: Chart) {
+  const covered: Box = c.gap ? [W, S, W + SPAN_LON * 0.7, S + SPAN_LAT] : DOMAIN;
+  const features = [
+    ...basin(covered, 20),
+    ...c.areas.map(([b, d]) => area(b, d)),
+    ...c.lands.map((b) => land(b)),
+    ...c.rocks.map(([x, y, d]) => point(W + x * SPAN_LON, S + y * SPAN_LAT, d)),
+    ...c.zones.map(([b, z]) => quality(b, z as Catzoc)),
+    coverage(covered)
+  ];
+  const store = buildPyramid(features, { minZoom: 12, leafZoom: 18 });
+  for (const [x, y, d] of c.adjust) {
+    const m = toMercator(W + x * SPAN_LON, S + y * SPAN_LAT);
+    const t = tileAt(store.adjustZoom, m[0], m[1]);
+    store.adjustments.set(tileKey(store.adjustZoom, t.x, t.y), {
+      dMin: d,
+      sigmaD: 0.3,
+      sigmaP: 3,
+      flags: FLAGS.LIVECHART_ADJUSTED,
+      cellRef: 0
+    });
+  }
+  return store;
+}
+
 describe("tile walk equality (property)", () => {
   test("the walk returns what the ea8277a walk returns", () => {
     fc.assert(
@@ -79,35 +106,53 @@ describe("tile walk equality (property)", () => {
         chart,
         fc.array(fc.tuple(footprintArb, optionsArb), { minLength: 1, maxLength: 8 }),
         (c, queries) => {
-          const covered: Box = c.gap ? [W, S, W + SPAN_LON * 0.7, S + SPAN_LAT] : DOMAIN;
-          const features = [
-            ...basin(covered, 20),
-            ...c.areas.map(([b, d]) => area(b, d)),
-            ...c.lands.map((b) => land(b)),
-            ...c.rocks.map(([x, y, d]) => point(W + x * SPAN_LON, S + y * SPAN_LAT, d)),
-            ...c.zones.map(([b, z]) => quality(b, z as Catzoc)),
-            coverage(covered)
-          ];
-          const store = buildPyramid(features, { minZoom: 12, leafZoom: 18 });
-          for (const [x, y, d] of c.adjust) {
-            const m = toMercator(W + x * SPAN_LON, S + y * SPAN_LAT);
-            const t = tileAt(store.adjustZoom, m[0], m[1]);
-            store.adjustments.set(tileKey(store.adjustZoom, t.x, t.y), {
-              dMin: d,
-              sigmaD: 0.3,
-              sigmaP: 3,
-              flags: FLAGS.LIVECHART_ADJUSTED,
-              cellRef: 0
-            });
-          }
+          const store = storeOf(c);
           for (const [f, opts] of queries) {
             const geom = footprintGeom(ring(f));
-            const o: QueryOptions = opts;
-            expect(minDepthOver(store, geom, o)).toEqual(referenceMinDepthOver(store, geom, o));
+            expect(minDepthOver(store, geom, opts)).toEqual(
+              referenceMinDepthOver(store, geom, opts)
+            );
           }
         }
       ),
       { numRuns: 60 }
     );
+  });
+
+  test("stopping at certain land keeps every value but flags, σ and cells", () => {
+    const risk = fc.record({ threshold: uniform(-1, 12), sigmaExtra: uniform(0.05, 1.5) });
+    let stopped = 0;
+    fc.assert(
+      fc.property(
+        chart.map((c) => ({ ...c, lands: [...c.lands, c.areas[0]?.[0] ?? DOMAIN] })),
+        fc.array(fc.tuple(footprintArb, optionsArb, risk), { minLength: 1, maxLength: 8 }),
+        (c, queries) => {
+          const store = storeOf(c);
+          for (const [f, opts, r] of queries) {
+            const geom = footprintGeom(ring(f));
+            const full = referenceMinDepthOver(store, geom, { ...opts, risk: r });
+            const fast = minDepthOver(store, geom, { ...opts, risk: r, stopWhenCertain: true });
+            const fields = (x: typeof full) => ({
+              dMin: x.dMin,
+              cellRef: x.cellRef,
+              coveredDMin: x.coveredDMin,
+              maxRisk: x.maxRisk,
+              riskTile: x.riskTile,
+              worst: x.worst
+            });
+            expect(fields(fast)).toEqual(fields(full));
+            expect(fast.flags & ~full.flags).toBe(0);
+            expect(fast.visits).toBeLessThanOrEqual(full.visits);
+            if (fast.visits < full.visits) {
+              stopped++;
+            } else {
+              expect(fast).toEqual(full);
+            }
+          }
+        }
+      ),
+      { numRuns: 60 }
+    );
+    expect(stopped).toBeGreaterThan(0);
   });
 });

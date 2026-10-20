@@ -74,6 +74,15 @@ export interface QueryOptions {
    * the chart's position uncertainty (`chart-position.ts`); 0 by default.
    */
   chartReachK?: number;
+  /**
+   * Stop the walk once it has found charted land at P = 1 (needs `risk`):
+   * no later tile can then change dMin, coveredDMin, maxRisk, riskTile or
+   * worst. flags, σ and cellRefs then hold only the tiles visited, so a
+   * gap or an unassessed survey elsewhere in reach can go unreported; the
+   * look-ahead uses it only where a P = 1 footprint decides the state
+   * whatever its flags. Route checks never set it.
+   */
+  stopWhenCertain?: boolean;
 }
 
 /** A footprint ring in WGS84, as a Mercator polygon. */
@@ -110,6 +119,7 @@ interface Walk {
   risk?: { threshold: number; sigmaExtra: number };
   maxRisk: number;
   riskTile?: { v: NodeValues; z: number; x: number; y: number; risk: number };
+  stopWhenCertain: boolean;
 }
 
 function take(w: Walk, v: NodeValues, z: number, x: number, y: number): void {
@@ -184,7 +194,14 @@ function reachOf(w: Walk, i: number): number {
   return w.buffer + w.perMetre * chartReach(w.k, w.survey.node[i] as number);
 }
 
+function certain(w: Walk): boolean {
+  return w.maxRisk >= 1 && w.coveredDMin === -Infinity && w.result.dMin === -Infinity;
+}
+
 function visit(w: Walk, z: number, x: number, y: number): void {
+  if (w.stopWhenCertain && certain(w)) {
+    return;
+  }
   // Read before the children are visited, which overwrite it.
   const rect = tileRectInto(z, x, y, w.rect);
   // The gap to the footprint's bounds never exceeds the distance to the
@@ -295,6 +312,7 @@ function walkFor(store: NodeStore, geom: Geom, opts: QueryOptions): Walk {
     clearAbove,
     risk: opts.risk,
     maxRisk: 0,
+    stopWhenCertain: opts.stopWhenCertain === true,
     result: { ...EMPTY },
     rect: { minX: 0, minY: 0, maxX: 0, maxY: 0 },
     coveredDMin: Infinity,

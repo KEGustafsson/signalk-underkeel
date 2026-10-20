@@ -27,7 +27,7 @@ function trackTts(
     if (t <= 0) {
       continue;
     }
-    const fp = footprint(t, origin, [track], m, vessel, index, s, opts);
+    const fp = footprint(t, origin, [track], m, vessel, index, s, opts, true);
     if (fp.uncovered || fp.risk >= opts.thresholds.warn) {
       return t;
     }
