@@ -15,7 +15,6 @@ describe("route errors", () => {
     for (const p of ["/v1/route-check", "/v1/route-repair", "/v1/departure-window"]) {
       expect(await post(p, {})).toEqual({ code: 500, body: { errors: ["internal error"] } });
     }
-    // The detail the reply leaves out reaches the server log.
     expect(logged).toHaveLength(3);
     expect(logged[0]).toMatch(/EACCES: open '\/srv\/signalk\/plugin-config-data\/x\.json'/);
   });
