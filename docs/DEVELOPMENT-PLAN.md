@@ -336,7 +336,9 @@ CATZOC C sounding counts up to 1 km from its position.
   110–160 with a Map per zoom (which V8 also caps at 16.7 M entries). `dMin` stays a 64-bit
   float, so a stored depth is never rounded deeper. Loading only the leaf blocks near the
   vessel and the route is the follow-up if the full Finnish coast exceeds the RAM budget.
-- `cells.json` (provenance) and `hazards.json` (exact hazard geometry) sit beside it.
+- `cells.json` (provenance) and `hazards.json` (exact hazard geometry) sit beside it. The
+  hazard R-tree is rebuilt from `hazards.json` at load, packed in typed arrays (about 47 bytes
+  per hazard).
 - The index is built in a worker thread, at start as for a new WFS box (§4.2); until the
   worker hands it over the look-ahead is `off` with the reason `building chart index`, and the
   WFS box starts only after the handover, so this build never replaces a newer box's index.

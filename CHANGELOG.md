@@ -53,6 +53,9 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Changed
 
+- The hazard R-tree is packed in typed arrays: 1 M soundings take 47 MB of tree instead of
+  289 MB and build in 1.3 s instead of 3.1 s on x86. Hazards at the same depth and distance from
+  a query are listed in catalogue order.
 - The pyramid's node store is a sorted tile-key column per zoom level instead of a `Map`, and
   `pyramid.bin` is written in that order, so loading uses the inflated
   columns in place. Two Nauvo cells: load 101 → 22 ms, resident +43 → +16 MB; the same 16
