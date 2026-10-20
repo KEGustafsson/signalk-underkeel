@@ -161,13 +161,16 @@ function tileInput(
     { speed: 0, waveHeight: deps.waveHeight() },
     deps.config.dynamics
   );
+  const { thresholds } = deps.config.lookahead;
+  const exact = sigmaExtra(terms, wl);
   const input: UkcTileInput = {
     threshold: thresholdDepth(terms, wl),
     // A forecast's sigma grows with lead time and a wave reading moves each second; at full
     // precision every poll would refresh every tile. Rounded up, P rises above the threshold
-    // and stays at least 1/2 past it, so no cell drawn at a warn level up to 1/2 reads safer.
-    sigmaExtra: Math.ceil(sigmaExtra(terms, wl) * 100) / 100,
-    thresholds: deps.config.lookahead.thresholds,
+    // and stays at least 1/2 past it, so no cell reads safer while the warn level is at most
+    // 1/2; above that a wider sigma could lower a P past the threshold below it.
+    sigmaExtra: thresholds.warn <= 0.5 ? Math.ceil(exact * 100) / 100 : exact,
+    thresholds,
     degraded: wl.degraded !== undefined
   };
   const { alert, warn } = input.thresholds;
