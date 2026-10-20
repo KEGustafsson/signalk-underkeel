@@ -329,7 +329,8 @@ CATZOC C sounding counts up to 1 km from its position.
 **Storage.**
 
 - `pyramid.bin`: a JSON header line, then one typed column per node field (depth, σ, flags,
-  cell reference, tile address, split bit). It is loaded into typed arrays at start; memory
+  cell reference, tile address, split bit), the columns together gzip-compressed at level 1
+  (7.5 MB → 0.42 MB for two Nauvo cells at z20; the CRC also refuses a torn body). It is loaded into typed arrays at start; memory
   mapping per zoom level is the follow-up if the full Finnish coast exceeds the RAM budget.
 - `cells.json` (provenance) and `hazards.json` (exact hazard geometry) sit beside it.
 - The index is built in a worker thread, at start as for a new WFS box (§4.2); until the

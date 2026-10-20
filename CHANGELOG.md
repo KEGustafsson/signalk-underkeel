@@ -53,6 +53,9 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Changed
 
+- `pyramid.bin` stores its columns gzip-compressed (format version 4), 18× fewer bytes written
+  to the SD card per rebuild (7.5 MB → 0.42 MB for two Nauvo cells at leaf zoom 20); a saved
+  version 3 index is rebuilt once at start.
 - The index build tests each area against a tile through a per-polygon box and edge grid and
   decides "reaches" and "contains" in one boundary pass, with the same nodes byte for byte:
   two Nauvo cells at leaf zoom 20 build in 1.9 s instead of 23.4 s on x86.

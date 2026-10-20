@@ -3,6 +3,7 @@ import os from "os";
 import path from "path";
 import { parseConfig } from "../src/config";
 import { cellDirectories, loadOrBuildIndex } from "../src/index-loader";
+import { gunzipSync } from "zlib";
 
 const FIXTURES = path.resolve(__dirname, "..", "fixtures", "enc");
 
@@ -174,4 +175,19 @@ describe("a saved index that cannot be read", () => {
     expect(r.index).toBeUndefined();
     expect(r.reason).toMatch(/chart index failed: .*truncated/);
   });
+});
+
+test("an uncompressed version 3 pyramid.bin from an older plugin is rebuilt", () => {
+  copyCell("FI4SYNTH");
+  load();
+  const file = path.join(dataDir, "index", "pyramid.bin");
+  const buf = fs.readFileSync(file);
+  const nl = buf.indexOf(0x0a);
+  const header = JSON.parse(buf.subarray(0, nl).toString("utf8")) as Record<string, unknown>;
+  const v3 = Buffer.from(`${JSON.stringify({ ...header, version: 3 })}\n`, "utf8");
+  fs.writeFileSync(file, Buffer.concat([v3, gunzipSync(buf.subarray(nl + 1))]));
+  const r = load();
+  expect(r.built).toBe(true);
+  expect(names(r)).toEqual(["FI4SYNTH"]);
+  expect(load().built).toBe(false);
 });
