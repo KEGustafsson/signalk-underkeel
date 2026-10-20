@@ -237,7 +237,9 @@ export class LivechartService {
   flush(): void {
     const now = this.now();
     this.notes.flush(now);
-    const state = this.dirty && (this.adjusted || now - this.stateAt >= STATE_EVERY_MS);
+    // A state file that could not be set aside is never written, so it never brings the log forward.
+    const state =
+      !this.keepFile && this.dirty && (this.adjusted || now - this.stateAt >= STATE_EVERY_MS);
     // Soundings first: the state file may still hold soundings only the log will keep.
     if (state || now - this.samplesAt >= SAMPLES_EVERY_MS) {
       this.saveSamples(now);
