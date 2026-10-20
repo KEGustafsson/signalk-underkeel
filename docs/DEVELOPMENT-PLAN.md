@@ -280,7 +280,7 @@ interface Cell {
   sigmaD: number; // 1σ depth uncertainty from CATZOC/SOUACC (m)
   sigmaP: number; // 1σ horizontal uncertainty of the source (m) from CATZOC/POSACC
   surveySigmaP: number; // widest σP of the assessed quality zones reaching it (chart reach)
-  flags: number; // SWEPT | NO_COVERAGE | UNASSESSED | DREDGED | LIVECHART_ADJUSTED
+  flags: number; // SWEPT | NO_COVERAGE | UNASSESSED | DREDGED | LIVECHART_ADJUSTED; proposed: CSB_ADJUSTED (§4.2 item 4)
   cellRef: number; // index into cells.json (edition provenance)
 }
 ```
