@@ -233,7 +233,12 @@ describe("durable save", () => {
     const real = { open: fs.openSync, fsync: fs.fsyncSync, rename: fs.renameSync };
     const events: string[] = [];
     const fds = new Map<number, string>();
-    const name = (p: fs.PathLike) => path.relative(dir, String(p)).replace(/\.tmp-[^/]+/, ".tmp");
+    const name = (p: fs.PathLike) =>
+      path
+        .relative(dir, String(p))
+        .split(path.sep)
+        .join("/")
+        .replace(/\.tmp-[^/]+/, ".tmp");
     const open = jest.spyOn(fs, "openSync").mockImplementation(((
       p: fs.PathLike,
       flags: fs.OpenMode
@@ -252,14 +257,15 @@ describe("durable save", () => {
     });
     try {
       saveChartIndex(path.join(dir, "index"), fixtureIndex());
-      expect(events).toEqual([
-        "fsync index.tmp/cells.json",
-        "fsync index.tmp/pyramid.bin",
-        "fsync index.tmp/hazards.json",
-        "fsync index.tmp",
-        "rename index.tmp",
-        "fsync "
-      ]);
+      const files = ["cells.json", "pyramid.bin", "hazards.json"].map(
+        (f) => `fsync index.tmp/${f}`
+      );
+      // Windows cannot open a directory; NTFS journals the rename itself.
+      expect(events).toEqual(
+        process.platform === "win32"
+          ? [...files, "rename index.tmp"]
+          : [...files, "fsync index.tmp", "rename index.tmp", "fsync "]
+      );
     } finally {
       [open, fsync, rename].forEach((s) => s.mockRestore());
       fs.rmSync(dir, { recursive: true, force: true });
