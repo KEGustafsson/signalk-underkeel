@@ -208,7 +208,9 @@ signalk-underkeel/
   local-tangent-plane math.
 - `better-sqlite3` for soundings and acknowledgements.
 - `worker_threads` for the index build. The worker's old-generation heap is capped at a
-  quarter of the RAM (256 MB to 2 GB), so a build too large for the machine ends the worker
+  quarter of the RAM (256 MB to 2 GB), and the root threads it starts share a second such
+  cap, so a build never holds more than half the RAM; the threads run only with at least
+  2 GiB, one per GiB (`defaultThreads`). A build too large for the machine ends the worker
   with an error in the status and the previous index stays in use, instead of growing until
   the kernel ends the server. A server started with `--max-old-space-size` overrides the cap,
   because V8 flags apply to every isolate in the process.
