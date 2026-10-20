@@ -1,4 +1,5 @@
-import type { NavState } from "../../src/engine/lookahead";
+import fc from "fast-check";
+import type { FootprintResult, NavState } from "../../src/engine/lookahead";
 import { DEFAULT_LOOKAHEAD, evaluateLookahead } from "../../src/engine/lookahead";
 import type { VesselModel } from "../../src/model/vessel";
 import type { ChartIndex } from "../../src/spatial/chart-index";
@@ -8,7 +9,8 @@ import { NodeStore } from "../../src/spatial/node-store";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
 import { ctx } from "../helpers/engine";
 import type { Box } from "../helpers/synthetic";
-import { basin, land } from "../helpers/synthetic";
+import { uniform } from "../helpers/arbitraries";
+import { basin, land, point } from "../helpers/synthetic";
 
 /**
  * The look-ahead's cost bounds (plan §4.8) change how much chart a tick
@@ -86,7 +88,8 @@ describe("certain land ends a footprint's chart walk", () => {
     const r = evaluateLookahead(at(555), ctx(KEEL), index, NOW);
     const reached = r.footprints.filter((f) => f.risk === 1);
     expect(reached.length).toBeGreaterThan(0);
-    expect(reached.every((f) => f.t > DEFAULT_LOOKAHEAD.warnWithin && f.uncovered)).toBe(true);
+    expect(reached.every((f) => f.t > DEFAULT_LOOKAHEAD.warnWithin)).toBe(true);
+    expect(reached.some((f) => f.uncovered)).toBe(true);
     expect(r.state).toBe("warn");
     expect(r.reason).toMatch(/^no chart coverage ahead in \d+ s$/);
   });
@@ -97,5 +100,82 @@ describe("certain land ends a footprint's chart walk", () => {
     expect(r.state).toBe("warn");
     expect(r.reason).toMatch(/^shoal ahead in \d+ s$/);
     expect(r.timeToShoal).toBeLessThanOrEqual(DEFAULT_LOOKAHEAD.warnWithin);
+  });
+});
+
+describe("coarse steps beyond the warn window", () => {
+  /** A seeded field of shoal rocks in 20 m water. */
+  function rockField(): ChartIndex {
+    let seed = 7;
+    const r = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32;
+    const rocks = Array.from({ length: 60 }, () =>
+      point(22.0 + r() * 0.04, 60.0 + r() * 0.01, 1.5 + r() * 2.5)
+    );
+    return indexOf([...basin(CHART, 20), ...rocks]);
+  }
+  const index = rockField();
+  const opts = { ...DEFAULT_LOOKAHEAD, distance: 600, minHorizon: 60 };
+  /**
+   * With no warn window every footprint is a plan step, as the engine scored
+   * before coarse steps; only the state table differs, which these tests
+   * leave out.
+   */
+  const fine = { ...opts, warnWithin: Infinity };
+
+  const navArb = fc.record({
+    x: uniform(0.2, 0.8),
+    y: uniform(0.2, 0.8),
+    cog: uniform(0, 2 * Math.PI),
+    sog: uniform(0.3, 2.5),
+    rot: uniform(-0.03, 0.03)
+  });
+
+  function navOf(n: { x: number; y: number; cog: number; sog: number; rot: number }): NavState {
+    const at = NOW;
+    return {
+      position: { value: [22.0 + n.x * 0.04, 60.0 + n.y * 0.01], at },
+      cog: { value: n.cog, at },
+      sog: { value: n.sog, at },
+      heading: { value: n.cog, at },
+      rot: { value: n.rot, at }
+    };
+  }
+
+  test("every tile a plan-step footprint reaches beyond the window, a coarse one reaches", () => {
+    fc.assert(
+      fc.property(navArb, (n) => {
+        const coarse = evaluateLookahead(navOf(n), ctx(KEEL), index, NOW, opts);
+        const dense = evaluateLookahead(navOf(n), ctx(KEEL), index, NOW, fine);
+        const beyond = (fps: FootprintResult[]) => fps.filter((f) => f.t > opts.warnWithin);
+        const flags = (fps: FootprintResult[]) => fps.reduce((u, f) => u | f.flags, 0);
+        expect(flags(beyond(dense.footprints)) & ~flags(beyond(coarse.footprints))).toBe(0);
+        // Coarse footprints are plan-step footprints, so the extremes agree.
+        expect(coarse.risk).toBe(dense.risk);
+        expect(coarse.clearance).toBe(dense.clearance);
+        expect(coarse.timeToShoal).toBe(dense.timeToShoal);
+        expect(coarse.footprints.length).toBeLessThanOrEqual(dense.footprints.length);
+        const within = (fps: FootprintResult[]) =>
+          fps.filter((f) => f.t <= opts.warnWithin).map((f) => [f.t, f.risk, f.flags]);
+        expect(within(coarse.footprints)).toEqual(within(dense.footprints));
+      }),
+      { numRuns: 40 }
+    );
+  });
+
+  test("a slow boat scores tens of footprints, not hundreds", () => {
+    const r = evaluateLookahead(
+      navOf({ x: 0.5, y: 0.5, cog: EAST, sog: 0.5, rot: 0 }),
+      ctx(KEEL),
+      index,
+      NOW,
+      opts
+    );
+    // 1200 s horizon in 400 steps of 3.0075 s; beyond 120 s every 21st, as (12 + 20) / 0.5 = 64 s.
+    expect(r.horizon).toBe(1200);
+    const step = 1200 / 399;
+    const gaps = r.footprints.slice(1).map((f, i) => f.t - (r.footprints[i] as FootprintResult).t);
+    expect(gaps.slice(0, 40).every((g) => Math.abs(g - step) < 1e-9)).toBe(true);
+    expect(gaps.slice(40, -1).every((g) => Math.abs(g - 21 * step) < 1e-9)).toBe(true);
+    expect(r.footprints.length).toBe(59);
   });
 });

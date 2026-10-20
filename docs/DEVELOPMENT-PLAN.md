@@ -511,6 +511,16 @@ both ends, still touch: a fast boat must not skip a rock between two samples. A 
 most 400 footprints: Δt grows toward that touching limit when the horizon would need more, and
 the horizon is cut only past it. Configuration caps D at 5 NM and the minimum horizon at 600 s.
 
+**Decision (step rule): coarser steps beyond the warn window.** Footprints are scored every Δt
+out to `warnWithin` (120 s), the widest window `classify` and the hysteresis raise a state in.
+Beyond it only every k-th Δt step is scored, with k the largest whole number for which k·Δt
+still leaves consecutive footprints touching, (L + 2 · positionBuffer) / SOG; footprint length
+and buffer only grow with t, so the union of the coarse footprints still covers the swept hull.
+Where a coarse footprint is the first to reach the warn or alert level or a coverage gap, the
+Δt steps it skipped are scored, so `timeToShoal` and the reason keep the Δt time. At 1 kn a
+tick scores 57 footprints instead of 361. The escape fan scores the same coarse times, so a
+heading's time to shoal beyond 120 s is known to k·Δt.
+
 **Output per tick.**
 
 - Min UKC μ and σ along the central member.
@@ -573,11 +583,10 @@ suppressing.
   through at once, so stale input is never held as an earlier state. The risk state before
   them stays held: after the gap a lower state still needs the 5 lowering ticks, and a higher
   one is taken at once.
-- A footprint inside the warn window, and every escape-track footprint, stops reading the
-  chart at the first charted land at P = 1: no later tile can change its depth, P or worst
-  tile, and P ≥ warn there sets warn or alarm (or ends the escape track) before coverage is
-  looked at. Footprints beyond the warn window read every tile in reach, so a coverage gap
-  next to land there is still reported. Route checks always read every tile.
+- A footprint stops reading the chart at the first charted land at P = 1: no later tile can
+  change its depth, P or worst tile. Its flags then hold only the tiles read, so where the state
+  turns on coverage (no warn or alarm from risk) such a footprint is read again in full, and a
+  coverage gap next to land is still reported. Route checks always read every tile.
 - Measured on the synthetic archipelago at leaf z20 (`npm run bench`, x86, plain Node):
   median 1.2 ms and p95 4 ms per tick, escape fan included. Under Jest the same run is about
   15× slower.

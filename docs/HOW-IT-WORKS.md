@@ -270,8 +270,12 @@ is raised by the integrity check in section 7.
 Steps are at most 3 s apart; for a fast boat the step shrinks so neighbouring footprints still
 touch. At 5 kn (2.6 m/s) the horizon is 214 s. A tick scores at most 400 footprints: a long
 horizon at low speed takes longer steps, up to where neighbouring footprints would stop
-touching, and only beyond that is the horizon cut. The look-ahead distance is at most 5 NM
-(9260 m) and the minimum horizon at most 600 s.
+touching, and only beyond that is the horizon cut. Past 120 s, the widest window a state is
+raised in, only every k-th step is scored, the most that still leaves neighbouring footprints
+touching (every 3rd at 6 kn, every 20th at 1 kn). Where one of those footprints is the first
+to reach P 5 %, P 1 % or a coverage gap, the steps it skipped are scored too, so the time
+to shoal and the time in the reason are those of the 3 s steps. The look-ahead distance is
+at most 5 NM (9260 m) and the minimum horizon at most 600 s.
 
 Below 18 kn the horizon always reaches 555.6 m ahead, so slowing down does not shorten the
 envelope. The same distance takes longer, though: 154 s at 7 kn, 270 s at 4 kn. Warn and alarm

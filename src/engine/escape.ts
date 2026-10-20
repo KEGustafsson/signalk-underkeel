@@ -10,6 +10,7 @@ import { escapeTrack } from "./trajectory";
 /**
  * Seconds until P reaches warn or the footprint leaves chart coverage along
  * one track; Infinity when neither happens. Uncharted water is never clear.
+ * A walk may stop at certain land, which is P ≥ warn whatever its coverage.
  * The footprint at t = 0 is the same hull on every track, so it is skipped:
  * when it is risky every track would score 0.
  */

@@ -86,8 +86,8 @@ export interface QueryOptions {
    * no later tile can then change dMin, coveredDMin, maxRisk, riskTile or
    * worst. flags, σ and cellRefs then hold only the tiles visited, so a
    * gap or an unassessed survey elsewhere in reach can go unreported; the
-   * look-ahead uses it only where a P = 1 footprint decides the state
-   * whatever its flags. Route checks never set it.
+   * look-ahead reads such a footprint again in full where its coverage
+   * decides the state. Route checks never set it.
    */
   stopWhenCertain?: boolean;
 }

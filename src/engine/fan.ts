@@ -49,11 +49,7 @@ export function lengthAt(t: number, vessel: VesselModel, opts: LookaheadOptions)
 
 /**
  * Scores the hull of `tracks` at `t`. With `certainStops` the chart walk
- * ends at the first charted land at P = 1, leaving `flags` and `uncovered`
- * partial: callers pass it only where such a footprint decides the result
- * whatever those say (inside the warn window, where P ≥ warn sets warn or
- * alarm before coverage is looked at, and on escape tracks, which stop at
- * P ≥ warn).
+ * may end at the first charted land at P = 1; the result is then `partial`.
  */
 export function footprint(
   t: number,
@@ -103,6 +99,7 @@ export function footprint(
     uncovered: !examined || (r.flags & FLAGS.NO_COVERAGE) !== 0,
     flags: r.flags,
     sigmaP: r.sigmaP,
-    riskTile: r.riskTile
+    riskTile: r.riskTile,
+    partial: certainStops && r.maxRisk >= 1 && r.coveredDMin === -Infinity && r.dMin === -Infinity
   };
 }
