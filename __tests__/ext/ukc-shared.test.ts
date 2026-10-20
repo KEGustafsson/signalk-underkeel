@@ -213,6 +213,59 @@ describe("extension display logic", () => {
     expect(UKC.levelMoved(null, null, 0.01)).toBe(false);
   });
 
+  test("the plugin's change list says which UKC tiles to fetch again", () => {
+    const tiles = UKC.tileRefresh();
+    expect(tiles.query()).toBe("");
+    const reply = (rev: number, more: object) => ({
+      epoch: "e 1",
+      rev,
+      all: false,
+      tiles: [],
+      ...more
+    });
+    expect(tiles.polled(reply(3, {}), 0.5)).toBeNull();
+    expect(tiles.query()).toBe("?epoch=e%201&rev=3");
+    expect(tiles.polled(reply(4, { tiles: [[14, 1, 2]] }), 0.5)).toEqual([[14, 1, 2]]);
+    // A wave height, σ, risk level or fallback change: every tile.
+    expect(tiles.polled(reply(5, { all: true }), 0.5)).toBe("all");
+    expect(tiles.query()).toBe("?epoch=e%201&rev=5");
+  });
+
+  test("a water level 1 cm from the last poll asks the change list again", () => {
+    const tiles = UKC.tileRefresh();
+    tiles.polled({ epoch: "e", rev: 0, all: false, tiles: [] }, 0.5);
+    expect(tiles.level(0.505)).toBeNull();
+    expect(tiles.level(0.512)).toBe("poll");
+    expect(tiles.level(0.515)).toBeNull();
+    expect(tiles.level(0.5)).toBe("poll");
+    expect(tiles.level(null)).toBe("poll");
+  });
+
+  test("without the change list every tile is fetched on a 1 cm fall or a 10 cm rise", () => {
+    const tiles = UKC.tileRefresh();
+    tiles.polled({ epoch: "e", rev: 0, all: false, tiles: [] }, 0.5);
+    // What changed since the last answer is unknown.
+    expect(tiles.lost()).toBe("all");
+    expect(tiles.lost()).toBeNull();
+    expect(tiles.level(0.495)).toBeNull();
+    expect(tiles.level(0.485)).toBe("all");
+    // Higher water makes a stale tile show more danger, never less.
+    expect(tiles.level(0.55)).toBeNull();
+    expect(tiles.level(0.584)).toBeNull();
+    expect(tiles.level(0.586)).toBe("all");
+    expect(tiles.level(0.6, "fmi:forecast|")).toBeNull();
+    expect(tiles.level(0.6, "fallback|FMI down")).toBe("all");
+    expect(tiles.level(null)).toBe("all");
+    expect(tiles.level(null)).toBeNull();
+    expect(tiles.level(0)).toBe("all");
+    // Once the list answers again, it decides.
+    expect(tiles.polled({ epoch: "e", rev: 2, all: false, tiles: [[14, 1, 1]] }, 0)).toEqual([
+      [14, 1, 1]
+    ]);
+    expect(tiles.level(0.05)).toBe("poll");
+    expect(tiles.lost()).toBe("all");
+  });
+
   test("the applied water level is keyed by its source and degraded reason", () => {
     const status = (applied?: object) => ({
       waterLevel: applied ? { source: "fmi", applied } : null

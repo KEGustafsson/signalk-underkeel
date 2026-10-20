@@ -2,9 +2,11 @@ import { UKC_MIN_ZOOM } from "./api/manifest";
 import { encodeMvt, MVT_EXTENT } from "./api/mvt";
 import { parseQueryRequest } from "./api/query-request";
 import type { ApiReply, TileReply } from "./api/routes";
+import type { TileInputs, UkcTileChanges } from "./api/ukc-tile-changes";
 import type { PluginConfig } from "./config";
 import { queryUkc } from "./engine/query";
-import { ukcTile } from "./engine/ukc-tiles";
+import type { UkcTileInput } from "./engine/ukc-tiles";
+import { ukcTileWithRange } from "./engine/ukc-tiles";
 import type { WaterLevel } from "./model/uncertainty";
 import { sigmaExtra, thresholdDepth } from "./model/uncertainty";
 import type { VesselModel } from "./model/vessel";
@@ -20,6 +22,8 @@ export interface QueryServiceDeps {
   vessel(): VesselModel | undefined;
   waterLevel(): WaterLevel;
   waveHeight(): number | undefined;
+  /** Which served tiles changed, for `GET /tiles/ukc/changes`. */
+  tileChanges?: UkcTileChanges;
 }
 
 function unavailable(deps: QueryServiceDeps): ApiReply | undefined {
@@ -78,18 +82,10 @@ export function ukcTileReply(z: number, x: number, y: number, deps: QueryService
   if (z < UKC_MIN_ZOOM) {
     return { status: 200, contentType: MVT_TYPE, body: encodeMvt("ukc", []) };
   }
-  const wl = deps.waterLevel();
-  const terms = vesselTerms(
-    vessel,
-    { speed: 0, waveHeight: deps.waveHeight() },
-    deps.config.dynamics
-  );
-  const rects = ukcTile((deps.index as ChartIndex).pyramid, z, x, y, MVT_EXTENT, {
-    threshold: thresholdDepth(terms, wl),
-    sigmaExtra: sigmaExtra(terms, wl),
-    thresholds: deps.config.lookahead.thresholds,
-    degraded: wl.degraded !== undefined
-  });
+  const { input, inputs } = tileInput(vessel, deps);
+  deps.tileChanges?.observe(inputs);
+  const { rects, range } = ukcTileWithRange(inputs.store, z, x, y, MVT_EXTENT, input);
+  deps.tileChanges?.serve(z, x, y, range);
   const byClass = new Map<string, [number, number][][]>();
   for (const r of rects) {
     const rings = byClass.get(r.class) ?? [];
@@ -103,6 +99,60 @@ export function ukcTileReply(z: number, x: number, y: number, deps: QueryService
   }
   const features = [...byClass].map(([cls, rings]) => ({ rings, properties: { class: cls } }));
   return { status: 200, contentType: MVT_TYPE, body: encodeMvt("ukc", features) };
+}
+
+/**
+ * The served tiles a client should fetch again since its cursor (`epoch`,
+ * `rev`). A malformed or foreign cursor gets `all`.
+ */
+export function ukcTileChangesReply(
+  query: Record<string, unknown>,
+  deps: QueryServiceDeps
+): ApiReply {
+  const changes = deps.tileChanges;
+  if (!changes) {
+    return { status: 404, body: { errors: ["no tile change list"] } };
+  }
+  const vessel = deps.vessel();
+  if (deps.index && vessel) {
+    changes.observe(tileInput(vessel, deps).inputs);
+  }
+  const { epoch, rev } = query;
+  const cursor =
+    epoch === undefined && rev === undefined
+      ? undefined
+      : {
+          epoch: String(epoch),
+          rev: typeof rev === "string" && /^\d{1,15}$/.test(rev) ? Number(rev) : NaN
+        };
+  return { status: 200, body: changes.since(cursor) };
+}
+
+function tileInput(
+  vessel: VesselModel,
+  deps: QueryServiceDeps
+): { input: UkcTileInput; inputs: TileInputs } {
+  const wl = deps.waterLevel();
+  const terms = vesselTerms(
+    vessel,
+    { speed: 0, waveHeight: deps.waveHeight() },
+    deps.config.dynamics
+  );
+  const input: UkcTileInput = {
+    threshold: thresholdDepth(terms, wl),
+    sigmaExtra: sigmaExtra(terms, wl),
+    thresholds: deps.config.lookahead.thresholds,
+    degraded: wl.degraded !== undefined
+  };
+  const { alert, warn } = input.thresholds;
+  return {
+    input,
+    inputs: {
+      store: (deps.index as ChartIndex).pyramid,
+      key: `${input.sigmaExtra}|${alert}|${warn}|${input.degraded}`,
+      threshold: input.threshold
+    }
+  };
 }
 
 function inTile(v: number, z: number): boolean {

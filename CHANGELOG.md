@@ -273,3 +273,9 @@ All notable changes to signalk-underkeel are documented here.
 - A route check from the background runtime times out after 30 s and reads "not checked",
   and a route is checked once at a time: a re-check asked for meanwhile runs after it. A hung
   reply had no timeout, and each re-check opened another connection beside it.
+- UKC tiles follow the wave allowance and the water level also without a Signal K stream: the
+  runtime asks the new `GET /tiles/ukc/changes` which tiles changed class, every 15 s and
+  after each 1 cm water-level move. A wave height change left tiles drawn for calmer water,
+  and without a stream the tiles never followed the tide. Freeboard now fetches only the tiles
+  whose classes changed: 2 tile fetches a minute instead of 108 with the tide rising 2 mm/s.
+  When that list does not answer, every tile is fetched again on a 1 cm fall or a 10 cm rise.

@@ -185,6 +185,68 @@
     return prev !== next;
   }
 
+  /**
+   * Which UKC tiles the runtime fetches again. While the plugin's change list
+   * (`GET /tiles/ukc/changes`) answers, the tiles it lists; the runtime asks
+   * it again once the water level has moved 1 cm. Without it, every tile when
+   * the level falls 1 cm or rises 10 cm or its source changes: a tile left
+   * stale by a rise shows more danger than the truth, never less.
+   *
+   * `polled` takes a change list reply and `level` a water level (with the
+   * source key from `/status`, when known); each answers "all", a list of
+   * [z, x, y], "poll" (ask the list) or null.
+   */
+  function tileRefresh() {
+    const STEP = 0.01;
+    const RISE = 0.1;
+    let cursor = null;
+    let live = false;
+    let ref;
+    let key;
+    return {
+      query: function () {
+        return cursor ? "?epoch=" + encodeURIComponent(cursor.epoch) + "&rev=" + cursor.rev : "";
+      },
+      polled: function (reply, h) {
+        cursor = { epoch: reply.epoch, rev: reply.rev };
+        live = true;
+        ref = h;
+        if (reply.all) {
+          return "all";
+        }
+        return reply.tiles && reply.tiles.length > 0 ? reply.tiles : null;
+      },
+      lost: function () {
+        const was = live;
+        live = false;
+        return was ? "all" : null;
+      },
+      level: function (h, sourceKey) {
+        if (live) {
+          if (!levelMoved(ref, h, STEP)) {
+            return null;
+          }
+          ref = h;
+          return "poll";
+        }
+        const keyMoved = sourceKey !== undefined && key !== undefined && sourceKey !== key;
+        if (sourceKey !== undefined) {
+          key = sourceKey;
+        }
+        const both = typeof ref === "number" && typeof h === "number";
+        const moved = both ? ref - h > STEP || h - ref > RISE : ref !== undefined && ref !== h;
+        if (ref === undefined) {
+          ref = h;
+        }
+        if (!keyMoved && !moved) {
+          return null;
+        }
+        ref = h;
+        return "all";
+      }
+    };
+  }
+
   /** The applied water level's source and degraded reason from `GET /status`; "" without one. */
   function waterSourceKey(status) {
     const applied = status && status.waterLevel && status.waterLevel.applied;
@@ -293,6 +355,7 @@
     checkedAgo: checkedAgo,
     revJumped: revJumped,
     levelMoved: levelMoved,
+    tileRefresh: tileRefresh,
     waterSourceKey: waterSourceKey,
     statusLines: statusLines
   };

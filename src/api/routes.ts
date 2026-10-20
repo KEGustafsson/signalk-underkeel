@@ -22,6 +22,7 @@ export interface ApiProvider {
   departureWindow(body: unknown): Promise<ApiReply>;
   query(body: unknown): ApiReply;
   ukcTile(z: number, x: number, y: number): TileReply;
+  ukcTileChanges(query: Record<string, unknown>): ApiReply;
   ukcStyle(): unknown;
   acks(): ApiReply;
   addAck(body: unknown): ApiReply;
@@ -174,6 +175,9 @@ export function registerRoutes(
       res.status(reply.status).json(reply.body);
     }
   });
+  r.get(`${API_BASE}/tiles/ukc/changes`, (req: Request, res: Response) =>
+    send(res, api.ukcTileChanges((req.query ?? {}) as Record<string, unknown>))
+  );
   r.get(`${API_BASE}/ukc-style.json`, (_req: Request, res: Response) => {
     res.json(api.ukcStyle());
   });

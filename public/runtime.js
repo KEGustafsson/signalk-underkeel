@@ -92,7 +92,7 @@ onPath["navigation.underKeel.state"] = (state) => {
   if (engineState === "off" && state !== "off") {
     onRestart();
   } else if (engineState !== undefined && isDown(engineState) !== isDown(state)) {
-    refreshTiles();
+    refreshTiles("all");
   }
   engineState = state;
   if (isDown(state)) {
@@ -116,55 +116,89 @@ onPath["navigation.underKeel.envelopeRev"] = (rev, left) => {
   }
 };
 
-// ---- UKC tiles: classed at fetch time, so fetched again when what classed them changes ----
-const LEVEL_STEP_M = 0.01;
-const WATER_SOURCE_EVERY_MS = 60000;
-let levelSeen = false;
-let tileLevel;
-let tileWaterSource;
+// ---- UKC tiles: classed at fetch time; the plugin lists the tiles whose classes changed ----
+/** The list also covers wave height and a fallback water level, which the stream does not show. */
+const TILE_POLL_MS = 15000;
+const tiles = UKC.tileRefresh();
+let waterLevel;
+let tilePolling = false;
+let tilePollQueued = false;
 
-function refreshTiles() {
+function refreshTiles(which) {
+  if (!which || which === "poll" || !has("overlays.data")) {
+    return;
+  }
+  const params = { overlayId: "ukc", source: "ukc", ...(which === "all" ? {} : { tiles: which }) };
+  client.call("overlay.refresh", params).catch((err) => console.warn("under-keel ukc tiles", err));
+}
+
+function onTileLevel(h, sourceKey) {
+  const which = tiles.level(h, sourceKey);
+  if (which === "poll") {
+    void pollTiles();
+  } else {
+    refreshTiles(which);
+  }
+}
+
+async function pollTiles() {
   if (!has("overlays.data")) {
     return;
   }
-  client
-    .call("overlay.refresh", { overlayId: "ukc", source: "ukc" })
-    .catch((err) => console.warn("under-keel ukc tiles", err));
+  if (tilePolling) {
+    tilePollQueued = true;
+    return;
+  }
+  tilePolling = true;
+  const h = waterLevel;
+  try {
+    const res = await fetch(`${UKC.API}/tiles/ukc/changes${tiles.query()}`, {
+      credentials: "same-origin",
+      cache: "no-store",
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
+    });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    refreshTiles(tiles.polled(await res.json(), h));
+  } catch (err) {
+    console.warn("under-keel ukc tile changes", err);
+    refreshTiles(tiles.lost());
+    await levelFromStatus();
+  } finally {
+    tilePolling = false;
+    if (tilePollQueued) {
+      tilePollQueued = false;
+      void pollTiles();
+    }
+  }
 }
 
-onPath["navigation.underKeel.waterLevel"] = (h) => {
-  if (!levelSeen) {
-    levelSeen = true;
-    tileLevel = h;
-  } else if (UKC.levelMoved(tileLevel, h, LEVEL_STEP_M)) {
-    tileLevel = h;
-    refreshTiles();
-  }
-};
-
-/** A fallback can keep the same height while it marks clear water unverified; only /status shows it. */
-async function checkWaterSource() {
+/** Without the change list the level rule decides, from /status when there is no stream. */
+async function levelFromStatus() {
   try {
     const res = await fetch(`${UKC.API}/status`, {
       credentials: "same-origin",
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
     });
-    if (!res.ok) {
-      return;
+    if (res.ok) {
+      const status = await res.json();
+      const applied = status.waterLevel && status.waterLevel.applied;
+      onTileLevel(applied ? applied.h : null, UKC.waterSourceKey(status));
     }
-    const key = UKC.waterSourceKey(await res.json());
-    if (tileWaterSource !== undefined && key !== tileWaterSource) {
-      refreshTiles();
-    }
-    tileWaterSource = key;
   } catch (err) {
     console.warn("under-keel status", err);
   }
 }
 
+onPath["navigation.underKeel.waterLevel"] = (h) => {
+  waterLevel = h;
+  onTileLevel(h);
+};
+
 if (has("overlays.data")) {
-  void checkWaterSource();
-  setInterval(() => void checkWaterSource(), WATER_SOURCE_EVERY_MS);
+  void pollTiles();
+  setInterval(() => void pollTiles(), TILE_POLL_MS);
 }
 
 // ---- route check: every visible route, again after each edit ----
@@ -304,7 +338,7 @@ async function checkAll() {
 const RECHECK_MS = 60000;
 
 function onRestart() {
-  refreshTiles();
+  refreshTiles("all");
   if (has("routes")) {
     void checkAll();
   }
