@@ -9,6 +9,7 @@ import {
   tileKey,
   tileRange,
   tileRect,
+  tileRectInto,
   toMercator,
   worldShifts
 } from "../foundation/geo";
@@ -16,7 +17,7 @@ import type { Geom } from "../foundation/geometry";
 import { geomBounds, geomRectDistance, pointRectDistance, shiftGeom } from "../foundation/geometry";
 import type { NodeStore, NodeValues } from "./node-store";
 import { probabilityBelowZero } from "../foundation/stats";
-import { combine, EMPTY, FLAGS, NO_DATA } from "./node-store";
+import { EMPTY, FLAGS, NO_DATA } from "./node-store";
 import type { SurveySigmaP } from "./chart-position";
 import { chartReach, surveySigmaP } from "./chart-position";
 
@@ -98,7 +99,10 @@ interface Walk {
   k: number;
   survey?: SurveySigmaP;
   clearAbove: number;
+  /** Folded in place by `take`; never one of the shared constants. */
   result: NodeValues;
+  /** Scratch bounds of the tile being visited. */
+  rect: Rect;
   coveredDMin: number;
   cells: Set<number>;
   worst?: { z: number; x: number; y: number };
@@ -109,10 +113,18 @@ interface Walk {
 }
 
 function take(w: Walk, v: NodeValues, z: number, x: number, y: number): void {
-  if (v.dMin < w.result.dMin || w.worst === undefined) {
+  const r = w.result;
+  if (v.dMin < r.dMin || w.worst === undefined) {
     w.worst = { z, x, y };
   }
-  w.result = combine(w.result, v);
+  // combine() folded in place: a tick takes thousands of tiles.
+  if (v.dMin < r.dMin) {
+    r.dMin = v.dMin;
+    r.cellRef = v.cellRef;
+  }
+  r.sigmaD = Math.max(r.sigmaD, v.sigmaD);
+  r.sigmaP = Math.max(r.sigmaP, v.sigmaP);
+  r.flags |= v.flags;
   if ((v.flags & FLAGS.NO_DEPTH) === 0) {
     w.coveredDMin = Math.min(w.coveredDMin, v.dMin);
   }
@@ -173,7 +185,8 @@ function reachOf(w: Walk, i: number): number {
 }
 
 function visit(w: Walk, z: number, x: number, y: number): void {
-  const rect = tileRect(z, x, y);
+  // Read before the children are visited, which overwrite it.
+  const rect = tileRectInto(z, x, y, w.rect);
   // The gap to the footprint's bounds never exceeds the distance to the
   // footprint, and costs far less to find.
   const gap = rectGap(w.bounds, rect);
@@ -282,7 +295,8 @@ function walkFor(store: NodeStore, geom: Geom, opts: QueryOptions): Walk {
     clearAbove,
     risk: opts.risk,
     maxRisk: 0,
-    result: EMPTY,
+    result: { ...EMPTY },
+    rect: { minX: 0, minY: 0, maxX: 0, maxY: 0 },
     coveredDMin: Infinity,
     cells: new Set(),
     visits: 0

@@ -83,10 +83,17 @@ export function tileSize(z: number): number {
 
 /** Mercator bounds of tile (z, x, y); y counts down from the north edge, as in XYZ tiles. */
 export function tileRect(z: number, x: number, y: number): Rect {
+  return tileRectInto(z, x, y, { minX: 0, minY: 0, maxX: 0, maxY: 0 });
+}
+
+/** `tileRect` written into `out`, for walks that visit many tiles. */
+export function tileRectInto(z: number, x: number, y: number, out: Rect): Rect {
   const size = tileSize(z);
-  const minX = -MERCATOR_HALF_WORLD + x * size;
-  const maxY = MERCATOR_HALF_WORLD - y * size;
-  return { minX, minY: maxY - size, maxX: minX + size, maxY };
+  out.minX = -MERCATOR_HALF_WORLD + x * size;
+  out.maxY = MERCATOR_HALF_WORLD - y * size;
+  out.minY = out.maxY - size;
+  out.maxX = out.minX + size;
+  return out;
 }
 
 /** Tile column/row containing a Mercator point (clamped to the world). */
@@ -108,9 +115,11 @@ export function tileRange(
   return { minX: a.x, minY: a.y, maxX: b.x, maxY: b.y };
 }
 
+const TILE_COUNTS = Array.from({ length: 31 }, (_, z) => 2 ** z);
+
 /** Collision-free numeric key for a tile at a fixed zoom (z ≤ 26). */
 export function tileKey(z: number, x: number, y: number): number {
-  return x * 2 ** z + y;
+  return x * (TILE_COUNTS[z] ?? 2 ** z) + y;
 }
 
 /** A rectangle that `extendRect` grows from nothing (inverted infinite bounds). */
