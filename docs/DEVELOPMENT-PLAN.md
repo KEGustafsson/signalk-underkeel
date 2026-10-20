@@ -207,7 +207,11 @@ signalk-underkeel/
 - `@turf/*`, only for buffers and planning-time geometry. The hot path uses its own
   local-tangent-plane math.
 - `better-sqlite3` for soundings and acknowledgements.
-- `worker_threads` for the index build.
+- `worker_threads` for the index build. The worker's old-generation heap is capped at a
+  quarter of the RAM (256 MB to 2 GB), so a build too large for the machine ends the worker
+  with an error in the status and the previous index stays in use, instead of growing until
+  the kernel ends the server. A server started with `--max-old-space-size` overrides the cap,
+  because V8 flags apply to every isolate in the process.
 - GDAL/OGR, run in a container through `signalk-container`, for reading S-57. This keeps the
   same container approach as `signalk-charts-provider-simple`.
 - Must run on a Raspberry Pi 4 as well as on the Jetson Orin. Budget: index RAM under 150 MB,
@@ -226,8 +230,23 @@ signalk-underkeel/
    non-navigational use only, and it has no land, rocks, wrecks, obstructions or `M_QUAL`.
    Decision (safety invariants 3 and 4): the plugin downloads a box of configurable radius
    (default 10 km) around the vessel and a new one once the vessel is more than half the radius
-   from its centre, checked every 10 s, at most once a minute and 5 minutes after a failed
-   download; the index is rebuilt in a worker thread and swapped in. The box is one cell
+   from its centre, or once the distance to the box edge along COG is under SOG × 1.5 × the
+   last download-and-build time plus the look-ahead's reach (the last time is saved with the
+   box; 10 minutes until one is measured). Checks run every 10 s, at most once a minute and
+   5 minutes after a failed download. The new box is centred SOG × the last time ahead along
+   COG, at most 0.8 × the radius, so the vessel is near its centre when it is handed over; at
+   25 kn with 10-minute rebuilds the half-radius rule alone handed a box over with the vessel
+   5.4 km past the old box's edge. A box centred ahead covers less water astern, which route
+   checks of legs behind the vessel see as uncovered (`unverified`, invariant 4). A worker thread downloads the box, parses, clips and writes the cell, rebuilds
+   the index and stages it; the main thread moves it into place and swaps it in. Each page is
+   read as a stream: more than 64 MB, or 30 s without a byte, fails the download, which then
+   waits 5 minutes as after any failure, and the previous index stays. The living chart is
+   moved onto the new index in slices of 1 000 cells, each its own turn of the event loop, and
+   the index is swapped in during the turn that finishes the move, so no query sees the new
+   index without the living chart's adjustments (invariant 5). When only the WFS cell differs
+   from the index in use, only the living-chart cells within 1 km and one cell of the old or
+   new box are re-judged: the chart prior of any other cell reads the same tiles in both; a
+   property test checks that this equals re-judging every cell. The box is one cell
    of usage band 1, so every ENC cell wins where both cover. Water no depth area reaches is
    land. Survey quality is an assumed CATZOC (configurable, default B). Every tile from the cell
    carries `NOT_FOR_NAVIGATION`: the look-ahead is never `normal` there (at most `alert`, with
@@ -810,7 +829,9 @@ current look-ahead footprints), checked like a `/query` polygon: a closed ring, 
 most 50 km across and not across ±180°; `sector` in degrees (default 20), `ttl` in seconds and
 `notificationId`; heading, water level and draft are taken from the plugin's current state.
 `GET /acks` is readonly; `POST` and `DELETE /acks/:id` need readwrite. They are stored in
-`acks.json` in the plugin data directory, so no database dependency is added; export as
+`acks.json` in the plugin data directory, so no database dependency is added; each write
+goes to a temporary file that is fsynced before the rename, with the directory fsynced after
+it, so a power cut leaves the old list or the new one. Export as
 Signal K notes is a follow-up. Suppression applies to the published state after hysteresis,
 because it changes the state, not P. It never suppresses a negative mean UKC within
 `certainWithin`: an acknowledgement covers an uncertain chart, not a charted depth shallower
@@ -854,15 +875,32 @@ leaf is coarser); the prior is the cell's charted depth and σD without adjustme
 starts after a 10-minute gap. A confirmed discrepancy sets a z18 adjustment that every query
 takes beside the chart, through `minDepthOver` and the UKC tiles, so look-ahead, route check,
 `/query` and the overlay all see it. Adjustments only ever lower a cell; later deeper
-readings leave it as it is. Notes are written with `resourcesApi.setResource("notes", …)` and
-rewritten as evidence grows. Posteriors, adjustments and the last 20 000 accepted soundings are
-kept in `livechart.json` beside the index (no database dependency) and saved at most once a
-minute and on stop. A failed save is reported and retried at the next one, and a malformed file
-is skipped entry by entry rather than stopping the plugin; a file that did not load whole (bad
-JSON, another version, malformed entries, cells at another zoom) is first renamed to
-`livechart.json.bad-<ms>` and reported, so no save overwrites it, and if it cannot be renamed
-it is not saved over at all. The file records its living-chart zoom; after a leaf-zoom change
-the adjustments are mapped onto the new zoom (a coarser cell takes the lowest `dMin` and largest
+readings leave it as it is. Notes are written with `resourcesApi.setResource("notes", …)`.
+A note is rewritten when the cell's adjusted depth drops to a lower 5 cm step or its σ rises
+to a higher 1 cm step, at most once per cell every 5 minutes: a change inside the 5 minutes is
+written with the latest values once they are over, and on stop. The note shows the depth
+floored to 5 cm and σ raised to the next cm, so it never shows the cell deeper or surer than
+the posterior; the adjustment itself keeps the exact values. Posteriors and adjustments are kept
+in `livechart.json` beside the index and the last 20 000 accepted soundings in
+`soundings.ndjson` (no database dependency). Decision (user, PL1): the save schedule is no
+longer "at most once a minute" for one file holding everything, which rewrote 3.2 MB per save
+once the soundings filled, 192 MB/h of SD-card writes. Soundings are appended to
+`soundings.ndjson`, one per line, every minute; once the file would hold more than 40 000 lines
+it is rewritten with the newest 20 000. `livechart.json` (cells and adjustments) is written
+every 10 minutes, and within 10 s of an adjustment being added or moving a 5 cm depth or 1 cm σ
+step; everything is written on stop. The saves run on a 10 s timer, not in the depth-delta
+callback. A power cut can lose up to 10 minutes of posterior evidence that is not yet a
+discrepancy and up to 1 minute of soundings, and an adjustment's lowering within its 5 cm step,
+never an adjustment added or moved a step more than 10 s before. Each write is fsynced, file
+then directory. A `livechart.json` from a version that kept the soundings in it still loads; its
+soundings move to `soundings.ndjson` at the next save. A failed save is reported and retried at
+the next scheduled one, and a malformed file is skipped entry by entry rather than stopping the
+plugin; a file that did not load whole (bad JSON, another version, malformed entries, cells at
+another zoom, malformed `soundings.ndjson` lines) is first renamed to `<name>.bad-<ms>` and
+reported, so no save overwrites it, and if it cannot be renamed it is not saved over at all. A
+last `soundings.ndjson` line cut short by a power cut is skipped and reported, and the file is
+rewritten whole at the next save. `livechart.json` records its living-chart zoom; after a leaf-zoom
+change the adjustments are mapped onto the new zoom (a coarser cell takes the lowest `dMin` and largest
 σ of the cells in it, a finer cell copies its parent's) and the posteriors are dropped. The CSB export
 (`GET /livechart/csb.geojson`) is B-12 GeoJSON of depths below the transducer, with the
 transducer depth as the sounder's `draft`; it is never uploaded.

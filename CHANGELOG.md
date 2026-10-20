@@ -58,6 +58,31 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Changed
 
+- The living chart moves onto a rebuilt WFS index in slices of 1 000 cells, one turn of the
+  event loop each, with the index swapped in during the turn that finishes the move; when only
+  the WFS cell changed, only the cells near the old and new box are re-judged. With 19 574
+  cells the handover blocked the event loop for 123–153 ms on x86 at leaf zoom 18; the longest
+  block is now 53–71 ms.
+- The next Traficom WFS box is fetched once the edge ahead is closer than SOG × 1.5 × the last
+  download-and-build time plus the look-ahead's reach, as well as at half the radius, and is
+  centred that far ahead along COG (at most 0.8 × the radius). With 10-minute rebuilds at
+  25 kn the vessel was 5.4 km past the old box when the new one was handed over; it is now
+  2.3 km inside it. The last refresh time is saved in `box.json`.
+- The Traficom WFS download, parse, clip and cell write run in the index build worker with the
+  build, so the main thread only moves the staged index into place and loads it. With the
+  10 km box (one 22 MB page) the server's event loop was blocked for 336–420 ms and 209–277 ms
+  per refresh on x86; now the longest block is the 67–83 ms handover.
+- Living-chart saves: the accepted soundings are appended to `soundings.ndjson` every minute
+  (rewritten with the newest 20 000 when it reaches twice that), and `livechart.json` holds the
+  cells and adjustments, written every 10 minutes and within 10 s of an adjustment being added
+  or moving a 5 cm or 1 cm σ step. Saves run on a timer instead of inside the depth-delta
+  callback. Before, `livechart.json` with all 20 000 soundings was rewritten every minute:
+  192 MB/h of SD-card writes and a 20–46 ms save in the delta callback. A `livechart.json`
+  that still holds soundings loads, and they move to `soundings.ndjson` at the next save.
+- Living-chart notes are rewritten when the cell's adjusted depth drops a 5 cm step or its σ
+  rises a 1 cm step, at most once per cell every 5 minutes (the latest values after that, and
+  on stop), and show the depth floored to 5 cm and σ raised to the next cm. Before, every
+  change of the adjustment rewrote the note: 6 240 note writes in a 2 h simulated run.
 - UKC vector tiles of 1 kB or more are sent gzipped with `Content-Encoding: gzip` when the client
   accepts it, and every tile carries `Vary: Accept-Encoding`; Signal K's compression skips the
   vector-tile type. A 40-tile z14 viewport over the Nauvo cells went from 279 kB to 52 kB, at
@@ -99,6 +124,15 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Fixed
 
+- The index build worker runs with a heap limit of a quarter of the RAM (256 MB to 2 GB).
+  An oversized build fails with "index build stopped at the N MB worker heap limit" in the
+  WFS status and the previous index stays in use; before, it could grow until the kernel ended
+  the Signal K server on a 1 GB Pi 3 or Cerbo GX. A worker that exits without a result now
+  fails the build instead of leaving the WFS refresh busy for good.
+- `acks.json` and `livechart.json` are flushed to the disk before the rename that replaces
+  them, and their directory after it. Without the fsync a power cut could leave an empty
+  `livechart.json` on filesystems that do not flush on rename, and the plugin then started
+  without its confirmed shoals.
 - Route-check corridors contain every point within the corridor half-width of the leg. They
   were drawn with a spherical bearing in the ellipsoid's tangent plane and missed points at the
   edge by up to 0.3 % of the width (0.12 m at the default ±40 m at the equator); they are now
@@ -210,9 +244,10 @@ All notable changes to signalk-underkeel are documented here.
 - The lowest water level over a leg's ETA interval is also sampled at every FMI forecast point
   inside it. Samples every 10 minutes from the start could miss a forecast trough by up to
   half a sample step of its slope (−0.375 m for a −0.40 m trough at 30 cm/h).
-- A Traficom WFS page that has not arrived within 120 s fails the download with that reason in
-  `GET /status`, and the download is retried as after any failure. A stalled server left the
-  download busy for good, with no error.
+- A Traficom WFS response or page body that sends nothing for 30 s fails the download with
+  that reason in `GET /status`, and the download is retried as after any failure. A stalled
+  server left the download busy for good, with no error. A slow link that keeps sending is read
+  to the end; a page over 64 MB fails the download.
 - A WFS index build aborted by plugin stop no longer overlaps the next build: the next worker
   starts only after the aborted one has exited. Stop still returns at once.
 - The WFS build worker only stages its index; the main thread moves it into the index

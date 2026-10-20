@@ -33,14 +33,28 @@ export const WFS_LIMITS = {
   maxFeatures: 50_000,
   /** A layer that takes more pages than this is refused, so a server that ignores startIndex stops. */
   maxPages: 100,
-  /** A page that has not fully arrived after this fails the download, so a stalled server ends it. */
-  pageTimeoutMs: 120_000
+  /** A page body larger than this fails the download: the 10 km box is one 22 MB page. */
+  maxPageBytes: 64 * 2 ** 20,
+  /**
+   * A response or body that sends nothing for this long fails the download, so a stalled
+   * server ends it while a slow link that keeps sending is read to the end.
+   */
+  idleTimeoutMs: 30_000
 } as const;
 
+/** What a page body is read through; a fetch Response's `body`. */
+export interface ByteStream {
+  getReader(): {
+    read(): Promise<{ done: boolean; value?: Uint8Array }>;
+    cancel(): Promise<void>;
+  };
+}
+
+/** A response without `body` is read with text() and checked against the cap afterwards. */
 export type WfsFetch = (
   url: string,
   init?: { signal?: AbortSignal }
-) => Promise<{ ok: boolean; status: number; text(): Promise<string> }>;
+) => Promise<{ ok: boolean; status: number; body?: ByteStream | null; text(): Promise<string> }>;
 
 /** [west, south, east, north], degrees. */
 export type Bbox = [number, number, number, number];
@@ -50,6 +64,20 @@ export function boxAround([lon, lat]: LonLat, radiusKm: number): Bbox {
   const dLat = ((radiusKm * 1000) / EARTH_RADIUS) * (180 / Math.PI);
   const dLon = dLat / Math.cos((lat * Math.PI) / 180);
   return [lon - dLon, lat - dLat, lon + dLon, lat + dLat];
+}
+
+/** Metres from `pos` along `bearing` (radians from north) to the edge of `b`; 0 outside it. */
+export function edgeAhead([lon, lat]: LonLat, bearing: number, [w, s, e, n]: Bbox): number {
+  if (lon < w || lon > e || lat < s || lat > n) {
+    return 0;
+  }
+  const mLat = (EARTH_RADIUS * Math.PI) / 180;
+  const mLon = mLat * Math.cos((lat * Math.PI) / 180);
+  const dx = Math.sin(bearing);
+  const dy = Math.cos(bearing);
+  const tx = dx > 0 ? ((e - lon) * mLon) / dx : dx < 0 ? ((w - lon) * mLon) / dx : Infinity;
+  const ty = dy > 0 ? ((n - lat) * mLat) / dy : dy < 0 ? ((s - lat) * mLat) / dy : Infinity;
+  return Math.min(tx, ty);
 }
 
 /** Why `b` cannot be downloaded, or undefined when it can. */
@@ -115,11 +143,14 @@ async function fetchLayer(
     if (page.type !== "FeatureCollection" || !Array.isArray(page.features)) {
       throw new Error(`${typeName}: not a GeoJSON FeatureCollection`);
     }
-    out.push(...(page.features as WfsFeature[]));
-    if (out.length > WFS_LIMITS.maxFeatures) {
+    if (out.length + page.features.length > WFS_LIMITS.maxFeatures) {
       throw new Error(
         `${typeName}: more than ${WFS_LIMITS.maxFeatures} features; use a smaller box`
       );
+    }
+    // A spread of a page of more than ~100 000 features would overflow the call stack.
+    for (const f of page.features as WfsFeature[]) {
+      out.push(f);
     }
     const matched = num(page.numberMatched);
     if (page.features.length === 0 || (matched !== undefined && out.length >= matched)) {
@@ -137,21 +168,93 @@ async function fetchPage(
   typeName: string,
   signal?: AbortSignal
 ): Promise<unknown> {
-  const timeout = AbortSignal.timeout(WFS_LIMITS.pageTimeoutMs);
+  const idle = new AbortController();
+  let stalled: Error | undefined;
+  let timer: NodeJS.Timeout | undefined;
+  const alive = (): void => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      stalled = new Error(`${typeName}: no data for ${WFS_LIMITS.idleTimeoutMs / 1000} s`);
+      idle.abort(stalled);
+    }, WFS_LIMITS.idleTimeoutMs);
+  };
+  const ended = signal ? AbortSignal.any([signal, idle.signal]) : idle.signal;
+  alive();
   try {
-    const res = await fetch(url, { signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
+    const res = await unlessAborted(fetch(url, { signal: ended }), ended);
     if (!res.ok) {
       throw new Error(`${typeName}: HTTP ${res.status}`);
     }
-    return JSON.parse(await res.text());
+    const text = res.body
+      ? await readBody(res.body, typeName, ended, alive)
+      : await unlessAborted(res.text(), ended);
+    if (Buffer.byteLength(text) > WFS_LIMITS.maxPageBytes) {
+      throw tooLarge(typeName);
+    }
+    return JSON.parse(text);
   } catch (err) {
-    if (timeout.aborted && !signal?.aborted) {
-      throw new Error(`${typeName}: no response within ${WFS_LIMITS.pageTimeoutMs / 1000} s`, {
-        cause: err
-      });
+    if (stalled && !signal?.aborted) {
+      throw stalled;
     }
     throw err;
+  } finally {
+    clearTimeout(timer);
   }
+}
+
+const tooLarge = (typeName: string): Error =>
+  new Error(
+    `${typeName}: page larger than ${WFS_LIMITS.maxPageBytes / 2 ** 20} MB; use a smaller box`
+  );
+
+/** The body as text, read chunk by chunk; `alive` is called for every chunk. */
+async function readBody(
+  body: ByteStream,
+  typeName: string,
+  signal: AbortSignal,
+  alive: () => void
+): Promise<string> {
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await unlessAborted(reader.read(), signal);
+      if (done || !value) {
+        return Buffer.concat(chunks).toString("utf8");
+      }
+      size += value.byteLength;
+      if (size > WFS_LIMITS.maxPageBytes) {
+        throw tooLarge(typeName);
+      }
+      chunks.push(value);
+      alive();
+    }
+  } finally {
+    reader.cancel().catch(() => undefined);
+  }
+}
+
+/** `p`, or a rejection with the signal's reason once it aborts: a fake or hung read may ignore it. */
+function unlessAborted<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const abort = (): void => reject(signal.reason as Error);
+    if (signal.aborted) {
+      abort();
+      return;
+    }
+    signal.addEventListener("abort", abort, { once: true });
+    p.then(
+      (v) => {
+        signal.removeEventListener("abort", abort);
+        resolve(v);
+      },
+      (err: unknown) => {
+        signal.removeEventListener("abort", abort);
+        reject(err as Error);
+      }
+    );
+  });
 }
 
 function num(v: unknown): number | undefined {

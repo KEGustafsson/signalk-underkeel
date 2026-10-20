@@ -4,7 +4,8 @@ import path from "path";
 import type { CsbPlatform } from "./livechart/csb-export";
 import { csbGeoJson } from "./livechart/csb-export";
 import type { Discrepancy } from "./livechart/discrepancy";
-import { discrepancyOf, noteFor, noteId } from "./livechart/discrepancy";
+import { discrepancyOf, noteId, noteOf } from "./livechart/discrepancy";
+import { adjustmentSteps, NoteSchedule } from "./livechart/note-schedule";
 import type { CellPosterior } from "./livechart/posterior";
 import {
   adjustmentFor,
@@ -14,17 +15,19 @@ import {
   rebasePrior
 } from "./livechart/posterior";
 import {
-  isCell,
-  isNodeValues,
   isRecord,
   isSounding,
   listOf,
-  mergeAdjustments,
-  tilesAt
+  MAX_ZOOM_STEPS,
+  moveAside,
+  savedZoom
 } from "./livechart/saved-state";
+import { cellRefAt, restoreAdjustments, restoreCells } from "./livechart/restore";
+import { SampleLog } from "./livechart/sample-log";
 import type { RawSounding, Sounding, SoundingSource } from "./livechart/soundings";
 import { reduce } from "./livechart/soundings";
 import type { NodeStore, NodeValues } from "./spatial/node-store";
+import { writeFileDurable } from "./foundation/durable-file";
 import { tileKey } from "./foundation/geo";
 import type { PluginConfig } from "./config";
 import type { Clock, Monitor } from "./monitor";
@@ -33,8 +36,9 @@ import type { ChartIndex } from "./spatial/chart-index";
 /**
  * Living chart for the plugin (plan §4.13): own soundings update per-cell
  * posteriors; a confirmed discrepancy lowers the cell for every query and
- * becomes a Signal K note. State is kept in `livechart.json` beside the
- * index. Nothing here can make a cell deeper (safety invariant 5).
+ * becomes a Signal K note. Cells and adjustments are kept in `livechart.json`
+ * beside the index, the accepted soundings in `soundings.ndjson`. Nothing here
+ * can make a cell deeper (safety invariant 5).
  */
 
 export interface LivechartConfig {
@@ -46,10 +50,30 @@ export interface LivechartConfig {
 export interface LivechartDeps {
   setNote(id: string, body: Record<string, unknown>): Promise<void>;
   error(message: string): void;
+  /** Epoch ms, for the note and save schedules; Date.now when not given. */
+  now?: () => number;
 }
 
 /** Soundings kept for the CSB export, newest last. */
-const MAX_SAMPLES = 20000;
+export const MAX_SAMPLES = 20000;
+
+/**
+ * The save schedule (plan §4.13): soundings are appended every minute; cells and adjustments
+ * are written every 10 minutes, and at the next check, at most 10 s later, once an
+ * adjustment is added or moves a 5 cm depth or 1 cm σ step.
+ */
+export const SAVE_CHECK_MS = 10_000;
+const SAMPLES_EVERY_MS = 60_000;
+const STATE_EVERY_MS = 10 * 60_000;
+
+/** Cells rebased per slice of prepareRebind(): 1 000 chart priors take about 11 ms on x86. */
+const REBIND_SLICE = 1000;
+
+/** A cell rebased onto a new prior, and its sample count then. */
+interface Rebased {
+  samples: number;
+  c: CellPosterior;
+}
 
 interface Saved {
   version: 1;
@@ -57,17 +81,23 @@ interface Saved {
   zoom: number;
   cells: CellPosterior[];
   adjustments: [number, NodeValues][];
-  samples: Sounding[];
 }
 
 export class LivechartService {
   private readonly posteriors: Posteriors;
-  private samples: Sounding[] = [];
+  private readonly log: SampleLog;
+  /** Cells or adjustments changed since `livechart.json` was written. */
   private dirty = false;
+  /** An adjustment was added or moved a step since then: write within SAVE_CHECK_MS. */
+  private adjusted = false;
+  private samplesAt: number;
+  private stateAt: number;
+  private stopTimer?: () => void;
   readonly rejected = new Map<string, number>();
   accepted = 0;
   /** Set when a state file that did not load whole could not be moved aside: never overwrite it. */
   private keepFile = false;
+  private readonly notes = new NoteSchedule((key) => this.writeNote(key));
 
   constructor(
     private store: NodeStore,
@@ -76,6 +106,8 @@ export class LivechartService {
     private readonly deps: LivechartDeps
   ) {
     this.posteriors = new Posteriors(store);
+    this.log = new SampleLog(path.join(path.dirname(file), "soundings.ndjson"), MAX_SAMPLES);
+    this.samplesAt = this.stateAt = this.now();
     this.load();
   }
 
@@ -84,12 +116,51 @@ export class LivechartService {
    * a saved state: each cell is rebased onto the new chart prior and judged again.
    */
   rebind(store: NodeStore): void {
+    this.applyRebind(store, () => true, new Map());
+  }
+
+  /**
+   * rebind() for a running plugin, without one long block: the cells for which `affected` is
+   * true are rebased in slices with `pause` after each, and the returned function, run
+   * once the caller swaps the index in, moves the living chart over. A cell `affected`
+   * leaves out keeps its prior, which the caller vouches is unchanged (invariant 5); a cell
+   * that got a sounding meanwhile is rebased again then.
+   */
+  async prepareRebind(
+    store: NodeStore,
+    affected: (c: CellPosterior) => boolean,
+    pause: () => Promise<void>
+  ): Promise<() => void> {
+    const done = new Map<number, Rebased>();
+    let n = 0;
+    for (const [key, c] of [...this.posteriors.cells]) {
+      if (affected(c)) {
+        done.set(key, { samples: c.samples, c: rebasePrior(c, chartPrior(store, c.z, c.x, c.y)) });
+        if (++n % REBIND_SLICE === 0) {
+          await pause();
+        }
+      }
+    }
+    await pause();
+    return () => this.applyRebind(store, affected, done);
+  }
+
+  private applyRebind(
+    store: NodeStore,
+    affected: (c: CellPosterior) => boolean,
+    done: Map<number, Rebased>
+  ): void {
     for (const [key, c] of this.posteriors.cells) {
-      this.posteriors.cells.set(key, rebasePrior(c, chartPrior(store, c.z, c.x, c.y)));
+      const d = done.get(key);
+      if (d && d.samples === c.samples) {
+        this.posteriors.cells.set(key, d.c);
+      } else if (affected(c)) {
+        this.posteriors.cells.set(key, rebasePrior(c, chartPrior(store, c.z, c.x, c.y)));
+      }
     }
     const z = this.store.adjustZoom;
     for (const [key, v] of this.store.adjustments) {
-      store.adjustments.set(key, { ...v, cellRef: this.cellRefAt(store, z, key) });
+      store.adjustments.set(key, { ...v, cellRef: cellRefAt(store, this.posteriors, z, key) });
     }
     this.store = store;
     this.posteriors.rebind(store);
@@ -113,10 +184,7 @@ export class LivechartService {
     }
     this.accepted += 1;
     this.dirty = true;
-    this.samples.push(r.sounding);
-    if (this.samples.length > MAX_SAMPLES) {
-      this.samples.splice(0, this.samples.length - MAX_SAMPLES);
-    }
+    this.log.add(r.sounding);
     const c = this.posteriors.add(r.sounding);
     if (isDiscrepancy(c)) {
       this.adjust(c);
@@ -132,10 +200,52 @@ export class LivechartService {
     }
     this.store.adjustments.set(key, next);
     this.dirty = true;
+    this.adjusted ||= !previous || adjustmentSteps(previous) !== adjustmentSteps(next);
     if (this.config.writeNotes) {
+      this.notes.changed(key, next, this.now());
+    }
+  }
+
+  private now(): number {
+    return (this.deps.now ?? Date.now)();
+  }
+
+  private writeNote(key: number): void {
+    const c = this.posteriors.cells.get(key);
+    if (c) {
       this.deps
-        .setNote(noteId(c), noteFor(discrepancyOf(c)))
+        .setNote(noteId(c), noteOf(c))
         .catch((err: Error) => this.deps.error(`note ${noteId(c)}: ${err.message}`));
+    }
+  }
+
+  /** Runs flush() on `clock` every SAVE_CHECK_MS until stop(). */
+  startSaving(clock: Pick<Clock, "setInterval" | "clearInterval">): void {
+    const timer = clock.setInterval(() => this.flush(), SAVE_CHECK_MS);
+    this.stopTimer = () => clock.clearInterval(timer);
+  }
+
+  /** Writes every waiting note and saves, for plugin stop. */
+  stop(): void {
+    this.stopTimer?.();
+    this.stopTimer = undefined;
+    this.notes.flush(this.now(), true);
+    this.save();
+  }
+
+  /** Writes the notes, soundings and state that the schedule says are due. */
+  flush(): void {
+    const now = this.now();
+    this.notes.flush(now);
+    // A state file that could not be set aside is never written, so it never brings the log forward.
+    const state =
+      !this.keepFile && this.dirty && (this.adjusted || now - this.stateAt >= STATE_EVERY_MS);
+    // Soundings first: the state file may still hold soundings only the log will keep.
+    if (state || now - this.samplesAt >= SAMPLES_EVERY_MS) {
+      this.saveSamples(now);
+    }
+    if (state) {
+      this.saveState(now);
     }
   }
 
@@ -148,7 +258,7 @@ export class LivechartService {
   }
 
   csb(): object {
-    return csbGeoJson(this.samples, {
+    return csbGeoJson(this.log.samples, {
       ...this.config.csb,
       transducerDepth: this.config.source.transducerDepth
     });
@@ -165,26 +275,43 @@ export class LivechartService {
   }
 
   /**
-   * Writes `livechart.json` when anything changed, atomically. A failed write
-   * is reported, not thrown: it runs from plugin stop and from the delta
-   * handler. The state stays dirty, so the next save tries again.
+   * Writes what changed: the new soundings, then `livechart.json`, each atomically and flushed
+   * to the disk. A failed write is reported, not thrown: it runs from plugin stop and from
+   * the save timer. What failed stays unsaved, so the next save tries again.
    */
   save(): void {
+    const now = this.now();
+    this.saveSamples(now);
+    this.saveState(now);
+  }
+
+  private saveSamples(now: number): void {
+    this.samplesAt = now;
+    try {
+      fs.mkdirSync(path.dirname(this.log.file), { recursive: true });
+      this.log.save();
+    } catch (err) {
+      this.deps.error(`${this.log.file} not saved: ${(err as Error).message}`);
+    }
+  }
+
+  private saveState(now: number): void {
     if (!this.dirty || this.keepFile) {
       return;
     }
+    // A failure is retried at the next 10-minute save, not at every check.
+    this.stateAt = now;
+    this.adjusted = false;
     const saved: Saved = {
       version: 1,
       zoom: this.store.adjustZoom,
       cells: [...this.posteriors.cells.values()],
-      adjustments: [...this.store.adjustments],
-      samples: this.samples
+      adjustments: [...this.store.adjustments]
     };
     const tmp = `${this.file}.tmp-${process.pid}`;
     try {
       fs.mkdirSync(path.dirname(this.file), { recursive: true });
-      fs.writeFileSync(tmp, JSON.stringify(saved));
-      fs.renameSync(tmp, this.file);
+      writeFileDurable(this.file, JSON.stringify(saved), tmp);
       this.dirty = false;
     } catch (err) {
       fs.rmSync(tmp, { force: true, recursive: true });
@@ -198,15 +325,20 @@ export class LivechartService {
    * was skipped.
    */
   private load(): void {
+    this.loadLog(this.loadState());
+  }
+
+  /** Restores `livechart.json`; returns the soundings a version that kept them there saved. */
+  private loadState(): Sounding[] {
     const saved = this.readSaved();
     if (!saved) {
-      return;
+      return [];
     }
     const z = this.store.adjustZoom;
     const from = savedZoom(saved, z);
     if (from === undefined || z - from > MAX_ZOOM_STEPS) {
       this.setAside(`has zoom ${String(saved.zoom)}, which cannot be mapped onto zoom ${z}`);
-      return;
+      return [];
     }
     const cells = listOf(saved.cells);
     const samples = listOf(saved.samples);
@@ -215,8 +347,8 @@ export class LivechartService {
     ).length;
     const malformed =
       notLists +
-      this.restoreCells(cells) +
-      this.restoreAdjustments(saved.adjustments, from) +
+      restoreCells(cells, this.store, this.posteriors) +
+      restoreAdjustments(saved.adjustments, from, this.store, this.posteriors) +
       samples.filter((v) => !isSounding(v)).length;
     // Against a rebuilt chart a cell may qualify that did not before; adjust() only lowers.
     for (const c of this.posteriors.cells.values()) {
@@ -224,9 +356,8 @@ export class LivechartService {
         this.adjust(c);
       }
     }
-    this.samples = samples.filter(isSounding).slice(-MAX_SAMPLES);
     // What did load is written to a new file at the next save; the old one is set aside.
-    this.dirty ||= malformed > 0 || from !== z;
+    this.dirty ||= malformed > 0 || from !== z || samples.length > 0;
     if (malformed > 0) {
       this.setAside(`had ${malformed} malformed entries, skipped`);
     } else if (from !== z && cells.length > 0) {
@@ -235,8 +366,32 @@ export class LivechartService {
           `adjustments moved onto zoom ${z}`
       );
     }
+    return samples.filter(isSounding);
   }
 
+  /**
+   * Restores `soundings.ndjson` after `legacy`, the soundings `livechart.json` held, which
+   * move into it at the next save. A log already holding them starts at the first of them.
+   */
+  private loadLog(legacy: Sounding[]): void {
+    const log = this.log;
+    let read: ReturnType<SampleLog["read"]>;
+    try {
+      read = log.read();
+    } catch (err) {
+      this.setAsideLog(`is not readable, starting empty: ${(err as Error).message}`);
+    }
+    if (read && read.malformed > 0) {
+      this.setAsideLog(`had ${read.malformed} malformed lines, skipped`);
+    }
+    if (read?.torn) {
+      this.deps.error(`${log.file}: skipped a truncated last line`);
+    }
+    const logged = read?.samples ?? [];
+    const first = logged[0]?.at ?? Infinity;
+    log.samples = [...legacy.filter((s) => s.at < first), ...logged].slice(-MAX_SAMPLES);
+    log.rewrite ||= legacy.length > 0;
+  }
   /** The saved state file as a version-1 record, or undefined with the reason reported. */
   private readSaved(): Record<string, unknown> | undefined {
     if (!fs.existsSync(this.file)) {
@@ -260,103 +415,23 @@ export class LivechartService {
     return saved;
   }
 
-  /** Renames the state file to `.bad-<ms>` and reports why; if that fails, never writes it. */
+  /** Sets the state file aside; if that fails, never writes it. */
   private setAside(reason: string): void {
-    const aside = `${this.file}.bad-${Date.now()}`;
-    try {
-      fs.renameSync(this.file, aside);
-      this.deps.error(`${this.file} ${reason}; moved to ${aside}`);
-    } catch (err) {
-      this.keepFile = true;
-      this.deps.error(
-        `${this.file} ${reason}; not moved aside (${(err as Error).message}), so not saved over`
-      );
-    }
+    this.keepFile ||= !moveAside(this.file, reason, this.deps.error);
   }
 
-  /**
-   * Restores the cells at the current living-chart zoom and returns how many were malformed.
-   * Cells at another zoom are keyed at that zoom and dropped; their adjustments are mapped.
-   * The index may have been rebuilt since the save, so each cell is moved onto the current
-   * chart's prior and cell reference; a saved cellRef indexes the catalogue it was saved with.
-   */
-  private restoreCells(cells: unknown[]): number {
-    const z = this.store.adjustZoom;
-    let malformed = 0;
-    for (const c of cells) {
-      if (!isCell(c)) {
-        malformed++;
-      } else if (c.z === z) {
-        // An uncharted cell's NaN prior is saved as null.
-        const chartDepth = typeof c.chartDepth === "number" ? c.chartDepth : NaN;
-        const current = chartPrior(this.store, c.z, c.x, c.y);
-        this.posteriors.cells.set(
-          tileKey(c.z, c.x, c.y),
-          rebasePrior({ ...c, chartDepth }, current)
-        );
-      }
-    }
-    return malformed;
-  }
-
-  /**
-   * Restores saved adjustments at the current zoom and returns how many were malformed. They
-   * keep their depths, since they only ever lower a cell: onto a coarser zoom a cell takes the
-   * shallowest depth and largest σ of the saved cells in it, onto a finer one every cell inside
-   * a saved one takes its values.
-   */
-  private restoreAdjustments(adjustments: unknown, from: number): number {
-    const z = this.store.adjustZoom;
-    let malformed = 0;
-    for (const entry of listOf(adjustments)) {
-      const [key, v] = Array.isArray(entry) ? (entry as unknown[]) : [];
-      const valid =
-        Number.isSafeInteger(key) && (key as number) >= 0 && (key as number) < 4 ** from;
-      if (!(valid && isNodeValues(v))) {
-        malformed++;
-        continue;
-      }
-      for (const t of tilesAt(key as number, from, z)) {
-        const k = tileKey(z, t.x, t.y);
-        const next = { ...v, cellRef: this.cellRefAt(this.store, z, k) };
-        this.store.adjustments.set(k, mergeAdjustments(this.store.adjustments.get(k), next));
-      }
-    }
-    return malformed;
-  }
-
-  /** The current chart's cell reference for living-chart cell `key`. */
-  private cellRefAt(store: NodeStore, z: number, key: number): number {
-    const n = 2 ** z;
-    return (
-      this.posteriors.cells.get(key)?.cellRef ??
-      chartPrior(store, z, Math.floor(key / n), key % n).cellRef
-    );
+  /** Sets the sounding log aside to be rewritten; if that fails, never writes it. */
+  private setAsideLog(reason: string): void {
+    const moved = moveAside(this.log.file, reason, this.deps.error);
+    this.log.keep ||= !moved;
+    this.log.rewrite ||= moved;
   }
 }
-
-/**
- * A saved cell is copied onto 4^steps finer cells; leaf zooms 14–22 give living-chart zooms
- * 14–18, so a real change is at most 4 steps.
- */
-const MAX_ZOOM_STEPS = 4;
-
-/** The zoom a saved state's cells and keys are at: as saved, else that of its cells. */
-function savedZoom(saved: Record<string, unknown>, current: number): number | undefined {
-  const z =
-    saved.zoom !== undefined ? saved.zoom : (listOf(saved.cells).find(isCell)?.z ?? current);
-  return Number.isInteger(z) && (z as number) >= 0 && (z as number) <= 26
-    ? (z as number)
-    : undefined;
-}
-
-/** The living chart is written to disk at most this often while soundings arrive. */
-const SAVE_EVERY_MS = 60_000;
 
 /** Creates the service when the living chart is on and feeds it the monitor's soundings. */
 export function startLivechart(
   app: Pick<ServerAPI, "getDataDirPath" | "resourcesApi" | "error">,
-  clock: Pick<Clock, "now">,
+  clock: Pick<Clock, "now" | "setInterval" | "clearInterval">,
   config: PluginConfig,
   index: ChartIndex | undefined,
   monitor: Monitor
@@ -370,10 +445,10 @@ export function startLivechart(
     path.join(app.getDataDirPath(), "livechart.json"),
     {
       setNote: (id, body) => app.resourcesApi.setResource("notes", id, body),
-      error: (m) => app.error(m)
+      error: (m) => app.error(m),
+      now: () => clock.now()
     }
   );
-  let savedAt = clock.now();
   monitor.watch([lc.path], (_p, value, at) => {
     lc.onSounding({
       depth: typeof value === "number" ? value : NaN,
@@ -382,10 +457,7 @@ export function startLivechart(
       positionAt: monitor.nav.position?.at,
       waterLevel: monitor.waterLevel()
     });
-    if (clock.now() - savedAt >= SAVE_EVERY_MS) {
-      savedAt = clock.now();
-      lc.save();
-    }
   });
+  lc.startSaving(clock);
   return lc;
 }

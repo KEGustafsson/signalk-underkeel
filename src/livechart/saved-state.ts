@@ -1,10 +1,11 @@
+import fs from "fs";
 import type { NodeValues } from "../spatial/node-store";
 import type { CellPosterior } from "./posterior";
 import type { Sounding } from "./soundings";
 
 /**
- * Checks for the entries of a saved `livechart.json`, and moving its
- * adjustments onto another living-chart zoom.
+ * Checks for the entries of a saved `livechart.json`, moving its adjustments
+ * onto another living-chart zoom, and setting aside a file that did not load.
  */
 
 export const isRecord = (v: unknown): v is Record<string, unknown> =>
@@ -89,4 +90,32 @@ export function mergeAdjustments(a: NodeValues | undefined, b: NodeValues): Node
         cellRef: b.cellRef
       }
     : b;
+}
+
+/** Renames `file` to `.bad-<ms>` and reports why; returns whether it was moved. */
+export function moveAside(file: string, reason: string, error: (m: string) => void): boolean {
+  const aside = `${file}.bad-${Date.now()}`;
+  try {
+    fs.renameSync(file, aside);
+    error(`${file} ${reason}; moved to ${aside}`);
+    return true;
+  } catch (err) {
+    error(`${file} ${reason}; not moved aside (${(err as Error).message}), so not saved over`);
+    return false;
+  }
+}
+
+/**
+ * A saved cell is copied onto 4^steps finer cells; leaf zooms 14–22 give living-chart zooms
+ * 14–18, so a real change is at most 4 steps.
+ */
+export const MAX_ZOOM_STEPS = 4;
+
+/** The zoom a saved state's cells and keys are at: as saved, else that of its cells. */
+export function savedZoom(saved: Record<string, unknown>, current: number): number | undefined {
+  const z =
+    saved.zoom !== undefined ? saved.zoom : (listOf(saved.cells).find(isCell)?.z ?? current);
+  return Number.isInteger(z) && (z as number) >= 0 && (z as number) <= 26
+    ? (z as number)
+    : undefined;
 }

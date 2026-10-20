@@ -166,13 +166,16 @@ and keeps a running estimate of the depth in each cell of the index, about 76 m 
 4. **Discrepancy.** After at least 5 soundings on at least 2 separate passes, a cell whose
    estimate is more than 2σ shallower than the chart is marked shallower. Every check then
    uses the shallower depth: look-ahead, route check, query and the UKC overlay. A Signal K
-   note marks the place on the chart with the evidence.
+   note marks the place on the chart with the evidence, its depth rounded down to 5 cm; it is
+   rewritten at most every 5 minutes as the estimate drops.
 
 Own soundings only ever make the chart shallower. Deeper readings never raise a charted depth,
 so a faulty transducer cannot switch off a hazard. The shallower cells survive a change of the
-index's leaf zoom: each new cell takes the shallowest depth of the old cells it holds. A state
-file that does not load whole is renamed to `livechart.json.bad-<time>` and reported, so it is
-never saved over. The accepted soundings can be exported as
+index's leaf zoom: each new cell takes the shallowest depth of the old cells it holds. The
+cells are saved to `livechart.json` every 10 minutes, and within 10 s of a cell being marked
+shallower; the soundings are appended to `soundings.ndjson` every minute. A state file that
+does not load whole is renamed to `livechart.json.bad-<time>` (or `soundings.ndjson.bad-<time>`)
+and reported, so it is never saved over. The accepted soundings can be exported as
 IHO crowd-sourced bathymetry (CSB) GeoJSON from `GET /livechart/csb.geojson`; nothing is
 uploaded anywhere.
 
@@ -635,16 +638,19 @@ data is not for navigational purposes**: Traficom licenses it for non-navigation
 
 ```mermaid
 flowchart TD
-  P[vessel position, checked periodically] --> D{more than half the box radius<br/>from the box centre?}
+  P[vessel position, checked periodically] --> D{more than half the box radius from<br/>the box centre, or the edge ahead<br/>closer than a rebuild's run?}
   D -- no --> KEEP[keep the current index]
-  D -- yes, and no download<br/>in the last minute or so --> W[download the box around the vessel<br/>DepthArea_A, DredgedArea_A, Sounding_P]
-  W --> B[rebuild the index in a worker thread:<br/>ENC cells first, then the WFS cell]
+  D -- yes, and no download<br/>in the last minute or so --> W[in a worker thread: download the box<br/>centred ahead along the course<br/>DepthArea_A, DredgedArea_A, Sounding_P]
+  W --> B[rebuild the index in the same thread:<br/>ENC cells first, then the WFS cell]
   B --> S[swap the new index in;<br/>the look-ahead keeps running]
   W -- fails --> E[keep the old index, report the error,<br/>retry after a longer back-off]
 ```
 
 - **Box:** radius 10 km by default (2–25 km). With the default, a new box is fetched once the
-  vessel is 5 km from the centre, so at least 5 km of WFS data lies ahead.
+  vessel is 5 km from the centre, or earlier at speed: once the edge ahead is closer than 1.5
+  times the distance the vessel covered during the last download and rebuild, plus the
+  look-ahead distance. The new box is centred where the vessel will be when it is ready, at
+  most 8 km ahead, so a slow Raspberry Pi at planing speed is not left at the old box's edge.
 - **Priority:** the WFS cell is usage band 1, so any ENC cell wins where both cover.
 - **Land:** the WFS has no land objects. Water that no depth area reaches is land, so a gap in
   the data never reads as open water.

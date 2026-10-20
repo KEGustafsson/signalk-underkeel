@@ -121,6 +121,14 @@ export function rebasePrior(
   c: CellPosterior,
   prior: { depth: number; sigma: number; cellRef: number }
 ): CellPosterior {
+  // Unchanged, without the rounding a round trip through the precisions would add.
+  if (
+    Object.is(prior.depth, c.chartDepth) &&
+    prior.sigma === c.chartSigma &&
+    prior.cellRef === c.cellRef
+  ) {
+    return c;
+  }
   const oldP = Number.isFinite(c.chartDepth) ? 1 / c.chartSigma ** 2 : 0;
   const newP = Number.isFinite(prior.depth) ? 1 / prior.sigma ** 2 : 0;
   const evidenceP = 1 / c.sigma ** 2 - oldP;
