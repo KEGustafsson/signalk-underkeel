@@ -193,6 +193,7 @@ export class UkcTileCache {
   bytes = 0;
   private store: WeakRef<NodeStore> | undefined;
   private count = -1;
+  private loads = 0;
   private readonly entries = new Map<string, Entry>();
 
   constructor(readonly maxBytes = TILE_CACHE_BYTES) {}
@@ -207,6 +208,13 @@ export class UkcTileCache {
       this.bytes = 0;
       this.store = new WeakRef(store);
       this.count = store.count;
+      this.loads = store.loadRevision;
+    }
+    if (store.loadRevision !== this.loads) {
+      // A tile walked over a block read from its stand-ins is safe but no longer what the
+      // loaded block gives; a block dropped since reads its stand-ins again.
+      this.dropOver(store.blocksChangedSince(this.loads));
+      this.loads = store.loadRevision;
     }
     const key = `${z}/${x}/${y}`;
     const revision = store.adjustments.revision;
@@ -229,6 +237,25 @@ export class UkcTileCache {
       bytes: geometryBytes(geometry) + ENTRY_BYTES + adjusted.length * 64
     });
     return geometry;
+  }
+
+  private dropOver(blocks: readonly { z: number; x: number; y: number }[]): void {
+    if (blocks.length === 0) {
+      return;
+    }
+    const changed = new Set(blocks.map((b) => `${b.z}/${b.x}/${b.y}`));
+    const bz = blocks[0]?.z ?? 0;
+    for (const [key, e] of this.entries) {
+      const [z, x, y] = key.split("/").map(Number) as [number, number, number];
+      const hit =
+        z >= bz
+          ? changed.has(`${bz}/${x >> (z - bz)}/${y >> (z - bz)}`)
+          : blocks.some((b) => b.x >> (bz - z) === x && b.y >> (bz - z) === y);
+      if (hit) {
+        this.entries.delete(key);
+        this.bytes -= e.bytes;
+      }
+    }
   }
 
   private keep(key: string, entry: Entry): void {
