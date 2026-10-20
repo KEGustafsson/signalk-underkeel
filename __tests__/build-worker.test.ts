@@ -52,7 +52,17 @@ describe("index build worker entry", () => {
   test("builds and stages the index, leaving the index directory to the main thread", async () => {
     const j = job();
     const messages = await runWorkerEntry(j);
-    expect(messages).toEqual([{ ok: true, staging: expect.any(String) }]);
+    expect(messages).toEqual([
+      {
+        ok: true,
+        staging: expect.any(String),
+        index: expect.objectContaining({
+          minZoom: 10,
+          leafZoom: 16,
+          roots: { built: 1, copied: 0 }
+        })
+      }
+    ]);
     expect(fs.existsSync(j.indexDir)).toBe(false);
     commitChartIndex(j.indexDir, (messages[0] as { staging: string }).staging);
     expect(loadChartIndex(j.indexDir).catalogue.cells.map((c) => c.name)).toEqual(["FI5SYNTH"]);
@@ -78,6 +88,24 @@ describe("workerBuilder (compiled lib/)", () => {
     const index = await (await builder())(j, new AbortController().signal);
     expect(index.catalogue.cells.map((c) => c.name)).toEqual(["FI5SYNTH"]);
     expect(fs.existsSync(path.join(j.indexDir, "pyramid.bin"))).toBe(true);
+  });
+
+  test("hands the index over from the worker without reading the saved files", async () => {
+    const j = job();
+    const read = jest.spyOn(fs, "readFileSync");
+    try {
+      const index = await (await builder())(j, new AbortController().signal);
+      expect(read.mock.calls.filter(([f]) => String(f).startsWith(j.indexDir))).toEqual([]);
+      const saved = loadChartIndex(j.indexDir);
+      const { serializePyramid } = (await import(LIB_STORE)) as {
+        serializePyramid: (s: unknown) => Buffer;
+      };
+      expect(serializePyramid(index.pyramid).equals(serializePyramid(saved.pyramid))).toBe(true);
+      expect(index.hazards.features).toEqual(saved.hazards.features);
+      expect(index.catalogue).toEqual(saved.catalogue);
+    } finally {
+      read.mockRestore();
+    }
   });
 
   test("rejects with the worker's error when the build fails", async () => {

@@ -135,6 +135,16 @@ function joinColumn(
  * build of all the roots at once makes.
  */
 export function joinRegions(minZoom: number, leafZoom: number, parts: RegionPart[]): NodeStore {
+  const { body, cols } = joinParts(minZoom, leafZoom, parts);
+  return storeOnBody(minZoom, leafZoom, body, cols);
+}
+
+/** The columns `joinRegions` adopts, views on one buffer laid out as the file body. */
+export function joinParts(
+  minZoom: number,
+  leafZoom: number,
+  parts: RegionPart[]
+): { body: Uint8Array; cols: NodeColumns } {
   parts.forEach(({ region: r }, k) => {
     const before = parts[k - 1]?.region;
     if (
@@ -166,5 +176,5 @@ export function joinRegions(minZoom: number, leafZoom: number, parts: RegionPart
   if (at !== total) {
     throw new Error("a pyramid part holds a zoom outside the range");
   }
-  return storeOnBody(minZoom, leafZoom, body, cols);
+  return { body, cols };
 }

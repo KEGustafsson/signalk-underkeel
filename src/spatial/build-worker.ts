@@ -1,6 +1,6 @@
 import os from "os";
 import { parentPort, Worker, workerData } from "worker_threads";
-import type { CellInfo } from "../ingest/cells";
+import type { CellCatalogue, CellInfo } from "../ingest/cells";
 import { readCellDirectory } from "../ingest/cell-reader";
 import type { ChartFeature, DepthFeature } from "../ingest/features";
 import type { CellReach } from "./build-items";
@@ -11,15 +11,17 @@ import type { ChartIndex } from "./chart-index";
 import { isNamedHazard, stageChartIndex } from "./chart-index";
 import { HazardIndex } from "./hazards";
 import type { NodeColumns } from "./node-store";
+import { NodeStore } from "./node-store";
 import type { RootRange } from "./pyramid-build";
 import type { RegionPart } from "./pyramid-regions";
 import {
   buildRegion,
   cellsReaching,
   cellsRootRange,
-  joinRegions,
+  joinParts,
   rootRegions
 } from "./pyramid-regions";
+import { storeOnBody } from "./store";
 
 /**
  * Index build off the event loop: a worker thread reads the cells, builds
@@ -112,9 +114,11 @@ function survey(job: BuildJob, saved: SavedIndex | undefined): Survey {
   return out;
 }
 
-/** A built index with what the next build reuses. */
+/** A built index with what the next build reuses and the main thread adopts. */
 export interface BuiltIndex extends ChartIndex {
   reaches: CellReach[];
+  /** The pyramid's columns, views on one buffer, so a reply moves them without a copy. */
+  cols: NodeColumns;
   roots: { built: number; copied: number };
 }
 
@@ -147,17 +151,51 @@ export async function buildByRegion(job: BuildJob, run: RegionRunner): Promise<B
         }))
     }))
   );
+  const { body, cols } = joinParts(minZoom, job.leafZoom, parts);
   return {
     catalogue: { version: 1, cells: s.infos },
-    pyramid: joinRegions(minZoom, job.leafZoom, parts),
+    pyramid: storeOnBody(minZoom, job.leafZoom, body, cols),
     hazards: new HazardIndex(s.hazards),
     reaches: s.reaches,
+    cols,
     roots: { built: roots.length - copies.size, copied: copies.size }
   };
 }
 
-const transfers = (cols: NodeColumns): ArrayBuffer[] =>
-  Object.values(cols).map((c: NodeColumns[keyof NodeColumns]) => c.buffer as ArrayBuffer);
+/** What a build posts to the main thread besides its staging directory. */
+export interface IndexParts {
+  catalogue: CellCatalogue;
+  hazards: readonly DepthFeature[];
+  minZoom: number;
+  leafZoom: number;
+  cols: NodeColumns;
+  roots: BuiltIndex["roots"];
+}
+
+export function indexParts(b: BuiltIndex): IndexParts {
+  const { catalogue, hazards, pyramid, cols, roots } = b;
+  const { minZoom, leafZoom } = pyramid;
+  return { catalogue, hazards: hazards.features, minZoom, leafZoom, cols, roots };
+}
+
+/**
+ * The index a build posted, adopted on the main thread without reading the
+ * saved files: the columns arrive moved, and only the hazard tree is packed.
+ */
+export function adoptIndex(p: IndexParts): ChartIndex {
+  return {
+    catalogue: p.catalogue,
+    pyramid: NodeStore.fromColumns(p.minZoom, p.leafZoom, p.cols),
+    hazards: new HazardIndex(p.hazards)
+  };
+}
+
+/** Each column's buffer once: the columns of a joined pyramid share one. */
+export const transfers = (cols: NodeColumns): ArrayBuffer[] => [
+  ...new Set(
+    Object.values(cols).map((c: NodeColumns[keyof NodeColumns]) => c.buffer as ArrayBuffer)
+  )
+];
 
 type Reply = { cols?: NodeColumns; error?: string };
 
@@ -231,26 +269,28 @@ export function regionPool(
   return { run, close };
 }
 
-type Staged = { staging: string; roots: BuiltIndex["roots"] };
-
-function stage(job: BuildJob, index: BuiltIndex): Staged {
+function stage(job: BuildJob, index: BuiltIndex): { staging: string; index: IndexParts } {
   const staging = stageChartIndex(job.indexDir, index);
   writeReach(staging, index.reaches);
-  return { staging, roots: index.roots };
+  return { staging, index: indexParts(index) };
 }
 
-/** Builds and stages the index; resolves with the staging directory and the roots built. */
-export async function runBuild(job: BuildJob): Promise<Staged> {
+/** Builds and stages the index; resolves with the staging directory and the index to post. */
+export async function runBuild(job: BuildJob): Promise<{ staging: string; index: IndexParts }> {
   const threads = job.threads ?? defaultThreads();
   if (threads <= 1) {
     return stage(job, await buildByRegion(job, (j) => Promise.resolve(runRegion(j))));
   }
   const pool = regionPool(threads, __filename, job.heapMb);
+  let built: BuiltIndex;
   try {
-    return stage(job, await buildByRegion(job, pool.run));
+    built = await buildByRegion(job, pool.run);
   } finally {
+    // Threads still exiting when the index was posted held the main thread's handover back
+    // 76–97 ms (32 cells at leaf zoom 20, x86); ended before the staging, 38–54 ms.
     pool.close();
   }
+  return stage(job, built);
 }
 
 function serveRegions(port: NonNullable<typeof parentPort>): void {
@@ -264,6 +304,13 @@ function serveRegions(port: NonNullable<typeof parentPort>): void {
   });
 }
 
+export interface BuildReply {
+  ok: boolean;
+  staging?: string;
+  index?: IndexParts;
+  error?: string;
+}
+
 // The Traficom WFS worker imports this module with its own job, which it leaves alone.
 const data = workerData as { regions?: boolean; dirs?: unknown } | undefined;
 if (parentPort && data?.regions) {
@@ -271,7 +318,7 @@ if (parentPort && data?.regions) {
 } else if (parentPort && data?.dirs) {
   const port = parentPort;
   runBuild(workerData as BuildJob).then(
-    (r) => port.postMessage({ ok: true, staging: r.staging }),
-    (err: Error) => port.postMessage({ ok: false, error: err.message })
+    (r) => port.postMessage({ ok: true, ...r } satisfies BuildReply, transfers(r.index.cols)),
+    (err: Error) => port.postMessage({ ok: false, error: err.message } satisfies BuildReply)
   );
 }

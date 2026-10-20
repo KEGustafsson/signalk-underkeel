@@ -238,7 +238,10 @@ signalk-underkeel/
    25 kn with 10-minute rebuilds the half-radius rule alone handed a box over with the vessel
    5.4 km past the old box's edge. A box centred ahead covers less water astern, which route
    checks of legs behind the vessel see as uncovered (`unverified`, invariant 4). A worker thread downloads the box, parses, clips and writes the cell, rebuilds
-   the index and stages it; the main thread moves it into place and swaps it in. The rebuild
+   the index and stages it; the main thread moves it into place and swaps in the index the
+   worker posts, its pyramid columns moved rather than copied, so the handover reads nothing
+   back from disk (the read-back held the event loop 52–61 ms at z20 with two Nauvo cells and
+   258–292 ms with 32; the handover now 21–23 and 68–97 ms, on x86). The rebuild
    builds only the z10 roots that the WFS cell reaches in the saved index or now, and copies
    the others from the saved index (§4.3). Each page is
    read as a stream: more than 64 MB, or 30 s without a byte, fails the download, which then
@@ -377,9 +380,10 @@ CATZOC C sounding counts up to 1 km from its position.
   index holds other cells or another order, another leaf zoom, no `reach.json`, or fails to
   read. As at start, a cell with the same DSID edition, update, issue date and datum areas is
   taken as unchanged.
-- The index is built in a worker thread, at start as for a new WFS box (§4.2); until the
-  worker hands it over the look-ahead is `off` with the reason `building chart index`, and the
-  WFS box starts only after the handover, so this build never replaces a newer box's index.
+- The index is built in a worker thread, at start as for a new WFS box (§4.2), and posted
+  to the main thread with its pyramid columns moved; until the worker hands it over the
+  look-ahead is `off` with the reason `building chart index`, and the WFS box starts only
+  after the handover, so this build never replaces a newer box's index.
   A saved `pyramid.bin` over 1 MB is read and inflated off the event loop the same way, `off`
   with `loading chart index` meanwhile; a smaller one loads within `start()` (22 ms on x86 for
   two Nauvo cells).

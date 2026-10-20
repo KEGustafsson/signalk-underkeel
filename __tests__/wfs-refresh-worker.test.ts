@@ -92,6 +92,7 @@ describe("WFS refresh worker entry", () => {
         {
           ok: true,
           staging: expect.any(String),
+          index: expect.objectContaining({ leafZoom: 16 }),
           features: { depthAreas: 1, dredgedAreas: 0, soundings: 0 }
         }
       ]);

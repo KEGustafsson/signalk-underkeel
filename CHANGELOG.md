@@ -62,6 +62,10 @@ All notable changes to signalk-underkeel are documented here.
   the Nauvo pair (32 cells) and the real 10 km box moved 5 km, the refresh built 4 of 12 roots:
   30.8 → 11.8 s of worker time at leaf zoom 20 and 5.6 → 2.7 s at 18 on x86. Where both boxes
   reach every ENC root, as with the Nauvo pair alone, every root is still built.
+- The index built in a worker, at start or for a WFS box, is posted to the main thread with its
+  pyramid columns moved, not copied, instead of being read back from disk: the longest
+  event-loop block at the handover fell from 52–61 to 21–23 ms for the Nauvo pair and a 10 km
+  box at leaf zoom 20, and from 258–292 to 68–97 ms with 32 cells, on x86.
 - The index build in the worker builds the pyramid one z10 root at a time, from only the cells
   reaching it, on up to four threads, with output byte-identical to a build of all cells at
   once. Sixteen copies of the Nauvo pair (3.3 M nodes) on x86: peak RSS 817 → 481 MB on one

@@ -140,9 +140,9 @@ describe("WFS refresh reusing the saved index's roots", () => {
     writeWfsCell(s.wfs, to, 4);
     const reused = await rebuilt(s, zoom, true);
     const full = await rebuilt(s, zoom, false);
-    expect(reused.roots.copied).toBeGreaterThan(0);
-    expect(reused.roots.built).toBeGreaterThan(0);
-    expect(reused.roots.built + reused.roots.copied).toBe(full.roots.built);
+    expect(reused.index.roots.copied).toBeGreaterThan(0);
+    expect(reused.index.roots.built).toBeGreaterThan(0);
+    expect(reused.index.roots.built + reused.index.roots.copied).toBe(full.index.roots.built);
     expectSameFiles(reused.staging, full.staging);
   });
 
@@ -162,7 +162,7 @@ describe("WFS refresh reusing the saved index's roots", () => {
       expect(
         loadChartIndex(reused.staging).catalogue.cells.find((c) => c.name === "FI5SH5")
       ).toEqual(expect.objectContaining({ edition: 4 }));
-      expect(reused.roots.copied).toBeGreaterThan(0);
+      expect(reused.index.roots.copied).toBeGreaterThan(0);
       expectSameFiles(reused.staging, full.staging);
     } finally {
       fs.writeFileSync(dsid, before);
@@ -186,13 +186,13 @@ describe("WFS refresh reusing the saved index's roots", () => {
     spoil(s);
     writeWfsCell(s.wfs, [22.7, 60.16], 4);
     const reused = await rebuilt(s, 14, true);
-    expect(reused.roots.copied).toBe(0);
+    expect(reused.index.roots.copied).toBe(0);
     expectSameFiles(reused.staging, (await rebuilt(s, 14, false)).staging);
   });
 
   test("a saved index at another leaf zoom is not reused", async () => {
     const s = await saved("other-zoom", [22.65, 60.15], 14);
-    expect((await rebuilt(s, 15, true)).roots.copied).toBe(0);
+    expect((await rebuilt(s, 15, true)).index.roots.copied).toBe(0);
   });
 });
 
