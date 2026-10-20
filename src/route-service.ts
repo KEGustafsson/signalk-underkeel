@@ -120,6 +120,14 @@ export class RequestQueue {
   private readonly waiting: (() => void)[] = [];
   private stopped = new AbortController();
 
+  /**
+   * Aborts on the next `abortAll`. A request takes it before any awaited work, so a stop
+   * while it still prepares (a route fetched by reference) reaches it too.
+   */
+  get stopSignal(): AbortSignal {
+    return this.stopped.signal;
+  }
+
   /** Aborts the running and every waiting job; later jobs run as usual. */
   abortAll(reason: string): void {
     this.stopped.abort(new Error(reason));
@@ -208,11 +216,12 @@ export async function routeCheck(
   deps: RouteServiceDeps,
   client: AbortSignal = NEVER
 ): Promise<ApiReply> {
+  const scoped = AbortSignal.any([client, deps.queue.stopSignal]);
   const p = await prepare(body, deps);
   if (isReply(p)) {
     return p;
   }
-  return deps.queue.run(client, async (signal) => ({
+  return deps.queue.run(scoped, async (signal) => ({
     status: 200,
     body: await checkRouteYielding(p.index, p.input, deps.now(), pauseFor(signal))
   }));
@@ -224,11 +233,12 @@ export async function routeRepair(
   deps: RouteServiceDeps,
   client: AbortSignal = NEVER
 ): Promise<ApiReply> {
+  const scoped = AbortSignal.any([client, deps.queue.stopSignal]);
   const p = await prepare(body, deps);
   if (isReply(p)) {
     return p;
   }
-  return deps.queue.run(client, async (signal) => {
+  return deps.queue.run(scoped, async (signal) => {
     const checkedAt = new Date(deps.now()).toISOString();
     const { repairs, route } = await repairRoute(
       p.index,
@@ -246,6 +256,7 @@ export async function departureWindowReply(
   deps: RouteServiceDeps,
   client: AbortSignal = NEVER
 ): Promise<ApiReply> {
+  const scoped = AbortSignal.any([client, deps.queue.stopSignal]);
   const opts = parseWindowOptions(body);
   if (!opts.ok) {
     return { status: 400, body: { errors: opts.errors } };
@@ -264,7 +275,7 @@ export async function departureWindowReply(
   }
   const from = p.input.departure;
   const to = from + opts.value.horizon * 1000;
-  return deps.queue.run(client, async (signal) => ({
+  return deps.queue.run(scoped, async (signal) => ({
     status: 200,
     body: await departureWindow(
       p.index,
