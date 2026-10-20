@@ -135,6 +135,8 @@ describe("living-chart notes", () => {
         expect(mean - v.measured).toBeLessThan(0.05 + 1e-9);
         expect(v.sigma).toBeGreaterThanOrEqual(sigma);
         expect(v.sigma - sigma).toBeLessThan(0.01 + 1e-9);
+        expect(Number(v.measured.toFixed(2))).toBe(v.measured);
+        expect(Number(v.sigma.toFixed(2))).toBe(v.sigma);
       })
     );
   });
