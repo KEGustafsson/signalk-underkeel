@@ -166,7 +166,8 @@ and keeps a running estimate of the depth in each cell of the index, about 76 m 
 4. **Discrepancy.** After at least 5 soundings on at least 2 separate passes, a cell whose
    estimate is more than 2σ shallower than the chart is marked shallower. Every check then
    uses the shallower depth: look-ahead, route check, query and the UKC overlay. A Signal K
-   note marks the place on the chart with the evidence.
+   note marks the place on the chart with the evidence, its depth rounded down to 5 cm; it is
+   rewritten at most every 5 minutes as the estimate drops.
 
 Own soundings only ever make the chart shallower. Deeper readings never raise a charted depth,
 so a faulty transducer cannot switch off a hazard. The shallower cells survive a change of the

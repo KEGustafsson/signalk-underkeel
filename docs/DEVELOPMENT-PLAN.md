@@ -834,8 +834,12 @@ leaf is coarser); the prior is the cell's charted depth and σD without adjustme
 starts after a 10-minute gap. A confirmed discrepancy sets a z18 adjustment that every query
 takes beside the chart, through `minDepthOver` and the UKC tiles, so look-ahead, route check,
 `/query` and the overlay all see it. Adjustments only ever lower a cell; later deeper
-readings leave it as it is. Notes are written with `resourcesApi.setResource("notes", …)` and
-rewritten as evidence grows. Posteriors, adjustments and the last 20 000 accepted soundings are
+readings leave it as it is. Notes are written with `resourcesApi.setResource("notes", …)`.
+A note is rewritten when the cell's adjusted depth drops to a lower 5 cm step or its σ rises
+to a higher 1 cm step, at most once per cell every 5 minutes: a change inside the 5 minutes is
+written with the latest values once they are over, and on stop. The note shows the depth
+floored to 5 cm and σ raised to the next cm, so it never shows the cell deeper or surer than
+the posterior; the adjustment itself keeps the exact values. Posteriors, adjustments and the last 20 000 accepted soundings are
 kept in `livechart.json` beside the index (no database dependency) and saved at most once a
 minute and on stop. A failed save is reported and retried at the next one, and a malformed file
 is skipped entry by entry rather than stopping the plugin; a file that did not load whole (bad

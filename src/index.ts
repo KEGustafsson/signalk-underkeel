@@ -34,7 +34,7 @@ function stopPlugin(app: ServerAPI, clock: Clock, state: PluginState): void {
   state.wfs = undefined;
   // A save that throws must not leave the monitor running or REST answering on the old index.
   try {
-    state.livechart?.save();
+    state.livechart?.stop();
   } catch (err) {
     app.error(`living chart not saved on stop: ${(err as Error).message}`);
   }

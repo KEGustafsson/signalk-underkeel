@@ -4,7 +4,8 @@ import path from "path";
 import type { CsbPlatform } from "./livechart/csb-export";
 import { csbGeoJson } from "./livechart/csb-export";
 import type { Discrepancy } from "./livechart/discrepancy";
-import { discrepancyOf, noteFor, noteId } from "./livechart/discrepancy";
+import { discrepancyOf, noteId, noteOf } from "./livechart/discrepancy";
+import { NoteSchedule } from "./livechart/note-schedule";
 import type { CellPosterior } from "./livechart/posterior";
 import {
   adjustmentFor,
@@ -47,6 +48,8 @@ export interface LivechartConfig {
 export interface LivechartDeps {
   setNote(id: string, body: Record<string, unknown>): Promise<void>;
   error(message: string): void;
+  /** Epoch ms, for the note schedule; Date.now when not given. */
+  now?: () => number;
 }
 
 /** Soundings kept for the CSB export, newest last. */
@@ -69,6 +72,7 @@ export class LivechartService {
   accepted = 0;
   /** Set when a state file that did not load whole could not be moved aside: never overwrite it. */
   private keepFile = false;
+  private readonly notes = new NoteSchedule((key) => this.writeNote(key));
 
   constructor(
     private store: NodeStore,
@@ -134,10 +138,32 @@ export class LivechartService {
     this.store.adjustments.set(key, next);
     this.dirty = true;
     if (this.config.writeNotes) {
+      this.notes.changed(key, next, this.now());
+    }
+  }
+
+  private now(): number {
+    return (this.deps.now ?? Date.now)();
+  }
+
+  private writeNote(key: number): void {
+    const c = this.posteriors.cells.get(key);
+    if (c) {
       this.deps
-        .setNote(noteId(c), noteFor(discrepancyOf(c)))
+        .setNote(noteId(c), noteOf(c))
         .catch((err: Error) => this.deps.error(`note ${noteId(c)}: ${err.message}`));
     }
+  }
+
+  /** Writes the notes that waited out their 5 minutes. */
+  flushNotes(): void {
+    this.notes.flush(this.now());
+  }
+
+  /** Writes every waiting note and saves, for plugin stop. */
+  stop(): void {
+    this.notes.flush(this.now(), true);
+    this.save();
   }
 
   discrepancies(): Discrepancy[] {
@@ -370,7 +396,8 @@ export function startLivechart(
     path.join(app.getDataDirPath(), "livechart.json"),
     {
       setNote: (id, body) => app.resourcesApi.setResource("notes", id, body),
-      error: (m) => app.error(m)
+      error: (m) => app.error(m),
+      now: () => clock.now()
     }
   );
   let savedAt = clock.now();
@@ -382,6 +409,7 @@ export function startLivechart(
       positionAt: monitor.nav.position?.at,
       waterLevel: monitor.waterLevel()
     });
+    lc.flushNotes();
     if (clock.now() - savedAt >= SAVE_EVERY_MS) {
       savedAt = clock.now();
       lc.save();

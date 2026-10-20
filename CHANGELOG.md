@@ -53,6 +53,10 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Changed
 
+- Living-chart notes are rewritten when the cell's adjusted depth drops a 5 cm step or its σ
+  rises a 1 cm step, at most once per cell every 5 minutes (the latest values after that, and
+  on stop), and show the depth floored to 5 cm and σ raised to the next cm. Before, every
+  change of the adjustment rewrote the note: 6 240 note writes in a 2 h simulated run.
 - The navigation-safety contract schemas in `schemas/navigation-safety/` are licensed under
   Apache-2.0, so other plotters and providers can adopt the contract; the plugin stays EUPL-1.2.
 - The request schemas bound `sector` (1..90°), `ttl` (1 s..30 days), `notificationId` (200
