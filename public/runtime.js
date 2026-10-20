@@ -206,8 +206,10 @@ async function check(routeId) {
       });
       // The plugin queues heavy requests and refuses the overflow; the earlier
       // result keeps its age meanwhile, so it still reads out of date in time.
-      if (res.status === 503 && current()) {
-        schedule(routeId, 1000 * (Number(res.headers.get("retry-after")) || 2));
+      // A 503 without Retry-After (no chart index yet, plugin stopped) is shown, not retried.
+      const retryAfter = res.headers.get("retry-after");
+      if (res.status === 503 && retryAfter !== null && current()) {
+        schedule(routeId, 1000 * (Number(retryAfter) || 2));
         return;
       }
       const body = await res.json();
