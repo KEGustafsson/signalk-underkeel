@@ -67,6 +67,9 @@ All notable changes to signalk-underkeel are documented here.
 - A look-ahead footprint stops reading the chart once it finds charted land at P = 1, and is
   read again in full only where the state turns on its coverage. Alarm ticks on the Nauvo route fell from 2.6
   to 2.2 ms median, and a tick after a 2 km GNSS jump from 770 to 270 ms (x86).
+- Look-ahead hull rectangles compute each point's ellipsoid scale and each bearing's sine and
+  cosine once instead of in six `project()` calls, with the same coordinates: footprint geometry
+  0.25 → 0.21 ms per 6 kn tick (x86).
 - Beyond the 120 s warn window the look-ahead scores only every k-th step, the most that still
   leaves neighbouring footprints touching (every 3rd at 6 kn, every 20th at 1 kn), and scores the
   skipped steps where one of those footprints is the first to reach P 5 %, P 1 % or a coverage

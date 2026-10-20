@@ -228,6 +228,27 @@ export function offset(origin: LonLat, east: number, north: number): LonLat {
   return [lon, lat];
 }
 
+/** Metres per radian north and east at a point: the radii `offset` uses there. */
+export interface LocalScale {
+  meridian: number;
+  /** Prime vertical radius times cos(latitude). */
+  parallel: number;
+}
+
+export function localScale(origin: LonLat): LocalScale {
+  const phi = origin[1] * DEG;
+  const w = 1 - WGS84_E2 * Math.sin(phi) ** 2;
+  return {
+    meridian: (MERCATOR_RADIUS * (1 - WGS84_E2)) / w ** 1.5,
+    parallel: (MERCATOR_RADIUS / Math.sqrt(w)) * Math.cos(phi)
+  };
+}
+
+/** `offset` with the origin's scale computed once, for several points around it; the same result. */
+export function offsetBy(origin: LonLat, k: LocalScale, east: number, north: number): LonLat {
+  return [origin[0] + east / k.parallel / DEG, origin[1] + north / k.meridian / DEG];
+}
+
 /** Longitude in [-180, 180). */
 export function wrapLon(lon: number): number {
   return ((((lon + 180) % 360) + 360) % 360) - 180;

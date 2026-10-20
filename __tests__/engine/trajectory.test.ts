@@ -1,8 +1,8 @@
 import fc from "fast-check";
-import { convexHull } from "../../src/engine/footprint";
+import { convexHull, footprintRing } from "../../src/engine/footprint";
 import { escapeTrack, fanMembers, trackAt } from "../../src/engine/trajectory";
 import type { LonLat } from "../../src/foundation/geo";
-import { haversine, project } from "../../src/foundation/geo";
+import { haversine, localScale, offset, offsetBy, project } from "../../src/foundation/geo";
 import { DEFAULT_GNSS_SIGMA, gnssSigma, UERE } from "../../src/model/position";
 import { uniform } from "../helpers/arbitraries";
 
@@ -111,5 +111,41 @@ describe("GNSS position σ", () => {
     expect(gnssSigma(undefined)).toBe(DEFAULT_GNSS_SIGMA);
     expect(gnssSigma(0)).toBe(DEFAULT_GNSS_SIGMA);
     expect(gnssSigma(NaN)).toBe(DEFAULT_GNSS_SIGMA);
+  });
+});
+
+describe("footprint rings", () => {
+  /** footprintRing as it stood at ea8277a: six project() calls. */
+  function reference(center: LonLat, heading: number, length: number, width: number): LonLat[] {
+    const bow = project(center, heading, length / 2);
+    const stern = project(center, heading + Math.PI, length / 2);
+    const starboard = heading + Math.PI / 2;
+    const port = heading - Math.PI / 2;
+    return [
+      project(bow, starboard, width / 2),
+      project(stern, starboard, width / 2),
+      project(stern, port, width / 2),
+      project(bow, port, width / 2)
+    ];
+  }
+
+  test("are the same doubles as six project() calls", () => {
+    fc.assert(
+      fc.property(
+        uniform(-179, 179),
+        uniform(-80, 80),
+        uniform(-10, 10),
+        uniform(0, 2000),
+        uniform(0, 100),
+        (lon, lat, heading, length, width) => {
+          const c: LonLat = [lon, lat];
+          expect(footprintRing(c, heading, length, width)).toEqual(
+            reference(c, heading, length, width)
+          );
+          expect(offsetBy(c, localScale(c), length, -width)).toEqual(offset(c, length, -width));
+        }
+      ),
+      { numRuns: 2000 }
+    );
   });
 });
