@@ -1,4 +1,5 @@
 import type { Request, RequestHandler, Response } from "express";
+import { gzipSync } from "zlib";
 import type { Envelope } from "../engine/envelope";
 
 export const API_BASE = "/v1";
@@ -6,6 +7,7 @@ export const API_BASE = "/v1";
 export interface ApiReply {
   status: number;
   body: unknown;
+  headers?: Record<string, string>;
 }
 
 export interface TileReply {
@@ -15,12 +17,13 @@ export interface TileReply {
 }
 
 export interface ApiProvider {
-  status(): unknown;
+  status(summary: boolean): unknown;
   envelope(): { rev: number; envelope: Envelope };
-  routeCheck(body: unknown): Promise<ApiReply>;
-  routeRepair(body: unknown): Promise<ApiReply>;
-  departureWindow(body: unknown): Promise<ApiReply>;
-  query(body: unknown): ApiReply;
+  /** `signal` aborts when the client goes away. */
+  routeCheck(body: unknown, signal: AbortSignal): Promise<ApiReply>;
+  routeRepair(body: unknown, signal: AbortSignal): Promise<ApiReply>;
+  departureWindow(body: unknown, signal: AbortSignal): Promise<ApiReply>;
+  query(body: unknown, signal: AbortSignal): Promise<ApiReply>;
   ukcTile(z: number, x: number, y: number): TileReply;
   ukcStyle(): unknown;
   acks(): ApiReply;
@@ -105,6 +108,9 @@ function fail(res: Response, err: unknown, log: (message: string) => void): void
 }
 
 function send(res: Response, reply: ApiReply): void {
+  for (const [name, value] of Object.entries(reply.headers ?? {})) {
+    res.setHeader(name, value);
+  }
   if (reply.body === undefined) {
     res.status(reply.status).end();
   } else {
@@ -125,8 +131,8 @@ export function registerRoutes(
   log: (message: string) => void = console.error
 ): void {
   const r = readonly(router);
-  r.get(`${API_BASE}/status`, (_req: Request, res: Response) => {
-    res.json(api.status());
+  r.get(`${API_BASE}/status`, (req: Request, res: Response) => {
+    res.json(api.status(req.query?.summary !== undefined));
   });
   r.get(`${API_BASE}/envelope`, (req: Request, res: Response) => {
     const current = api.envelope();
@@ -137,31 +143,22 @@ export function registerRoutes(
     }
     res.json(current);
   });
-  r.post(`${API_BASE}/route-check`, (req: Request, res: Response) => {
-    readJsonBody(req)
-      .then((body) => api.routeCheck(body))
-      .then((reply) => res.status(reply.status).json(reply.body))
-      .catch((err: unknown) => fail(res, err, log));
-  });
   for (const [route, handler] of [
+    ["route-check", api.routeCheck],
     ["route-repair", api.routeRepair],
-    ["departure-window", api.departureWindow]
+    ["departure-window", api.departureWindow],
+    ["query", api.query]
   ] as const) {
     r.post(`${API_BASE}/${route}`, (req: Request, res: Response) => {
+      const client = new AbortController();
+      // Also after the reply is sent, when nothing is left to abort.
+      res.on("close", () => client.abort(new Error("client disconnected")));
       readJsonBody(req)
-        .then((body) => handler(body))
+        .then((body) => handler(body, client.signal))
         .then((reply) => send(res, reply))
         .catch((err: unknown) => fail(res, err, log));
     });
   }
-  r.post(`${API_BASE}/query`, (req: Request, res: Response) => {
-    readJsonBody(req)
-      .then((body) => {
-        const reply = api.query(body);
-        res.status(reply.status).json(reply.body);
-      })
-      .catch((err: unknown) => fail(res, err, log));
-  });
   r.get(`${API_BASE}/tiles/ukc/:z/:x/:file`, (req: Request, res: Response) => {
     const p = (req.params ?? {}) as Record<string, string | undefined>;
     const y = /^(\d{1,8})\.pbf$/.exec(p.file ?? "")?.[1];
@@ -169,7 +166,15 @@ export function registerRoutes(
     // The tiles follow the water level and vessel: Plotter Extensions §Live changes.
     res.setHeader("Cache-Control", "no-cache");
     if (reply.body instanceof Uint8Array) {
-      res.status(reply.status).type(reply.contentType).send(Buffer.from(reply.body));
+      res.setHeader("Vary", "Accept-Encoding");
+      // Signal K's compression() skips this content type; it leaves an encoded body alone.
+      const gzip =
+        reply.body.length >= GZIP_MIN_BYTES && acceptsGzip(req.headers?.["accept-encoding"]);
+      if (gzip) {
+        res.setHeader("Content-Encoding", "gzip");
+      }
+      const body = gzip ? gzipSync(reply.body) : Buffer.from(reply.body);
+      res.status(reply.status).type(reply.contentType).send(body);
     } else {
       res.status(reply.status).json(reply.body);
     }
@@ -193,6 +198,26 @@ export function registerRoutes(
   w.delete(`${API_BASE}/acks/:id`, (req: Request, res: Response) => {
     send(res, api.deleteAck(String((req.params as Record<string, unknown> | undefined)?.id ?? "")));
   });
+}
+
+/** Smaller bodies gain less from gzip than its header costs; compression() uses the same. */
+const GZIP_MIN_BYTES = 1024;
+
+/** Whether an Accept-Encoding header accepts gzip, by name or `*`, with a q above 0. */
+export function acceptsGzip(header: string | string[] | undefined): boolean {
+  let any = false;
+  for (const part of String(header ?? "").split(",")) {
+    const [name, ...params] = part.split(";").map((t) => t.trim().toLowerCase());
+    const q = params.find((p) => p.startsWith("q="));
+    const accepted = q === undefined || Number(q.slice(2)) > 0;
+    if (name === "gzip") {
+      return accepted;
+    }
+    if (name === "*") {
+      any = accepted;
+    }
+  }
+  return any;
 }
 
 /** A path segment as a non-negative integer, else NaN. */

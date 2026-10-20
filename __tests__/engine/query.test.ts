@@ -148,6 +148,32 @@ describe("query request validation", () => {
     open.geometry.coordinates[0]?.pop();
     expect(bad(open)).toEqual(["polygon outer ring must be closed"]);
   });
+
+  test("a polygon is refused when its vertices times its box and buffer area are too much work", () => {
+    const circle = (vertices: number, radius: number) => {
+      const ring = Array.from({ length: vertices }, (_, i) => {
+        const a = (2 * Math.PI * i) / vertices;
+        return [
+          22.085 + (radius * Math.sin(a)) / (111195 * Math.cos((60.075 * Math.PI) / 180)),
+          60.075 + (radius * Math.cos(a)) / 111195
+        ];
+      });
+      return { type: "Polygon", coordinates: [[...ring, ring[0]]] };
+    };
+    const errors = (body: unknown) => {
+      const r = parseQueryRequest(body);
+      return r.ok ? [] : r.errors;
+    };
+    // 499 vertices over (1 + 4 km)² fits the 25 km² box limit and took 0.47 s on a laptop.
+    expect(errors({ geometry: circle(499, 490), bufferMetres: 2000 })).toEqual([
+      "polygon vertices × km² of box and buffer must be at most 150: use fewer vertices or a smaller buffer"
+    ]);
+    expect(errors({ geometry: circle(5, 490), bufferMetres: 2000 })).toEqual([]);
+    expect(errors({ geometry: circle(499, 270) })).toEqual([]);
+    expect(
+      errors({ geometry: { type: "Point", coordinates: [22, 60] }, bufferMetres: 2000 })
+    ).toEqual([]);
+  });
 });
 
 describe("chart position uncertainty", () => {

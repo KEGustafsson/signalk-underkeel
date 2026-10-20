@@ -4,9 +4,9 @@ import type { Monitor } from "./monitor";
 import type { LivechartService } from "./livechart-service";
 import type { WfsService } from "./wfs-service";
 
-/** Body of `GET /status`: engine state, index provenance and look-ahead summary. */
+/** Body of `GET /status`: engine state, index provenance and look-ahead summary; `?summary` without the per-cell lists. */
 
-function indexSection(load: IndexLoad | undefined): Record<string, unknown> {
+function indexSection(load: IndexLoad | undefined, summary: boolean): Record<string, unknown> {
   const index = load?.index;
   return {
     dir: load?.indexDir,
@@ -15,11 +15,12 @@ function indexSection(load: IndexLoad | undefined): Record<string, unknown> {
     reason: load?.reason,
     nodes: index?.pyramid.count ?? 0,
     hazards: index?.hazards.size ?? 0,
-    cells: index?.catalogue.cells ?? []
+    ...(summary ? {} : { cells: index?.catalogue.cells ?? [] })
   };
 }
 
-function monitorSection(m: Monitor): Record<string, unknown> {
+function monitorSection(m: Monitor, summary: boolean): Record<string, unknown> {
+  const { datums, ...waterLevel } = m.waterLevelStatus();
   return {
     engine: { state: m.last.state, reason: m.last.reason, since: new Date(m.since).toISOString() },
     lookahead: {
@@ -29,7 +30,7 @@ function monitorSection(m: Monitor): Record<string, unknown> {
       envelopeRev: m.envelope.rev
     },
     vessel: m.vesselNotes,
-    waterLevel: m.waterLevelStatus(),
+    waterLevel: summary ? waterLevel : { ...waterLevel, datums },
     integrity: m.integrityResult ?? null
   };
 }
@@ -42,10 +43,16 @@ export function statusReport(s: {
   wfs?: WfsService;
   stopped: EngineStatus;
   now: number;
+  /**
+   * Leave out the lists that grow with the cells (`index.cells`,
+   * `waterLevel.datums`), for a client that polls the status often.
+   */
+  summary?: boolean;
 }): unknown {
+  const summary = s.summary ?? false;
   return {
-    ...(s.monitor ? monitorSection(s.monitor) : { engine: s.stopped, vessel: [] }),
-    index: indexSection(s.load),
+    ...(s.monitor ? monitorSection(s.monitor, summary) : { engine: s.stopped, vessel: [] }),
+    index: indexSection(s.load, summary),
     livechart: s.livechart?.status() ?? null,
     wfs: s.wfs?.status() ?? null,
     mooringZones: {

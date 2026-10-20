@@ -730,11 +730,17 @@ the full forecast horizon), re-checking only the legs whose water level changed.
 intervals in which every leg passes. In Finnish waters this matters during low-water episodes
 with high pressure and easterly winds; in tidal waters it becomes a full tide-gate planner.
 
-**As built (M2).** A leg is checked in pieces of about 1 km taken at equal fractions of the
-rhumb line, the line a Mercator chart plotter draws between the waypoints, so the corridor
-follows the leg as drawn and the last piece ends on its end point. A course computer may
-steer the great circle instead: where the great circle strays more than 10 m from the rhumb
-line, its own pieces are checked too; below that the rhumb corridor is widened by the gap.
+**As built (M2).** A leg is checked in pieces of about max(1 km, 4r), r the corridor half-width,
+taken at equal fractions of the rhumb line, the line a Mercator chart plotter draws between the
+waypoints, so the corridor follows the leg as drawn and the last piece ends on its end point.
+Each piece's rectangle reaches r past both ends, so 1 km pieces of a ±2 km corridor queried the
+same water about five times. A course computer may steer the great circle instead: where the
+great circle strays more than max(10 m, r/4) from the rhumb line, its own pieces are checked
+too, widened by how far it strays from their chords; below that the rhumb corridor is widened
+by the gap. Every rectangle is 1/256 wider than asked, since the Mercator chart and the tangent
+plane the rectangle is drawn in drift apart over a piece (up to 0.15 % of r, measured to 84°);
+a fast-check property holds every point exactly r from either line inside the corridor
+(invariant 4).
 
 **As built (M5).** The repair grid has at most 120 cells on its longer side, at least 10 m
 each, and reaches half the leg's length (at least 300 m) beyond it. A cell is blocked when the
@@ -749,17 +755,29 @@ the `/route-check` body; the window adds `horizon` (default 48 h, at most 7 days
 (default 15 min, at least 5 min, at most 1000 departures). Each leg takes the lowest level from
 its arrival until one step after it leaves, so a sampled `ok` departure also holds for every
 departure until the next sample and a coarse step cannot skip a low water. Leg results are reused across
-departures for the same water level rounded down to the centimetre (σ rounded up). One request
+departures for the same water level rounded down to the centimetre (σ rounded up), and a
+departure's legs after its first `fail` are not checked, since `fail` already decides its status.
+Decision (invariant 2): with `probability` at least 1e-3, a leg's result is also reused across
+levels with the same σ and fallback reason: `ok` at a level holds at any higher level and `fail`
+at any lower one. A query may stop at a tile whose P bound is below 1e-4 (`RISK_STOP_BELOW`), so
+a direct check can overstate P by up to that much; from 1e-3 up the reused status is the one a
+direct check gives, and below it every level is checked directly. One request
 repairs at most 10 legs, and the rest are listed with a reason. A corridor query costs about
 its area, so a route check, repair or window is refused when the route's length times its
 corridor width (2 × (xteLimit + planning buffer)) exceeds 200 km², and a window when its
 departures times that area exceed 1600 km² or its departures times legs exceed 20 000, since a
 leg check costs a corridor query however short the leg is. All three yield to the event loop
 after each corridor query (the route check and the repaired route's re-check), each leg check
-or each departure, so look-ahead ticks keep running during a long request. On a laptop a
+or each departure, and route repair also every 256 cells its search expands and after each
+simplification check, so look-ahead ticks keep running during a long request. They and
+`POST /query` run through one queue after validation: one at a time, at most 4 waiting, and 503
+with `Retry-After: 2` beyond that, so concurrent requests do not interleave their slices. A
+request is aborted at its next pause when its client disconnects or the plugin stops, and
+answers 503 with the reason, never a partial result. On a laptop a
 corridor over 3000 shoals costs 1–3.5 ms per km². `POST /query` is refused when its bounding
-box widened by the buffer exceeds 25 km²: a 500-vertex ring tests every tile against every
-vertex, about 60 ms at that size. Measured under Jest on the synthetic archipelago: 52 ms per
+box widened by the buffer exceeds 25 km², or when its vertices times that area exceed 150 km²:
+every tile is tested against every vertex, and a 499-vertex ring over 25 km² took 0.47 s on a
+laptop over the Nauvo cells, against at most 16 ms within both limits. Measured under Jest on the synthetic archipelago: 52 ms per
 repaired leg.
 
 ### 4.12 Acknowledged passages

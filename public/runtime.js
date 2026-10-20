@@ -204,6 +204,14 @@ async function check(routeId) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ route: line })
       });
+      // The plugin queues heavy requests and refuses the overflow; the earlier
+      // result keeps its age meanwhile, so it still reads out of date in time.
+      // A 503 without Retry-After (no chart index yet, plugin stopped) is shown, not retried.
+      const retryAfter = res.headers.get("retry-after");
+      if (res.status === 503 && retryAfter !== null && current()) {
+        schedule(routeId, 1000 * (Number(retryAfter) || 2));
+        return;
+      }
       const body = await res.json();
       if (!current()) {
         return;
@@ -238,9 +246,9 @@ async function check(routeId) {
 }
 
 /** Edits come in bursts while the user drags a point: check once they settle. */
-function schedule(routeId) {
+function schedule(routeId, delay = 1000) {
   clearTimeout(timers.get(routeId));
-  timers.set(routeId, setTimeout(() => void check(routeId), 1000));
+  timers.set(routeId, setTimeout(() => void check(routeId), delay));
 }
 
 async function checkAll() {

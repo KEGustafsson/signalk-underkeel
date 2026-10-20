@@ -41,6 +41,7 @@ signalk-underkeel's limits of that kind:
 | `POST /departure-window`                    | departures × corridor area ≤ 1600 km², departures × legs ≤ 20 000 |
 | `geometry` of `POST /query`                 | Polygon: 4..500 positions, no holes, bounding box ≤ 50 km across  |
 | `geometry` of `POST /query`                 | bounding box widened by the buffer ≤ 25 km²                       |
+| `geometry` of `POST /query`                 | vertices × that widened box ≤ 150 km² (a Point counts as 1)       |
 | `polygon` of `POST /acks`                   | 4..500 positions, closed, no holes, ≤ 50 km across                |
 | every position                              | longitude within ±180°, latitude within ±85°                      |
 

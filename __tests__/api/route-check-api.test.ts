@@ -9,7 +9,12 @@ import {
 import { MAX_BODY_BYTES, readJsonBody } from "../../src/api/routes";
 import { parseConfig } from "../../src/config";
 import type { RouteServiceDeps } from "../../src/route-service";
-import { routeCheck } from "../../src/route-service";
+import {
+  departureWindowReply,
+  RequestQueue,
+  routeCheck,
+  routeRepair
+} from "../../src/route-service";
 import { fixtureIndex } from "../helpers/fixture-index";
 
 const LINE = {
@@ -146,9 +151,46 @@ function deps(over: Partial<RouteServiceDeps> = {}): RouteServiceDeps {
         ? Promise.resolve({ feature: { geometry: LINE } })
         : Promise.reject(new Error("nope")),
     now: () => Date.parse("2026-10-18T07:00:00Z"),
+    queue: new RequestQueue(),
     ...over
   };
 }
+
+describe("a plugin stop while a request still prepares", () => {
+  test.each([
+    ["route check", routeCheck],
+    ["route repair", routeRepair],
+    ["departure window", departureWindowReply]
+  ] as const)("aborts the %s fetched by reference", async (_name, handler) => {
+    let release = (): void => undefined;
+    const queue = new RequestQueue();
+    const d = deps({
+      queue,
+      getRoute: () =>
+        new Promise((resolve) => {
+          release = () => resolve({ feature: { geometry: LINE } });
+        })
+    });
+    const reply = handler({ routeRef: "/resources/routes/known", horizon: 3600, step: 600 }, d);
+    await new Promise((resolve) => setImmediate(resolve));
+    queue.abortAll("plugin stopped");
+    release();
+    expect((await reply).body).toEqual({ errors: ["plugin stopped"] });
+  });
+
+  test.each([
+    ["route check", routeCheck],
+    ["route repair", routeRepair],
+    ["departure window", departureWindowReply]
+  ] as const)("answers the %s while the route lookup never returns", async (_name, handler) => {
+    const queue = new RequestQueue();
+    const d = deps({ queue, getRoute: () => new Promise(() => undefined) });
+    const reply = handler({ routeRef: "/resources/routes/known", horizon: 3600, step: 600 }, d);
+    await new Promise((resolve) => setImmediate(resolve));
+    queue.abortAll("plugin stopped");
+    expect(await reply).toEqual({ status: 503, body: { errors: ["plugin stopped"] } });
+  });
+});
 
 describe("route-check service", () => {
   test("checks inline geometry with the current vessel", async () => {

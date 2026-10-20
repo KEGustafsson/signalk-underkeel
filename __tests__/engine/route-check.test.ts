@@ -14,7 +14,7 @@ import { BANK, fixtureIndex, ROCK } from "../helpers/fixture-index";
 import { area, basin, coverage, point, quality } from "../helpers/synthetic";
 import { CHART_DATUM } from "../helpers/engine";
 import { DEFAULT_DYNAMICS } from "../../src/model/vessel";
-import { uniform } from "../helpers/arbitraries";
+import { fraction, uniform } from "../helpers/arbitraries";
 
 const NOW = Date.parse("2026-10-18T07:00:00Z");
 
@@ -267,19 +267,43 @@ describe("corridor geometry", () => {
     }
   });
 
+  test("a piece up to 4r long contains every point within r of its rhumb line, up to 84°", () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: -84_0000, max: 84_0000 }),
+        uniform(0, 2 * Math.PI),
+        uniform(1, 2010),
+        fraction,
+        fraction,
+        uniform(0, 2 * Math.PI),
+        (lat, brg, r, length, along, dir) => {
+          const a: LonLat = [20, lat / 10_000];
+          const b = project(a, brg, length * Math.max(1000, 4 * r));
+          // Exactly r off the line: the points a narrow corridor misses first.
+          const q = project(alongRhumb(a, b, along), dir, r);
+          const ring = corridorRing(a, b, r).map((p) => toMercator(p[0], p[1]));
+          expect(pointInPolygon(toMercator(q[0], q[1]), { outer: ring, holes: [] })).toBe(true);
+        }
+      ),
+      { numRuns: 1000 }
+    );
+  });
+
   test("a multi-piece leg's corridor contains every point within r of its rhumb line and great circle", () => {
     fc.assert(
       fc.property(
-        fc.integer({ min: -60_0000, max: 60_0000 }),
+        fc.integer({ min: -84_0000, max: 84_0000 }),
         fc.integer({ min: 0, max: 359_99 }),
         fc.integer({ min: 1000, max: 500_000 }),
-        fc.integer({ min: 1, max: 200 }),
+        fc.integer({ min: 1, max: 2010 }),
         fc.integer({ min: 0, max: 10_000 }),
         fc.integer({ min: 0, max: 359 }),
-        fc.integer({ min: 0, max: 999 }),
+        fc.oneof(fc.constant(1000), fc.integer({ min: 0, max: 1000 })),
         (lat, brgCdeg, length, r, along, dirDeg, frac) => {
           const a: LonLat = [20, lat / 10_000];
           const b = project(a, (brgCdeg / 100) * (Math.PI / 180), length);
+          // A route position is within ±85°, the edge of the Mercator chart.
+          fc.pre(Math.abs(b[1]) <= 84);
           const t = along / 10_000;
           const rings = legCorridors(a, b, r).map((ring) => ({
             outer: ring.map((q) => toMercator(q[0], q[1])),
@@ -291,8 +315,16 @@ describe("corridor geometry", () => {
             expect(rings.some((ring) => pointInPolygon(qm, ring))).toBe(true);
           }
         }
-      )
+      ),
+      { numRuns: 300 }
     );
+  });
+
+  test("a wide corridor is checked in pieces of 4r, not 1 km", () => {
+    const a: LonLat = [22.025, 60.03];
+    const b: LonLat = [22.145, 60.12];
+    expect(legCorridors(a, b, 40)).toHaveLength(Math.ceil(haversine(a, b) / 1000));
+    expect(legCorridors(a, b, 2010)).toHaveLength(Math.ceil(haversine(a, b) / 8040));
   });
 
   test("a leg across 180° is checked the short way round", () => {
