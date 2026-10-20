@@ -7,7 +7,7 @@ import { NodeStore } from "./node-store";
 /**
  * On-disk pyramid format: a JSON header line, then one little-endian
  * column per node field, the columns together gzip-compressed (level 1:
- * 7.5 MB of columns write as 0.42 MB, and the CRC refuses a torn body of
+ * 7.5 MB of columns write as 0.56 MB, and the CRC refuses a torn body of
  * the right length). Nodes are written in order of zoom and then tile key,
  * so loading reads the columns as they are into the store; the
  * index is built once and reloaded at every plugin start. Columns are
@@ -66,9 +66,8 @@ function requireLittleEndian(): void {
   }
 }
 
-/** Every stored node, zoom by zoom and in tile-key order within a zoom, in the current format. */
-export function serializePyramid(store: NodeStore): Buffer {
-  requireLittleEndian();
+/** Every stored node's columns, zoom by zoom and in tile-key order within a zoom. */
+export function pyramidColumns(store: NodeStore): NodeColumns {
   const cols = columnsOf(store.count);
   let n = 0;
   for (let z = store.minZoom; z <= store.leafZoom; z++) {
@@ -86,20 +85,77 @@ export function serializePyramid(store: NodeStore): Buffer {
       n++;
     }
   }
+  // A tile stored twice is entered once, so fewer than `count` may be filled.
+  return n === store.count ? cols : sliceColumns(cols, 0, n);
+}
+
+function sliceColumns(cols: Columns, from: number, to: number): Columns {
+  const out = {} as Record<keyof Columns, Columns[keyof Columns]>;
+  for (const k of ORDER) {
+    out[k] = cols[k].slice(from, to);
+  }
+  return out as Columns;
+}
+
+/** The store as file bytes, in the current format. */
+export function serializePyramid(store: NodeStore): Buffer {
+  requireLittleEndian();
+  const saved = bodies.get(store);
+  if (saved && saved.dMin === store.dMin && store.dMin.length === store.count) {
+    return encode(store, store.count, [saved.body]);
+  }
+  const cols = pyramidColumns(store);
+  const n = cols.dMin.length;
+  return encode(
+    store,
+    n,
+    ORDER.map((k) => cols[k])
+  );
+}
+
+function encode(store: NodeStore, count: number, parts: ArrayBufferView[]): Buffer {
   const header: Header = {
     magic: MAGIC,
     version: PYRAMID_VERSION,
     minZoom: store.minZoom,
     leafZoom: store.leafZoom,
-    count: n
+    count
   };
   const head = Buffer.from(`${JSON.stringify(header)}\n`, "utf8");
-  // Exactly `n` entries per column, the count the header records.
-  const parts = ORDER.map((k) => {
-    const col = cols[k].subarray(0, n);
-    return Buffer.from(col.buffer, col.byteOffset, col.byteLength);
-  });
-  return Buffer.concat([head, gzipSync(Buffer.concat(parts), { level: 1 })]);
+  const bytes = parts.map((c) => Buffer.from(c.buffer, c.byteOffset, c.byteLength));
+  const body = bytes.length === 1 ? (bytes[0] as Buffer) : Buffer.concat(bytes);
+  return Buffer.concat([head, gzipSync(body, { level: 1 })]);
+}
+
+/**
+ * Stores whose columns are views on one buffer laid out as the file body, in
+ * file order: their serialization compresses that buffer without a copy.
+ */
+const bodies = new WeakMap<NodeStore, { body: Uint8Array; dMin: Float64Array }>();
+
+/** Columns for `count` nodes, as views on one new buffer laid out as the file body. */
+export function bodyColumns(count: number): { body: Uint8Array; cols: NodeColumns } {
+  const body = new Uint8Array(BYTES_PER_NODE * count);
+  return { body, cols: columnsOn(body, count) };
+}
+
+/** The store over `cols`, views on `body`, remembered for a copy-free save when in file order. */
+export function storeOnBody(
+  minZoom: number,
+  leafZoom: number,
+  body: Uint8Array,
+  cols: NodeColumns
+): NodeStore {
+  const store = NodeStore.fromColumns(minZoom, leafZoom, cols);
+  const { z, key } = cols;
+  let ordered = true;
+  for (let i = 1; i < key.length && ordered; i++) {
+    ordered = z[i] !== z[i - 1] || (key[i] as number) > (key[i - 1] as number);
+  }
+  if (ordered) {
+    bodies.set(store, { body, dMin: cols.dMin });
+  }
+  return store;
 }
 
 /** Whether a pyramid file's header is this format and version. */
@@ -183,7 +239,8 @@ function storeOn(p: Parsed, inflated: Buffer): NodeStore {
     throw new Error("pyramid file is truncated");
   }
   const cols = columnsOn(inflated, p.header.count);
-  return NodeStore.fromColumns(p.header.minZoom, p.header.leafZoom, cols);
+  const body = new Uint8Array(cols.dMin.buffer, cols.dMin.byteOffset, p.bytes);
+  return storeOnBody(p.header.minZoom, p.header.leafZoom, body, cols);
 }
 
 /** Reads a current-version file; refuses a foreign header or a truncated body. */

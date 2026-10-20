@@ -1,4 +1,4 @@
-import type { Rect, XY } from "../foundation/geo";
+import type { Rect } from "../foundation/geo";
 import type { PolygonGeom, Ring } from "../foundation/geometry";
 import { segmentRectDistance } from "../foundation/geometry";
 
@@ -38,8 +38,10 @@ interface EdgeGrid {
   visit: number;
 }
 
+/** A ring as x0, y0, x1, y1, …: 16 bytes a vertex, where an [x, y] array per vertex took 50–70. */
 interface RingIndex {
-  ring: Ring;
+  xy: Float64Array;
+  n: number;
   box: Rect;
   grid: EdgeGrid | undefined;
 }
@@ -50,16 +52,19 @@ export interface PolygonIndex {
   holes: RingIndex[];
 }
 
-function ringBox(ring: Ring): Rect {
+function ringBox(xy: Float64Array): Rect {
   const box = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
-  for (const p of ring) {
-    box.minX = Math.min(box.minX, p[0]);
-    box.maxX = Math.max(box.maxX, p[0]);
-    box.minY = Math.min(box.minY, p[1]);
-    box.maxY = Math.max(box.maxY, p[1]);
+  for (let k = 0; k < xy.length; k += 2) {
+    box.minX = Math.min(box.minX, xy[k] as number);
+    box.maxX = Math.max(box.maxX, xy[k] as number);
+    box.minY = Math.min(box.minY, xy[k + 1] as number);
+    box.maxY = Math.max(box.maxY, xy[k + 1] as number);
   }
   return box;
 }
+
+/** Vertex before i, closing the ring. */
+const prev = (n: number, i: number): number => (i === 0 ? n - 1 : i - 1);
 
 // Monotone in the coordinate, so an edge reaching a coordinate is filed under its cell.
 const column = (g: EdgeGrid, x: number): number =>
@@ -67,14 +72,16 @@ const column = (g: EdgeGrid, x: number): number =>
 const row = (g: EdgeGrid, y: number): number =>
   Math.min(g.size - 1, Math.max(0, Math.floor((y - g.minY) / g.cellH)));
 
-function edgeSpan(g: EdgeGrid, ring: Ring, i: number): [number, number, number, number] {
-  const a = ring[i === 0 ? ring.length - 1 : i - 1] as XY;
-  const b = ring[i] as XY;
+const xOf = (ri: RingIndex, i: number): number => ri.xy[2 * i] as number;
+const yOf = (ri: RingIndex, i: number): number => ri.xy[2 * i + 1] as number;
+
+function edgeSpan(g: EdgeGrid, ri: RingIndex, i: number): [number, number, number, number] {
+  const j = prev(ri.n, i);
   return [
-    column(g, Math.min(a[0], b[0])),
-    column(g, Math.max(a[0], b[0])),
-    row(g, Math.min(a[1], b[1])),
-    row(g, Math.max(a[1], b[1]))
+    column(g, Math.min(xOf(ri, j), xOf(ri, i))),
+    column(g, Math.max(xOf(ri, j), xOf(ri, i))),
+    row(g, Math.min(yOf(ri, j), yOf(ri, i))),
+    row(g, Math.max(yOf(ri, j), yOf(ri, i)))
   ];
 }
 
@@ -104,8 +111,9 @@ function fillTable(
   return { start, items };
 }
 
-function edgeGrid(ring: Ring, box: Rect): EdgeGrid {
-  const size = Math.max(2, Math.ceil(Math.sqrt(ring.length / 2)));
+function edgeGrid(ri: RingIndex): EdgeGrid {
+  const box = ri.box;
+  const size = Math.max(2, Math.ceil(Math.sqrt(ri.n / 2)));
   const g: EdgeGrid = {
     size,
     minX: box.minX,
@@ -116,17 +124,17 @@ function edgeGrid(ring: Ring, box: Rect): EdgeGrid {
     rowEdges: new Int32Array(0),
     cellStart: new Int32Array(0),
     cellEdges: new Int32Array(0),
-    seen: new Uint32Array(ring.length),
+    seen: new Uint32Array(ri.n),
     visit: 0
   };
-  const rows = fillTable(size, ring.length, (i, add) => {
-    const [, , y0, y1] = edgeSpan(g, ring, i);
+  const rows = fillTable(size, ri.n, (i, add) => {
+    const [, , y0, y1] = edgeSpan(g, ri, i);
     for (let y = y0; y <= y1; y++) {
       add(y);
     }
   });
-  const cells = fillTable(size * size, ring.length, (i, add) => {
-    const [x0, x1, y0, y1] = edgeSpan(g, ring, i);
+  const cells = fillTable(size * size, ri.n, (i, add) => {
+    const [x0, x1, y0, y1] = edgeSpan(g, ri, i);
     for (let y = y0; y <= y1; y++) {
       for (let x = x0; x <= x1; x++) {
         add(y * size + x);
@@ -141,8 +149,14 @@ function edgeGrid(ring: Ring, box: Rect): EdgeGrid {
 }
 
 function indexRing(ring: Ring): RingIndex {
-  const box = ringBox(ring);
-  return { ring, box, grid: ring.length >= GRID_MIN ? edgeGrid(ring, box) : undefined };
+  const xy = new Float64Array(2 * ring.length);
+  ring.forEach((p, i) => {
+    xy[2 * i] = p[0];
+    xy[2 * i + 1] = p[1];
+  });
+  const ri: RingIndex = { xy, n: ring.length, box: ringBox(xy), grid: undefined };
+  ri.grid = ri.n >= GRID_MIN ? edgeGrid(ri) : undefined;
+  return ri;
 }
 
 export function indexPolygon(poly: PolygonGeom): PolygonIndex {
@@ -151,11 +165,13 @@ export function indexPolygon(poly: PolygonGeom): PolygonIndex {
 }
 
 /** The ray-cast step of geometry.ts `inRing` for edge i, a = vertex i, b = the one before. */
-function crosses(x: number, y: number, ring: Ring, i: number): boolean {
-  const a = ring[i] as XY;
-  const b = ring[i === 0 ? ring.length - 1 : i - 1] as XY;
-  if (a[1] > y !== b[1] > y) {
-    const xCross = ((b[0] - a[0]) * (y - a[1])) / (b[1] - a[1]) + a[0];
+function crosses(x: number, y: number, ri: RingIndex, i: number): boolean {
+  const j = prev(ri.n, i);
+  const ay = yOf(ri, i);
+  const by = yOf(ri, j);
+  if (ay > y !== by > y) {
+    const ax = xOf(ri, i);
+    const xCross = ((xOf(ri, j) - ax) * (y - ay)) / (by - ay) + ax;
     return x < xCross;
   }
   return false;
@@ -166,8 +182,8 @@ function inRing(x: number, y: number, ri: RingIndex): boolean {
   let inside = false;
   const g = ri.grid;
   if (!g) {
-    for (let i = 0; i < ri.ring.length; i++) {
-      inside = crosses(x, y, ri.ring, i) ? !inside : inside;
+    for (let i = 0; i < ri.n; i++) {
+      inside = crosses(x, y, ri, i) ? !inside : inside;
     }
     return inside;
   }
@@ -176,7 +192,7 @@ function inRing(x: number, y: number, ri: RingIndex): boolean {
   }
   const r = row(g, y);
   for (let k = g.rowStart[r] as number; k < (g.rowStart[r + 1] as number); k++) {
-    inside = crosses(x, y, ri.ring, g.rowEdges[k] as number) ? !inside : inside;
+    inside = crosses(x, y, ri, g.rowEdges[k] as number) ? !inside : inside;
   }
   return inside;
 }
@@ -185,19 +201,30 @@ export function inPolygon(x: number, y: number, p: PolygonIndex): boolean {
   return inRing(x, y, p.outer) && !p.holes.some((h) => inRing(x, y, h));
 }
 
-/** geometry.ts `segmentRectDistanceUpTo` for edge i. */
-function edgeDistance(ring: Ring, i: number, r: Rect, limit: number): number {
-  const a = ring[i === 0 ? ring.length - 1 : i - 1] as XY;
-  const b = ring[i] as XY;
+// Edge ends handed to geometry.ts, which reads them and keeps no reference.
+const edgeA: [number, number] = [0, 0];
+const edgeB: [number, number] = [0, 0];
+
+/** geometry.ts `segmentRectDistanceUpTo` for edge i, from vertex i - 1 to vertex i. */
+function edgeDistance(ri: RingIndex, i: number, r: Rect, limit: number): number {
+  const j = prev(ri.n, i);
+  const ax = xOf(ri, j);
+  const ay = yOf(ri, j);
+  const bx = xOf(ri, i);
+  const by = yOf(ri, i);
   if (
-    Math.min(a[0], b[0]) > r.maxX + limit ||
-    Math.max(a[0], b[0]) < r.minX - limit ||
-    Math.min(a[1], b[1]) > r.maxY + limit ||
-    Math.max(a[1], b[1]) < r.minY - limit
+    Math.min(ax, bx) > r.maxX + limit ||
+    Math.max(ax, bx) < r.minX - limit ||
+    Math.min(ay, by) > r.maxY + limit ||
+    Math.max(ay, by) < r.minY - limit
   ) {
     return Infinity;
   }
-  return segmentRectDistance(a, b, r);
+  edgeA[0] = ax;
+  edgeA[1] = ay;
+  edgeB[0] = bx;
+  edgeB[1] = by;
+  return segmentRectDistance(edgeA, edgeB, r);
 }
 
 /**
@@ -236,8 +263,8 @@ function ringRectDistance(ri: RingIndex, r: Rect, limit: number): number {
   const b = ri.box;
   let d = Infinity;
   if (!g || !Number.isFinite(limit)) {
-    for (let i = 0; i < ri.ring.length && d > 0; i++) {
-      d = Math.min(d, edgeDistance(ri.ring, i, r, Math.min(limit, d)));
+    for (let i = 0; i < ri.n && d > 0; i++) {
+      d = Math.min(d, edgeDistance(ri, i, r, Math.min(limit, d)));
     }
     return d;
   }
@@ -251,7 +278,7 @@ function ringRectDistance(ri: RingIndex, r: Rect, limit: number): number {
   }
   if (limit === 0) {
     forNearEdges(g, r, 0, (i) => {
-      d = Math.min(d, edgeDistance(ri.ring, i, r, 0));
+      d = Math.min(d, edgeDistance(ri, i, r, 0));
       return d > 0;
     });
     return d;
@@ -260,7 +287,7 @@ function ringRectDistance(ri: RingIndex, r: Rect, limit: number): number {
   forNearEdges(g, r, limit, (i) => near.push(i) > 0);
   near.sort((x, y) => x - y);
   for (let k = 0; k < near.length && d > 0; k++) {
-    d = Math.min(d, edgeDistance(ri.ring, near[k] as number, r, Math.min(limit, d)));
+    d = Math.min(d, edgeDistance(ri, near[k] as number, r, Math.min(limit, d)));
   }
   return d;
 }

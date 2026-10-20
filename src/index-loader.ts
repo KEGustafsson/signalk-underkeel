@@ -38,7 +38,7 @@ export const LOADING_REASON = "loading chart index";
 
 /**
  * A saved pyramid.bin larger than this is read and inflated off the event
- * loop at start; two Nauvo cells (0.42 MB) load in 22 ms on x86, so a file
+ * loop at start; two Nauvo cells (0.56 MB) load in 22 ms on x86, so a file
  * this size blocks about 0.2 s on a Raspberry Pi 4.
  */
 export const SYNC_LOAD_BYTES = 1_000_000;

@@ -27,7 +27,7 @@ export interface ChartIndex {
 /** Object classes kept in the hazard tree so results can name what they hit. */
 const HAZARD_CLASSES = new Set(["UWTROC", "WRECKS", "OBSTRN", "SOUNDG"]);
 
-function isNamedHazard(f: ChartFeature): f is DepthFeature {
+export function isNamedHazard(f: ChartFeature): f is DepthFeature {
   return f.role === "depth" && HAZARD_CLASSES.has(f.objectClass);
 }
 

@@ -53,6 +53,11 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Changed
 
+- The index build in the worker builds the pyramid one z10 root at a time, from only the cells
+  reaching it, on up to four threads, with output byte-identical to a build of all cells at
+  once. Sixteen copies of the Nauvo pair (3.3 M nodes) on x86: peak RSS 817 → 481 MB on one
+  thread; 27.6 → 13.4 s on three threads (974 MB). The default is one thread per core but one,
+  at most four and at most one per GiB of RAM.
 - The hazard R-tree is packed in typed arrays: 1 M soundings take 47 MB of tree instead of
   289 MB and build in 1.3 s instead of 3.1 s on x86. Hazards at the same depth and distance from
   a query are listed in catalogue order.
@@ -61,8 +66,8 @@ All notable changes to signalk-underkeel are documented here.
   columns in place. Two Nauvo cells: load 101 → 22 ms, resident +43 → +16 MB; the same 16
   times over (3.3 M nodes): load 2.4 s → 0.24 s, +490 → +148 MB, lookup 524 → 135 ns. A store
   is no longer limited to the 16.7 M nodes of a V8 `Map`.
-- `pyramid.bin` stores its columns gzip-compressed, 18× fewer bytes written to the SD card per
-  rebuild (7.5 MB → 0.42 MB for two Nauvo cells at leaf zoom 20); an index saved by an earlier
+- `pyramid.bin` stores its columns gzip-compressed, 13× fewer bytes written to the SD card per
+  rebuild (7.5 MB → 0.56 MB for two Nauvo cells at leaf zoom 20); an index saved by an earlier
   version of the plugin is rebuilt once at start.
 - The index build tests each area against a tile through a per-polygon box and edge grid and
   decides "reaches" and "contains" in one boundary pass, with the same nodes byte for byte:
