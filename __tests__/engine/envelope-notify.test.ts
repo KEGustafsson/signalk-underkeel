@@ -7,7 +7,8 @@ import {
 } from "../../src/engine/envelope";
 import type { LookaheadResult } from "../../src/engine/lookahead";
 import { DEFAULT_LOOKAHEAD, evaluateLookahead } from "../../src/engine/lookahead";
-import { notificationFor } from "../../src/engine/notify";
+import { notificationFor, notificationKey } from "../../src/engine/notify";
+import { ChangeNotifier } from "../../src/notifications";
 import { FLAGS } from "../../src/spatial/node-store";
 import { ctx } from "../helpers/engine";
 import { fixtureIndex, M_PER_DEG_LON, ROCK } from "../helpers/fixture-index";
@@ -223,6 +224,46 @@ describe("notification", () => {
     footprints: [],
     escapeHeading: null
   };
+
+  test("the repeat key follows state, reason and hazard, not the countdown", () => {
+    const warn = (reason: string, lnam?: string): LookaheadResult => ({
+      ...base,
+      state: "warn",
+      reason,
+      worst: lnam
+        ? {
+            t: 30,
+            position: [22, 60],
+            explanation: { hazard: { class: "UWTROC", lnam, depth: 1 } } as never
+          }
+        : undefined
+    });
+    const key = (r: LookaheadResult) => notificationKey(r);
+    expect(key(warn("shoal ahead in 117 s", "A"))).toBe(key(warn("shoal ahead in 114 s", "A")));
+    expect(key(warn("shoal ahead in 117 s", "A"))).not.toBe(key(warn("shoal ahead in 117 s", "B")));
+    expect(key(warn("shoal ahead in 117 s"))).not.toBe(
+      key(warn("no chart coverage ahead in 117 s"))
+    );
+    expect(key(warn("shoal ahead in 117 s"))).not.toBe(
+      key({ ...warn("shoal ahead in 117 s"), state: "alarm" })
+    );
+  });
+
+  test("a repeated key waits for the refresh; a new key goes out at once", () => {
+    const sent: unknown[] = [];
+    const notifier = new ChangeNotifier({ handleMessage: (_id, d) => sent.push(d) }, "p");
+    const n = (state: string, message: string) => ({ state, method: [], message });
+    const at = (key: string, now: number) => ({ key, refreshMs: 30_000, now });
+    notifier.send("x", n("warn", "in 117 s"), at("warn", 0));
+    notifier.send("x", n("warn", "in 114 s"), at("warn", 3_000));
+    notifier.send("x", n("warn", "in 90 s"), at("warn", 29_000));
+    expect(sent).toHaveLength(1);
+    notifier.send("x", n("warn", "in 87 s"), at("warn", 30_000));
+    notifier.send("x", n("warn", "in 86 s"), at("warn", 31_000));
+    expect(sent).toHaveLength(2);
+    notifier.send("x", n("alarm", "in 85 s"), at("alarm", 32_000));
+    expect(sent).toHaveLength(3);
+  });
 
   test("normal clears with no method", () => {
     expect(notificationFor(base)).toMatchObject({

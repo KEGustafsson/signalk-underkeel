@@ -624,6 +624,8 @@ fired, the notification holds until SOG stays above 0.5 m/s for 10 s.
 **Deltas.** These are published by the plugin, use plugin-scoped units in SI, and are
 proposed for the Signal K spec later. `state` and `envelopeRev` go out every tick; the other
 values when they change and at least every 10 s, and the plugin status when its text changes.
+`notifications.navigation.underKeel` goes out at once on a new state, kind of reason or named
+hazard, and with only its countdown or terms changed at most every 30 s.
 
 | Path                                         | Unit         | Meaning                                                |
 | -------------------------------------------- | ------------ | ------------------------------------------------------ |

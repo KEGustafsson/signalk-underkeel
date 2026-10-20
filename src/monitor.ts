@@ -8,8 +8,7 @@ import { suppress } from "./engine/acks";
 import { GroundingDetector } from "./engine/grounding-detect";
 import { Hysteresis } from "./engine/hysteresis";
 import { evaluateLookahead } from "./engine/lookahead";
-import type { UnderKeelNotification } from "./engine/notify";
-import { notificationFor } from "./engine/notify";
+import { notificationFor, notificationKey, NOTIFY_REFRESH_MS } from "./engine/notify";
 import type { LonLat } from "./foundation/geo";
 import { PATHS, publishable } from "./foundation/state";
 import type { FetchLike } from "./model/fmi";
@@ -377,7 +376,7 @@ export class Monitor {
       ],
       this.clock.now()
     );
-    this.notify(notificationFor(r));
+    this.notify(r);
     if (this.integrityResult) {
       this.notifier.send(PATHS.positionIntegrity, integrityNotification(this.integrityResult));
     }
@@ -399,9 +398,13 @@ export class Monitor {
     this.status.status(notes.filter((n) => n !== undefined).join(" · "));
   }
 
-  /** Publishes the look-ahead notification only when its state or message changes. */
-  notify(n: UnderKeelNotification): void {
-    this.notifier.send(PATHS.notification, n);
+  /**
+   * Publishes the look-ahead notification at once when its state, reason or
+   * hazard changes, and its countdown at most every NOTIFY_REFRESH_MS.
+   */
+  notify(r: LookaheadResult): void {
+    const repeat = { key: notificationKey(r), refreshMs: NOTIFY_REFRESH_MS, now: this.clock.now() };
+    this.notifier.send(PATHS.notification, notificationFor(r), repeat);
   }
 
   /** `notifications.grounding` from the optional detector (safety invariant 7). */

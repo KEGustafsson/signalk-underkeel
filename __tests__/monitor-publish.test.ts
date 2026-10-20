@@ -3,10 +3,17 @@ import { parseConfig } from "../src/config";
 import type { Clock } from "../src/monitor";
 import { Monitor } from "../src/monitor";
 import { KEEP_ALIVE_MS } from "../src/tick-publisher";
+import { NOTIFY_REFRESH_MS } from "../src/engine/notify";
 import { fixtureIndex, M_PER_DEG_LON, ROCK } from "./helpers/fixture-index";
 import { navDelta, T0, values } from "./helpers/plugin-harness";
 
-/** What a tick publishes: values on change with a keep-alive, and the status on change. */
+/**
+ * What a tick publishes: values on change with a keep-alive, the status on
+ * change, and the look-ahead notification at once on a state or reason
+ * change and its countdown at most every NOTIFY_REFRESH_MS.
+ */
+
+const NOTIFICATION = "notifications.navigation.underKeel";
 
 interface Rig {
   monitor: Monitor;
@@ -122,5 +129,32 @@ describe("tick publishing", () => {
     r.tick(approach(40, T0 + 6000));
     r.tick(approach(39, T0 + 7000));
     expect(r.statuses.at(-1)).toMatch(/^Monitoring: (warn|alarm)/);
+  });
+
+  test("the countdown is refreshed at most every 30 s; a new state goes out at once", () => {
+    const r = rig(false);
+    // From 140 s out the rock is a warn whose countdown drops every tick.
+    let t = 140;
+    r.tick(approach(t, T0 + 1000));
+    r.tick(approach(--t, T0 + 2000));
+    const states = () =>
+      values(r.deltas)
+        .filter((v) => v.path === NOTIFICATION)
+        .map((v) => (v.value as { state: string }).state);
+    const before = states().length;
+    const warnTicks = 25;
+    for (let i = 0; i < warnTicks; i++) {
+      r.tick(approach(--t, T0 + 3000 + i * 1000));
+    }
+    expect(r.monitor.last.state).toBe("warn");
+    expect(states().length - before).toBeLessThanOrEqual(
+      Math.ceil((warnTicks * 1000) / NOTIFY_REFRESH_MS)
+    );
+    // Close in until alarm is published: its notification goes out on that same tick.
+    for (let i = 0; i < 60 && r.monitor.last.state !== "alarm"; i++) {
+      r.tick(approach(--t, T0 + 30_000 + i * 1000));
+    }
+    expect(r.monitor.last.state).toBe("alarm");
+    expect(states().at(-1)).toBe("alarm");
   });
 });

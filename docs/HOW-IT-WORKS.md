@@ -367,7 +367,9 @@ still say what is ahead.
 When the plugin stops it publishes `state` `off` and every other `navigation.underKeel` value as
 `null`, so no reading outlives the monitoring.
 
-The notification is sent only when its state or message changes. Its `data.explanation`
+The notification is sent at once when its state, the kind of reason or the named hazard
+changes. While those hold, a new countdown or term in its message goes out at most every 30 s;
+`navigation.underKeel.timeToShoal` carries the current countdown. Its `data.explanation`
 carries each term of the sentence as a number, plus the deciding chart cell and its edition,
 and the named hazard when one set the depth. The `alarm` from the approach:
 

@@ -78,3 +78,22 @@ export function notificationFor(result: LookaheadResult): UnderKeelNotification 
     }
   };
 }
+
+/**
+ * What a new look-ahead notification must go out for at once: its state,
+ * the engine state, the kind of reason and the hazard named. The seconds
+ * to shoal and the terms in the message change every tick and are sent
+ * at most every NOTIFY_REFRESH_MS while these hold.
+ */
+export function notificationKey(result: LookaheadResult): string {
+  const hazard = result.worst?.explanation.hazard;
+  return [
+    notificationState(result.state),
+    result.state,
+    result.reason.replace(/\d+(\.\d+)?/g, "#"),
+    hazard ? `${hazard.class} ${hazard.lnam ?? ""}` : ""
+  ].join("|");
+}
+
+/** The message of an unchanged look-ahead notification is refreshed this often, ms. */
+export const NOTIFY_REFRESH_MS = 30_000;

@@ -49,21 +49,41 @@ export function stoppedNotification(): UnderKeelNotification {
   };
 }
 
-/** Publishes a notification path only when its state or message changes. */
+/** How a path's notification is compared with the last one sent. */
+export interface Repeat {
+  /** Sent at once when it differs from the last one sent. */
+  key: string;
+  /** A notification with the same key but another message waits this long, ms. */
+  refreshMs: number;
+  now: number;
+}
+
+/**
+ * Publishes a notification path only when its state or message changes,
+ * or with `repeat`, when its key changes, and its message at most every
+ * `refreshMs` while the key holds.
+ */
 export class ChangeNotifier {
-  private readonly last = new Map<string, string>();
+  private readonly last = new Map<
+    string,
+    { state: string; key: string; text: string; at: number }
+  >();
 
   constructor(
     private readonly app: Pick<ServerAPI, "handleMessage">,
     private readonly pluginId: string
   ) {}
 
-  send(path: string, value: NotificationValue): void {
-    const key = `${value.state}|${value.message}`;
-    if (this.last.get(path) === key) {
+  send(path: string, value: NotificationValue, repeat?: Repeat): void {
+    const text = `${value.state}|${value.message}`;
+    const key = repeat?.key ?? text;
+    const now = repeat?.now ?? 0;
+    const last = this.last.get(path);
+    const due = last !== undefined && repeat !== undefined && now - last.at >= repeat.refreshMs;
+    if (last && last.key === key && (last.text === text || !due)) {
       return;
     }
-    this.last.set(path, key);
+    this.last.set(path, { state: value.state, key, text, at: now });
     this.app.handleMessage(this.pluginId, {
       updates: [{ values: [{ path: path as Path, value: value as never }] }]
     });
@@ -72,7 +92,7 @@ export class ChangeNotifier {
   /** Sets a path this notifier raised back to normal; a path it never wrote stays untouched. */
   clear(path: string, message: string): void {
     const last = this.last.get(path);
-    if (last !== undefined && !last.startsWith("normal|")) {
+    if (last !== undefined && last.state !== "normal") {
       this.send(path, { state: "normal", method: [], message });
     }
   }
