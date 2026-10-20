@@ -59,10 +59,13 @@ All notable changes to signalk-underkeel are documented here.
   characters), speeds, drafts, `bufferMetres`, `xteLimit` and `probability` as the plugin
   does, so a request that validates is no longer refused for those fields; size budgets are
   listed in `schemas/navigation-safety/README.md`.
-
 - The status widget changes the page only when a value it shows changes. With three Signal K
   values a second and steady readings it made 549 DOM changes and 99 layouts a minute; now
   none.
+- The extension pages, scripts and styles under `/plotterext/signalk-underkeel/` carry an ETag
+  and are answered 304 when the browser holds them, still with `Cache-Control: no-cache`. A
+  Freeboard reload fetched 56.2 kB of them and now 12.7 kB; a first load 57.5 kB and now
+  36.3 kB, since the three pages share four scripts.
 
 ### Fixed
 
