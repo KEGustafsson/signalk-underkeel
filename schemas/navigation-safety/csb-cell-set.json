@@ -43,7 +43,12 @@
       "minimum": 10,
       "maximum": 22
     },
-    "minZoom": { "type": "integer", "minimum": 0, "maximum": 22 },
+    "minZoom": {
+      "description": "Coarsest zoom in the set, at least 1 (a quadkey has one digit per zoom) and at most leafZoom.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 22
+    },
     "shoalQuantile": {
       "description": "Quantile of the reduced soundings that dShoal reports at the leaf zoom, for example 0.05.",
       "type": "number",

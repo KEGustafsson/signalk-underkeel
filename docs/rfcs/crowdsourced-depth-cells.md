@@ -2,7 +2,8 @@
 
 Status: draft for crowdsourced bathymetry publishers, first Open Waters
 ([crowd-depth](https://github.com/openwatersio/crowd-depth), [seascape](https://github.com/openwatersio/seascape)).
-signalk-underkeel does not read these cells yet.
+The schemas define a publisher format. They are not part of signalk-underkeel's HTTP contract
+or its configured inputs.
 
 ## Motivation
 
@@ -56,10 +57,11 @@ Coarser cells aggregate their children so that zooming out never reads deeper:
 
 `schemas/navigation-safety/csb-cell-set.json` describes one publication: `provider`,
 `licence` (SPDX), `attribution`, `edition`, `issued`, the chart datum as an S-57 `verdat`
-code, `leafZoom`, `minZoom`, `shoalQuantile`, `bbox` and `sources`. It carries either:
+code, `leafZoom`, `minZoom` (`1 ≤ minZoom ≤ leafZoom`), `shoalQuantile`, `bbox` and `sources`.
+It carries `cells`, `tiles`, or both, which then describe the same cells:
 
 - `cells`: an area extract with every cell from `minZoom` to `leafZoom`, for download
-  before a passage; or
+  before a passage;
 - `tiles`: a Mapbox Vector Tiles URL template and layer name, whose features are the cell
   polygons with the cell fields as properties.
 
@@ -81,8 +83,10 @@ Proposed for an ingest beside the ENC and Traficom WFS readers (plan §4.2), off
 
 1. A cell is used only when `reduction` is not `none`, `nPlatforms ≥ 2` and `nDays ≥ 2`
    (both configurable).
-2. It lowers the pyramid where `dShoal < dMin_chart − 2·√(sigmaZ² + sigmaD²)`: the leaf's
-   `dMin` becomes `dShoal` and `sigmaD` becomes at least `sigmaZ`, burnt in with a
+2. `dLeaf` is the leaf's current effective depth: the charted `dMin` after any earlier
+   lowering, such as `LIVECHART_ADJUSTED`. The cell lowers the leaf where
+   `dShoal < dLeaf − 2·√(sigmaZ² + sigmaD²)`: the leaf's `dMin` becomes `min(dLeaf, dShoal)`
+   and `sigmaD` becomes at least `sigmaZ`, burnt in with a
    `2·sigmaXY` position buffer as `SOUNDG` is. The leaf gains a new flag, `CSB_ADJUSTED`.
 3. It never raises a depth and never sets coverage: a leaf with `NO_COVERAGE` stays
    `unverified` in route checks and is never `clear` on the overlay (invariants 1, 4, 5).

@@ -48,11 +48,18 @@ describe("crowdsourced depth cells", () => {
     expect(v.validate("csb-cell.json", { ...parent, quadkey: "120203002131" })).toEqual([]);
   });
 
-  test("a set carries its cells inline or names a tileset", () => {
+  test("a set carries its cells inline, names a tileset, or both", () => {
     expect(v.validate("csb-cell-set.json", { ...SET, cells: [CELL] })).toEqual([]);
     expect(
       v.validate("csb-cell-set.json", {
         ...SET,
+        tiles: { url: "https://tiles.example.org/csb/{z}/{x}/{y}.pbf", layer: "csb" }
+      })
+    ).toEqual([]);
+    expect(
+      v.validate("csb-cell-set.json", {
+        ...SET,
+        cells: [CELL],
         tiles: { url: "https://tiles.example.org/csb/{z}/{x}/{y}.pbf", layer: "csb" }
       })
     ).toEqual([]);
@@ -76,15 +83,17 @@ describe("crowdsourced depth cells", () => {
     ]);
   });
 
-  test("a set's cells, quantile and tile template are checked", () => {
+  test("a set's zoom range, quantile, cells and tile template are checked", () => {
     expect(
       v.validate("csb-cell-set.json", {
         ...SET,
+        minZoom: 0,
         shoalQuantile: 0,
         tiles: { url: "https://tiles.example.org/csb.pbf", layer: "csb" },
         cells: [{ ...CELL, sigmaZ: -0.1 }]
       })
     ).toEqual([
+      "$.minZoom: 0 < 1",
       "$.shoalQuantile: 0 ≤ 0",
       "$.cells[0].sigmaZ: -0.1 < 0",
       '$.tiles.url: "https://tiles.example.org/csb.pbf" does not match \\{z\\}.*\\{x\\}.*\\{y\\}'

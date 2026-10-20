@@ -237,8 +237,11 @@ signalk-underkeel/
    never confidence.
 4. **Crowdsourced depth cells** (proposal, not implemented). IHO CSB soundings aggregated by a
    publisher into Web Mercator cells with counts, dates and σ
-   (`schemas/navigation-safety/csb-cell.json`, `docs/rfcs/crowdsourced-depth-cells.md`). They
-   may lower a leaf (flag `CSB_ADJUSTED`), never raise it, and never add coverage.
+   (`schemas/navigation-safety/csb-cell.json`, `docs/rfcs/crowdsourced-depth-cells.md`). A cell
+   is used only with `reduction` other than `none`, `nPlatforms ≥ 2` and `nDays ≥ 2`; a set
+   whose `verdat` does not map to the water-level source is rejected with a reason on
+   `/status`. A used cell sets the leaf to `min(current dMin, dShoal)` (flag `CSB_ADJUSTED`),
+   never raises it, and never adds coverage.
 
 **S-57 object classes used:**
 
