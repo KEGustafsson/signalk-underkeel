@@ -7,6 +7,37 @@ import { ctx } from "../helpers/engine";
 import { fixtureIndex, M_PER_DEG_LON, ROCK } from "../helpers/fixture-index";
 
 const NOW = 1_800_000_000_000;
+
+function inside(p: readonly number[], ring: number[][]): boolean {
+  let odd = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [ax, ay] = ring[i] as [number, number];
+    const [bx, by] = ring[j] as [number, number];
+    if (ay > (p[1] as number) !== by > (p[1] as number)) {
+      if ((p[0] as number) < ((bx - ax) * ((p[1] as number) - ay)) / (by - ay) + ax) {
+        odd = !odd;
+      }
+    }
+  }
+  return odd;
+}
+
+/** Distance in degrees from p to the ring's edges, longitude scaled at 60° N. */
+function edgeDistance(p: readonly number[], ring: number[][]): number {
+  const k = Math.cos((60 * Math.PI) / 180);
+  let d = Infinity;
+  for (let i = 1; i < ring.length; i++) {
+    const [ax, ay] = ring[i - 1] as [number, number];
+    const [bx, by] = ring[i] as [number, number];
+    const dx = (bx - ax) * k;
+    const dy = by - ay;
+    const px = ((p[0] as number) - ax) * k;
+    const py = (p[1] as number) - ay;
+    const t = Math.max(0, Math.min(1, (px * dx + py * dy) / (dx * dx + dy * dy || 1)));
+    d = Math.min(d, Math.hypot(px - t * dx, py - t * dy));
+  }
+  return d;
+}
 const TH = DEFAULT_LOOKAHEAD.thresholds;
 
 function at(lon: number, lat: number, sog = 3): LookaheadResult {
@@ -65,6 +96,37 @@ describe("envelope", () => {
       const bottom = Math.min(...f.ring.map((p) => p[1]));
       expect(north + lat0).toBeGreaterThanOrEqual(top - tol);
       expect(lat0 - south).toBeLessThanOrEqual(bottom + tol);
+    }
+  });
+
+  test("a 400-footprint horizon keeps the budget and its outline holds every footprint", () => {
+    const opts = { ...DEFAULT_LOOKAHEAD, distance: 5 * 1852, minHorizon: 600 };
+    for (const rot of [0, 0.004]) {
+      const r = evaluateLookahead(
+        {
+          position: { value: [22.003, 60.0125], at: NOW },
+          cog: { value: Math.PI / 2, at: NOW },
+          sog: { value: 0.3, at: NOW },
+          rot: { value: rot, at: NOW }
+        },
+        ctx({ draft: 3.2, length: 12, beam: 4 }),
+        fixtureIndex(),
+        NOW,
+        opts
+      );
+      expect(r.footprints.length).toBe(400);
+      const env = buildEnvelope(r, TH);
+      expect(Buffer.byteLength(JSON.stringify(env))).toBeLessThan(15_000);
+      const rings = env.features
+        .filter((f) => f.properties.kind === "segment")
+        .map((f) => (f.geometry.coordinates as number[][][])[0] as number[][]);
+      // Inside a drawn segment or near its edge: the outline joins each footprint's port and
+      // starboard extremes, so in a turn a hull corner can sit up to 2 m outside it.
+      const near = (p: readonly number[]) =>
+        rings.some((ring) => inside(p, ring) || edgeDistance(p, ring) < 2.5e-5);
+      for (const f of r.footprints) {
+        f.ring.forEach((p) => expect(near(p)).toBe(true));
+      }
     }
   });
 

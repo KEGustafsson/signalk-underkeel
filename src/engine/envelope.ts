@@ -8,9 +8,10 @@ import type { FootprintResult, LookaheadResult, Thresholds, WorstPoint } from ".
  * Look-ahead envelope for `GET /envelope` (plan §4.10): the predicted
  * track, the swept cone split into segments of equal class (clear,
  * caution, danger, unverified), and the worst point with its explanation. Consecutive footprints of one class
- * are merged into one outline, and coordinates are rounded to 1e-5°
- * (about 1 m), so the payload stays within the 15 kB budget (plan §6)
- * however many footprints the horizon holds.
+ * are merged into one outline, vertices in line with their neighbours are
+ * dropped, and coordinates are rounded to 1e-5° (about 1 m), so the payload
+ * stays within the 15 kB budget (plan §6) however many footprints the
+ * horizon holds.
  */
 
 export interface EnvelopeFeature {
@@ -156,6 +157,72 @@ function outline(run: FootprintResult[], all: FootprintResult[], start: number):
   ];
 }
 
+/**
+ * Planar degrees (longitude scaled by cos(latitude)): a vertex this close
+ * to the line through the vertices kept around it is dropped. 1e-7° is
+ * about 1 cm, a hundredth of the 1e-5° the coordinates are rounded to, so
+ * no drawn outline moves by a visible amount.
+ */
+const SIMPLIFY = 1e-7;
+
+function offLine(p: XY, a: XY, b: XY): number {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const len2 = dx * dx + dy * dy;
+  const t =
+    len2 === 0 ? 0 : Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len2));
+  return Math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy));
+}
+
+/**
+ * The ring without the vertices that lie within SIMPLIFY of the outline
+ * of the others (Douglas–Peucker, both halves of the ring). Along a
+ * straight track the sides of consecutive footprints line up, so a long
+ * horizon's outline keeps its corners and turns, not one vertex per
+ * footprint.
+ */
+function simplify(ring: LonLat[], xy: (p: LonLat) => XY): LonLat[] {
+  const n = ring.length;
+  if (n <= 4) {
+    return ring;
+  }
+  const pts = ring.map(xy);
+  const p0 = pts[0] as XY;
+  let far = 0;
+  pts.forEach((p, i) => {
+    if (
+      Math.hypot(p[0] - p0[0], p[1] - p0[1]) >
+      Math.hypot((pts[far] as XY)[0] - p0[0], (pts[far] as XY)[1] - p0[1])
+    ) {
+      far = i;
+    }
+  });
+  const keep = new Uint8Array(n + 1);
+  keep[0] = keep[far] = keep[n] = 1;
+  const at = (i: number) => pts[i % n] as XY;
+  const stack: [number, number][] = [
+    [0, far],
+    [far, n]
+  ];
+  for (let span = stack.pop(); span; span = stack.pop()) {
+    const [a, b] = span;
+    let worst = -1;
+    let max = SIMPLIFY;
+    for (let i = a + 1; i < b; i++) {
+      const d = offLine(at(i), at(a), at(b));
+      if (d > max) {
+        max = d;
+        worst = i;
+      }
+    }
+    if (worst >= 0) {
+      keep[worst] = 1;
+      stack.push([a, worst], [worst, b]);
+    }
+  }
+  return ring.filter((_, i) => keep[i] === 1);
+}
+
 function segmentFeature(
   run: FootprintResult[],
   all: FootprintResult[],
@@ -165,7 +232,7 @@ function segmentFeature(
 ): EnvelopeFeature {
   const first = run[0] as FootprintResult;
   const last = run[run.length - 1] as FootprintResult;
-  const ring = outline(run, all, start).map(qp);
+  const ring = simplify(outline(run, all, start), planar(first.center)).map(qp);
   ring.push(ring[0] as number[]);
   const means = run.map((f) => f.mean).filter((u): u is number => u !== null);
   const minMean = means.length > 0 ? Math.min(...means) : null;
