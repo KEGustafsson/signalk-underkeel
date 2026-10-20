@@ -3,6 +3,8 @@ import type { Catzoc, ChartFeature } from "../../src/ingest/features";
 import { FLAGS } from "../../src/spatial/node-store";
 import { footprintGeom, minDepthOver } from "../../src/spatial/pyramid";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
+import { deserializePyramid, serializePyramid } from "../../src/spatial/store";
+import { fromMercator, tileAt, tileRect, toMercator } from "../../src/foundation/geo";
 import type { Box } from "../helpers/synthetic";
 import { area, boxRing, coverage, point, quality } from "../helpers/synthetic";
 
@@ -121,6 +123,59 @@ const boxArb = fc.tuple(frac, frac, frac, frac).map(([a, b, c, d]): Box => {
   ];
 });
 
+describe("leaves only partly in an assessed survey", () => {
+  test("a drying area in a leaf on the coverage edge is reached from B water 7 m off", () => {
+    // fast-check counterexample: the area's leaf is partly outside coverage and quality.
+    const domain: Box = [W, S, W + SPAN_LON, S + SPAN_LAT];
+    const features = [
+      coverage(domain),
+      quality([W, S, W + SPAN_LON, S + SPAN_LAT / 3], 3),
+      quality([W, S + SPAN_LAT / 3, W + SPAN_LON, S + (2 * SPAN_LAT) / 3], 1),
+      quality([W, S + (2 * SPAN_LAT) / 3, W + SPAN_LON, S + SPAN_LAT], 1),
+      area(domain, 30),
+      area([22, 60, 22.00001, 60.00001], 0)
+    ];
+    const store = buildPyramid(features, { minZoom: 13, leafZoom: 17 });
+    const q: Box = [22.00012207031249, 60, 22.00013207031249, 60.00001];
+    const r = minDepthOver(store, footprintGeom(boxRing(q)), { chartReachK: 2 });
+    expect(r.dMin).toBeLessThanOrEqual(0);
+  });
+
+  test("a drying area in a leaf straddling B and U water is reached from B water 40 m off", () => {
+    // A z20 leaf the B/U boundary cuts in half; the patch lies in its B half.
+    const at: [number, number] = [22.03, 60.015];
+    const [mx, my] = toMercator(at[0], at[1]);
+    const leaf = tileAt(20, mx, my);
+    const r20 = tileRect(20, leaf.x, leaf.y);
+    const [west, south] = fromMercator(r20.minX, r20.minY);
+    const [east, north] = fromMercator(r20.maxX, r20.maxY);
+    const seam = (west + east) / 2;
+    const midLat = (south + north) / 2;
+    const patch: Box = [
+      west + (seam - west) / 4,
+      midLat - 0.00002,
+      seam - (seam - west) / 4,
+      midLat
+    ];
+    const features = [
+      coverage(BOX),
+      quality([BOX[0], BOX[1], seam, BOX[3]], 3),
+      quality([seam, BOX[1], BOX[2], BOX[3]], 6),
+      area(BOX, 15),
+      area(patch, -1)
+    ];
+    const store = buildPyramid(features, { minZoom: 12, leafZoom: 20 });
+    const from: [number, number] = [patch[0] - 40 / M_PER_DEG_LON, midLat];
+    const r = minDepthOver(store, footprintGeom([from]), { chartReachK: 2 });
+    expect(r.dMin).toBe(-1);
+    // Without the chart's position the patch is out of reach.
+    expect(minDepthOver(store, footprintGeom([from])).dMin).toBe(15);
+    // The survey σP column survives a save and reload.
+    const reloaded = deserializePyramid(serializePyramid(store));
+    expect(minDepthOver(reloaded, footprintGeom([from]), { chartReachK: 2 })).toEqual(r);
+  });
+});
+
 describe("chart position reach conservativeness (property)", () => {
   test("minDepthOver ≤ every area within the buffer plus k·σP of its survey", () => {
     const catzoc = fc.constantFrom<Catzoc>(1, 2, 3, 4, 6);
@@ -164,7 +219,7 @@ describe("chart position reach conservativeness (property)", () => {
           expect(r.dMin).toBeLessThanOrEqual(oracle);
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 200 }
     );
   });
 });

@@ -88,6 +88,13 @@ export class NodeStore {
   dMin = new Float64Array(1024);
   sigmaD = new Float32Array(1024);
   sigmaP = new Float32Array(1024);
+  /**
+   * Widest σP of the assessed, non-advisory quality zones reaching the node
+   * (for a split node, reaching any leaf under it): its chart position
+   * reach. Unlike `sigmaP` it leaves out unassessed water's configured guess,
+   * but not the assessed part of a leaf that is only partly assessed.
+   */
+  surveySigmaP = new Float32Array(1024);
   flags = new Uint16Array(1024);
   cellRef = new Int32Array(1024);
   split = new Uint8Array(1024);
@@ -118,6 +125,7 @@ export class NodeStore {
     this.dMin = g(this.dMin, (n) => new Float64Array(n));
     this.sigmaD = g(this.sigmaD, (n) => new Float32Array(n));
     this.sigmaP = g(this.sigmaP, (n) => new Float32Array(n));
+    this.surveySigmaP = g(this.surveySigmaP, (n) => new Float32Array(n));
     this.flags = g(this.flags, (n) => new Uint16Array(n));
     this.cellRef = g(this.cellRef, (n) => new Int32Array(n));
     this.split = g(this.split, (n) => new Uint8Array(n));
@@ -132,7 +140,14 @@ export class NodeStore {
   }
 
   /** Stores tile (z, x, y); `split` marks a node whose children are stored too. */
-  add(z: number, x: number, y: number, v: NodeValues, split: boolean): number {
+  add(
+    z: number,
+    x: number,
+    y: number,
+    v: NodeValues,
+    split: boolean,
+    surveySigmaP: number
+  ): number {
     if (this.count === this.dMin.length) {
       this.grow();
     }
@@ -140,6 +155,7 @@ export class NodeStore {
     this.dMin[i] = v.dMin;
     this.sigmaD[i] = v.sigmaD;
     this.sigmaP[i] = v.sigmaP;
+    this.surveySigmaP[i] = surveySigmaP;
     this.flags[i] = v.flags;
     this.cellRef[i] = v.cellRef;
     this.split[i] = split ? 1 : 0;

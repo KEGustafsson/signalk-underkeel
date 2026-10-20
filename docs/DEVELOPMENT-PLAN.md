@@ -272,6 +272,7 @@ interface Cell {
   dMin: number; // conservative charted depth (m below chart datum), -Inf = land
   sigmaD: number; // 1σ depth uncertainty from CATZOC/SOUACC (m)
   sigmaP: number; // 1σ horizontal uncertainty of the source (m) from CATZOC/POSACC
+  surveySigmaP: number; // widest σP of the assessed quality zones reaching it (chart reach)
   flags: number; // SWEPT | NO_COVERAGE | UNASSESSED | DREDGED | LIVECHART_ADJUSTED
   cellRef: number; // index into cells.json (edition provenance)
 }
@@ -307,9 +308,12 @@ Expected cost is about 50 to 300 cell visits per look-ahead footprint.
 each tile within the query buffer plus `k·σP` of that tile's own survey, at most 1000 m
 (`spatial/chart-position.ts`). A drying area drawn 60 m off a footprint in CATZOC B water
 (σP 25 m) is therefore in reach, while an A1 rock beside it is not widened by C water
-elsewhere in the query. A split tile prunes its subtree by the widest σP of the assessed leaves
-under it, so the walk descends wherever any leaf may reach and nowhere else. Unassessed and
-`NOT_FOR_NAVIGATION` tiles add no reach: their flags already make a leg `unverified`, a query
+elsewhere in the query. A leaf's reach comes from `surveySigmaP`, the widest σP of the
+assessed, non-advisory quality zones reaching it, so a leaf only partly assessed (at a coverage
+edge or between a B and a U zone) keeps the reach of its assessed part; `sigmaP` would also hold
+the unassessed guess. A split tile stores the widest of its leaves and prunes its subtree by
+it, so the walk descends wherever any leaf may reach and nowhere else. Unassessed water and
+Traficom WFS water add no reach: their flags already make a leg `unverified`, a query
 never `clear` and the look-ahead never `normal`, and the unassessed σP of 500 m would make
 nearly every leg over WFS water `fail` on land within 1 km that the data does not put there. A
 point hazard is counted twice this way, burned and reached, which errs on the shallow side: a

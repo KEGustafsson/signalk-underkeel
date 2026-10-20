@@ -7,6 +7,7 @@ import { parseConfig } from "../src/config";
 import { stepFor, DEFAULT_LOOKAHEAD } from "../src/engine/lookahead";
 import underkeel = require("../src/index");
 import { tileAt, toMercator } from "../src/foundation/geo";
+import { PYRAMID_VERSION } from "../src/spatial/store";
 import { FIXTURES, M_PER_DEG_LON, ROCK } from "./helpers/fixture-index";
 import { decodeMvt } from "./helpers/mvt-decode";
 import {
@@ -716,7 +717,7 @@ describe("index loader", () => {
       const buf = fs.readFileSync(file);
       const nl = buf.indexOf(0x0a);
       const header = JSON.parse(buf.subarray(0, nl).toString("utf8")) as { version: number };
-      const old = Buffer.from(JSON.stringify({ ...header, version: 1 }), "utf8");
+      const old = Buffer.from(JSON.stringify({ ...header, version: PYRAMID_VERSION - 1 }), "utf8");
       fs.writeFileSync(file, Buffer.concat([old, buf.subarray(nl)]));
       const again = loadOrBuildIndex(cfg, dir);
       expect(again.built).toBe(true);

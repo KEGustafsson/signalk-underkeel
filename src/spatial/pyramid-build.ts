@@ -359,6 +359,27 @@ function uniformValues(a: Analysis, rect: Rect, opts: BuildOptions): NodeValues 
   };
 }
 
+/**
+ * Chart position σP of a leaf: the widest of the assessed, non-advisory
+ * quality zones reaching it, however much of it they cover.
+ */
+function surveySigma(hits: Hit[], opts: BuildOptions): number {
+  let sigmaP = 0;
+  for (const h of hits) {
+    const f = h.item.f;
+    if (f.role === "quality" && f.catzoc !== 6 && !f.advisory) {
+      sigmaP = Math.max(sigmaP, sigmaFor(f.catzoc, 0, f, opts.quality).sigmaP);
+    }
+  }
+  return sigmaP;
+}
+
+interface Evaluated {
+  v: NodeValues;
+  /** Widest leaf `surveySigma` under the node. */
+  survey: number;
+}
+
 function evaluate(
   store: NodeStore,
   opts: BuildOptions,
@@ -366,32 +387,36 @@ function evaluate(
   x: number,
   y: number,
   items: Item[]
-): NodeValues {
+): Evaluated {
   const rect = tileRect(z, x, y);
   const all = classify(items, rect);
   if (!all.some((h) => h.item.f.role === "coverage")) {
-    store.add(z, x, y, NO_DATA, false);
-    return NO_DATA;
+    store.add(z, x, y, NO_DATA, false, 0);
+    return { v: NO_DATA, survey: 0 };
   }
   const tileGround = (rect.maxX - rect.minX) / groundToMercator(1, maxAbsLat(rect));
   const a = analyse(all, rect, tileGround);
   if (!a.needsSplit || z === opts.leafZoom) {
     const v = uniformValues(a, rect, opts);
-    store.add(z, x, y, v, false);
-    return v;
+    const survey = surveySigma(a.hits, opts);
+    store.add(z, x, y, v, false, survey);
+    return { v, survey };
   }
   const passed = forChildren(all, a);
   let v = EMPTY;
+  let survey = 0;
   for (const [dx, dy] of [
     [0, 0],
     [1, 0],
     [0, 1],
     [1, 1]
   ] as const) {
-    v = combine(v, evaluate(store, opts, z + 1, 2 * x + dx, 2 * y + dy, passed));
+    const child = evaluate(store, opts, z + 1, 2 * x + dx, 2 * y + dy, passed);
+    v = combine(v, child.v);
+    survey = Math.max(survey, child.survey);
   }
-  store.add(z, x, y, v, true);
-  return v;
+  store.add(z, x, y, v, true, survey);
+  return { v, survey };
 }
 
 /**

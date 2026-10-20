@@ -67,7 +67,9 @@ All notable changes to signalk-underkeel are documented here.
   rest, at most 1 km), since depth areas and lines are not widened when the index is built;
   unassessed and not-for-navigation water adds none and stays `unverified`. A drying area 60 m
   off a leg or a footprint in CATZOC B or C water returned `ok` or `normal` with P = 0, and a
-  poor survey anywhere in reach no longer widens the buffer for a well-surveyed rock.
+  poor survey anywhere in reach no longer widens the buffer for a well-surveyed rock. A leaf
+  only partly in an assessed survey, at a coverage edge or between a B and a U zone, keeps the
+  reach of its assessed part.
 - UKC tiles draw each cell at least as bad as any cell within 2·σP of its assessed survey, the
   reach a route check counts: water 60 m from a drying area in CATZOC B or C water was drawn
   `clear` while a route check there failed.
@@ -117,8 +119,9 @@ All notable changes to signalk-underkeel are documented here.
   look-ahead is never normal. `scripts/enc-to-geojson.sh` exports these layers. Before, such an
   area inside a cell's coverage took the depth of any nearby sounding's burn disc; now any
   covered place no depth area reaches has no depth.
-- The saved pyramid format is now version 2, and a saved index of an older version is rebuilt
-  at start when cells are configured, so an index built before the fixes above is not reused.
+- The saved pyramid format is now version 3, with a column for each node's assessed survey σP,
+  and a saved index of an older version is rebuilt at start when cells are configured, so an
+  index built before the fixes above is not reused.
 - A rock, wreck or obstruction without `VALSOU` that covers and uncovers (`WATLEV` 4) or is
   subject to inundation (`WATLEV` 6) counts as land, like `WATLEV` 1 and 2. It was taken as
   0 m at chart datum, deeper than a hazard that dries at low water.
