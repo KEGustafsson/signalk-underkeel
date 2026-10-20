@@ -9,7 +9,7 @@ import {
 import { MAX_BODY_BYTES, readJsonBody } from "../../src/api/routes";
 import { parseConfig } from "../../src/config";
 import type { RouteServiceDeps } from "../../src/route-service";
-import { routeCheck } from "../../src/route-service";
+import { RequestQueue, routeCheck } from "../../src/route-service";
 import { fixtureIndex } from "../helpers/fixture-index";
 
 const LINE = {
@@ -146,6 +146,7 @@ function deps(over: Partial<RouteServiceDeps> = {}): RouteServiceDeps {
         ? Promise.resolve({ feature: { geometry: LINE } })
         : Promise.reject(new Error("nope")),
     now: () => Date.parse("2026-10-18T07:00:00Z"),
+    queue: new RequestQueue(),
     ...over
   };
 }

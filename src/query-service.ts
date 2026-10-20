@@ -4,6 +4,7 @@ import { parseQueryRequest } from "./api/query-request";
 import type { ApiReply, TileReply } from "./api/routes";
 import type { TileInputs, UkcTileChanges } from "./api/ukc-tile-changes";
 import type { PluginConfig } from "./config";
+import type { RequestQueue } from "./route-service";
 import { queryUkc } from "./engine/query";
 import type { UkcTileInput } from "./engine/ukc-tiles";
 import { ukcTileWithRange } from "./engine/ukc-tiles";
@@ -33,7 +34,13 @@ function unavailable(deps: QueryServiceDeps): ApiReply | undefined {
   return undefined;
 }
 
-export function query(body: unknown, deps: QueryServiceDeps): ApiReply {
+/** Runs in `queue`, since a large polygon can take some milliseconds on the event loop. */
+export async function query(
+  body: unknown,
+  deps: QueryServiceDeps,
+  queue: RequestQueue,
+  client: AbortSignal
+): Promise<ApiReply> {
   const parsed = parseQueryRequest(body);
   if (!parsed.ok) {
     return { status: 400, body: { errors: parsed.errors } };
@@ -54,14 +61,19 @@ export function query(body: unknown, deps: QueryServiceDeps): ApiReply {
     { speed: req.speed ?? 0, waveHeight: deps.waveHeight() },
     deps.config.dynamics
   );
-  const result = queryUkc(deps.index as ChartIndex, {
-    ring: req.ring,
-    bufferMetres: req.bufferMetres ?? 0,
-    terms,
-    waterLevel: deps.waterLevel(),
-    thresholds: deps.config.lookahead.thresholds
-  });
-  return { status: 200, body: result };
+  const index = deps.index as ChartIndex;
+  return await queue.run(client, () =>
+    Promise.resolve({
+      status: 200,
+      body: queryUkc(index, {
+        ring: req.ring,
+        bufferMetres: req.bufferMetres ?? 0,
+        terms,
+        waterLevel: deps.waterLevel(),
+        thresholds: deps.config.lookahead.thresholds
+      })
+    })
+  );
 }
 
 const MVT_TYPE = "application/vnd.mapbox-vector-tile";

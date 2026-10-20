@@ -14,6 +14,7 @@ import { CHART_DATUM } from "./model/water-level";
 import type { QueryServiceDeps } from "./query-service";
 import { query, ukcTileChangesReply, ukcTileReply } from "./query-service";
 import type { RouteServiceDeps } from "./route-service";
+import type { RequestQueue } from "./route-service";
 import { departureWindowReply, routeCheck, routeRepair } from "./route-service";
 import { statusReport } from "./status-report";
 import type { LivechartService } from "./livechart-service";
@@ -30,6 +31,8 @@ export interface PluginState {
   livechart?: LivechartService;
   wfs?: WfsService;
   stopped: EngineStatus;
+  /** The heavy REST work, aborted when the plugin stops. */
+  requests: RequestQueue;
 }
 
 const NOT_STARTED: ApiReply = { status: 503, body: { errors: ["plugin not started"] } };
@@ -57,7 +60,8 @@ export function apiFor(
     waterLevel: (start, end, at) => s.monitor?.waterLevelOver(start, end, at) ?? CHART_DATUM,
     waveHeight: () => s.monitor?.nav.waveHeight?.value,
     getRoute: (id) => app.resourcesApi.getResource("routes", id),
-    now: () => clock.now()
+    now: () => clock.now(),
+    queue: s.requests
   });
   const withAcks = (fn: (deps: AckServiceDeps) => ApiReply): ApiReply => {
     const m = s.monitor;
@@ -75,8 +79,9 @@ export function apiFor(
     });
   };
   return {
-    status: () =>
+    status: (summary) =>
       statusReport({
+        summary,
         load: s.load,
         monitor: s.monitor,
         stopped: s.stopped,
@@ -89,10 +94,10 @@ export function apiFor(
       s.monitor
         ? { rev: s.monitor.envelope.rev, envelope: s.monitor.envelope.envelope }
         : { rev: 0, envelope: { type: "FeatureCollection", features: [] } },
-    routeCheck: (body) => routeCheck(body, routeDeps()),
-    routeRepair: (body) => routeRepair(body, routeDeps()),
-    departureWindow: (body) => departureWindowReply(body, routeDeps()),
-    query: (body) => query(body, queryDeps()),
+    routeCheck: (body, signal) => routeCheck(body, routeDeps(), signal),
+    routeRepair: (body, signal) => routeRepair(body, routeDeps(), signal),
+    departureWindow: (body, signal) => departureWindowReply(body, routeDeps(), signal),
+    query: (body, signal) => query(body, queryDeps(), s.requests, signal),
     ukcTile: (z, x, y) => ukcTileReply(z, x, y, queryDeps()),
     ukcTileChanges: (q) => ukcTileChangesReply(q, queryDeps()),
     ukcStyle,

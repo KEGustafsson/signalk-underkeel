@@ -1,12 +1,15 @@
+import fc from "fast-check";
 import { departureWindow } from "../../src/engine/departure-window";
-import type { RouteCheckInput } from "../../src/engine/route-check";
-import { checkRoute } from "../../src/engine/route-check";
+import type { LegResult, RouteCheckInput } from "../../src/engine/route-check";
+import { checkLeg, checkRoute } from "../../src/engine/route-check";
 import { DEFAULT_REPAIR, repairLeg, repairRoute, simplify } from "../../src/engine/route-repair";
 import type { LonLat } from "../../src/foundation/geo";
+import { haversine } from "../../src/foundation/geo";
 import { DEFAULT_DYNAMICS } from "../../src/model/vessel";
 import type { WaterLevel } from "../../src/model/uncertainty";
 import type { ChartIndex } from "../../src/spatial/chart-index";
 import { HazardIndex } from "../../src/spatial/hazards";
+import * as pyramid from "../../src/spatial/pyramid";
 import { footprintGeom, minDepthOver } from "../../src/spatial/pyramid";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
 import { area, basin, coverage, quality } from "../helpers/synthetic";
@@ -24,6 +27,17 @@ function shoalIndex(): ChartIndex {
       { minZoom: 12, leafZoom: 18 }
     ),
     hazards: new HazardIndex([])
+  };
+}
+
+/** The 10 m basin with one more feature. */
+function shoalIndexWith(feature: ReturnType<typeof area>): ChartIndex {
+  return {
+    ...shoalIndex(),
+    pyramid: buildPyramid([...basin([22.0, 60.0, 22.06, 60.03], 10), feature], {
+      minZoom: 12,
+      leafZoom: 18
+    })
   };
 }
 
@@ -67,6 +81,31 @@ describe("route repair", () => {
     // Existing points are not moved: the repair starts and ends on the leg's own ends.
     expect(repair?.legs[0]?.from).toEqual(LEG[0]);
     expect(repair?.legs.at(-1)?.to).toEqual(LEG[1]);
+  });
+
+  test("one leg's search lets other work in between slices of a few hundred cells", async () => {
+    // A long leg whose shoal fills most of the grid's width, so the search expands many cells.
+    const wall = shoalIndexWith(area([22.02, 60.004, 22.04, 60.026], 1));
+    const queries = jest.spyOn(pyramid, "minDepthOver");
+    const slices: number[] = [];
+    let last = 0;
+    const pause = () => {
+      slices.push(queries.mock.calls.length - last);
+      last = queries.mock.calls.length;
+      return Promise.resolve();
+    };
+    const leg = input([
+      [22.005, 60.015],
+      [22.055, 60.015]
+    ]);
+    const { repairs } = await repairRoute(wall, leg, DEFAULT_REPAIR, pause);
+    queries.mockRestore();
+    const checked = checkRoute(wall, leg, NOW).legs[0] as LegResult;
+    expect(repairs).toEqual([repairLeg(wall, leg, checked)]);
+    const total = slices.reduce((a, b) => a + b, 0);
+    expect(total).toBeGreaterThan(1000);
+    // 256 expansions of up to 8 neighbours each, and the cells along their lines of sight.
+    expect(Math.max(...slices)).toBeLessThan(total / 3);
   });
 
   test("legs that pass are left alone", async () => {
@@ -232,6 +271,79 @@ describe("departure window", () => {
     expect(w.checks).toBeLessThanOrEqual(3);
   });
 
+  test("a departure checks no leg after its first failing one, and its status is unchanged", async () => {
+    // The shoal leg first, then three legs in open water; the level falls 1 cm per departure.
+    const route: LonLat[] = [...LEG, [22.05, 60.025], [22.01, 60.025], [22.01, 60.005]];
+    const falling = (s: number): WaterLevel => ({
+      h: -0.5 - Math.floor((s - NOW) / (15 * 60_000)) / 100,
+      sigma: 0.05,
+      source: "manual"
+    });
+    const r = input(route, { waterLevel: falling });
+    const w = await departureWindow(index, r, NOW, NOW + 4 * HOUR, 15 * 60_000);
+    expect(w.steps.map((s) => s.status)).toEqual(
+      directStatuses(index, r, NOW, NOW + 4 * HOUR, 15 * 60_000)
+    );
+    expect(w.steps.every((s) => s.status === "fail")).toBe(true);
+    expect(w.checks).toBeLessThanOrEqual(w.steps.length);
+  });
+
+  test("reusing a leg's result at another water level never differs from checking it directly", async () => {
+    const route: LonLat[] = [...LEG, [22.03, 60.025], [22.03, 60.005]];
+    const step = 15 * 60_000;
+    await fc.assert(
+      fc.asyncProperty(
+        // Levels a few centimetres apart, so legs change status between departures.
+        fc.integer({ min: -80, max: 200 }),
+        fc.array(fc.integer({ min: -12, max: 12 }), { minLength: 9, maxLength: 9 }),
+        fc.integer({ min: 1, max: 30 }),
+        fc.integer({ min: 0, max: 1000 }),
+        fc.integer({ min: 20, max: 250 }),
+        async (base, offsets, sigmaCm, pExp, draftCm) => {
+          const level = (s: number): WaterLevel => ({
+            h: (base + (offsets[Math.min(8, Math.floor((s - NOW) / step))] as number)) / 100,
+            sigma: sigmaCm / 100,
+            source: "manual"
+          });
+          const r = input(route, {
+            vessel: { draft: draftCm / 100, length: 6, beam: 2 },
+            waterLevel: level,
+            // 1e-3..0.5: the range in which results are reused across levels.
+            probability: 10 ** (-3 + (2.7 * pExp) / 1000)
+          });
+          const w = await departureWindow(index, r, NOW, NOW + 8 * step, step);
+          expect(w.steps.map((s) => s.status)).toEqual(
+            directStatuses(index, r, NOW, NOW + 8 * step, step)
+          );
+        }
+      ),
+      { numRuns: 60 }
+    );
+  });
+
+  test("a leg ok at one level is ok at a higher one without a new check", async () => {
+    const step = 15 * 60_000;
+    // Rising 10 cm per departure from well above the shoal's depth.
+    const rising = (s: number): WaterLevel => ({
+      h: 1.5 + Math.floor((s - NOW) / step) / 10,
+      sigma: 0.05,
+      source: "manual"
+    });
+    const r = input(LEG, { vessel: shallow, waterLevel: rising });
+    const w = await departureWindow(index, r, NOW, NOW + 8 * step, step);
+    expect(w.steps.every((s) => s.status === "ok")).toBe(true);
+    expect(w.checks).toBe(1);
+    // Below 1e-3 every level is checked directly.
+    const strict = await departureWindow(
+      index,
+      { ...r, probability: 1e-4 },
+      NOW,
+      NOW + 8 * step,
+      step
+    );
+    expect(strict.checks).toBe(9);
+  });
+
   test("a fallback water level is never a window", async () => {
     const fallback = {
       h: 0,
@@ -243,3 +355,36 @@ describe("departure window", () => {
     expect((await departureWindow(index, route, NOW, NOW + HOUR, 15 * 60_000)).windows).toEqual([]);
   });
 });
+
+const RANK = { ok: 0, marginal: 1, unverified: 2, fail: 3 } as const;
+
+/** Each departure's worst leg status, every leg checked at its own level, rounded as the window rounds it. */
+function directStatuses(
+  index: ChartIndex,
+  route: RouteCheckInput,
+  from: number,
+  to: number,
+  stepMs: number
+): string[] {
+  const out: string[] = [];
+  for (let t = from; t <= to; t += stepMs) {
+    let start = t;
+    let worst: keyof typeof RANK = "ok";
+    for (let i = 0; i + 1 < route.coordinates.length; i++) {
+      const a = route.coordinates[i] as LonLat;
+      const b = route.coordinates[i + 1] as LonLat;
+      const end = start + (haversine(a, b) / (route.speeds[i] as number)) * 1000;
+      const wl = route.waterLevel(start, end + stepMs, [a, b]);
+      const level = {
+        ...wl,
+        h: Math.floor(wl.h * 100) / 100,
+        sigma: Math.ceil(wl.sigma * 100) / 100
+      };
+      const status = checkLeg(index, { ...route, waterLevel: () => level }, i, start).leg.status;
+      worst = RANK[status] > RANK[worst] ? status : worst;
+      start = end;
+    }
+    out.push(worst);
+  }
+  return out;
+}
