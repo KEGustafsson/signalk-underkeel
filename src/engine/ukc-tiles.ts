@@ -1,13 +1,11 @@
-import type { Rect } from "../foundation/geo";
-import { rectGap, tileRect, tileSize } from "../foundation/geo";
 import { normalCdf, probabilityBelowZero } from "../foundation/stats";
-import { reachersOf } from "../spatial/chart-position";
 import type { NodeStore, NodeValues } from "../spatial/node-store";
 import { FLAGS } from "../spatial/node-store";
-import { DEFAULT_BUILD } from "../spatial/pyramid-build";
-import type { TileCell } from "../spatial/tile-walk";
-import { cellsInTile } from "../spatial/tile-walk";
 import type { Thresholds } from "./lookahead";
+import type { TileGeometry, UkcTileCache } from "./ukc-tile-geometry";
+import { DETAIL_ZOOMS, MASK_WORDS, SLOTS, tileGeometry } from "./ukc-tile-geometry";
+
+export { DETAIL_ZOOMS };
 
 /**
  * UKC overlay (plan §4.10): every pyramid cell in a web-map tile classed by
@@ -36,9 +34,6 @@ export interface UkcTileInput {
   /** The water level is a fallback: nothing is drawn as clear. */
   degraded: boolean;
 }
-
-/** Cells per tile side at most: 2^6 = 64. */
-export const DETAIL_ZOOMS = 6;
 
 const UNVERIFIED = FLAGS.NO_COVERAGE | FLAGS.UNASSESSED | FLAGS.NO_DEPTH | FLAGS.NOT_FOR_NAVIGATION;
 
@@ -176,79 +171,106 @@ const BY_RANK = ["clear", "caution", "unverified", "danger"] as const;
 
 type WaterClass = keyof typeof RANK;
 
-/** Cells per tile side of the reach grid: one per drawing cell at the finest zoom. */
-const SLOTS = 2 ** DETAIL_ZOOMS;
-
 /**
- * The worst class reaching each slot of a SLOTS × SLOTS grid over the tile,
- * rows from the north edge. Land reaching a slot reads as danger, since a
- * footprint there would count it.
+ * The worst rank reaching each slot of the reach grid, from the rank of each
+ * kind. Land reaching a slot reads as danger, since a footprint there would
+ * count it.
  */
-function reachGrid(
-  store: NodeStore,
-  tile: Rect,
-  z: number,
-  input: UkcTileInput,
-  range: ThresholdRange | undefined
-): Uint8Array | undefined {
-  const reachers = reachersOf(store, tile, DEFAULT_BUILD.k, z + DETAIL_ZOOMS);
+function reachGrid(g: TileGeometry, ranks: Uint8Array): Uint8Array | undefined {
   let grid: Uint8Array | undefined;
-  const slot = tileSize(z) / SLOTS;
-  const clamp = (v: number): number => Math.max(0, Math.min(SLOTS - 1, Math.floor(v)));
-  for (const r of reachers) {
-    const cls = classed(r.values, input, r.bound, range);
-    const rank = cls === undefined ? 0 : cls === "land" ? RANK.danger : RANK[cls];
+  for (let m = 0; m < g.reachKind.length; m++) {
+    const rank = ranks[g.reachKind[m] as number] as number;
     if (rank === 0) {
       continue;
     }
     grid ??= new Uint8Array(SLOTS * SLOTS);
-    const i0 = clamp((r.rect.minX - r.reach - tile.minX) / slot);
-    const i1 = clamp((r.rect.maxX + r.reach - tile.minX) / slot);
-    const j0 = clamp((tile.maxY - r.rect.maxY - r.reach) / slot);
-    const j1 = clamp((tile.maxY - r.rect.minY + r.reach) / slot);
-    for (let j = j0; j <= j1; j++) {
-      const maxY = tile.maxY - j * slot;
-      for (let i = i0; i <= i1; i++) {
-        const k = j * SLOTS + i;
-        if ((grid[k] as number) >= rank) {
-          continue;
-        }
-        const minX = tile.minX + i * slot;
-        const s = { minX, minY: maxY - slot, maxX: minX + slot, maxY };
-        if (rectGap(s, r.rect) <= r.reach) {
+    for (let w = 0; w < MASK_WORDS; w++) {
+      let bits = (g.reachMask[m * MASK_WORDS + w] as number) | 0;
+      while (bits !== 0) {
+        const low = bits & -bits;
+        const k = w * 32 + 31 - Math.clz32(low);
+        if ((grid[k] as number) < rank) {
           grid[k] = rank;
         }
+        bits ^= low;
       }
     }
   }
   return grid;
 }
 
+/** Classes in the order the drawn rectangles are sorted by: their names' order. */
+const BY_NAME: UkcClass[] = ["caution", "clear", "danger", "land", "unverified"];
+const NAME_ORDER = new Map(BY_NAME.map((c, i) => [c, i]));
+const RANK_NAME = BY_RANK.map((c) => NAME_ORDER.get(c) as number);
+
+/** Rectangles as columns, reused across tiles: `cls` is the index in BY_NAME. */
+class RectColumns {
+  n = 0;
+  cls = new Uint8Array(0);
+  x0 = new Float64Array(0);
+  y0 = new Float64Array(0);
+  x1 = new Float64Array(0);
+  y1 = new Float64Array(0);
+  order = new Uint32Array(0);
+  key = new Float64Array(0);
+
+  /** Empties the columns, with room for `cap` rectangles. */
+  reset(cap: number): void {
+    this.n = 0;
+    if (this.cls.length < cap) {
+      Object.assign(this, {
+        cls: new Uint8Array(cap),
+        x0: new Float64Array(cap),
+        y0: new Float64Array(cap),
+        x1: new Float64Array(cap),
+        y1: new Float64Array(cap),
+        order: new Uint32Array(cap),
+        key: new Float64Array(cap)
+      });
+    }
+  }
+
+  push(cls: number, x0: number, y0: number, size: number): void {
+    const i = this.n++;
+    this.cls[i] = cls;
+    this.x0[i] = x0;
+    this.y0[i] = y0;
+    this.x1[i] = x0 + size;
+    this.y1[i] = y0 + size;
+  }
+}
+
+const scratch = new RectColumns();
+
+/** Rectangles a sort key can index: SLOTS² slot rectangles and as many cells. */
+const INDEX_SPAN = 2 * SLOTS * SLOTS;
+
 /**
- * Rectangles for one cell: whole when nothing worse reaches it, else one per
+ * Rectangles for cell c: whole when nothing worse reaches it, else one per
  * reach slot, each with the worse of its own class and the slot's.
  */
 function cellRects(
-  c: TileCell,
+  out: RectColumns,
+  g: TileGeometry,
+  c: number,
   cls: UkcClass,
-  z: number,
-  x: number,
-  y: number,
   extent: number,
   grid: Uint8Array | undefined
-): UkcRect[] {
-  const scale = 2 ** (c.z - z);
+): void {
+  const scale = 2 ** (g.cellZ[c] as number);
+  const cx = g.cellX[c] as number;
+  const cy = g.cellY[c] as number;
   const size = extent / scale;
-  const x0 = (c.x - x * scale) * size;
-  const y0 = (c.y - y * scale) * size;
-  const whole = [{ class: cls, x0, y0, x1: x0 + size, y1: y0 + size }];
+  const name = NAME_ORDER.get(cls) as number;
   if (!grid || cls === "land") {
-    return whole;
+    out.push(name, cx * size, cy * size, size);
+    return;
   }
   const own = RANK[cls as WaterClass];
   const n = SLOTS / scale;
-  const si = (c.x - x * scale) * n;
-  const sj = (c.y - y * scale) * n;
+  const si = cx * n;
+  const sj = cy * n;
   let worse = false;
   for (let j = sj; j < sj + n && !worse; j++) {
     for (let i = si; i < si + n && !worse; i++) {
@@ -256,31 +278,83 @@ function cellRects(
     }
   }
   if (!worse) {
-    return whole;
+    out.push(name, cx * size, cy * size, size);
+    return;
   }
   const step = extent / SLOTS;
-  const out: UkcRect[] = [];
   for (let j = sj; j < sj + n; j++) {
     for (let i = si; i < si + n; i++) {
       const rank = Math.max(own, grid[j * SLOTS + i] as number);
-      const sx = i * step;
-      const sy = j * step;
-      out.push({ class: BY_RANK[rank] as UkcClass, x0: sx, y0: sy, x1: sx + step, y1: sy + step });
+      out.push(RANK_NAME[rank] as number, i * step, j * step, step);
     }
   }
-  return out;
 }
 
-/** Classed rectangles for tile (z, x, y), runs of equal class merged along rows. */
+/**
+ * The rectangles sorted by class name, y0, y1 and x0, runs along a row
+ * merged. With `units` every coordinate is a whole number of reach slots of
+ * `step`, and the order is that of one number per rectangle.
+ */
+function mergedRects(r: RectColumns, step: number, units: boolean): UkcRect[] {
+  const { cls, x0, y0, x1, y1 } = r;
+  let order: ArrayLike<number>;
+  if (units && r.n <= INDEX_SPAN) {
+    const keys = r.key.subarray(0, r.n);
+    for (let i = 0; i < r.n; i++) {
+      const u =
+        (((cls[i] as number) * 65 + (y0[i] as number) / step) * 65 + (y1[i] as number) / step) * 65;
+      keys[i] = (u + (x0[i] as number) / step) * INDEX_SPAN + i;
+    }
+    keys.sort();
+    order = keys.map((k) => k % INDEX_SPAN);
+  } else {
+    const index = r.order.subarray(0, r.n);
+    index.forEach((_, i) => (index[i] = i));
+    order = index.sort(
+      (a, b) =>
+        (cls[a] as number) - (cls[b] as number) ||
+        (y0[a] as number) - (y0[b] as number) ||
+        (y1[a] as number) - (y1[b] as number) ||
+        (x0[a] as number) - (x0[b] as number)
+    );
+  }
+  const merged: UkcRect[] = [];
+  let last: UkcRect | undefined;
+  let lastCls = -1;
+  for (let k = 0; k < order.length; k++) {
+    const i = order[k] as number;
+    const c = cls[i] as number;
+    if (last && lastCls === c && last.y0 === y0[i] && last.y1 === y1[i] && last.x1 === x0[i]) {
+      last.x1 = x1[i] as number;
+    } else {
+      last = {
+        class: BY_NAME[c] as UkcClass,
+        x0: x0[i] as number,
+        y0: y0[i] as number,
+        x1: x1[i] as number,
+        y1: y1[i] as number
+      };
+      lastCls = c;
+      merged.push(last);
+    }
+  }
+  return merged;
+}
+
+/**
+ * Classed rectangles for tile (z, x, y), runs of equal class merged along
+ * rows. With `cache` the tile's geometry is walked once and reused.
+ */
 export function ukcTile(
   store: NodeStore,
   z: number,
   x: number,
   y: number,
   extent: number,
-  input: UkcTileInput
+  input: UkcTileInput,
+  cache?: UkcTileCache
 ): UkcRect[] {
-  return drawTile(store, z, x, y, extent, input, undefined);
+  return drawTile(geometryOf(store, z, x, y, cache), extent, input, undefined);
 }
 
 /** ukcTile and the thresholds over which it is drawn the same. */
@@ -290,46 +364,51 @@ export function ukcTileWithRange(
   x: number,
   y: number,
   extent: number,
-  input: UkcTileInput
+  input: UkcTileInput,
+  cache?: UkcTileCache
 ): { rects: UkcRect[]; range: ThresholdRange } {
   const range = { lo: -Infinity, hi: Infinity };
-  return { rects: drawTile(store, z, x, y, extent, input, range), range };
+  return { rects: drawTile(geometryOf(store, z, x, y, cache), extent, input, range), range };
 }
 
-function drawTile(
+function geometryOf(
   store: NodeStore,
   z: number,
   x: number,
   y: number,
+  cache: UkcTileCache | undefined
+): TileGeometry {
+  return cache ? cache.geometry(store, z, x, y) : tileGeometry(store, z, x, y);
+}
+
+function drawTile(
+  g: TileGeometry,
   extent: number,
   input: UkcTileInput,
   range: ThresholdRange | undefined
 ): UkcRect[] {
-  const grid = reachGrid(store, tileRect(z, x, y), z, input, range);
-  const rects: UkcRect[] = [];
-  for (const c of cellsInTile(store, z, x, y, z + DETAIL_ZOOMS)) {
-    const cls = classed(c.values, input, c.bound, range);
+  const kinds = g.dMin.length;
+  const classes: (UkcClass | undefined)[] = [];
+  const ranks = new Uint8Array(kinds);
+  const v: NodeValues = { dMin: 0, sigmaD: 0, sigmaP: 0, flags: 0, cellRef: -1 };
+  for (let k = 0; k < kinds; k++) {
+    v.dMin = g.dMin[k] as number;
+    v.sigmaD = g.sigmaD[k] as number;
+    v.flags = g.flags[k] as number;
+    const cls = classed(v, input, g.bound[k] === 1, range);
+    classes.push(cls);
+    ranks[k] = cls === undefined ? 0 : cls === "land" ? RANK.danger : RANK[cls];
+  }
+  const grid = reachGrid(g, ranks);
+  // Slot rectangles partition the tile, so a cell split into them adds at most SLOTS² in all.
+  scratch.reset(g.cellKind.length + SLOTS * SLOTS);
+  for (let c = 0; c < g.cellKind.length; c++) {
+    const cls = classes[g.cellKind[c] as number];
     if (cls !== undefined) {
-      rects.push(...cellRects(c, cls, z, x, y, extent, grid));
+      cellRects(scratch, g, c, cls, extent, grid);
     }
   }
-  rects.sort((a, b) =>
-    a.class !== b.class ? (a.class < b.class ? -1 : 1) : a.y0 - b.y0 || a.y1 - b.y1 || a.x0 - b.x0
-  );
-  const merged: UkcRect[] = [];
-  for (const r of rects) {
-    const last = merged[merged.length - 1];
-    if (
-      last &&
-      last.class === r.class &&
-      last.y0 === r.y0 &&
-      last.y1 === r.y1 &&
-      last.x1 === r.x0
-    ) {
-      last.x1 = r.x1;
-    } else {
-      merged.push({ ...r });
-    }
-  }
-  return merged;
+  const step = extent / SLOTS;
+  const units = extent % SLOTS === 0 && g.cellZ.every((dz) => dz <= DETAIL_ZOOMS);
+  return mergedRects(scratch, step, units);
 }

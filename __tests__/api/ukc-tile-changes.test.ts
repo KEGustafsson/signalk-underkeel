@@ -1,9 +1,10 @@
 import { tileKey } from "../../src/foundation/geo";
 import { UkcTileChanges } from "../../src/api/ukc-tile-changes";
 import type { NodeStore, NodeValues } from "../../src/spatial/node-store";
+import { AdjustmentMap } from "../../src/spatial/node-store";
 
 function fakeStore(): NodeStore {
-  return { adjustments: new Map<number, NodeValues>(), adjustZoom: 18 } as unknown as NodeStore;
+  return { adjustments: new AdjustmentMap(), adjustZoom: 18 } as unknown as NodeStore;
 }
 
 const cell = (dMin: number): NodeValues => ({

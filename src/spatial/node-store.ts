@@ -66,6 +66,31 @@ export const EMPTY: NodeValues = {
   cellRef: -1
 };
 
+/**
+ * The living-chart cells of a store. Every write bumps `revision` in the same
+ * call, so a cache of tiles drawn from them can tell that one may have
+ * changed without comparing every cell. Values are replaced, never changed
+ * in place.
+ */
+export class AdjustmentMap extends Map<number, NodeValues> {
+  revision = 0;
+
+  override set(key: number, value: NodeValues): this {
+    this.revision++;
+    return super.set(key, value);
+  }
+
+  override delete(key: number): boolean {
+    this.revision++;
+    return super.delete(key);
+  }
+
+  override clear(): void {
+    this.revision++;
+    super.clear();
+  }
+}
+
 /** Zoom of living-chart cells (plan §4.13), capped at the leaf zoom. */
 export const ADJUST_ZOOM = 18;
 
@@ -158,7 +183,7 @@ export class NodeStore {
    * soundings that queries take beside the charted ones. Taking them can
    * only lower a result's depth (safety invariant 5).
    */
-  readonly adjustments = new Map<number, NodeValues>();
+  readonly adjustments = new AdjustmentMap();
   private readonly levels: Level[];
   count = 0;
   dMin = new Float64Array(1024);
