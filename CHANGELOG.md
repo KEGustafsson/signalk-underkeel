@@ -71,6 +71,14 @@ All notable changes to signalk-underkeel are documented here.
   is emptied by a new index and a tile is walked again when an own sounding changes a cell in
   it. A 40-tile z14 view over the Nauvo cells refreshes in 29 ms instead of 86 ms on x86, and
   a tile the change feed lists after a 1 cm fall takes 0.74 ms instead of 2.35 ms (p50).
+- `pyramid.bin` (format version 6, rebuilt once) holds the zooms to 15 in one gzip member and the
+  finer nodes in one member per z12 tile, and a loaded index reads those blocks when a query
+  first reaches them, keeping up to 32 MB of them and those around the vessel and 300 s ahead
+  on its course. A block not loaded reads as no coverage with bounds no loaded tile exceeds, so
+  no answer is ever safer than with it loaded. 64 copies of the Nauvo pair (13.5 M nodes) on
+  x86: RSS after start 579 → 94 MB, a 150 km passage at 10 m/s peaks at 154 MB instead of
+  602 MB with identical states on all 15 000 ticks; the first tick reading a block takes 13.5 ms
+  (8.5 ms held whole), steady ticks are unchanged.
 - The index build in the worker builds the pyramid one z10 root at a time, from only the cells
   reaching it, on up to four threads, with output byte-identical to a build of all cells at
   once. Sixteen copies of the Nauvo pair (3.3 M nodes) on x86: peak RSS 817 → 481 MB on one

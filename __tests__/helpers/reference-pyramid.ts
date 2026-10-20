@@ -96,7 +96,7 @@ function reachOf(w: Walk, i: number): number {
   if (!w.survey || i < 0) {
     return w.buffer;
   }
-  return w.buffer + w.perMetre * chartReach(w.k, w.survey.node[i] as number);
+  return w.buffer + w.perMetre * chartReach(w.k, w.store.surveySigma(i));
 }
 
 function visit(w: Walk, z: number, x: number, y: number): void {

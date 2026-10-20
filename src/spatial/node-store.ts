@@ -157,6 +157,40 @@ function sortLevel(level: Level): void {
   Object.assign(level, { keys, nodes, offset: 0, n, sorted: true });
 }
 
+/**
+ * What a split node at a block store's cut zoom stands for while the block
+ * holding its subtree is not loaded: with its own values (the subtree's
+ * shallowest depth, widest σ and every flag) these bound what any query
+ * over the subtree could read from it (`pyramid.ts`, `tile-walk.ts`).
+ */
+export interface StandIn {
+  /** Shallowest dMin of the leaves under the node without NO_DEPTH; Infinity when none. */
+  covered: number;
+  /** Narrowest σD of those leaves. */
+  sigmaDMin: number;
+}
+
+/**
+ * The nodes finer than `cutZoom` of a store read from a file block by block
+ * (`block-cache.ts`). Node indices it hands out are never reused, so one
+ * held past an eviction reads as NO_DATA rather than as another tile.
+ */
+export interface BlockSource {
+  readonly cutZoom: number;
+  readonly blockZoom: number;
+  /** Bumped whenever a block is loaded or dropped. */
+  readonly revision: number;
+  /** Tile keys at `blockZoom` of the blocks loaded or dropped after `revision`. */
+  changedSince(revision: number): number[];
+  find(z: number, x: number, y: number): number;
+  values(i: number): NodeValues;
+  isSplit(i: number): boolean;
+  surveySigma(i: number): number;
+  /** For split node i at (cutZoom, x, y): undefined once its block is loaded, else its stand-in. */
+  standIn(i: number, x: number, y: number): StandIn | undefined;
+  entries(z: number): Generator<[number, number, number]>;
+}
+
 /** The columns `NodeStore.fromColumns` adopts, one entry per node; `key` is the tileKey. */
 export interface NodeColumns {
   z: Uint8Array;
@@ -185,7 +219,11 @@ export class NodeStore {
    */
   readonly adjustments = new AdjustmentMap();
   private readonly levels: Level[];
+  /** Nodes in the index, in this store's columns and in its blocks. */
   count = 0;
+  /** Nodes in this store's own columns. */
+  private own = 0;
+  private source: BlockSource | undefined;
   dMin = new Float64Array(1024);
   sigmaD = new Float32Array(1024);
   sigmaP = new Float32Array(1024);
@@ -233,6 +271,7 @@ export class NodeStore {
     }
     Object.assign(store, {
       count,
+      own: count,
       dMin: cols.dMin,
       sigmaD: cols.sigmaD,
       sigmaP: cols.sigmaP,
@@ -242,6 +281,40 @@ export class NodeStore {
       split: cols.split
     });
     return store;
+  }
+
+  /**
+   * Hands the nodes finer than `source.cutZoom` to `source`; this store's
+   * columns then hold the coarser ones and `total` is the index's node count.
+   */
+  attach(source: BlockSource, total: number): void {
+    if (this.levels.slice(source.cutZoom + 1 - this.minZoom).some((l) => l.n > 0)) {
+      throw new Error(`the store holds nodes finer than zoom ${source.cutZoom}`);
+    }
+    this.source = source;
+    this.count = total;
+  }
+
+  /**
+   * Bumped whenever a block is loaded or dropped; 0 for a store held whole.
+   * A query over a block not loaded reads its stand-ins, so an answer cached
+   * at one revision may differ at a later one, though only towards the loaded
+   * answer, which a stand-in never reads safer than.
+   */
+  get loadRevision(): number {
+    return this.source?.revision ?? 0;
+  }
+
+  /** The block tiles loaded or dropped since `loadRevision` was `revision`. */
+  blocksChangedSince(revision: number): { z: number; x: number; y: number }[] {
+    const s = this.source;
+    if (!s) {
+      return [];
+    }
+    const n = 2 ** s.blockZoom;
+    return s
+      .changedSince(revision)
+      .map((key) => ({ z: s.blockZoom, x: Math.floor(key / n), y: key % n }));
   }
 
   get adjustZoom(): number {
@@ -292,9 +365,13 @@ export class NodeStore {
     surveySigmaP: number
   ): number {
     const level = this.levels[this.levelIndex(z)] as Level;
+    if (this.source) {
+      throw new Error("a store read block by block takes no nodes");
+    }
     if (this.count === this.dMin.length) {
       this.grow();
     }
+    this.own++;
     const i = this.count++;
     this.dMin[i] = v.dMin;
     this.sigmaD[i] = v.sigmaD;
@@ -311,6 +388,9 @@ export class NodeStore {
   find(z: number, x: number, y: number): number {
     if (z < this.minZoom || z > this.leafZoom) {
       return -1;
+    }
+    if (this.source !== undefined && z > this.source.cutZoom) {
+      return this.source.find(z, x, y);
     }
     const level = this.level(z);
     const keys = level.keys;
@@ -335,8 +415,8 @@ export class NodeStore {
 
   /** Values of node i; an out-of-range index reads as NO_DATA, never as a depth. */
   values(i: number): NodeValues {
-    if (!(i >= 0 && i < this.count)) {
-      return { ...NO_DATA };
+    if (!(i >= 0 && i < this.own)) {
+      return this.source ? this.source.values(i) : { ...NO_DATA };
     }
     return {
       dMin: this.dMin[i] as number,
@@ -349,7 +429,27 @@ export class NodeStore {
 
   /** Whether node i's children are stored (its values are then bounds, not exact). */
   isSplit(i: number): boolean {
-    return this.split[i] === 1;
+    return i < this.own ? this.split[i] === 1 : this.source?.isSplit(i) === true;
+  }
+
+  /** Node i's `surveySigmaP`; 0 for an index never handed out. */
+  surveySigma(i: number): number {
+    if (i >= 0 && i < this.own) {
+      return this.surveySigmaP[i] as number;
+    }
+    return this.source ? this.source.surveySigma(i) : 0;
+  }
+
+  /**
+   * For split node i at tile (z, x, y): what stands in for its children while
+   * the block holding them is not loaded (a load is tried first), else
+   * undefined. Only a store read block by block has any.
+   */
+  standIn(i: number, z: number, x: number, y: number): StandIn | undefined {
+    const s = this.source;
+    return s && z === s.cutZoom && i >= 0 && i < this.own && this.split[i] === 1
+      ? s.standIn(i, x, y)
+      : undefined;
   }
 
   /** The stored tiles at zoom z with keys in [lo, hi) as [key, nodeIndex], in key order. */
@@ -372,6 +472,10 @@ export class NodeStore {
 
   /** Every stored tile at zoom z as [x, y, nodeIndex], in tile-key order. */
   *entries(z: number): Generator<[number, number, number]> {
+    if (this.source && z > this.source.cutZoom) {
+      yield* this.source.entries(z);
+      return;
+    }
     const n = 2 ** z;
     const level = this.level(z);
     for (let j = 0; j < level.n; j++) {

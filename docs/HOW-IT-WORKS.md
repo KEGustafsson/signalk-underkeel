@@ -97,6 +97,12 @@ saved under the plugin data directory; until it is ready the engine is `off` wit
 whose index format differs is rebuilt too, and so is one whose files cannot be read, as a power
 cut during a save can leave them; the reason then names the read error.
 
+Only the coarse part of the depth pyramid stays in memory; its fine tiles are read from the
+saved file, a few kilometres square at a time, when the look-ahead, a route check, a query or
+a map tile first reaches them, and the blocks around the boat and ahead on its course are read
+before it gets there. Up to 32 MB of them are kept. A block that is not read yet counts as an
+area without chart coverage, never as clear water.
+
 The status line at the top of the plugin's page shows the engine state and its reason, for
 example `Monitoring: unknown — position stale`.
 
