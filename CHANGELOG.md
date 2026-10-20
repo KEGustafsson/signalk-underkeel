@@ -53,6 +53,10 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Changed
 
+- UKC vector tiles of 1 kB or more are sent gzipped with `Content-Encoding: gzip` when the client
+  accepts it, and every tile carries `Vary: Accept-Encoding`; Signal K's compression skips the
+  vector-tile type. A 40-tile z14 viewport over the Nauvo cells went from 279 kB to 52 kB, at
+  0.19 ms of gzip per tile on a laptop.
 - Route checks, repairs, departure windows and `POST /query` run one at a time, with at most four
   waiting and 503 with `Retry-After` beyond that; a request whose client disconnects, or that is
   running when the plugin stops, is abandoned at its next pause. Ten concurrent repairs of a

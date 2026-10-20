@@ -1,4 +1,5 @@
 import type { Request, RequestHandler, Response } from "express";
+import { gzipSync } from "zlib";
 import type { Envelope } from "../engine/envelope";
 
 export const API_BASE = "/v1";
@@ -165,7 +166,15 @@ export function registerRoutes(
     // The tiles follow the water level and vessel: Plotter Extensions §Live changes.
     res.setHeader("Cache-Control", "no-cache");
     if (reply.body instanceof Uint8Array) {
-      res.status(reply.status).type(reply.contentType).send(Buffer.from(reply.body));
+      res.setHeader("Vary", "Accept-Encoding");
+      // Signal K's compression() skips this content type; it leaves an encoded body alone.
+      const gzip =
+        reply.body.length >= GZIP_MIN_BYTES && acceptsGzip(req.headers?.["accept-encoding"]);
+      if (gzip) {
+        res.setHeader("Content-Encoding", "gzip");
+      }
+      const body = gzip ? gzipSync(reply.body) : Buffer.from(reply.body);
+      res.status(reply.status).type(reply.contentType).send(body);
     } else {
       res.status(reply.status).json(reply.body);
     }
@@ -189,6 +198,26 @@ export function registerRoutes(
   w.delete(`${API_BASE}/acks/:id`, (req: Request, res: Response) => {
     send(res, api.deleteAck(String((req.params as Record<string, unknown> | undefined)?.id ?? "")));
   });
+}
+
+/** Smaller bodies gain less from gzip than its header costs; compression() uses the same. */
+const GZIP_MIN_BYTES = 1024;
+
+/** Whether an Accept-Encoding header accepts gzip, by name or `*`, with a q above 0. */
+export function acceptsGzip(header: string | string[] | undefined): boolean {
+  let any = false;
+  for (const part of String(header ?? "").split(",")) {
+    const [name, ...params] = part.split(";").map((t) => t.trim().toLowerCase());
+    const q = params.find((p) => p.startsWith("q="));
+    const accepted = q === undefined || Number(q.slice(2)) > 0;
+    if (name === "gzip") {
+      return accepted;
+    }
+    if (name === "*") {
+      any = accepted;
+    }
+  }
+  return any;
 }
 
 /** A path segment as a non-negative integer, else NaN. */

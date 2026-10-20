@@ -13,7 +13,12 @@ interface FakeRes {
 }
 
 type Handler = (
-  req: { query?: Record<string, string>; params?: Record<string, string>; body?: unknown },
+  req: {
+    query?: Record<string, string>;
+    params?: Record<string, string>;
+    headers?: Record<string, string>;
+    body?: unknown;
+  },
   res: FakeRes
 ) => void;
 
@@ -128,7 +133,8 @@ export function fakeRouter(withAccess = true) {
   const call = (
     p: string,
     query: Record<string, string> = {},
-    params: Record<string, string> = {}
+    params: Record<string, string> = {},
+    reqHeaders: Record<string, string> = {}
   ) => {
     let body: unknown;
     let code = 200;
@@ -147,7 +153,7 @@ export function fakeRouter(withAccess = true) {
         return { ...res, end: () => undefined };
       }
     };
-    routes.get(`GET ${p}`)?.({ query, params }, res);
+    routes.get(`GET ${p}`)?.({ query, params, headers: reqHeaders }, res);
     return { code, body, type, headers };
   };
   const del = (p: string, params: Record<string, string>) =>

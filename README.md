@@ -350,7 +350,7 @@ deleting acknowledgements needs a readwrite user. Errors are `{ "errors": [strin
 | `GET /acks`, `POST /acks`, `DELETE /acks/:id` | acknowledged passages; `POST` answers 409 while the water level is a fallback                     |
 | `GET /livechart/discrepancies`                | living-chart cells shallower than charted                                                         |
 | `GET /livechart/csb.geojson`                  | own soundings in the IHO CSB format                                                               |
-| `GET /tiles/ukc/{z}/{x}/{y}.pbf`              | Mapbox vector tiles from zoom 11, one `ukc` layer, `Cache-Control: no-cache`                      |
+| `GET /tiles/ukc/{z}/{x}/{y}.pbf`              | Mapbox vector tiles from zoom 11, one `ukc` layer, `Cache-Control: no-cache`, gzipped on request  |
 | `GET /ukc-style.json`                         | a MapLibre style for the tiles                                                                    |
 
 A route-check body carries `route` (a GeoJSON LineString) or `routeRef`
