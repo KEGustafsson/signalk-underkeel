@@ -1,4 +1,5 @@
 import fs from "fs";
+import os from "os";
 import path from "path";
 import { Worker } from "worker_threads";
 import type { LonLat } from "./foundation/geo";
@@ -24,36 +25,62 @@ export type IndexBuilder = (job: BuildJob, signal: AbortSignal) => Promise<Chart
 let exits: Promise<unknown> = Promise.resolve();
 
 /**
- * Builds in a worker thread from the compiled `lib/spatial/build-worker.js`.
- * The worker only stages the index; it is moved into the index directory
- * here, on the main thread, and never for an aborted build, so a worker
- * still exiting cannot replace an index saved after it was aborted. An
- * aborted worker runs until terminate() resolves, so its build rejects only
- * then and the next build starts only then; stop() itself returns at once.
+ * Old-generation heap for a build worker: a quarter of the RAM, 256 MB to 2 GB. The ENC pair
+ * plus a 10 km WFS box at leaf zoom 20 builds in under 96 MB; without a limit an oversized
+ * build grows until the kernel ends the whole Signal K server on a 1 GB Pi 3 or Cerbo GX.
  */
-export const workerBuilder: IndexBuilder = async (job, signal) => {
+export function workerHeapLimitMb(totalBytes = os.totalmem()): number {
+  return Math.min(2048, Math.max(256, Math.floor(totalBytes / 4 / 2 ** 20)));
+}
+
+interface WorkerReply {
+  ok: boolean;
+  staging?: string;
+  error?: string;
+}
+
+/**
+ * Runs `script` in a worker thread with `data` and resolves with its staged reply. The
+ * worker only stages; the caller moves the result into place on the main thread, and never
+ * for an aborted run, so a worker still exiting cannot replace an index saved after it was
+ * aborted. An aborted worker runs until terminate() resolves, so its run rejects only then
+ * and the next run starts only then; stop() itself returns at once.
+ */
+export async function runWorker<R extends WorkerReply>(
+  script: string,
+  data: object,
+  signal: AbortSignal,
+  heapMb = workerHeapLimitMb()
+): Promise<R & { staging: string }> {
   await exits;
   if (signal.aborted) {
     throw new Error("aborted");
   }
   return new Promise((resolve, reject) => {
-    const worker = new Worker(path.join(__dirname, "spatial", "build-worker.js"), {
-      workerData: job
+    const worker = new Worker(script, {
+      workerData: data,
+      resourceLimits: { maxOldGenerationSizeMb: heapMb }
     });
     const thread = worker.threadId;
+    const indexDir =
+      "indexDir" in data && typeof data.indexDir === "string" ? data.indexDir : undefined;
     const abort = (): void => {
       // A worker stopped mid-write leaves its staging behind; once it has
       // exited nothing else writes there.
       const exit = worker
         .terminate()
         .catch(() => undefined)
-        .then(() => removeStaging(job.indexDir, (p, t) => p === process.pid && t === thread))
+        .then(() =>
+          indexDir === undefined
+            ? undefined
+            : removeStaging(indexDir, (p, t) => p === process.pid && t === thread)
+        )
         .catch(() => undefined);
       exits = Promise.all([exits, exit]);
       void exit.then(() => reject(new Error("aborted")));
     };
     signal.addEventListener("abort", abort, { once: true });
-    worker.once("message", (m: { ok: boolean; staging?: string; error?: string }) => {
+    worker.once("message", (m: R) => {
       if (signal.aborted) {
         if (m.staging) {
           fs.rmSync(m.staging, { recursive: true, force: true });
@@ -63,24 +90,41 @@ export const workerBuilder: IndexBuilder = async (job, signal) => {
       signal.removeEventListener("abort", abort);
       void worker.terminate();
       if (m.ok && m.staging) {
-        try {
-          commitChartIndex(job.indexDir, m.staging);
-          resolve(loadChartIndex(job.indexDir));
-        } catch (err) {
-          reject(err as Error);
-        }
+        resolve(m as R & { staging: string });
       } else {
         reject(new Error(m.error ?? "index build failed"));
       }
     });
-    worker.once("error", (err) => {
+    worker.once("error", (err: Error & { code?: string }) => {
       if (signal.aborted) {
         return;
       }
       signal.removeEventListener("abort", abort);
-      reject(err);
+      reject(
+        err.code === "ERR_WORKER_OUT_OF_MEMORY"
+          ? new Error(`index build stopped at the ${heapMb} MB worker heap limit: ${err.message}`)
+          : err
+      );
+    });
+    // Settles a worker that ended without a message or an error; after either it is a no-op.
+    worker.once("exit", (code: number) => {
+      if (!signal.aborted) {
+        signal.removeEventListener("abort", abort);
+        reject(new Error(`index build worker exited with code ${code} without a result`));
+      }
     });
   });
+}
+
+/** Builds in a worker thread from the compiled `lib/spatial/build-worker.js`. */
+export const workerBuilder: IndexBuilder = async (job, signal) => {
+  const m = await runWorker(path.join(__dirname, "spatial", "build-worker.js"), job, signal);
+  if (signal.aborted) {
+    fs.rmSync(m.staging, { recursive: true, force: true });
+    throw new Error("aborted");
+  }
+  commitChartIndex(job.indexDir, m.staging);
+  return loadChartIndex(job.indexDir);
 };
 
 /** The box in use, as saved in `<data dir>/wfs/box.json`. */

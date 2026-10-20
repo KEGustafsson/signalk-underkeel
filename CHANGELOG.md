@@ -62,6 +62,11 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Fixed
 
+- The index build worker runs with a heap limit of a quarter of the RAM (256 MB to 2 GB).
+  An oversized build fails with "index build stopped at the N MB worker heap limit" in the
+  WFS status and the previous index stays in use; before, it could grow until the kernel ended
+  the Signal K server on a 1 GB Pi 3 or Cerbo GX. A worker that exits without a result now
+  fails the build instead of leaving the WFS refresh busy for good.
 - `acks.json` and `livechart.json` are flushed to the disk before the rename that replaces
   them, and their directory after it. Without the fsync a power cut could leave an empty
   `livechart.json` on filesystems that do not flush on rename, and the plugin then started

@@ -106,6 +106,27 @@ describe("WFS box around the vessel", () => {
     expect(h.fetched).toHaveLength(2);
   });
 
+  test("a failed index build is reported in the status and the previous box and index stay", async () => {
+    const h = harness();
+    h.t.pos = [22.08, 60.07];
+    await h.service.check();
+    const box = h.service.status().box;
+    h.deps.build = () =>
+      Promise.reject(new Error("index build stopped at the 256 MB worker heap limit"));
+    h.t.now += 120_000;
+    h.t.pos = [22.08 + 6 * KM_LON_60, 60.07];
+    await h.service.check();
+    expect(h.indexes).toHaveLength(1);
+    expect(h.service.status()).toMatchObject({
+      box,
+      busy: false,
+      lastError: "index build stopped at the 256 MB worker heap limit"
+    });
+    expect(h.errors).toEqual([
+      "Traficom WFS depths: index build stopped at the 256 MB worker heap limit"
+    ]);
+  });
+
   test("stop aborts a download in flight without an error or a new index", async () => {
     const pending: WfsFetch = (_url, init) =>
       new Promise((_resolve, reject) =>
