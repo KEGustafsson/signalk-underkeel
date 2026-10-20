@@ -264,6 +264,53 @@ export function geomContainsRect(geom: Geom, r: Rect): boolean {
   );
 }
 
+/** All four corners of `r` lie within `d` of segment a→b. */
+function cornersNearSegment(r: Rect, a: XY, b: XY, d: number): boolean {
+  return (
+    segmentDistance(r.minX, r.minY, a, b) <= d &&
+    segmentDistance(r.maxX, r.minY, a, b) <= d &&
+    segmentDistance(r.maxX, r.maxY, a, b) <= d &&
+    segmentDistance(r.minX, r.maxY, a, b) <= d
+  );
+}
+
+function pathHoldsRect(coords: readonly XY[], closed: boolean, r: Rect, d: number): boolean {
+  const n = coords.length;
+  for (let i = closed ? 0 : 1; i < n; i++) {
+    if (cornersNearSegment(r, coords[i === 0 ? n - 1 : i - 1] as XY, coords[i] as XY, d)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * True only when every point of the rectangle lies within `d` of the
+ * geometry: inside one of its polygons, or with all four corners within `d`
+ * of one vertex or one edge. A disc or a capsule is convex, so it then
+ * holds the whole rectangle. False costs a caller work, never safety.
+ */
+export function rectWithin(geom: Geom, r: Rect, d: number): boolean {
+  if (geom.type === "point") {
+    return cornersNearSegment(r, geom.p, geom.p, d);
+  }
+  if (geom.type === "line") {
+    return d > 0 && pathHoldsRect(geom.coords, false, r, d);
+  }
+  for (const poly of geom.polygons) {
+    const inside =
+      inPolygon(r.minX, r.minY, poly) &&
+      inPolygon(r.maxX, r.minY, poly) &&
+      inPolygon(r.maxX, r.maxY, poly) &&
+      inPolygon(r.minX, r.maxY, poly) &&
+      polygonBoundaryRectDistance(poly, r, 0) > 0;
+    if (inside || (d > 0 && pathHoldsRect(poly.outer, true, r, d))) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /** Below this length (metres) an edge is not matched against its neighbours. */
 const MIN_SHARED_EDGE = 1e-3;
 /** Offset (metres) of the side probes from an edge's midpoint. */

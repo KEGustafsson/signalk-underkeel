@@ -11,6 +11,7 @@ import {
   pointInPolygon,
   pointRectDistance,
   pointSegmentDistance,
+  rectWithin,
   segmentIntersectsRect,
   segmentRectDistance
 } from "../../src/foundation/geometry";
@@ -90,6 +91,27 @@ describe("planar geometry", () => {
     expect(geomContainsRect(donutGeom, r(30, 30, 50, 50))).toBe(false);
     expect(geomContainsRect(donutGeom, r(90, 90, 110, 110))).toBe(false);
     expect(geomContainsRect({ type: "point", p: [1, 1] }, r(0, 0, 2, 2))).toBe(false);
+  });
+
+  test("a rect is within a distance only when every point of it is", () => {
+    expect(rectWithin(donutGeom, r(5, 5, 30, 30), 0)).toBe(true);
+    expect(rectWithin(donutGeom, r(30, 30, 50, 50), 0)).toBe(false);
+    expect(rectWithin(donutGeom, r(45, 45, 55, 55), 4)).toBe(false);
+    expect(rectWithin(donutGeom, r(101, 10, 104, 20), 5)).toBe(true);
+    expect(rectWithin(donutGeom, r(101, 10, 106, 20), 5)).toBe(false);
+    const point: Geom = { type: "point", p: [0, 0] };
+    expect(rectWithin(point, r(-3, -3, 3, 3), Math.hypot(3, 3))).toBe(true);
+    expect(rectWithin(point, r(-3, -3, 3, 3), 4)).toBe(false);
+    const line: Geom = {
+      type: "line",
+      coords: [
+        [0, 0],
+        [10, 0],
+        [10, 10]
+      ]
+    };
+    expect(rectWithin(line, r(2, -1, 8, 1), 1)).toBe(true);
+    expect(rectWithin(line, r(2, -1, 8, 1), 0)).toBe(false);
   });
 
   test("lines and points", () => {

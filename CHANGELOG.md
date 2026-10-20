@@ -67,6 +67,9 @@ All notable changes to signalk-underkeel are documented here.
 - A look-ahead footprint inside the warn window, and an escape-track footprint, stop reading
   the chart once they find charted land at P = 1. Alarm ticks on the Nauvo route fell from 2.6
   to 2.2 ms median, and a tick after a 2 km GNSS jump from 770 to 270 ms (x86).
+- A depth query no longer tests the tiles under a tile that lies wholly within its buffer of
+  the footprint or polygon. A 499-vertex `POST /query` polygon of 500 m radius with a 2 km
+  buffer took 198 ms, now 48 ms (x86); jagged polygons gain nothing (124 → 128 ms).
 
 ### Fixed
 

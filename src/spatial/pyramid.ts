@@ -4,6 +4,7 @@ import {
   fromMercator,
   groundToMercator,
   maxAbsLat,
+  rectContainsRect,
   rectGap,
   shiftRect,
   tileKey,
@@ -14,7 +15,13 @@ import {
   worldShifts
 } from "../foundation/geo";
 import type { Geom } from "../foundation/geometry";
-import { geomBounds, geomRectDistance, pointRectDistance, shiftGeom } from "../foundation/geometry";
+import {
+  geomBounds,
+  geomRectDistance,
+  pointRectDistance,
+  rectWithin,
+  shiftGeom
+} from "../foundation/geometry";
 import type { NodeStore, NodeValues } from "./node-store";
 import { probabilityBelowZero } from "../foundation/stats";
 import { EMPTY, FLAGS, NO_DATA } from "./node-store";
@@ -99,6 +106,8 @@ interface Walk {
   geom: Geom;
   /** Bounds of `geom`, and a point of it when it has one. */
   bounds: Rect;
+  /** `bounds` grown by `buffer`: every tile within the buffer of the footprint lies in it. */
+  hold: Rect;
   vertex?: XY;
   /** Mercator reach of a tile without chart position, and of any tile at most. */
   buffer: number;
@@ -198,27 +207,37 @@ function certain(w: Walk): boolean {
   return w.maxRisk >= 1 && w.coveredDMin === -Infinity && w.result.dMin === -Infinity;
 }
 
-function visit(w: Walk, z: number, x: number, y: number): void {
+/** Whether tile `rect` (node i) lies within its reach of the footprint. */
+function reaches(w: Walk, rect: Rect, i: number): boolean {
+  // The gap to the footprint's bounds never exceeds the distance to the
+  // footprint, and costs far less to find.
+  const gap = rectGap(w.bounds, rect);
+  if (gap > w.maxReach) {
+    return false;
+  }
+  const reach = reachOf(w, i);
+  if (gap > reach) {
+    return false;
+  }
+  // A point of the footprint within reach settles it; most tiles inside a
+  // wide chart reach are settled so.
+  const close = w.vertex !== undefined && pointRectDistance(w.vertex, rect) <= reach;
+  return close || geomRectDistance(w.geom, rect, reach) <= reach;
+}
+
+/**
+ * `inside`: the tile lies wholly within `w.buffer`, the least reach any
+ * node gets, of the footprint, so it and every tile under it are in reach
+ * without testing.
+ */
+function visit(w: Walk, z: number, x: number, y: number, inside: boolean): void {
   if (w.stopWhenCertain && certain(w)) {
     return;
   }
   // Read before the children are visited, which overwrite it.
   const rect = tileRectInto(z, x, y, w.rect);
-  // The gap to the footprint's bounds never exceeds the distance to the
-  // footprint, and costs far less to find.
-  const gap = rectGap(w.bounds, rect);
-  if (gap > w.maxReach) {
-    return;
-  }
   const i = w.store.find(z, x, y);
-  const reach = reachOf(w, i);
-  if (gap > reach) {
-    return;
-  }
-  // A point of the footprint within reach settles it; most tiles inside a
-  // wide chart reach are settled so.
-  const close = w.vertex !== undefined && pointRectDistance(w.vertex, rect) <= reach;
-  if (!close && geomRectDistance(w.geom, rect, reach) > reach) {
+  if (!inside && !reaches(w, rect, i)) {
     return;
   }
   w.visits++;
@@ -227,15 +246,16 @@ function visit(w: Walk, z: number, x: number, y: number): void {
     return;
   }
   const v = w.store.values(i);
-  const split = w.store.isSplit(i);
-  if (!split || canStop(w, v)) {
+  if (!w.store.isSplit(i) || canStop(w, v)) {
     take(w, v, z, x, y);
     return;
   }
-  visit(w, z + 1, 2 * x, 2 * y);
-  visit(w, z + 1, 2 * x + 1, 2 * y);
-  visit(w, z + 1, 2 * x, 2 * y + 1);
-  visit(w, z + 1, 2 * x + 1, 2 * y + 1);
+  // Only a tile inside the footprint's bounds grown by the buffer can lie within the buffer.
+  const within = inside || (rectContainsRect(w.hold, rect) && rectWithin(w.geom, rect, w.buffer));
+  visit(w, z + 1, 2 * x, 2 * y, within);
+  visit(w, z + 1, 2 * x + 1, 2 * y, within);
+  visit(w, z + 1, 2 * x, 2 * y + 1, within);
+  visit(w, z + 1, 2 * x + 1, 2 * y + 1, within);
 }
 
 /** Living-chart cells near the footprint are taken beside the charted tiles. */
@@ -304,6 +324,7 @@ function walkFor(store: NodeStore, geom: Geom, opts: QueryOptions): Walk {
     store,
     geom,
     bounds,
+    hold: bounds,
     buffer: survey ? perMetre * bufferMetres : maxReach,
     maxReach,
     perMetre,
@@ -335,12 +356,13 @@ export function minDepthOver(store: NodeStore, geom: Geom, opts: QueryOptions = 
   for (const shift of worldShifts(reach)) {
     w.geom = shift === 0 ? geom : shiftGeom(geom, shift);
     w.bounds = shiftRect(bounds, shift);
+    w.hold = expandRect(w.bounds, w.buffer);
     w.vertex = vertexOf(w.geom);
     const shifted = shiftRect(reach, shift);
     const range = tileRange(store.minZoom, shifted);
     for (let x = range.minX; x <= range.maxX; x++) {
       for (let y = range.minY; y <= range.maxY; y++) {
-        visit(w, store.minZoom, x, y);
+        visit(w, store.minZoom, x, y, false);
       }
     }
     if (!opts.chartOnly) {

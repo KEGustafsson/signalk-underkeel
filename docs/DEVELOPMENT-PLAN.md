@@ -299,7 +299,9 @@ splitting every tile down to the leaf zoom.
 3. If the tile's bound is already hopeless, stop. That part fails, with the worst cell as
    evidence.
 4. Otherwise descend into the children, and at the leaves intersect them with the exact
-   polygon.
+   polygon. A tile that lies wholly within the buffer of the polygon (inside it, or with all
+   four corners within the buffer of one vertex or edge) passes that to its children, which
+   are then taken without distance tests.
 
 Expected cost is about 50 to 300 cell visits per look-ahead footprint.
 

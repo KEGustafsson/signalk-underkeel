@@ -13,7 +13,8 @@ import { area, basin, boxRing, coverage, land, point, quality } from "../helpers
 
 /**
  * The tile walk's speed-ups (sqrt distances, a reused tile rectangle,
- * in-place folding, the inside flag) must not change any query's answer:
+ * in-place folding, skipping the tests under a tile wholly in reach) must
+ * not change any query's answer:
  * the current walk and the ea8277a walk agree on every field, visits
  * included, over random charts, footprints and options.
  */
@@ -60,6 +61,18 @@ const optionsArb = fc.record({
   }),
   chartOnly: fc.boolean()
 });
+
+/** A ring of up to 60 vertices around a centre, convex or jagged, as a /query polygon. */
+const blobArb = fc.record({
+  x: fraction,
+  y: fraction,
+  radii: fc.array(uniform(20, 700), { minLength: 3, maxLength: 60 })
+});
+
+function blob(b: { x: number; y: number; radii: number[] }): LonLat[] {
+  const c: LonLat = [W + b.x * SPAN_LON, S + b.y * SPAN_LAT];
+  return b.radii.map((r, i) => project(c, (2 * Math.PI * i) / b.radii.length, r));
+}
 
 function ring(f: { x: number; y: number; heading: number; length: number; beam: number }) {
   const c: LonLat = [W + f.x * SPAN_LON, S + f.y * SPAN_LAT];
@@ -116,6 +129,25 @@ describe("tile walk equality (property)", () => {
         }
       ),
       { numRuns: 60 }
+    );
+  });
+
+  test("polygons of many vertices return what the ea8277a walk returns", () => {
+    fc.assert(
+      fc.property(
+        chart,
+        fc.array(fc.tuple(blobArb, optionsArb), { minLength: 1, maxLength: 4 }),
+        (c, queries) => {
+          const store = storeOf(c);
+          for (const [b, opts] of queries) {
+            const geom = footprintGeom(blob(b));
+            expect(minDepthOver(store, geom, opts)).toEqual(
+              referenceMinDepthOver(store, geom, opts)
+            );
+          }
+        }
+      ),
+      { numRuns: 40 }
     );
   });
 
