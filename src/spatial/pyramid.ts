@@ -22,7 +22,7 @@ import {
   rectWithin,
   shiftGeom
 } from "../foundation/geometry";
-import type { NodeStore, NodeValues } from "./node-store";
+import type { NodeStore, NodeValues, StandIn } from "./node-store";
 import { probabilityBelowZero } from "../foundation/stats";
 import { EMPTY, FLAGS, NO_DATA } from "./node-store";
 import type { SurveySigmaP } from "./chart-position";
@@ -131,7 +131,8 @@ interface Walk {
   stopWhenCertain: boolean;
 }
 
-function take(w: Walk, v: NodeValues, z: number, x: number, y: number): void {
+/** Folds a tile's depth, σ, flags and cell into the result. */
+function fold(w: Walk, v: NodeValues, flags: number, z: number, x: number, y: number): void {
   const r = w.result;
   if (v.dMin < r.dMin || w.worst === undefined) {
     w.worst = { z, x, y };
@@ -143,21 +144,49 @@ function take(w: Walk, v: NodeValues, z: number, x: number, y: number): void {
   }
   r.sigmaD = Math.max(r.sigmaD, v.sigmaD);
   r.sigmaP = Math.max(r.sigmaP, v.sigmaP);
-  r.flags |= v.flags;
-  if ((v.flags & FLAGS.NO_DEPTH) === 0) {
-    w.coveredDMin = Math.min(w.coveredDMin, v.dMin);
-  }
+  r.flags |= flags;
   if (v.cellRef >= 0) {
     w.cells.add(v.cellRef);
   }
-  if (w.risk && (v.flags & FLAGS.NO_DEPTH) === 0) {
-    const sigma = Math.hypot(v.sigmaD, w.risk.sigmaExtra);
-    const risk = probabilityBelowZero(v.dMin - w.risk.threshold, sigma);
+}
+
+/** Counts a charted tile's P(UKC < 0) from its dMin and σD. */
+function weigh(w: Walk, t: NodeValues, z: number, x: number, y: number): void {
+  if (w.risk) {
+    const sigma = Math.hypot(t.sigmaD, w.risk.sigmaExtra);
+    const risk = probabilityBelowZero(t.dMin - w.risk.threshold, sigma);
     if (w.riskTile === undefined || risk > w.riskTile.risk) {
-      w.riskTile = { v, z, x, y, risk };
+      w.riskTile = { v: t, z, x, y, risk };
       w.maxRisk = risk;
     }
   }
+}
+
+function take(w: Walk, v: NodeValues, z: number, x: number, y: number): void {
+  fold(w, v, v.flags, z, x, y);
+  if ((v.flags & FLAGS.NO_DEPTH) === 0) {
+    w.coveredDMin = Math.min(w.coveredDMin, v.dMin);
+    weigh(w, v, z, x, y);
+  }
+}
+
+/**
+ * Takes a split tile whose children are in a block not loaded, as no
+ * coverage and with bounds no loaded child could exceed: its own shallowest
+ * depth, widest σ and flags, the shallowest charted depth under it, and a
+ * risk at least any charted child's. Below the threshold a child's P is
+ * highest at its least σ, above it at its widest, so the stand-in's σ is
+ * picked by the side its charted depth is on.
+ */
+function takeStandIn(w: Walk, v: NodeValues, s: StandIn, z: number, x: number, y: number): void {
+  const flags = v.flags | FLAGS.NO_COVERAGE;
+  fold(w, v, flags, z, x, y);
+  if (s.covered === Infinity) {
+    return;
+  }
+  w.coveredDMin = Math.min(w.coveredDMin, s.covered);
+  const below = w.risk !== undefined && s.covered < w.risk.threshold;
+  weigh(w, { ...v, dMin: s.covered, sigmaD: below ? s.sigmaDMin : v.sigmaD, flags }, z, x, y);
 }
 
 /**
@@ -200,7 +229,7 @@ function reachOf(w: Walk, i: number): number {
   if (!w.survey || i < 0) {
     return w.buffer;
   }
-  return w.buffer + w.perMetre * chartReach(w.k, w.survey.node[i] as number);
+  return w.buffer + w.perMetre * chartReach(w.k, w.store.surveySigma(i));
 }
 
 function certain(w: Walk): boolean {
@@ -248,6 +277,11 @@ function visit(w: Walk, z: number, x: number, y: number, inside: boolean): void 
   const v = w.store.values(i);
   if (!w.store.isSplit(i) || canStop(w, v)) {
     take(w, v, z, x, y);
+    return;
+  }
+  const s = w.store.standIn(i, z, x, y);
+  if (s) {
+    takeStandIn(w, v, s, z, x, y);
     return;
   }
   // Only a tile inside the footprint's bounds grown by the buffer can lie within the buffer.

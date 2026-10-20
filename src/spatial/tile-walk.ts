@@ -1,6 +1,6 @@
 import { tileKey } from "../foundation/geo";
-import type { NodeStore, NodeValues } from "./node-store";
-import { combine, NO_DATA } from "./node-store";
+import type { NodeStore, NodeValues, StandIn } from "./node-store";
+import { combine, FLAGS, NO_DATA } from "./node-store";
 
 export interface TileCell {
   z: number;
@@ -107,6 +107,23 @@ function withAdjustments(
   );
 }
 
+/**
+ * Values for a bound cell whose block is not loaded, which `classify` in
+ * `ukc-tiles.ts` draws at least as severe as any cell under it: danger with
+ * land under it, unverified with nothing charted, otherwise its charted
+ * shallowest depth with the widest σ, and NO_COVERAGE so it is never clear.
+ */
+export function standInCell(v: NodeValues, s: StandIn): NodeValues {
+  if (s.covered === Infinity) {
+    return { ...v, dMin: -Infinity, flags: v.flags | NO_DATA.flags };
+  }
+  if (s.covered === -Infinity) {
+    // A bound at -Infinity without NO_COVERAGE is drawn as danger.
+    return { ...v, dMin: -Infinity, flags: v.flags & ~FLAGS.NO_COVERAGE };
+  }
+  return { ...v, dMin: s.covered, flags: v.flags | FLAGS.NO_COVERAGE };
+}
+
 function chartCells(
   store: NodeStore,
   z: number,
@@ -132,6 +149,11 @@ function chartCells(
       out.push({ z: cz, x: cx, y: cy, values: store.values(i), bound: store.isSplit(i) });
       return;
     }
+    const s = store.standIn(i, cz, cx, cy);
+    if (s) {
+      out.push({ z: cz, x: cx, y: cy, values: standInCell(store.values(i), s), bound: true });
+      return;
+    }
     for (const [dx, dy] of CHILDREN) {
       visit(cz + 1, 2 * cx + dx, 2 * cy + dy);
     }
@@ -152,7 +174,9 @@ function chartCells(
     } else if (!store.isSplit(i) || az >= limit) {
       out.push({ z, x, y, values: store.values(i), bound: store.isSplit(i) });
     } else {
-      out.push({ z, x, y, values: NO_DATA, bound: false });
+      const s = store.standIn(i, az, Math.floor(x / 2 ** shift), Math.floor(y / 2 ** shift));
+      const values = s ? standInCell(store.values(i), s) : NO_DATA;
+      out.push({ z, x, y, values, bound: s !== undefined });
     }
     return out;
   }

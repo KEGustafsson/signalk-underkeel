@@ -8,6 +8,7 @@ import {
   tileRect
 } from "../foundation/geo";
 import type { NodeStore, NodeValues } from "./node-store";
+import { standInCell } from "./tile-walk";
 
 /**
  * Depth areas and lines are not widened by their survey's position
@@ -27,9 +28,8 @@ export function chartReach(k: number, sigmaP: number): number {
   return Math.min(MAX_CHART_BUFFER, k * sigmaP);
 }
 
+/** Per node the widest assessed σP reaching it or any leaf under it is `store.surveySigma(i)`. */
 export interface SurveySigmaP {
-  /** Per node: the widest assessed σP reaching it or any leaf under it. */
-  node: Float32Array;
   /** The widest over the whole store. */
   max: number;
 }
@@ -40,14 +40,14 @@ const cache = new WeakMap<NodeStore, { count: number; max: number }>();
 export function surveySigmaP(store: NodeStore): SurveySigmaP {
   const hit = cache.get(store);
   if (hit && hit.count === store.count) {
-    return { node: store.surveySigmaP, max: hit.max };
+    return { max: hit.max };
   }
   let max = 0;
   for (const [, , i] of store.entries(store.minZoom)) {
-    max = Math.max(max, store.surveySigmaP[i] as number);
+    max = Math.max(max, store.surveySigma(i));
   }
   cache.set(store, { count: store.count, max });
-  return { node: store.surveySigmaP, max };
+  return { max };
 }
 
 /** A pyramid cell whose chart reach extends beyond it. */
@@ -77,7 +77,7 @@ export function reachersOf(store: NodeStore, rect: Rect, k: number, maxZoom: num
   const out: Reacher[] = [];
   const visit = (z: number, x: number, y: number): void => {
     const i = store.find(z, x, y);
-    const reach = i < 0 ? 0 : perMetre * chartReach(k, sigma.node[i] as number);
+    const reach = i < 0 ? 0 : perMetre * chartReach(k, store.surveySigma(i));
     const r = tileRect(z, x, y);
     if (reach <= 0 || rectGap(r, rect) > reach) {
       return;
@@ -85,6 +85,11 @@ export function reachersOf(store: NodeStore, rect: Rect, k: number, maxZoom: num
     const split = store.isSplit(i);
     if (!split || z >= maxZoom) {
       out.push({ rect: r, values: store.values(i), bound: split, reach });
+      return;
+    }
+    const s = store.standIn(i, z, x, y);
+    if (s) {
+      out.push({ rect: r, values: standInCell(store.values(i), s), bound: true, reach });
       return;
     }
     for (const [dx, dy] of CHILDREN) {

@@ -10,12 +10,9 @@ import { HazardIndex } from "./hazards";
 import type { NodeStore } from "./node-store";
 import type { BuildOptions } from "./pyramid-build";
 import { buildPyramid } from "./pyramid-build";
-import {
-  deserializePyramid,
-  deserializePyramidAsync,
-  isCurrentPyramid,
-  serializePyramid
-} from "./store";
+import { cacheOf } from "./block-cache";
+import type { CacheOptions } from "./block-cache";
+import { isCurrentPyramid, openPyramid, openPyramidAsync, serializePyramid } from "./store";
 
 /** The queryable chart: provenance, the min-depth pyramid and the hazard tree. */
 export interface ChartIndex {
@@ -210,34 +207,35 @@ const hazardsFrom = (json: string): HazardIndex =>
     (JSON.parse(json) as StoredHazard[]).map((h) => ({ ...h, depth: h.depth ?? -Infinity }))
   );
 
-/** Loads a saved index, first recovering one that a crash during save left moved aside. */
-export function loadChartIndex(dir: string): ChartIndex {
+/**
+ * Loads a saved index, first recovering one that a crash during save left
+ * moved aside. The pyramid's blocks are read as queries reach them, but each
+ * is inflated once here, so a damaged file is refused now and rebuilt.
+ */
+export function loadChartIndex(dir: string, opts?: CacheOptions): ChartIndex {
   recoverChartIndex(dir);
   const catalogue = parseCatalogue(
     JSON.parse(fs.readFileSync(path.join(dir, FILES.cells), "utf8"))
   );
-  const pyramid = deserializePyramid(fs.readFileSync(path.join(dir, FILES.pyramid)));
+  const pyramid = openPyramid(path.join(dir, FILES.pyramid), opts);
+  cacheOf(pyramid)?.verifySync();
   const hazards = hazardsFrom(fs.readFileSync(path.join(dir, FILES.hazards), "utf8"));
   return { catalogue, pyramid, hazards };
 }
 
 /**
- * `loadChartIndex` with the file reads and the pyramid's inflate off the
- * event loop; parsing the catalogue and hazards and adopting the inflated
- * columns stay on it.
+ * `loadChartIndex` with the file reads and the pyramid's inflates off the
+ * event loop; parsing the catalogue and hazards stays on it.
  */
-export async function loadChartIndexAsync(dir: string): Promise<ChartIndex> {
+export async function loadChartIndexAsync(dir: string, opts?: CacheOptions): Promise<ChartIndex> {
   recoverChartIndex(dir);
   const read = (f: string) => fs.promises.readFile(path.join(dir, f));
   const [cells, pyramid, hazards] = await Promise.all([
     read(FILES.cells),
-    read(FILES.pyramid),
+    openPyramidAsync(path.join(dir, FILES.pyramid), opts),
     read(FILES.hazards)
   ]);
+  await cacheOf(pyramid)?.verify();
   const catalogue = parseCatalogue(JSON.parse(cells.toString("utf8")));
-  return {
-    catalogue,
-    pyramid: await deserializePyramidAsync(pyramid),
-    hazards: hazardsFrom(hazards.toString("utf8"))
-  };
+  return { catalogue, pyramid, hazards: hazardsFrom(hazards.toString("utf8")) };
 }
