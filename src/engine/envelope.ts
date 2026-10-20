@@ -324,6 +324,64 @@ function firstRev(): number {
   return issued;
 }
 
+/** Metres a stationary envelope may wander before it is published again. */
+export const ENVELOPE_DEADBAND = 5;
+
+const M_PER_DEG = 111_320;
+
+/** The geometry's vertex chains: a point is one chain of one vertex. */
+function chains(g: EnvelopeFeature["geometry"]): number[][][] {
+  return g.type === "Point"
+    ? [[g.coordinates]]
+    : g.type === "LineString"
+      ? [g.coordinates]
+      : g.coordinates;
+}
+
+/** Metres from p to the nearest edge or vertex of the chains, in a local plane at p. */
+function distanceTo(p: number[], lines: number[][][]): number {
+  const k = Math.cos(((p[1] as number) * Math.PI) / 180);
+  const xy = (q: number[]): XY => [
+    ((q[0] as number) - (p[0] as number)) * k,
+    (q[1] as number) - (p[1] as number)
+  ];
+  let d = Infinity;
+  for (const line of lines) {
+    for (let i = 0; i < line.length; i++) {
+      const a = xy(line[i] as number[]);
+      d = Math.min(d, offLine([0, 0], a, xy((line[i + 1] ?? line[i]) as number[])));
+    }
+  }
+  return d * M_PER_DEG;
+}
+
+/** Every vertex of each geometry lies within `metres` of the other. */
+function near(
+  a: EnvelopeFeature["geometry"],
+  b: EnvelopeFeature["geometry"],
+  metres: number
+): boolean {
+  const ca = chains(a);
+  const cb = chains(b);
+  const inside = (from: number[][][], to: number[][][]) =>
+    from.every((line) => line.every((p) => distanceTo(p, to) <= metres));
+  return a.type === b.type && inside(ca, cb) && inside(cb, ca);
+}
+
+/** Same features with the same properties, each drawn within `metres` of the published one. */
+function jitterOf(published: Envelope, next: Envelope, metres: number): boolean {
+  return (
+    published.features.length === next.features.length &&
+    next.features.every((f, i) => {
+      const p = published.features[i] as EnvelopeFeature;
+      return (
+        JSON.stringify(p.properties) === JSON.stringify(f.properties) &&
+        near(p.geometry, f.geometry, metres)
+      );
+    })
+  );
+}
+
 /**
  * Holds the latest envelope and bumps `rev` only when its content changes. `rev` starts at the
  * wall-clock ms of creation (and above any rev issued before in this process), so a client
@@ -335,9 +393,14 @@ export class EnvelopeTracker {
   envelope: Envelope = { type: "FeatureCollection", features: [] };
   private key = JSON.stringify(this.envelope);
 
-  update(next: Envelope): boolean {
+  /**
+   * With a `deadband` (metres), used below low speed, GPS noise that moves
+   * the drawing less than that and changes no class or number is not
+   * published: each new rev costs every client a fetch.
+   */
+  update(next: Envelope, deadband = 0): boolean {
     const key = JSON.stringify(next);
-    if (key === this.key) {
+    if (key === this.key || (deadband > 0 && jitterOf(this.envelope, next, deadband))) {
       return false;
     }
     this.key = key;

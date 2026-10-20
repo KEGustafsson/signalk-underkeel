@@ -77,6 +77,10 @@ All notable changes to signalk-underkeel are documented here.
 - `GET /envelope` drops outline vertices within 1 cm of the line through their neighbours. With
   a 5 NM horizon (400 footprints) the envelope fell from 19.5 to 3.5 kB median and 21.4 to
   5.6 kB at most, back within the 15 kB budget; at 6 kn from 4.1 to 2.5 kB.
+- Below the low speed `navigation.underKeel.envelopeRev` no longer bumps while GPS noise moves
+  the drawn envelope less than 5 m and no class or number in it changes. At rest with 1 m of
+  position noise it bumped on 599 of 600 ticks, so every Freeboard fetched the envelope and
+  redrew its overlay once a second; now 0 (153 with 2 m of white noise).
 - The look-ahead buffer k_p · σ_pos stops at 500 m. Beyond that the state is at least `warn`
   with the reason "position uncertainty N m" and the integrity monitor's reasons, and no escape
   heading is searched. After a 2 km GNSS jump in water without land a tick took 0.4 to 3.2 s

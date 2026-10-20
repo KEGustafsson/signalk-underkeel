@@ -1,6 +1,6 @@
 import type { Delta, Path, ServerAPI, Unsubscribes } from "@signalk/server-api";
 import type { PluginConfig } from "./config";
-import { buildEnvelope, EnvelopeTracker } from "./engine/envelope";
+import { buildEnvelope, ENVELOPE_DEADBAND, EnvelopeTracker } from "./engine/envelope";
 import type { LookaheadResult, NavState, Sample } from "./engine/lookahead";
 import type { AckStore } from "./ack-store";
 import type { Zone } from "./engine/acks";
@@ -352,7 +352,9 @@ export class Monitor {
       this.since = this.clock.now();
     }
     this.last = next;
-    this.envelope.update(buildEnvelope(this.last, this.config.lookahead.thresholds));
+    // A single footprint is the boat below low speed, where only GPS noise moves it.
+    const still = this.last.footprints.length === 1 ? ENVELOPE_DEADBAND : 0;
+    this.envelope.update(buildEnvelope(this.last, this.config.lookahead.thresholds), still);
     const r = this.last;
     this.app.handleMessage(this.pluginId, {
       updates: [

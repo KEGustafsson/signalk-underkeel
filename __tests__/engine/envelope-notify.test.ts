@@ -1,4 +1,10 @@
-import { buildEnvelope, classOf, EnvelopeTracker } from "../../src/engine/envelope";
+import type { EnvelopeFeature } from "../../src/engine/envelope";
+import {
+  buildEnvelope,
+  classOf,
+  ENVELOPE_DEADBAND,
+  EnvelopeTracker
+} from "../../src/engine/envelope";
 import type { LookaheadResult } from "../../src/engine/lookahead";
 import { DEFAULT_LOOKAHEAD, evaluateLookahead } from "../../src/engine/lookahead";
 import { notificationFor } from "../../src/engine/notify";
@@ -173,6 +179,26 @@ describe("envelope", () => {
     expect(tracker.rev).toBe(start + 1);
     expect(tracker.update(buildEnvelope(at(22.006, 60.01), TH))).toBe(true);
     expect(tracker.rev).toBe(start + 2);
+  });
+
+  test("at rest, GPS noise within the deadband keeps the rev; a move or a class change bumps it", () => {
+    const still = (east: number) => buildEnvelope(at(22.005 + east / M_PER_DEG_LON, 60.01, 0), TH);
+    const tracker = new EnvelopeTracker();
+    tracker.update(still(0), ENVELOPE_DEADBAND);
+    const rev = tracker.rev;
+    for (const east of [1.5, -2, 3, 0.5]) {
+      expect(tracker.update(still(east), ENVELOPE_DEADBAND)).toBe(false);
+    }
+    expect(tracker.rev).toBe(rev);
+    // Measured from the published envelope, so small steps do not add up unseen.
+    expect(tracker.update(still(6), ENVELOPE_DEADBAND)).toBe(true);
+    expect(tracker.rev).toBe(rev + 1);
+    const recoloured = still(6.5);
+    const segment = recoloured.features.find((f) => f.properties.kind === "segment");
+    (segment as EnvelopeFeature).properties.class = "danger";
+    expect(tracker.update(recoloured, ENVELOPE_DEADBAND)).toBe(true);
+    // Under way there is no deadband.
+    expect(tracker.update(still(7), 0)).toBe(true);
   });
 
   test("a new tracker starts above every rev issued before it", () => {
