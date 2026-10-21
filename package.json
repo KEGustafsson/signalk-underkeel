@@ -7,7 +7,13 @@
     "lib/",
     "public/",
     "scripts/enc-to-geojson.sh",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "docs/images/how-it-works/combo-pic.jpg",
+    "docs/images/how-it-works/freeboard-risk.jpg",
+    "docs/images/how-it-works/ukc-overlay.jpg",
+    "docs/images/how-it-works/route-check.jpg",
+    "docs/images/how-it-works/freeboard-panel.jpg",
+    "docs/images/how-it-works/config.png"
   ],
   "keywords": [
     "signalk-node-server-plugin",
@@ -15,7 +21,15 @@
     "signalk-category-chart-plotters"
   ],
   "signalk": {
-    "displayName": "Under-Keel Awareness"
+    "displayName": "Under-Keel Awareness",
+    "screenshots": [
+      "./docs/images/how-it-works/combo-pic.jpg",
+      "./docs/images/how-it-works/freeboard-risk.jpg",
+      "./docs/images/how-it-works/ukc-overlay.jpg",
+      "./docs/images/how-it-works/route-check.jpg",
+      "./docs/images/how-it-works/freeboard-panel.jpg",
+      "./docs/images/how-it-works/config.png"
+    ]
   },
   "signalk-plugin-enabled-by-default": false,
   "scripts": {

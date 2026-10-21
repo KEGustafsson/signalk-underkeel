@@ -29,7 +29,7 @@
 # harness parses the `build-command` / `test-command` declared below and
 # runs them against a shallow clone of this repo to score the App Store
 # "Plugin test suite" indicator. That run is stricter than GitHub CI —
-# `firejail --net=none` (loopback only, no DNS, no registry), a 120 s cap
+# `firejail --net=none` (loopback only, no DNS, no registry), a 240 s cap
 # on the test command, 300 s on the build — and it exports
 # SIGNALK_REGISTRY_TEST=1 so tests can opt out of what the sandbox cannot
 # provide. Keep `npm run test` hermetic and under the cap, or the plugin
