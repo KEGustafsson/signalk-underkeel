@@ -165,12 +165,17 @@ describe("plugin with the Traficom WFS source", () => {
     expect(before.flags).toContain("LIVECHART_ADJUSTED");
     expect(before.charted).toBeLessThan(10);
     const box = (call("/v1/status").body as { wfs: { box: { fetchedAt: string } } }).wfs.box;
-    // 2 km east is past half the 3 km radius: the next box is fetched and handed over.
+    // 2 km east is past half the 3 km radius: the next box is fetched and handed over. The
+    // handover first waits for block reads still holding the old index open, which are real I/O.
     fix(22.036);
     clock.advance(10_000);
+    const fetchedAt = () =>
+      (call("/v1/status").body as { wfs: { box: { fetchedAt: string } } }).wfs.box.fetchedAt;
+    for (let i = 0; i < 500 && fetchedAt() === box.fetchedAt; i++) {
+      await settle();
+    }
+    expect(fetchedAt()).not.toBe(box.fetchedAt);
     await drain();
-    const status = call("/v1/status").body as { wfs: { box: { fetchedAt: string } } };
-    expect(status.wfs.box.fetchedAt).not.toBe(box.fetchedAt);
     const after = (await post("/v1/query", shoal)).body as { charted: number; flags: string[] };
     expect(after.flags).toContain("LIVECHART_ADJUSTED");
     expect(after.charted).toBe(before.charted);
