@@ -3,7 +3,7 @@ import os from "os";
 import path from "path";
 import type { ServerAPI } from "@signalk/server-api";
 import underkeel = require("../src/index");
-import { FIXTURES, M_PER_DEG_LON, ROCK } from "./helpers/fixture-index";
+import { FIXTURES, M_PER_DEG_LON, ROCK, seedFixtureIndex } from "./helpers/fixture-index";
 import { fakeApp, fakeClock, fakeRouter, navDelta, T0, values } from "./helpers/plugin-harness";
 
 /**
@@ -30,6 +30,7 @@ function alarmPassage(dataDir: string, options: Record<string, unknown>) {
   const plugin = underkeel(app, clock);
   const { router } = fakeRouter();
   plugin.registerWithRouter?.(router as never);
+  seedFixtureIndex(dataDir);
   plugin.start({ cellsDir: FIXTURES, leafZoom: 18, ...options }, () => undefined);
   const states: unknown[] = [];
   // 75 m west of the rock at 3 m/s, for 20 s: the bow stays short of it.

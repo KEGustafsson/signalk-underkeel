@@ -58,6 +58,25 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Changed
 
+- The index build in the worker builds the pyramid one z10 root at a time, from only the cells
+  reaching it, on up to four threads, with output byte-identical to a build of all cells at
+  once. Sixteen copies of the Nauvo pair (3.3 M nodes) on x86: peak RSS 817 → 481 MB on one
+  thread; 27.6 → 13.4 s on three threads (974 MB). The default is one thread per core but one,
+  at most four and at most one per GiB of RAM.
+- The hazard R-tree is packed in typed arrays: 1 M soundings take 47 MB of tree instead of
+  289 MB and build in 1.3 s instead of 3.1 s on x86. Hazards at the same depth and distance from
+  a query are listed in catalogue order.
+- The pyramid's node store is a sorted tile-key column per zoom level instead of a `Map`, and
+  `pyramid.bin` is written in that order, so loading uses the inflated
+  columns in place. Two Nauvo cells: load 101 → 22 ms, resident +43 → +16 MB; the same 16
+  times over (3.3 M nodes): load 2.4 s → 0.24 s, +490 → +148 MB, lookup 524 → 135 ns. A store
+  is no longer limited to the 16.7 M nodes of a V8 `Map`.
+- `pyramid.bin` stores its columns gzip-compressed, 13× fewer bytes written to the SD card per
+  rebuild (7.5 MB → 0.56 MB for two Nauvo cells at leaf zoom 20); an index saved by an earlier
+  version of the plugin is rebuilt once at start.
+- The index build tests each area against a tile through a per-polygon box and edge grid and
+  decides "reaches" and "contains" in one boundary pass, with the same nodes byte for byte:
+  two Nauvo cells at leaf zoom 20 build in 1.9 s instead of 23.4 s on x86.
 - The living chart moves onto a rebuilt WFS index in slices of 1 000 cells, one turn of the
   event loop each, with the index swapped in during the turn that finishes the move; when only
   the WFS cell changed, only the cells near the old and new box are re-judged. With 19 574
@@ -124,7 +143,20 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Fixed
 
-- The index build worker runs with a heap limit of a quarter of the RAM (256 MB to 2 GB).
+- The chart index is built in a worker thread at start too, as it already was for Traficom
+  WFS boxes; meanwhile the engine is `off` with the reason `building chart index`. `start()`
+  built it on the main thread, which froze the whole Signal K server for 24 s with two Nauvo
+  cells at leaf zoom 20 on x86 (about 1.5 min on a Raspberry Pi 4) on the first start, after a
+  cell or format change and when the WFS source was toggled. A saved index over 1 MB is read
+  and inflated off the event loop too (`off` with `loading chart index`): 3.3 M nodes blocked
+  `start()` for 2.2 s, now 6 ms and at most 50 ms per event-loop turn.
+- A saved chart index whose files cannot be read or parsed is rebuilt from the configured
+  cells at start, with the read error in the index reason. An index left empty by a power cut
+  during a save kept the engine `off` with "chart index failed: Unexpected end of JSON input"
+  on every later start until **Rebuild index at start** was set. Index files and their
+  directories are now fsynced before and after the rename that commits them.
+- The index build worker runs with a heap limit of a quarter of the RAM (256 MB to 2 GB);
+  its root threads, on machines with 2 GiB or more, share a second limit of the same size.
   An oversized build fails with "index build stopped at the N MB worker heap limit" in the
   WFS status and the previous index stays in use; before, it could grow until the kernel ended
   the Signal K server on a 1 GB Pi 3 or Cerbo GX. A worker that exits without a result now

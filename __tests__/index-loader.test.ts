@@ -2,7 +2,9 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { parseConfig } from "../src/config";
-import { cellDirectories, loadOrBuildIndex } from "../src/index-loader";
+import { cellDirectories, loadOrBuildIndex, planIndex } from "../src/index-loader";
+import { loadChartIndex, loadChartIndexAsync } from "../src/spatial/chart-index";
+import { gunzipSync } from "zlib";
 
 const FIXTURES = path.resolve(__dirname, "..", "fixtures", "enc");
 
@@ -136,5 +138,104 @@ describe("saved index against the cells directory", () => {
     const r = load({ rebuildIndex: true });
     expect(r.built).toBe(true);
     expect(r.reason).toBeUndefined();
+  });
+});
+
+describe("a saved index that cannot be read", () => {
+  const indexFile = (name: string): string => path.join(dataDir, "index", name);
+  const halve = (name: string): void =>
+    fs.truncateSync(indexFile(name), Math.floor(fs.statSync(indexFile(name)).size / 2));
+
+  test.each([
+    ["an empty cells.json", () => fs.truncateSync(indexFile("cells.json"), 0)],
+    ["a half-written pyramid.bin", () => halve("pyramid.bin")],
+    ["a half-written hazards.json", () => halve("hazards.json")],
+    [
+      "an empty cells.json and pyramid.bin",
+      () => ["cells.json", "pyramid.bin"].forEach((f) => fs.truncateSync(indexFile(f), 0))
+    ]
+  ])("%s is rebuilt from the cells, naming the read error", (_what, tear) => {
+    copyCell("FI4SYNTH");
+    load();
+    tear();
+    const r = load();
+    expect(r.built).toBe(true);
+    expect(names(r)).toEqual(["FI4SYNTH"]);
+    expect(r.reason).toMatch(/rebuilt the index: the saved one could not be read \(.+\)/);
+    // The next start loads the rebuilt index again.
+    const again = load();
+    expect(again.built).toBe(false);
+    expect(again.reason).toBeUndefined();
+  });
+
+  test("without cells to rebuild from, the read error is the reason", () => {
+    copyCell("FI4SYNTH");
+    load();
+    halve("pyramid.bin");
+    const r = loadOrBuildIndex(parseConfig({ leafZoom: 16 }), dataDir);
+    expect(r.index).toBeUndefined();
+    expect(r.reason).toMatch(/chart index failed: .*truncated/);
+  });
+});
+
+test("an uncompressed version 3 pyramid.bin from an older plugin is rebuilt", () => {
+  copyCell("FI4SYNTH");
+  load();
+  const file = path.join(dataDir, "index", "pyramid.bin");
+  const buf = fs.readFileSync(file);
+  const nl = buf.indexOf(0x0a);
+  const header = JSON.parse(buf.subarray(0, nl).toString("utf8")) as Record<string, unknown>;
+  const v3 = Buffer.from(`${JSON.stringify({ ...header, version: 3 })}\n`, "utf8");
+  fs.writeFileSync(file, Buffer.concat([v3, gunzipSync(buf.subarray(nl + 1))]));
+  const r = load();
+  expect(r.built).toBe(true);
+  expect(names(r)).toEqual(["FI4SYNTH"]);
+  expect(load().built).toBe(false);
+});
+
+describe("a saved index too large to load on the event loop", () => {
+  test("is planned as a read, and the read off the loop loads the same index", async () => {
+    copyCell("FI4SYNTH");
+    load();
+    const p = planIndex(parseConfig({ cellsDir, leafZoom: 16 }), dataDir, [], 0);
+    expect(p).toMatchObject({ read: path.join(dataDir, "index"), notes: [] });
+    if (!("read" in p)) {
+      return;
+    }
+    const sync = loadChartIndex(p.read);
+    const read = await loadChartIndexAsync(p.read);
+    expect(read.catalogue).toEqual(sync.catalogue);
+    expect(read.hazards.features).toEqual(sync.hazards.features);
+    expect(read.pyramid.count).toBe(sync.pyramid.count);
+    for (let z = sync.pyramid.minZoom; z <= sync.pyramid.leafZoom; z++) {
+      for (const [x, y, i] of sync.pyramid.entries(z)) {
+        expect(read.pyramid.values(read.pyramid.find(z, x, y))).toEqual(sync.pyramid.values(i));
+      }
+    }
+  });
+
+  test("falls back to a rebuild naming the read error, or without cells to the error", async () => {
+    copyCell("FI4SYNTH");
+    load();
+    const file = path.join(dataDir, "index", "pyramid.bin");
+    fs.truncateSync(file, Math.floor(fs.statSync(file).size / 2));
+    const p = planIndex(parseConfig({ cellsDir, leafZoom: 16 }), dataDir, [], 0);
+    if (!("read" in p)) {
+      throw new Error("expected a read plan");
+    }
+    const err = await loadChartIndexAsync(p.read).catch((e: unknown) => e as Error);
+    expect(err).toBeInstanceOf(Error);
+    expect(p.unreadable(err)).toMatchObject({
+      build: { dirs: [path.join(cellsDir, "FI4SYNTH")] },
+      notes: [expect.stringMatching(/could not be read \(pyramid file is truncated\)/)]
+    });
+    const none = planIndex(parseConfig({ leafZoom: 16 }), dataDir, [], 0);
+    expect("read" in none && none.unreadable(err)).toEqual({
+      load: {
+        indexDir: path.join(dataDir, "index"),
+        built: false,
+        reason: expect.stringMatching(/chart index failed: pyramid file is truncated/)
+      }
+    });
   });
 });

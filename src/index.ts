@@ -2,11 +2,11 @@ import type { Path, Plugin, PluginRouter, ServerAPI } from "@signalk/server-api"
 import { mountAssets } from "./api/assets";
 import { manifestProvider, PLUGIN_ID } from "./api/manifest";
 import { registerRoutes } from "./api/routes";
-import type { PluginConfig } from "./config";
 import { parseConfig, SCHEMA } from "./config";
 import type { EngineStatus } from "./foundation/state";
 import { createStatus, PATHS } from "./foundation/state";
-import { loadOrBuildIndex } from "./index-loader";
+import { planIndex } from "./index-loader";
+import { pendingLoad, settleAtStart } from "./index-startup";
 import type { Clock } from "./monitor";
 import { Monitor, SYSTEM_CLOCK } from "./monitor";
 import type { FetchLike } from "./model/fmi";
@@ -75,6 +75,7 @@ export = function underkeel(
     stopped: createStatus("off", "plugin not started", new Date(clock.now())),
     requests: new RequestQueue()
   };
+  let startup: AbortController | undefined;
 
   return {
     id: PLUGIN_ID,
@@ -87,11 +88,8 @@ export = function underkeel(
     start(options: unknown): void {
       const config = parseConfig(options);
       const wfs = config.wfs && startWfs({ app, clock, state, config, fetch, build }, config.wfs);
-      const load = loadOrBuildIndex(
-        config,
-        app.getDataDirPath(),
-        wfs?.savedCell() ? [wfs.cellDir] : []
-      );
+      const plan = planIndex(config, app.getDataDirPath(), wfs?.savedCell() ? [wfs.cellDir] : []);
+      const load = "load" in plan ? plan.load : pendingLoad(plan);
       const monitor = new Monitor(app, PLUGIN_ID, config, load.index, load.reason, clock, fetch);
       const acks = new AckStore(path.join(app.getDataDirPath(), "acks.json"));
       if (acks.error) {
@@ -101,7 +99,11 @@ export = function underkeel(
       const livechart = startLivechart(app, clock, config, load.index, monitor);
       monitor.start();
       Object.assign(state, { config, load, monitor, acks, livechart, wfs, zoneErrors: [] });
-      wfs?.start();
+      if ("load" in plan) {
+        wfs?.start();
+      } else {
+        startup = settleAtStart({ app, clock, state, config, monitor, wfs }, plan, build);
+      }
       void loadZones(config.mooringZones, (id) => app.resourcesApi.getResource("regions", id)).then(
         ({ zones, errors }) => {
           // A slow load from an earlier start must not report into this one.
@@ -118,6 +120,8 @@ export = function underkeel(
     },
 
     stop(): void {
+      startup?.abort();
+      startup = undefined;
       stopPlugin(app, clock, state);
     },
 

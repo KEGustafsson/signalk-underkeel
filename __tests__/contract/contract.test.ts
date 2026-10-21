@@ -6,7 +6,7 @@ import { buildManifest } from "../../src/api/manifest";
 import { parseQueryRequest } from "../../src/api/query-request";
 import { parseRouteRequest } from "../../src/api/route-request";
 import underkeel = require("../../src/index");
-import { FIXTURES, M_PER_DEG_LON, ROCK } from "../helpers/fixture-index";
+import { FIXTURES, M_PER_DEG_LON, ROCK, seedFixtureIndex } from "../helpers/fixture-index";
 import { Validator } from "../helpers/json-schema";
 import { fakeApp, fakeClock, fakeRouter, lastValue, navDelta, T0 } from "../helpers/plugin-harness";
 import { stubProvider } from "./stub-provider";
@@ -193,6 +193,7 @@ describe("signalk-underkeel satisfies the contract", () => {
     const plugin = underkeel(f.app, clock);
     const { router, call, post } = fakeRouter();
     plugin.registerWithRouter?.(router as never);
+    seedFixtureIndex(dataDir);
     plugin.start({ cellsDir: FIXTURES, leafZoom: 18 }, () => undefined);
     f.send(navDelta(ROCK[0] - 75 / M_PER_DEG_LON, ROCK[1], 3, T0));
     clock.advance(1000);
@@ -236,6 +237,7 @@ describe("signalk-underkeel satisfies the contract", () => {
       return { running, stopped: lastValue(f.deltas, "notifications.navigation.underKeel") };
     };
     const off = notification({ indexDir: path.join(dataDir, "no-index") });
+    seedFixtureIndex(dataDir);
     const unknown = notification({ cellsDir: FIXTURES, leafZoom: 18 });
     expect(off.running).toMatchObject({ data: { engineState: "off" } });
     expect(unknown.running).toMatchObject({ data: { engineState: "unknown" } });

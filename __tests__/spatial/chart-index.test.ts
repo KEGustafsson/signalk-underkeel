@@ -104,6 +104,29 @@ describe("index persistence", () => {
     expect(() => deserializePyramid(good.subarray(0, good.length - 1))).toThrow(/truncated/);
   });
 
+  test("a header count that disagrees with the body is refused, not laid out wrong", () => {
+    const good = serializePyramid(fixtureIndex().pyramid);
+    const nl = good.indexOf(0x0a);
+    const header = JSON.parse(good.subarray(0, nl).toString("utf8")) as { count: number };
+    const short = Buffer.concat([
+      Buffer.from(JSON.stringify({ ...header, count: header.count - 1 })),
+      good.subarray(nl)
+    ]);
+    expect(() => deserializePyramid(short)).toThrow(/corrupt/);
+  });
+
+  test("the columns are gzip-compressed and a flipped byte is refused", () => {
+    const store = fixtureIndex().pyramid;
+    const file = serializePyramid(store);
+    const body = file.subarray(file.indexOf(0x0a) + 1);
+    expect([body[0], body[1]]).toEqual([0x1f, 0x8b]);
+    // 36 bytes of columns per node uncompressed.
+    expect(body.length).toBeLessThan((store.count * 36) / 4);
+    const torn = Buffer.from(file);
+    torn[torn.length - 100] = (torn[torn.length - 100] as number) ^ 0xff;
+    expect(() => deserializePyramid(torn)).toThrow(/corrupt/);
+  });
+
   test("refuses cells whose features name another catalogue entry", () => {
     const a = readCellDirectory(path.join(FIXTURES, "FI5SYNTH"), 0);
     const b = readCellDirectory(path.join(FIXTURES, "FI4SYNTH"), 0);
@@ -212,5 +235,51 @@ describe("hazard tree", () => {
     const depths = hits.map((h) => h.feature.depth);
     expect(depths).toEqual([...depths].sort((a, b) => a - b));
     expect(new HazardIndex([]).near(geom, 1000)).toEqual([]);
+  });
+});
+
+describe("durable save", () => {
+  test("every file and both directories are flushed to disk, the staging before its rename", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-fsync-"));
+    const real = { open: fs.openSync, fsync: fs.fsyncSync, rename: fs.renameSync };
+    const events: string[] = [];
+    const fds = new Map<number, string>();
+    const name = (p: fs.PathLike) =>
+      path
+        .relative(dir, String(p))
+        .split(path.sep)
+        .join("/")
+        .replace(/\.tmp-[^/]+/, ".tmp");
+    const open = jest.spyOn(fs, "openSync").mockImplementation(((
+      p: fs.PathLike,
+      flags: fs.OpenMode
+    ) => {
+      const fd = real.open(p, flags);
+      fds.set(fd, name(p));
+      return fd;
+    }) as typeof fs.openSync);
+    const fsync = jest.spyOn(fs, "fsyncSync").mockImplementation((fd: number) => {
+      events.push(`fsync ${fds.get(fd) ?? fd}`);
+      real.fsync(fd);
+    });
+    const rename = jest.spyOn(fs, "renameSync").mockImplementation((from, to) => {
+      events.push(`rename ${name(from)}`);
+      real.rename(from, to);
+    });
+    try {
+      saveChartIndex(path.join(dir, "index"), fixtureIndex());
+      const files = ["cells.json", "pyramid.bin", "hazards.json"].map(
+        (f) => `fsync index.tmp/${f}`
+      );
+      // Windows cannot open a directory; NTFS journals the rename itself.
+      expect(events).toEqual(
+        process.platform === "win32"
+          ? [...files, "rename index.tmp"]
+          : [...files, "fsync index.tmp", "rename index.tmp", "fsync "]
+      );
+    } finally {
+      [open, fsync, rename].forEach((s) => s.mockRestore());
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

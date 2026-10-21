@@ -66,14 +66,90 @@ export const EMPTY: NodeValues = {
   cellRef: -1
 };
 
+/** Zoom of living-chart cells (plan §4.13), capped at the leaf zoom. */
+export const ADJUST_ZOOM = 18;
+
+/**
+ * One zoom level's tiles: tile keys and their node indices, searched by
+ * bisection once sorted by key. A Map per level cost about 65 bytes of heap
+ * per node and V8 refuses one beyond 16.7 M entries; these cost 12, and a
+ * loaded level only the 8 of its key.
+ */
+interface Level {
+  keys: Float64Array;
+  /** Node index per key; undefined when key j belongs to node `offset + j`. */
+  nodes: Int32Array | undefined;
+  offset: number;
+  n: number;
+  /** Keys were added in increasing order, so `keys[0..n)` can be bisected. */
+  sorted: boolean;
+}
+
+const emptyLevel = (): Level => ({
+  keys: new Float64Array(0),
+  nodes: new Int32Array(0),
+  offset: 0,
+  n: 0,
+  sorted: true
+});
+
+const nodeAt = (level: Level, j: number): number =>
+  level.nodes ? (level.nodes[j] as number) : level.offset + j;
+
+function append(level: Level, key: number, node: number): void {
+  if (level.n === level.keys.length || !level.nodes) {
+    const keys = new Float64Array(Math.max(16, level.n * 2));
+    const nodes = new Int32Array(keys.length);
+    keys.set(level.keys.subarray(0, level.n));
+    for (let j = 0; j < level.n; j++) {
+      nodes[j] = nodeAt(level, j);
+    }
+    Object.assign(level, { keys, nodes, offset: 0 });
+  }
+  if (level.n > 0 && !(key > (level.keys[level.n - 1] as number))) {
+    level.sorted = false;
+  }
+  level.keys[level.n] = key;
+  (level.nodes as Int32Array)[level.n] = node;
+  level.n++;
+}
+
+/** Orders the level by key; of a tile added more than once the last add stays, as in a Map. */
+function sortLevel(level: Level): void {
+  const order = Array.from({ length: level.n }, (_, j) => j).sort(
+    (a, b) => (level.keys[a] as number) - (level.keys[b] as number) || a - b
+  );
+  const keys = new Float64Array(level.n);
+  const nodes = new Int32Array(level.n);
+  let n = 0;
+  for (const j of order) {
+    const key = level.keys[j] as number;
+    n = n > 0 && keys[n - 1] === key ? n - 1 : n;
+    keys[n] = key;
+    nodes[n] = nodeAt(level, j);
+    n++;
+  }
+  Object.assign(level, { keys, nodes, offset: 0, n, sorted: true });
+}
+
+/** The columns `NodeStore.fromColumns` adopts, one entry per node; `key` is the tileKey. */
+export interface NodeColumns {
+  z: Uint8Array;
+  key: Float64Array;
+  dMin: Float64Array;
+  sigmaD: Float32Array;
+  sigmaP: Float32Array;
+  surveySigmaP: Float32Array;
+  flags: Uint16Array;
+  cellRef: Int32Array;
+  split: Uint8Array;
+}
+
 /**
  * Sparse quadtree storage. A node is stored for every evaluated tile; a node
  * whose `split` bit is clear has no children and its values hold exactly for
  * its whole tile. Columns are typed arrays so a large index stays compact.
  */
-/** Zoom of living-chart cells (plan §4.13), capped at the leaf zoom. */
-export const ADJUST_ZOOM = 18;
-
 export class NodeStore {
   readonly minZoom: number;
   readonly leafZoom: number;
@@ -83,7 +159,7 @@ export class NodeStore {
    * only lower a result's depth (safety invariant 5).
    */
   readonly adjustments = new Map<number, NodeValues>();
-  private readonly levels: Map<number, number>[];
+  private readonly levels: Level[];
   count = 0;
   dMin = new Float64Array(1024);
   sigmaD = new Float32Array(1024);
@@ -105,7 +181,42 @@ export class NodeStore {
     }
     this.minZoom = minZoom;
     this.leafZoom = leafZoom;
-    this.levels = Array.from({ length: leafZoom - minZoom + 1 }, () => new Map());
+    this.levels = Array.from({ length: leafZoom - minZoom + 1 }, emptyLevel);
+  }
+
+  /**
+   * A store holding `cols` as its columns, without copying them. The nodes
+   * must be grouped by zoom, coarsest first, as `serializePyramid` writes them
+   * (also in key order, so no level needs a sort); anything else is refused.
+   */
+  static fromColumns(minZoom: number, leafZoom: number, cols: NodeColumns): NodeStore {
+    const store = new NodeStore(minZoom, leafZoom);
+    const count = cols.dMin.length;
+    const { z: zs, key } = cols;
+    let i = 0;
+    store.levels.forEach((_, k) => {
+      const start = i;
+      let sorted = true;
+      for (; i < count && zs[i] === minZoom + k; i++) {
+        sorted &&= i === start || (key[i] as number) > (key[i - 1] as number);
+      }
+      const keys = key.subarray(start, i);
+      store.levels[k] = { keys, nodes: undefined, offset: start, n: i - start, sorted };
+    });
+    if (i < count) {
+      throw new Error(`pyramid node ${i} is at zoom ${zs[i]}, out of zoom order`);
+    }
+    Object.assign(store, {
+      count,
+      dMin: cols.dMin,
+      sigmaD: cols.sigmaD,
+      sigmaP: cols.sigmaP,
+      surveySigmaP: cols.surveySigmaP,
+      flags: cols.flags,
+      cellRef: cols.cellRef,
+      split: cols.split
+    });
+    return store;
   }
 
   get adjustZoom(): number {
@@ -113,7 +224,7 @@ export class NodeStore {
   }
 
   private grow(): void {
-    const cap = this.dMin.length * 2;
+    const cap = Math.max(1024, this.dMin.length * 2);
     const g = <T extends Float64Array | Float32Array | Uint16Array | Int32Array | Uint8Array>(
       a: T,
       make: (n: number) => T
@@ -131,10 +242,17 @@ export class NodeStore {
     this.split = g(this.split, (n) => new Uint8Array(n));
   }
 
-  private level(z: number): Map<number, number> {
-    const level = this.levels[z - this.minZoom];
-    if (!level) {
+  private levelIndex(z: number): number {
+    if (!(z >= this.minZoom && z <= this.leafZoom)) {
       throw new Error(`zoom ${z} outside ${this.minZoom}..${this.leafZoom}`);
+    }
+    return z - this.minZoom;
+  }
+
+  private level(z: number): Level {
+    const level = this.levels[this.levelIndex(z)] as Level;
+    if (!level.sorted) {
+      sortLevel(level);
     }
     return level;
   }
@@ -148,6 +266,7 @@ export class NodeStore {
     split: boolean,
     surveySigmaP: number
   ): number {
+    const level = this.levels[this.levelIndex(z)] as Level;
     if (this.count === this.dMin.length) {
       this.grow();
     }
@@ -159,7 +278,7 @@ export class NodeStore {
     this.flags[i] = v.flags;
     this.cellRef[i] = v.cellRef;
     this.split[i] = split ? 1 : 0;
-    this.level(z).set(tileKey(z, x, y), i);
+    append(level, tileKey(z, x, y), i);
     return i;
   }
 
@@ -168,17 +287,38 @@ export class NodeStore {
     if (z < this.minZoom || z > this.leafZoom) {
       return -1;
     }
-    return this.level(z).get(tileKey(z, x, y)) ?? -1;
+    const level = this.level(z);
+    const keys = level.keys;
+    const key = tileKey(z, x, y);
+    let lo = 0;
+    let hi = level.n - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >>> 1;
+      const k = keys[mid] as number;
+      if (k === key) {
+        return nodeAt(level, mid);
+      }
+      // A NaN key compares false both ways and so ends unfound.
+      if (k < key) {
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    return -1;
   }
 
   /** Values of node i; an out-of-range index reads as NO_DATA, never as a depth. */
   values(i: number): NodeValues {
+    if (!(i >= 0 && i < this.count)) {
+      return { ...NO_DATA };
+    }
     return {
-      dMin: this.dMin[i] ?? -Infinity,
-      sigmaD: this.sigmaD[i] ?? 0,
-      sigmaP: this.sigmaP[i] ?? 0,
-      flags: this.flags[i] ?? NO_DATA.flags,
-      cellRef: this.cellRef[i] ?? -1
+      dMin: this.dMin[i] as number,
+      sigmaD: this.sigmaD[i] as number,
+      sigmaP: this.sigmaP[i] as number,
+      flags: this.flags[i] as number,
+      cellRef: this.cellRef[i] as number
     };
   }
 
@@ -187,11 +327,13 @@ export class NodeStore {
     return this.split[i] === 1;
   }
 
-  /** Every stored tile at zoom z as [x, y, nodeIndex]. */
+  /** Every stored tile at zoom z as [x, y, nodeIndex], in tile-key order. */
   *entries(z: number): Generator<[number, number, number]> {
     const n = 2 ** z;
-    for (const [key, i] of this.level(z)) {
-      yield [Math.floor(key / n), key % n, i];
+    const level = this.level(z);
+    for (let j = 0; j < level.n; j++) {
+      const key = level.keys[j] as number;
+      yield [Math.floor(key / n), key % n, nodeAt(level, j)];
     }
   }
 }

@@ -137,7 +137,8 @@ function commit(indexDir: string, staging: string, signal: AbortSignal): ChartIn
 /** Builds in a worker thread from the compiled `lib/spatial/build-worker.js`. */
 export const workerBuilder: IndexBuilder = async (job, signal) => {
   const script = path.join(__dirname, "spatial", "build-worker.js");
-  const m = await runWorker(script, job, signal, job.indexDir);
+  const heapMb = workerHeapLimitMb();
+  const m = await runWorker(script, { ...job, heapMb }, signal, job.indexDir, heapMb);
   return commit(job.indexDir, m.staging, signal);
 };
 

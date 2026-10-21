@@ -208,10 +208,14 @@ signalk-underkeel/
   local-tangent-plane math.
 - `better-sqlite3` for soundings and acknowledgements.
 - `worker_threads` for the index build. The worker's old-generation heap is capped at a
-  quarter of the RAM (256 MB to 2 GB), so a build too large for the machine ends the worker
-  with an error in the status and the previous index stays in use, instead of growing until
-  the kernel ends the server. A server started with `--max-old-space-size` overrides the cap,
-  because V8 flags apply to every isolate in the process.
+  quarter of the RAM (256 MB to 2 GB), and the root threads it starts share a second such
+  cap, so the build's old-generation heaps total at most half the RAM; the threads run only
+  with at least 2 GiB, one per GiB (`defaultThreads`). These caps bound the V8 heaps, not the
+  process RSS (buffers and typed arrays sit outside them). A build whose heap outgrows them
+  ends the worker with an error in the status and the previous index stays in use, rather
+  than growing the heap until the kernel ends the server. A server started with
+  `--max-old-space-size` overrides the cap, because V8 flags apply to every isolate in the
+  process.
 - GDAL/OGR, run in a container through `signalk-container`, for reading S-57. This keeps the
   same container approach as `signalk-charts-provider-simple`.
 - Must run on a Raspberry Pi 4 as well as on the Jetson Orin. Budget: index RAM under 150 MB,
@@ -318,6 +322,18 @@ wide does not by itself subdivide a tile: the tile takes the disc's depth over i
 which is pessimistic by at most one tile width and keeps CATZOC C soundings (σP 250 m) from
 splitting every tile down to the leaf zoom.
 
+**Build cost.** Each area polygon keeps its bounding box and, for rings of 64 or more
+vertices, a uniform grid of its edges, so a tile test reads only the edges near the tile and
+the edges that span the corner's row; one boundary pass and four corner tests decide both "the
+area reaches the tile" and "the area contains the tile", and an area containing a tile is
+passed to its children as containing them. The tests return exactly what the per-vertex walk
+returns (`src/spatial/polygon-index.ts`), so the pyramid is unchanged. The index build in the
+worker evaluates one minZoom root at a time from only the cells whose features reach it (a
+survey pass keeps each cell's extent and widest burn radius), on up to four threads (one per
+core but one and per GiB of RAM), and joins the roots in key order; each root depends only on
+the features reaching it, so the pyramid is byte-identical to a build of all cells at once
+whatever the thread count, and only one neighbourhood's features are held per thread.
+
 **Query: `minDepthOver(polygon, zoomCap)`.**
 
 1. Start at the coarsest tiles that cover the polygon's bounding box.
@@ -348,9 +364,26 @@ CATZOC C sounding counts up to 1 km from its position.
 **Storage.**
 
 - `pyramid.bin`: a JSON header line, then one typed column per node field (depth, σ, flags,
-  cell reference, tile address, split bit). It is loaded into typed arrays at start; memory
-  mapping per zoom level is the follow-up if the full Finnish coast exceeds the RAM budget.
-- `cells.json` (provenance) and `hazards.json` (exact hazard geometry) sit beside it.
+  cell reference, tile key, zoom, split bit), the columns together gzip-compressed at level 1
+  (7.5 MB → 0.56 MB for two Nauvo cells at z20; the CRC also refuses a torn body). Nodes are
+  written by zoom and then tile key, so at start the inflated columns are the store as they
+  are, and a lookup bisects its zoom's key column: 36 bytes per node resident, against
+  110–160 with a Map per zoom (which V8 also caps at 16.7 M entries). `dMin` stays a 64-bit
+  float, so a stored depth is never rounded deeper. Loading only the leaf blocks near the
+  vessel and the route is the follow-up if the full Finnish coast exceeds the RAM budget.
+- `cells.json` (provenance) and `hazards.json` (exact hazard geometry) sit beside it. The
+  hazard R-tree is rebuilt from `hazards.json` at load, packed in typed arrays (about 47 bytes
+  per hazard).
+- The index is built in a worker thread, at start as for a new WFS box (§4.2); until the
+  worker hands it over the look-ahead is `off` with the reason `building chart index`, and the
+  WFS box starts only after the handover, so this build never replaces a newer box's index.
+  A saved `pyramid.bin` over 1 MB is read and inflated off the event loop the same way, `off`
+  with `loading chart index` meanwhile; a smaller one loads within `start()` (22 ms on x86 for
+  two Nauvo cells).
+- A save writes and fsyncs the three files and their staging directory, renames the staging
+  directory into place and fsyncs the parent. A saved index that fails to read or parse at
+  start (a power cut can still leave a file short) is rebuilt from the configured cells, with
+  the read error in the index reason; without cells the read error is the reason.
 - The same data is also exported as UKC tiles (§4.10).
 
 **Invariant, tested by property-based tests:** for any polygon,

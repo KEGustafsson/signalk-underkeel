@@ -80,8 +80,13 @@ describe("only the main thread writes the index directory", () => {
   });
   afterEach(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
-  test("the build worker stages the index and leaves the index directory alone", () => {
-    const staging = runBuild({ dirs: [path.join(FIXTURES, "FI5SYNTH")], leafZoom: 14, indexDir });
+  test("the build worker stages the index and leaves the index directory alone", async () => {
+    const staging = await runBuild({
+      dirs: [path.join(FIXTURES, "FI5SYNTH")],
+      leafZoom: 14,
+      indexDir,
+      threads: 1
+    });
     expect(fs.existsSync(indexDir)).toBe(false);
     expect(loadChartIndex(staging).catalogue.cells.map((c) => c.name)).toEqual(["FI5SYNTH"]);
   });

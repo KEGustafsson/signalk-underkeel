@@ -1,47 +1,86 @@
 import type { Rect } from "../foundation/geo";
-import { expandRect, rectsOverlap, shiftRect, worldShifts } from "../foundation/geo";
+import { expandRect, shiftRect, worldShifts } from "../foundation/geo";
 import type { Geom } from "../foundation/geometry";
 import { geomBounds, geomRectDistance, shiftGeom } from "../foundation/geometry";
 import type { DepthFeature } from "../ingest/features";
 
 /**
- * Static R-tree (sort-tile-recursive packing) over the exact geometry of
- * point and line hazards. The pyramid already burns these in; the tree is
- * used to name the hazard behind a result and to refine near a threshold.
+ * Static R-tree over the exact geometry of point and line hazards, packed in
+ * typed arrays (sort-tile-recursive order): about 40 bytes per hazard where a
+ * node object per hazard cost about 290. The pyramid already burns these in;
+ * the tree is used to name the hazard behind a result and to refine near a
+ * threshold.
  */
 
-interface Node {
-  rect: Rect;
-  children: Node[];
-  items: number[];
-}
-
-function unionRect(rects: Rect[]): Rect {
-  return {
-    minX: Math.min(...rects.map((r) => r.minX)),
-    minY: Math.min(...rects.map((r) => r.minY)),
-    maxX: Math.max(...rects.map((r) => r.maxX)),
-    maxY: Math.max(...rects.map((r) => r.maxY))
-  };
-}
-
-function center(r: Rect): [number, number] {
-  return [(r.minX + r.maxX) / 2, (r.minY + r.maxY) / 2];
-}
-
-/** Groups entries into runs of at most `size`, tiled by x then y. */
-function strGroups<T extends { rect: Rect }>(entries: T[], size: number): T[][] {
-  const slices = Math.ceil(Math.sqrt(Math.ceil(entries.length / size)));
-  const byX = [...entries].sort((a, b) => center(a.rect)[0] - center(b.rect)[0]);
+/** Groups `items` (indices into `boxes`) into runs of at most `size`, tiled by x then y. */
+function strOrder(items: Uint32Array, boxes: Float64Array, size: number): Uint32Array {
+  const cx = (i: number) => (boxes[4 * i] as number) + (boxes[4 * i + 2] as number);
+  const cy = (i: number) => (boxes[4 * i + 1] as number) + (boxes[4 * i + 3] as number);
+  const slices = Math.ceil(Math.sqrt(Math.ceil(items.length / size)));
   const perSlice = slices * size;
-  const groups: T[][] = [];
+  const byX = items.slice().sort((a, b) => cx(a) - cx(b));
   for (let i = 0; i < byX.length; i += perSlice) {
-    const slice = byX.slice(i, i + perSlice).sort((a, b) => center(a.rect)[1] - center(b.rect)[1]);
-    for (let j = 0; j < slice.length; j += size) {
-      groups.push(slice.slice(j, j + size));
-    }
+    byX.subarray(i, i + perSlice).sort((a, b) => cy(a) - cy(b));
   }
-  return groups;
+  return byX;
+}
+
+interface Packed {
+  /** minX, minY, maxX, maxY per entry: the hazards first, then each level of nodes. */
+  boxes: Float64Array;
+  /** Per entry: the hazard's feature index, or a node's first child entry. */
+  first: Uint32Array;
+  /** Per entry: a node's child count; 0 for a hazard. */
+  children: Uint32Array;
+  root: number;
+}
+
+/** Widens node `node`'s box over its children's. */
+function enclose(boxes: Float64Array, node: number, from: number, count: number): void {
+  let [minX, minY, maxX, maxY] = [Infinity, Infinity, -Infinity, -Infinity];
+  for (let c = from; c < from + count; c++) {
+    minX = Math.min(minX, boxes[4 * c] as number);
+    minY = Math.min(minY, boxes[4 * c + 1] as number);
+    maxX = Math.max(maxX, boxes[4 * c + 2] as number);
+    maxY = Math.max(maxY, boxes[4 * c + 3] as number);
+  }
+  boxes.set([minX, minY, maxX, maxY], 4 * node);
+}
+
+/**
+ * The hazards in STR order, then levels of nodes over runs of `size`
+ * consecutive entries of the level below, up to one root.
+ */
+function pack(rects: Float64Array, n: number, size: number): Packed {
+  const sizes = [n];
+  while ((sizes[sizes.length - 1] as number) > 1) {
+    sizes.push(Math.ceil((sizes[sizes.length - 1] as number) / size));
+  }
+  const entries = sizes.reduce((a, b) => a + b, 0);
+  const boxes = new Float64Array(4 * entries);
+  const first = new Uint32Array(entries);
+  const children = new Uint32Array(entries);
+  strOrder(
+    Uint32Array.from({ length: n }, (_, i) => i),
+    rects,
+    size
+  ).forEach((f, j) => {
+    boxes.set(rects.subarray(4 * f, 4 * f + 4), 4 * j);
+    first[j] = f;
+  });
+  let base = 0;
+  for (const [level, below] of sizes.slice(0, -1).entries()) {
+    const above = base + below;
+    for (let k = 0; k < (sizes[level + 1] as number); k++) {
+      const from = base + k * size;
+      const count = Math.min(size, below - k * size);
+      first[above + k] = from;
+      children[above + k] = count;
+      enclose(boxes, above + k, from, count);
+    }
+    base = above;
+  }
+  return { boxes, first, children, root: entries - 1 };
 }
 
 export interface HazardHit {
@@ -53,25 +92,25 @@ export interface HazardHit {
 /** Hazards in an STR-packed tree with `nodeSize` entries per node. */
 export class HazardIndex {
   readonly features: readonly DepthFeature[];
-  private readonly rects: Rect[];
-  private readonly root: Node | undefined;
+  private readonly tree: Packed | undefined;
+  /** Scratch for a hazard's box, handed to the distance test. */
+  private readonly box: Rect = { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+  /** Per feature: its box's position in `tree.boxes`. */
+  private readonly entryOf: Uint32Array;
 
   constructor(features: readonly DepthFeature[], nodeSize = 16) {
     this.features = features;
-    this.rects = features.map((f) => geomBounds(f.geom));
-    let level: Node[] = this.rects.map((rect, i) => ({ rect, children: [], items: [i] }));
-    if (level.length === 0) {
-      this.root = undefined;
-      return;
+    const n = features.length;
+    const rects = new Float64Array(4 * n);
+    features.forEach((f, i) => {
+      const r = geomBounds(f.geom);
+      rects.set([r.minX, r.minY, r.maxX, r.maxY], 4 * i);
+    });
+    this.tree = n === 0 ? undefined : pack(rects, n, nodeSize);
+    this.entryOf = new Uint32Array(n);
+    for (let j = 0; j < n; j++) {
+      this.entryOf[this.tree?.first[j] as number] = j;
     }
-    while (level.length > 1) {
-      level = strGroups(level, nodeSize).map((group) => ({
-        rect: unionRect(group.map((n) => n.rect)),
-        children: group,
-        items: []
-      }));
-    }
-    this.root = level[0];
   }
 
   get size(): number {
@@ -81,16 +120,41 @@ export class HazardIndex {
   /** Indices of features whose bounding box overlaps `rect`. */
   search(rect: Rect): number[] {
     const out: number[] = [];
-    const stack = this.root ? [this.root] : [];
-    while (stack.length > 0) {
-      const node = stack.pop() as Node;
-      if (!rectsOverlap(node.rect, rect)) {
+    const t = this.tree;
+    const stack = t ? [t.root] : [];
+    while (t && stack.length > 0) {
+      const e = stack.pop() as number;
+      const b = t.boxes;
+      if (!(
+        (b[4 * e] as number) <= rect.maxX &&
+        rect.minX <= (b[4 * e + 2] as number) &&
+        (b[4 * e + 1] as number) <= rect.maxY &&
+        rect.minY <= (b[4 * e + 3] as number)
+      )) {
         continue;
       }
-      out.push(...node.items);
-      stack.push(...node.children);
+      const count = t.children[e] as number;
+      if (count === 0) {
+        out.push(t.first[e] as number);
+      }
+      for (let c = t.first[e] as number; count > 0 && c < (t.first[e] as number) + count; c++) {
+        stack.push(c);
+      }
     }
     return out;
+  }
+
+  /** The box of feature i, in the scratch rectangle. */
+  private boxOf(i: number): Rect {
+    const b = (this.tree as Packed).boxes;
+    const e = 4 * (this.entryOf[i] as number);
+    Object.assign(this.box, {
+      minX: b[e] as number,
+      minY: b[e + 1] as number,
+      maxX: b[e + 2] as number,
+      maxY: b[e + 3] as number
+    });
+    return this.box;
   }
 
   /**
@@ -105,16 +169,16 @@ export class HazardIndex {
     for (const shift of worldShifts(reach)) {
       const g = shift === 0 ? geom : shiftGeom(geom, shift);
       for (const i of this.search(shiftRect(reach, shift))) {
-        const distance = geomRectDistance(g, this.rects[i] as Rect, buffer);
+        const distance = geomRectDistance(g, this.boxOf(i), buffer);
         if (distance <= buffer && distance < (best.get(i) ?? Infinity)) {
           best.set(i, distance);
         }
       }
     }
-    const hits = [...best].map(([i, distance]) => ({
-      feature: this.features[i] as DepthFeature,
-      distance
-    }));
-    return hits.sort((a, b) => a.feature.depth - b.feature.depth || a.distance - b.distance);
+    const depth = (i: number): number => (this.features[i] as DepthFeature).depth;
+    // Ties keep the feature order, so the result does not depend on the tree's layout.
+    return [...best]
+      .sort(([i, a], [j, b]) => depth(i) - depth(j) || a - b || i - j)
+      .map(([i, distance]) => ({ feature: this.features[i] as DepthFeature, distance }));
   }
 }
