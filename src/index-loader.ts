@@ -35,6 +35,14 @@ export interface IndexLoad {
 /** The look-ahead reasons, `off`, while start builds or reads the index (safety invariant 3). */
 export const BUILDING_REASON = "building chart index";
 export const LOADING_REASON = "loading chart index";
+export const WFS_WAITING_REASON = "waiting for the first Traficom WFS download";
+
+/** Reasons that mean the index is on its way, not that loading it failed. */
+export const PENDING_REASONS: ReadonlySet<string> = new Set([
+  BUILDING_REASON,
+  LOADING_REASON,
+  WFS_WAITING_REASON
+]);
 
 /**
  * A saved pyramid.bin larger than this is read and inflated off the event
@@ -281,9 +289,7 @@ function missingReason(cfg: PluginConfig, indexDir: string, stale: boolean): str
   if (stale) {
     return "the saved index holds Traficom WFS depths and that source is off; set cellsDir";
   }
-  return cfg.wfs
-    ? "waiting for the first Traficom WFS download"
-    : `no chart index in ${indexDir}; set cellsDir`;
+  return cfg.wfs ? WFS_WAITING_REASON : `no chart index in ${indexDir}; set cellsDir`;
 }
 
 /**

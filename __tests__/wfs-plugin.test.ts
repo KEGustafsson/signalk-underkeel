@@ -72,7 +72,8 @@ describe("plugin with the Traficom WFS source", () => {
     const { router, call } = fakeRouter();
     plugin.registerWithRouter?.(router as never);
     expect(lastValue(h.deltas, "navigation.underKeel.state")).toBe("off");
-    expect(h.errors).toContain("waiting for the first Traficom WFS download");
+    expect(h.statuses).toContain("waiting for the first Traficom WFS download");
+    expect(h.errors).toEqual([]);
     h.send(navDelta(22.0, 60.0, 0, clock.now()));
     clock.advance(10_000);
     for (let i = 0; i < 5; i++) {
