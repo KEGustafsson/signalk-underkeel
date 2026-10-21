@@ -31,6 +31,21 @@ export interface CacheOptions {
  */
 export const DEFAULT_CACHE: CacheOptions = { budgetBytes: 32 * 2 ** 20, syncBytes: 256 * 2 ** 10 };
 
+/** Read errors that may pass: too many open files, a file busy on Windows, an interrupted read. */
+const TRANSIENT = new Set([
+  "EMFILE",
+  "ENFILE",
+  "EBUSY",
+  "EAGAIN",
+  "EINTR",
+  "EIO",
+  "EPERM",
+  "EACCES"
+]);
+
+/** How long a block the system could not read waits before it is tried again, ms. */
+export const RETRY_MS = 5000;
+
 export interface CacheLayout {
   leafZoom: number;
   /** Nodes at this zoom and coarser are the store's own; finer ones are in blocks. */
@@ -91,6 +106,8 @@ export class BlockCache implements BlockSource {
   private readonly pending = new Map<number, Promise<void>>();
   /** Blocks that failed to read, with why; they read as stand-ins from then on. */
   readonly failed = new Map<number, string>();
+  /** Blocks the system could not read just now, with when to try again (ms since epoch). */
+  private readonly retryAt = new Map<number, number>();
   private kept = new Set<number>();
   private nextBase: number;
   private clock = 0;
@@ -230,7 +247,7 @@ export class BlockCache implements BlockSource {
   /** A block a query reached: read now when small, else asked for off the event loop. */
   private demand(key: number): Loaded | undefined {
     const e = this.table.get(key);
-    if (e === undefined || this.failed.has(key)) {
+    if (e === undefined || this.waiting(key)) {
       return undefined;
     }
     if (e.bytes > this.opts.syncBytes) {
@@ -250,8 +267,22 @@ export class BlockCache implements BlockSource {
     return this.insert(e, body);
   }
 
+  /**
+   * A block whose bytes are bad, or whose file was replaced, is refused for
+   * good; one the system could not read just now is tried again after
+   * RETRY_MS, so a passing EMFILE or EBUSY leaves no lasting gap.
+   */
   private fail(key: number, err: unknown): void {
-    this.failed.set(key, (err as Error).message);
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== undefined && TRANSIENT.has(code)) {
+      this.retryAt.set(key, Date.now() + RETRY_MS);
+    } else {
+      this.failed.set(key, (err as Error).message);
+    }
+  }
+
+  private waiting(key: number): boolean {
+    return this.failed.has(key) || (this.retryAt.get(key) ?? 0) > Date.now();
   }
 
   private insert(e: BlockEntry, body: Buffer): Loaded {
@@ -266,6 +297,7 @@ export class BlockCache implements BlockSource {
       used: ++this.clock
     };
     this.nextBase += e.nodes;
+    this.retryAt.delete(e.key);
     this.loaded.set(e.key, b);
     this.byBase.push(b);
     this.bytes += BYTES_PER_NODE * e.nodes;
@@ -284,7 +316,7 @@ export class BlockCache implements BlockSource {
   /** Reads block `key` off the event loop unless it is loaded, failed or on its way. */
   load(key: number): Promise<void> {
     const e = this.table.get(key);
-    if (e === undefined || this.loaded.has(key) || this.failed.has(key)) {
+    if (e === undefined || this.loaded.has(key) || this.waiting(key)) {
       return Promise.resolve();
     }
     let p = this.pending.get(key);

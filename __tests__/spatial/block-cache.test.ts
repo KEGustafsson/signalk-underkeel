@@ -6,7 +6,7 @@ import { gunzipSync } from "zlib";
 import type { LonLat } from "../../src/foundation/geo";
 import { fromMercator, tileKey, tileRect } from "../../src/foundation/geo";
 import { readCellDirectory } from "../../src/ingest/cell-reader";
-import { cacheOf } from "../../src/spatial/block-cache";
+import { cacheOf, RETRY_MS } from "../../src/spatial/block-cache";
 import {
   buildChartIndex,
   loadChartIndex,
@@ -336,7 +336,7 @@ describe("the block cache", () => {
     const geom = footprintGeom(ringOf(key, FINE.blockZoom));
     const cold = minDepthOver(store, geom);
     expect(cache?.count).toBe(0);
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await cache?.load(key);
     expect(cache?.count).toBe(1);
     expect(minDepthOver(store, geom)).toEqual(minDepthOver(built, geom));
     expect(cold.flags & 2).toBe(2);
@@ -362,6 +362,36 @@ describe("the block cache", () => {
     );
     expect(built.loadRevision).toBe(0);
     expect(built.blocksChangedSince(0)).toEqual([]);
+  });
+
+  test("a block the system could not read just now is tried again after a pause", () => {
+    const dir = path.join(tmp, "transient");
+    fs.mkdirSync(dir, { recursive: true });
+    const target = path.join(dir, "pyramid.bin");
+    fs.writeFileSync(target, file());
+    const store = openPyramid(target);
+    const cache = cacheOf(store);
+    const key = cache?.keys()[0] as number;
+    const geom = footprintGeom(ringOf(key, FINE.blockZoom));
+    const emfile = Object.assign(new Error("EMFILE: too many open files"), { code: "EMFILE" });
+    const open = jest.spyOn(fs, "openSync").mockImplementationOnce(() => {
+      throw emfile;
+    });
+    const now = Date.now();
+    const clock = jest.spyOn(Date, "now").mockReturnValue(now);
+    try {
+      expect(minDepthOver(store, geom).flags & 2).toBe(2);
+      expect(cache?.failed.has(key)).toBe(false);
+      // Within the pause the block is not read again.
+      minDepthOver(store, geom);
+      expect(cache?.count).toBe(0);
+      clock.mockReturnValue(now + RETRY_MS + 1);
+      expect(minDepthOver(store, geom)).toEqual(minDepthOver(built, geom));
+      expect(cache?.count).toBe(1);
+    } finally {
+      open.mockRestore();
+      clock.mockRestore();
+    }
   });
 
   test("blocks are not read from a file replaced since the store was opened", () => {

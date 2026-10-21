@@ -1,8 +1,9 @@
 import type { Rect } from "../foundation/geo";
 import { rectGap, tileRect, tileSize } from "../foundation/geo";
 import type { Reacher } from "../spatial/chart-position";
-import { reachersOf } from "../spatial/chart-position";
+import { MAX_CHART_BUFFER, reachersOf } from "../spatial/chart-position";
 import type { NodeStore, NodeValues } from "../spatial/node-store";
+import { mercatorBuffer } from "../spatial/pyramid";
 import { DEFAULT_BUILD } from "../spatial/pyramid-build";
 import type { Adjusted } from "../spatial/tile-walk";
 import { adjustmentsIn, cellsInTile } from "../spatial/tile-walk";
@@ -243,15 +244,15 @@ export class UkcTileCache {
     if (blocks.length === 0) {
       return;
     }
-    const changed = new Set(blocks.map((b) => `${b.z}/${b.x}/${b.y}`));
-    const bz = blocks[0]?.z ?? 0;
+    // A tile's reach grid reads cells up to the chart reach outside it.
+    const near = blocks.map((b) => {
+      const rect = tileRect(b.z, b.x, b.y);
+      return { rect, reach: mercatorBuffer(rect, MAX_CHART_BUFFER) };
+    });
     for (const [key, e] of this.entries) {
       const [z, x, y] = key.split("/").map(Number) as [number, number, number];
-      const hit =
-        z >= bz
-          ? changed.has(`${bz}/${x >> (z - bz)}/${y >> (z - bz)}`)
-          : blocks.some((b) => b.x >> (bz - z) === x && b.y >> (bz - z) === y);
-      if (hit) {
+      const tile = tileRect(z, x, y);
+      if (near.some((n) => rectGap(tile, n.rect) <= n.reach)) {
         this.entries.delete(key);
         this.bytes -= e.bytes;
       }
