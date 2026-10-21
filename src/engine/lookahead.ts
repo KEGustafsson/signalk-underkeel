@@ -181,6 +181,11 @@ export interface LookaheadResult {
   timeToShoal: number | null;
   /** True heading with the longest time to shoal, radians; null when normal or none is better. */
   escapeHeading: number | null;
+  /**
+   * False when no escape heading may be published for this tick: at low
+   * speed or with the position buffer capped. Absent when no tick was scored.
+   */
+  escapable?: boolean;
   horizon: number;
   footprints: FootprintResult[];
   worst?: WorstPoint;
@@ -467,7 +472,8 @@ export function evaluateLookahead(
   const verdict = u.capped
     ? uncertainPosition(assessed, s.sigmaPos, inputs.positionReason)
     : assessed;
-  const searched = inputs.escape === true && m.moving && !u.capped;
+  const escapable = m.moving && !u.capped;
+  const searched = inputs.escape === true && escapable;
   const escape =
     searched && verdict.state !== "normal" && verdict.state !== "unknown"
       ? escapeHeading(times, u.origin, m, u.vessel, u.chart, s, opts)
@@ -482,6 +488,7 @@ export function evaluateLookahead(
     risk: fps.reduce<number | null>((max, f) => Math.max(max ?? 0, f.risk), null),
     timeToShoal: verdict.tts,
     escapeHeading: escape,
+    escapable,
     horizon: times[times.length - 1] as number,
     footprints: fps,
     worst: worstOf(fps, u.chart, s, wl, opts.kp),

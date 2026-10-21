@@ -27,6 +27,8 @@ export class EscapeSearch {
   private at = -Infinity;
   private slowMs = 0;
   private pending?: unknown;
+  /** Bumped to void a search queued before it; a deferral may have no cancel. */
+  private generation = 0;
   private stopped = false;
 
   constructor(
@@ -35,17 +37,22 @@ export class EscapeSearch {
     private readonly publish: (heading: number | null) => void
   ) {}
 
-  /** The heading a tick whose engine state is `state` publishes: none once the danger has passed. */
-  headingFor(state: UnderKeelState): number | null {
-    return calm(state) ? null : this.heading;
+  /**
+   * The heading a tick whose engine state is `state` publishes: none once the
+   * danger has passed, nor while the tick is not `escapable` (low speed or a
+   * capped position buffer, where any heading would be a guess).
+   */
+  headingFor(state: UnderKeelState, escapable = true): number | null {
+    return idle(state, escapable) ? null : this.heading;
   }
 
   /** After a tick whose engine state was `state` and which took `tickMs`. */
-  after(state: UnderKeelState, tickMs: number): void {
-    if (calm(state)) {
+  after(state: UnderKeelState, tickMs: number, escapable = true): void {
+    if (idle(state, escapable)) {
       this.heading = null;
       this.at = -Infinity;
       this.skipped = undefined;
+      this.drop();
       return;
     }
     const slow = Math.max(tickMs, this.slowMs);
@@ -66,11 +73,12 @@ export class EscapeSearch {
       return;
     }
     this.at = now;
+    const generation = this.generation;
     const run = (): void => {
-      this.pending = undefined;
-      if (this.stopped) {
+      if (this.stopped || generation !== this.generation) {
         return;
       }
+      this.pending = undefined;
       const t0 = this.clock.now();
       this.heading = this.search();
       this.slowMs = this.clock.now() - t0;
@@ -85,6 +93,12 @@ export class EscapeSearch {
 
   stop(): void {
     this.stopped = true;
+    this.drop();
+  }
+
+  /** Cancels a queued search, and voids it where the deferral cannot cancel. */
+  private drop(): void {
+    this.generation++;
     if (this.pending !== undefined) {
       this.clock.cancel?.(this.pending);
       this.pending = undefined;
@@ -92,5 +106,5 @@ export class EscapeSearch {
   }
 }
 
-const calm = (state: UnderKeelState): boolean =>
-  state === "normal" || state === "unknown" || state === "off";
+const idle = (state: UnderKeelState, escapable: boolean): boolean =>
+  !escapable || state === "normal" || state === "unknown" || state === "off";

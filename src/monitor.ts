@@ -360,9 +360,13 @@ export class Monitor {
     const t0 = this.clock.now();
     this.levels.refresh(this.nav.position?.value, t0);
     const raw = this.evaluate();
-    const next = this.suppressed(
-      this.hysteresis.next({ ...raw, escapeHeading: this.escape.headingFor(raw.state) })
-    );
+    const escapable = raw.escapable !== false;
+    const held = this.hysteresis.next({
+      ...raw,
+      escapeHeading: this.escape.headingFor(raw.state, escapable)
+    });
+    // A held state keeps its last heading, which is a guess too once the tick is not escapable.
+    const next = this.suppressed(escapable ? held : { ...held, escapeHeading: null });
     if (next.state !== this.last.state) {
       this.since = this.clock.now();
     }
@@ -389,7 +393,7 @@ export class Monitor {
       this.notifier.send(PATHS.positionIntegrity, integrityNotification(this.integrityResult));
     }
     this.checkGrounding(r);
-    this.escape.after(raw.state, this.clock.now() - t0);
+    this.escape.after(raw.state, this.clock.now() - t0, escapable);
     this.report(r);
   }
 
