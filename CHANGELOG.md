@@ -6,6 +6,8 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Added
 
+- App Store screenshots: `package.json` lists six of the docs images under
+  `signalk.screenshots`, and the package ships them and the README illustration.
 - `GET /status?summary` leaves out `index.cells` and `waterLevel.datums`, which grow with the
   cells: 22.7 kB with 300 cells against 237 B. It keeps every field the Freeboard panel and
   runtime read.
