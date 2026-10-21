@@ -11,6 +11,7 @@ import type { WfsCounts, WfsJob, WfsReply } from "./wfs-worker";
 import type { Clock } from "./monitor";
 import type { BuildJob, BuildReply, IndexParts } from "./spatial/build-worker";
 import { adoptIndex } from "./spatial/build-worker";
+import { readsSettled } from "./spatial/block-reader";
 import type { ChartIndex } from "./spatial/chart-index";
 import { commitChartIndex, loadChartIndexAsync, removeStaging } from "./spatial/chart-index";
 
@@ -132,6 +133,7 @@ async function commit(
   m: BuildReply & { staging: string },
   signal: AbortSignal
 ): Promise<ChartIndex> {
+  await readsSettled(indexDir);
   if (signal.aborted) {
     fs.rmSync(m.staging, { recursive: true, force: true });
     throw new Error("aborted");
@@ -180,6 +182,7 @@ export function inThreadRefresher(fetch: WfsFetch, build: IndexBuilder): WfsRefr
       fetch,
       signal
     });
+    await readsSettled(job.build.indexDir);
     return { index: await build(job.build, signal), features };
   };
 }

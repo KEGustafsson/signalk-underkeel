@@ -1,15 +1,10 @@
 import os from "os";
 import { gzipSync } from "zlib";
 import { tileKey } from "../foundation/geo";
-import type { BlockReader, CacheOptions } from "./block-cache";
-import {
-  attachBlocks,
-  bufferReader,
-  cacheOf,
-  DEFAULT_CACHE,
-  fileReader,
-  fileReaderAsync
-} from "./block-cache";
+import type { CacheOptions } from "./block-cache";
+import { attachBlocks, cacheOf, DEFAULT_CACHE } from "./block-cache";
+import type { BlockReader } from "./block-reader";
+import { bufferReader, fileReader, fileReaderAsync } from "./block-reader";
 import type { NodeColumns } from "./node-store";
 import { NodeStore } from "./node-store";
 import type { BlockEntry, BlockLayout, BlockSplit } from "./pyramid-blocks";

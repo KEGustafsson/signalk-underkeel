@@ -563,11 +563,13 @@ describe("plugin lifecycle", () => {
   });
 
   test("the grounding detector is off by default and writes notifications.grounding when on", () => {
+    // Seeded once: a block read the first run started may still hold the index open, and
+    // Windows refuses to rename a directory with an open file in it.
+    seedFixtureIndex(dataDir);
     const run = (options: Record<string, unknown>) => {
       const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 1.8 } } });
       const clock = fakeClock(T0);
       const plugin = underkeel(f.app, clock);
-      seedFixtureIndex(dataDir);
       plugin.start({ cellsDir: FIXTURES, leafZoom: 18, ...options }, () => undefined);
       const at = (t: number, sog: number) => {
         const d = navDelta(22.005, 60.015, sog, T0 + t);
