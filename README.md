@@ -15,6 +15,8 @@ plotters such as [Freeboard-SK](https://github.com/SignalK/freeboard-sk).
   the REST API and Signal K data model, contributing and releasing.
 - [Documentation map](#documentation-map) and [licence](#license).
 
+![Underkeel in Freeboard-SK](docs/images/how-it-works/combo-pic.jpg)
+
 # For users
 
 ## What it does
