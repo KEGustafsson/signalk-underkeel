@@ -423,9 +423,10 @@ horizon wins; if none does, the one with the most time before shoal water. The f
 the vessel is the same on every heading and is not counted. When every heading reaches shoal
 water at the same time, or within the first step, the escape heading is null: there is no
 heading to recommend. The result is published as `navigation.underKeel.escapeHeading`. It is
-searched at most every 3 s and held in between, once the second's other values are out. On
-hardware so slow that a tick takes over 250 ms the search is skipped, the heading is null and
-the plugin status says why. The plugin only publishes it; it never steers.
+searched at most every 3 s and held in between, once the second's other values are out. After
+a tick or a search that takes over 250 ms (slow hardware or a long horizon), the next search is
+skipped, the heading is null and the plugin status says why. The plugin only publishes it; it
+never steers.
 
 ### Position integrity
 
