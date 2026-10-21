@@ -9,9 +9,11 @@ import type { Bbox, WfsFetch } from "./ingest/wfs";
 import { boxAround, downloadWfsCell, edgeAhead, WFS_CELL_NAME, WFS_NOTICE } from "./ingest/wfs";
 import type { WfsCounts, WfsJob, WfsReply } from "./wfs-worker";
 import type { Clock } from "./monitor";
-import type { BuildJob } from "./spatial/build-worker";
+import type { BuildJob, BuildReply, IndexParts } from "./spatial/build-worker";
+import { adoptIndex } from "./spatial/build-worker";
+import { readsSettled } from "./spatial/block-reader";
 import type { ChartIndex } from "./spatial/chart-index";
-import { commitChartIndex, loadChartIndex, removeStaging } from "./spatial/chart-index";
+import { commitChartIndex, loadChartIndexAsync, removeStaging } from "./spatial/chart-index";
 
 /**
  * Keeps a Traficom WFS box around the vessel (plan §4.2). When the vessel
@@ -42,12 +44,6 @@ export function workerHeapLimitMb(totalBytes = os.totalmem()): number {
   return Math.min(2048, Math.max(256, Math.floor(totalBytes / 4 / 2 ** 20)));
 }
 
-interface WorkerReply {
-  ok: boolean;
-  staging?: string;
-  error?: string;
-}
-
 /**
  * Runs `script` in a worker thread with `data` and resolves with its staged reply. The
  * worker only stages; the caller moves the result into place on the main thread, and never
@@ -55,7 +51,7 @@ interface WorkerReply {
  * aborted. An aborted worker runs until terminate() resolves, so its run rejects only then
  * and the next run starts only then; stop() itself returns at once.
  */
-export async function runWorker<R extends WorkerReply>(
+export async function runWorker<R extends BuildReply>(
   script: string,
   data: object,
   signal: AbortSignal,
@@ -124,14 +120,36 @@ export async function runWorker<R extends WorkerReply>(
   });
 }
 
-/** Moves a staged index into `indexDir` and loads it, unless the run was aborted meanwhile. */
-function commit(indexDir: string, staging: string, signal: AbortSignal): ChartIndex {
+/** Up to this many nodes (about 38 MB of columns) the posted index is kept as posted. */
+const HELD_WHOLE_NODES = 1_000_000;
+
+/**
+ * Moves a staged index into `indexDir` and adopts the one the worker posted, unless the run
+ * was aborted meanwhile. Reading the saved index back blocked the event loop for 52–61 ms
+ * with the Nauvo pair and a 10 km WFS box at leaf zoom 20, 258–292 ms with 32 cells (x86).
+ */
+async function commit(
+  indexDir: string,
+  m: BuildReply & { staging: string },
+  signal: AbortSignal
+): Promise<ChartIndex> {
+  await readsSettled(indexDir);
   if (signal.aborted) {
-    fs.rmSync(staging, { recursive: true, force: true });
+    fs.rmSync(m.staging, { recursive: true, force: true });
     throw new Error("aborted");
   }
-  commitChartIndex(indexDir, staging);
-  return loadChartIndex(indexDir);
+  commitChartIndex(indexDir, m.staging);
+  const posted = adoptIndex(m.index as IndexParts);
+  if (posted.pyramid.count <= HELD_WHOLE_NODES) {
+    return posted;
+  }
+  // Held whole, a coast-wide index would stay resident after every refresh; the committed
+  // file is read block by block instead, its blocks verified off the event loop.
+  const index = await loadChartIndexAsync(indexDir);
+  if (signal.aborted) {
+    throw new Error("aborted");
+  }
+  return index;
 }
 
 /** Builds in a worker thread from the compiled `lib/spatial/build-worker.js`. */
@@ -139,7 +157,7 @@ export const workerBuilder: IndexBuilder = async (job, signal) => {
   const script = path.join(__dirname, "spatial", "build-worker.js");
   const heapMb = workerHeapLimitMb();
   const m = await runWorker(script, { ...job, heapMb }, signal, job.indexDir, heapMb);
-  return commit(job.indexDir, m.staging, signal);
+  return await commit(job.indexDir, m, signal);
 };
 
 /**
@@ -148,9 +166,11 @@ export const workerBuilder: IndexBuilder = async (job, signal) => {
  */
 export const workerRefresher: WfsRefresher = async (job, signal) => {
   const script = path.join(__dirname, "wfs-worker.js");
-  const m = await runWorker<WfsReply>(script, job, signal, job.build.indexDir);
+  const heapMb = workerHeapLimitMb();
+  const data: WfsJob = { ...job, build: { ...job.build, heapMb } };
+  const m = await runWorker<WfsReply>(script, data, signal, job.build.indexDir, heapMb);
   const features = m.features ?? { depthAreas: 0, dredgedAreas: 0, soundings: 0 };
-  return { index: commit(job.build.indexDir, m.staging, signal), features };
+  return { index: await commit(job.build.indexDir, m, signal), features };
 };
 
 /** The download on this thread with `fetch`, then `build`: for an injected fetch or builder. */
@@ -162,6 +182,7 @@ export function inThreadRefresher(fetch: WfsFetch, build: IndexBuilder): WfsRefr
       fetch,
       signal
     });
+    await readsSettled(job.build.indexDir);
     return { index: await build(job.build, signal), features };
   };
 }
@@ -331,7 +352,8 @@ export class WfsService {
           build: {
             dirs: [...this.deps.encDirs(), this.cellDir],
             leafZoom: this.deps.leafZoom,
-            indexDir: this.deps.indexDir
+            indexDir: this.deps.indexDir,
+            changed: [this.cellDir]
           }
         },
         controller.signal

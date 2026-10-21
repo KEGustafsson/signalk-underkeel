@@ -5,6 +5,7 @@ import { addAck, deleteAck, listAcks } from "./ack-service";
 import { ukcStyle } from "./api/manifest";
 import type { ApiProvider, ApiReply } from "./api/routes";
 import { UkcTileChanges } from "./api/ukc-tile-changes";
+import { UkcTileCache } from "./engine/ukc-tile-geometry";
 import type { PluginConfig } from "./config";
 import { parseConfig } from "./config";
 import type { EngineStatus } from "./foundation/state";
@@ -43,6 +44,7 @@ export function apiFor(
   s: PluginState
 ): ApiProvider {
   const tileChanges = new UkcTileChanges();
+  const tileCache = new UkcTileCache();
   const queryDeps = (): QueryServiceDeps => ({
     index: s.load?.index,
     indexReason: s.load?.reason ?? "plugin not started",
@@ -50,7 +52,8 @@ export function apiFor(
     vessel: () => s.monitor?.vessel(),
     waterLevel: () => s.monitor?.waterLevel() ?? CHART_DATUM,
     waveHeight: () => s.monitor?.nav.waveHeight?.value,
-    tileChanges
+    tileChanges,
+    tileCache
   });
   const routeDeps = (): RouteServiceDeps => ({
     index: s.load?.index,

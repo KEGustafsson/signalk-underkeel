@@ -1,22 +1,27 @@
 import os from "os";
 import { parentPort, Worker, workerData } from "worker_threads";
-import type { CellInfo } from "../ingest/cells";
+import type { CellCatalogue, CellInfo } from "../ingest/cells";
 import { readCellDirectory } from "../ingest/cell-reader";
 import type { ChartFeature, DepthFeature } from "../ingest/features";
 import type { CellReach } from "./build-items";
 import { cellReach, DEFAULT_BUILD, prepareItems } from "./build-items";
+import type { SavedIndex } from "./build-reuse";
+import { copiedRoots, savedIndex, unchangedInfo, writeReach } from "./build-reuse";
 import type { ChartIndex } from "./chart-index";
 import { isNamedHazard, stageChartIndex } from "./chart-index";
 import { HazardIndex } from "./hazards";
 import type { NodeColumns } from "./node-store";
+import { NodeStore } from "./node-store";
 import type { RootRange } from "./pyramid-build";
+import type { RegionPart } from "./pyramid-regions";
 import {
   buildRegion,
   cellsReaching,
   cellsRootRange,
-  joinRegions,
+  joinParts,
   rootRegions
 } from "./pyramid-regions";
+import { storeOnBody } from "./store";
 
 /**
  * Index build off the event loop: a worker thread reads the cells, builds
@@ -39,6 +44,14 @@ export interface BuildJob {
   threads?: number;
   /** Heap limit shared by the root threads (MB); none when absent. */
   heapMb?: number;
+  /**
+   * Cell directories whose content may differ from the saved index's while
+   * their DSID does not, as the Traficom WFS cell's after a download. When
+   * set, the roots that neither these cells nor any cell with a new DSID
+   * reach, in the saved build or now, are copied from the index saved in
+   * `indexDir` instead of built.
+   */
+  changed?: string[];
 }
 
 /** One region of roots and the cells that reach it, by directory and catalogue index. */
@@ -67,55 +80,122 @@ export function runRegion(job: RegionJob): NodeColumns {
   return buildRegion(prepareItems(readFeatures(job), opts), opts, job.region);
 }
 
-/** Reads each cell once for what the index keeps of it: provenance, named hazards and reach. */
-function survey(job: BuildJob): {
+interface Survey {
   infos: CellInfo[];
   hazards: DepthFeature[];
   reaches: CellReach[];
-} {
+  /** Catalogue indices of the cells read anew: all of them without a saved index. */
+  changed: number[];
+}
+
+/**
+ * Reads each cell once for what the index keeps of it: provenance, named
+ * hazards and reach. A cell the saved index holds unchanged keeps its saved
+ * hazards and reach, and only its DSID is read.
+ */
+function survey(job: BuildJob, saved: SavedIndex | undefined): Survey {
   const opts = { ...DEFAULT_BUILD, leafZoom: job.leafZoom };
-  const out = {
-    infos: [] as CellInfo[],
-    hazards: [] as DepthFeature[],
-    reaches: [] as CellReach[]
-  };
+  const out: Survey = { infos: [], hazards: [], reaches: [], changed: [] };
   job.dirs.forEach((dir, i) => {
+    const was = saved?.cells[i];
+    const info = was && !job.changed?.includes(dir) ? unchangedInfo(dir, was) : undefined;
+    if (saved && info) {
+      out.infos.push(info);
+      out.hazards.push(...(saved.hazards.get(i) ?? []));
+      out.reaches.push(saved.reaches[i] as CellReach);
+      return;
+    }
     const cell = readCellDirectory(dir, i);
     out.infos.push(cell.info);
     out.hazards.push(...cell.features.filter(isNamedHazard));
     out.reaches.push(cellReach(cell.features, opts));
+    out.changed.push(i);
   });
   return out;
 }
 
+/** A built index with what the next build reuses and the main thread adopts. */
+export interface BuiltIndex extends ChartIndex {
+  reaches: CellReach[];
+  /** The pyramid's columns, views on one buffer, so a reply moves them without a copy. */
+  cols: NodeColumns;
+  roots: { built: number; copied: number };
+}
+
 /** The chart index of `job.dirs`, the pyramid built region by region through `run`. */
-export async function buildByRegion(job: BuildJob, run: RegionRunner): Promise<ChartIndex> {
+export async function buildByRegion(job: BuildJob, run: RegionRunner): Promise<BuiltIndex> {
   const { minZoom } = DEFAULT_BUILD;
-  const { infos, hazards, reaches } = survey(job);
-  const range = cellsRootRange(reaches, minZoom);
-  const regions = range ? rootRegions(range) : [];
-  const parts = await Promise.all(
-    regions.map(async (region) => ({
+  const saved = job.changed ? savedIndex(job.indexDir, job.dirs, job.leafZoom) : undefined;
+  const s = survey(job, saved);
+  const range = cellsRootRange(s.reaches, minZoom);
+  const roots = range ? rootRegions(range) : [];
+  const copies = saved
+    ? copiedRoots(
+        saved,
+        s.changed.flatMap((i) => [s.reaches[i], saved.reaches[i]] as CellReach[]),
+        roots
+      )
+    : new Map<number, NodeColumns>();
+  const parts: RegionPart[] = await Promise.all(
+    roots.map(async (region, k) => ({
       region,
-      cols: await run({
-        cells: cellsReaching(region, minZoom, reaches).map((ref) => ({
-          dir: job.dirs[ref] as string,
-          ref
-        })),
-        leafZoom: job.leafZoom,
-        region
-      })
+      cols:
+        copies.get(k) ??
+        (await run({
+          cells: cellsReaching(region, minZoom, s.reaches).map((ref) => ({
+            dir: job.dirs[ref] as string,
+            ref
+          })),
+          leafZoom: job.leafZoom,
+          region
+        }))
     }))
   );
+  const { body, cols } = joinParts(minZoom, job.leafZoom, parts);
   return {
-    catalogue: { version: 1, cells: infos },
-    pyramid: joinRegions(minZoom, job.leafZoom, parts),
-    hazards: new HazardIndex(hazards)
+    catalogue: { version: 1, cells: s.infos },
+    pyramid: storeOnBody(minZoom, job.leafZoom, body, cols),
+    hazards: new HazardIndex(s.hazards),
+    reaches: s.reaches,
+    cols,
+    roots: { built: roots.length - copies.size, copied: copies.size }
   };
 }
 
-const transfers = (cols: NodeColumns): ArrayBuffer[] =>
-  Object.values(cols).map((c: NodeColumns[keyof NodeColumns]) => c.buffer as ArrayBuffer);
+/** What a build posts to the main thread besides its staging directory. */
+export interface IndexParts {
+  catalogue: CellCatalogue;
+  hazards: readonly DepthFeature[];
+  minZoom: number;
+  leafZoom: number;
+  cols: NodeColumns;
+  roots: BuiltIndex["roots"];
+}
+
+export function indexParts(b: BuiltIndex): IndexParts {
+  const { catalogue, hazards, pyramid, cols, roots } = b;
+  const { minZoom, leafZoom } = pyramid;
+  return { catalogue, hazards: hazards.features, minZoom, leafZoom, cols, roots };
+}
+
+/**
+ * The index a build posted, adopted on the main thread without reading the
+ * saved files: the columns arrive moved, and only the hazard tree is packed.
+ */
+export function adoptIndex(p: IndexParts): ChartIndex {
+  return {
+    catalogue: p.catalogue,
+    pyramid: NodeStore.fromColumns(p.minZoom, p.leafZoom, p.cols),
+    hazards: new HazardIndex(p.hazards)
+  };
+}
+
+/** Each column's buffer once: the columns of a joined pyramid share one. */
+export const transfers = (cols: NodeColumns): ArrayBuffer[] => [
+  ...new Set(
+    Object.values(cols).map((c: NodeColumns[keyof NodeColumns]) => c.buffer as ArrayBuffer)
+  )
+];
 
 type Reply = { cols?: NodeColumns; error?: string };
 
@@ -190,21 +270,28 @@ export function regionPool(
   return { run, close };
 }
 
-/** Builds the index and returns the staging directory it was written to. */
-export async function runBuild(job: BuildJob): Promise<string> {
+function stage(job: BuildJob, index: BuiltIndex): { staging: string; index: IndexParts } {
+  const staging = stageChartIndex(job.indexDir, index);
+  writeReach(staging, index.reaches);
+  return { staging, index: indexParts(index) };
+}
+
+/** Builds and stages the index; resolves with the staging directory and the index to post. */
+export async function runBuild(job: BuildJob): Promise<{ staging: string; index: IndexParts }> {
   const threads = job.threads ?? defaultThreads();
   if (threads <= 1) {
-    return stageChartIndex(
-      job.indexDir,
-      await buildByRegion(job, (j) => Promise.resolve(runRegion(j)))
-    );
+    return stage(job, await buildByRegion(job, (j) => Promise.resolve(runRegion(j))));
   }
   const pool = regionPool(threads, __filename, job.heapMb);
+  let built: BuiltIndex;
   try {
-    return stageChartIndex(job.indexDir, await buildByRegion(job, pool.run));
+    built = await buildByRegion(job, pool.run);
   } finally {
+    // Threads still exiting when the index was posted held the main thread's handover back
+    // 76–97 ms (32 cells at leaf zoom 20, x86); ended before the staging, 38–54 ms.
     pool.close();
   }
+  return stage(job, built);
 }
 
 function serveRegions(port: NonNullable<typeof parentPort>): void {
@@ -218,14 +305,21 @@ function serveRegions(port: NonNullable<typeof parentPort>): void {
   });
 }
 
-if (parentPort && workerData) {
+export interface BuildReply {
+  ok: boolean;
+  staging?: string;
+  index?: IndexParts;
+  error?: string;
+}
+
+// The Traficom WFS worker imports this module with its own job, which it leaves alone.
+const data = workerData as { regions?: boolean; dirs?: unknown } | undefined;
+if (parentPort && data?.regions) {
+  serveRegions(parentPort);
+} else if (parentPort && data?.dirs) {
   const port = parentPort;
-  if ((workerData as { regions?: boolean }).regions) {
-    serveRegions(port);
-  } else {
-    runBuild(workerData as BuildJob).then(
-      (staging) => port.postMessage({ ok: true, staging }),
-      (err: Error) => port.postMessage({ ok: false, error: err.message })
-    );
-  }
+  runBuild(workerData as BuildJob).then(
+    (r) => port.postMessage({ ok: true, ...r } satisfies BuildReply, transfers(r.index.cols)),
+    (err: Error) => port.postMessage({ ok: false, error: err.message } satisfies BuildReply)
+  );
 }

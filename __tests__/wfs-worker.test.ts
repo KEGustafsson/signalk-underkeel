@@ -2,8 +2,10 @@ import { EventEmitter } from "events";
 import fs from "fs";
 import os from "os";
 import path from "path";
+import type { IndexParts } from "../src/spatial/build-worker";
 import { runBuild } from "../src/spatial/build-worker";
 import { loadChartIndex, saveChartIndex, stageChartIndex } from "../src/spatial/chart-index";
+import { pyramidColumns } from "../src/spatial/store";
 import { Worker } from "worker_threads";
 import { workerBuilder, workerHeapLimitMb } from "../src/wfs-service";
 import { FIXTURES, fixtureIndex } from "./helpers/fixture-index";
@@ -81,7 +83,7 @@ describe("only the main thread writes the index directory", () => {
   afterEach(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
   test("the build worker stages the index and leaves the index directory alone", async () => {
-    const staging = await runBuild({
+    const { staging } = await runBuild({
       dirs: [path.join(FIXTURES, "FI5SYNTH")],
       leafZoom: 14,
       indexDir,
@@ -94,10 +96,20 @@ describe("only the main thread writes the index directory", () => {
   test("a finished build is moved into the index directory and loaded", async () => {
     const built = workerBuilder({ ...job, indexDir }, new AbortController().signal);
     await settle();
-    const staging = stageChartIndex(indexDir, fixtureIndex());
-    mockWorkers[0]?.emit("message", { ok: true, staging });
+    const fixture = fixtureIndex();
+    const staging = stageChartIndex(indexDir, fixture);
+    const posted: IndexParts = {
+      catalogue: fixture.catalogue,
+      hazards: fixture.hazards.features,
+      minZoom: fixture.pyramid.minZoom,
+      leafZoom: fixture.pyramid.leafZoom,
+      cols: pyramidColumns(fixture.pyramid),
+      roots: { built: 1, copied: 0 }
+    };
+    mockWorkers[0]?.emit("message", { ok: true, staging, index: posted });
     const index = await built;
     expect(index.catalogue.cells.map((c) => c.name)).toEqual(["FI5SYNTH", "FI4SYNTH"]);
+    expect(index.pyramid.dMin).toBe(posted.cols.dMin);
     expect(fs.existsSync(staging)).toBe(false);
   });
 

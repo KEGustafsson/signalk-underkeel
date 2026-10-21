@@ -16,6 +16,7 @@ import { apiFor } from "./api-wiring";
 import { RequestQueue } from "./route-service";
 import { stoppedNotification } from "./notifications";
 import { loadZones } from "./zones";
+import { keepBlocksNearVessel } from "./block-keeper";
 import { startLivechart } from "./livechart-service";
 import type { IndexBuilder } from "./wfs-service";
 import { workerBuilder } from "./wfs-service";
@@ -96,6 +97,7 @@ export = function underkeel(
         app.error(acks.error);
       }
       monitor.useAcks(acks);
+      keepBlocksNearVessel(monitor, () => state.load?.index, clock, config.lookahead);
       const livechart = startLivechart(app, clock, config, load.index, monitor);
       monitor.start();
       Object.assign(state, { config, load, monitor, acks, livechart, wfs, zoneErrors: [] });

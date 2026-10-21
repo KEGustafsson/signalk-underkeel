@@ -1,6 +1,5 @@
 import fc from "fast-check";
 import path from "path";
-import { gunzipSync } from "zlib";
 import { tileKey } from "../../src/foundation/geo";
 import { readCellDirectory } from "../../src/ingest/cell-reader";
 import type { NodeValues } from "../../src/spatial/node-store";
@@ -140,24 +139,6 @@ describe("the fixture pyramid, built and loaded", () => {
           expectSameNode(loaded, ref, z, x, y);
         }
       }
-    }
-  });
-
-  test("the file holds the nodes sorted by zoom, then tile key, so loading needs no sort", () => {
-    const n = built.count;
-    const body = gunzipSync(file.subarray(file.indexOf(0x0a) + 1));
-    // Column order: dMin, key, sigmaD, sigmaP, surveySigmaP, cellRef, flags, z, split.
-    const key = new Float64Array(
-      body.buffer.slice(body.byteOffset + 8 * n, body.byteOffset + 16 * n)
-    );
-    const z = body.subarray(34 * n, 35 * n);
-    const entries = [];
-    for (let zoom = built.minZoom; zoom <= built.leafZoom; zoom++) {
-      entries.push(...[...built.entries(zoom)].map(([x, y]) => [zoom, tileKey(zoom, x, y)]));
-    }
-    expect([...z].map((zoom, i) => [zoom, key[i]])).toEqual(entries);
-    for (let i = 1; i < n; i++) {
-      expect(z[i]! > z[i - 1]! || (z[i] === z[i - 1] && key[i]! > key[i - 1]!)).toBe(true);
     }
   });
 });

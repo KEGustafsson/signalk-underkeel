@@ -44,6 +44,8 @@ export class UkcTileChanges {
   private store: NodeStore | undefined;
   private key: string | undefined;
   private adjustments = new Map<number, NodeValues>();
+  /** `store.adjustments.revision` when `adjustments` was copied. */
+  private revision = 0;
   private readonly served = new Map<string, Served>();
   /** Listed tiles and the revision they were listed at, oldest first. */
   private readonly changed = new Map<string, number>();
@@ -63,6 +65,7 @@ export class UkcTileChanges {
       this.store = now.store;
       this.key = now.key;
       this.adjustments = new Map(now.store.adjustments);
+      this.revision = now.store.adjustments.revision;
       this.served.clear();
       this.changed.clear();
       return;
@@ -128,6 +131,10 @@ export class UkcTileChanges {
 
   /** Living-chart cells whose values changed since the last call, as tileKeys. */
   private movedAdjustments(store: NodeStore): number[] {
+    if (store.adjustments.revision === this.revision) {
+      return [];
+    }
+    this.revision = store.adjustments.revision;
     const moved: number[] = [];
     for (const [key, v] of store.adjustments) {
       if (this.adjustments.get(key) !== v) {

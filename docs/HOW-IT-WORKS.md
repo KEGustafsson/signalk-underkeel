@@ -97,6 +97,12 @@ saved under the plugin data directory; until it is ready the engine is `off` wit
 whose index format differs is rebuilt too, and so is one whose files cannot be read, as a power
 cut during a save can leave them; the reason then names the read error.
 
+Only the coarse part of the depth pyramid stays in memory; its fine tiles are read from the
+saved file, a few kilometres square at a time, when the look-ahead, a route check, a query or
+a map tile first reaches them, and the blocks around the boat and ahead on its course are read
+before it gets there. Up to 32 MB of them are kept. A block that is not read yet counts as an
+area without chart coverage, never as clear water.
+
 The status line at the top of the plugin's page shows the engine state and its reason, for
 example `Monitoring: unknown — position stale`.
 
@@ -543,7 +549,9 @@ for every tile it serves, and `GET /tiles/ukc/changes` lists the tiles whose ran
 water level, draft and wave allowance have left, or in which an own sounding changed a cell.
 The background runtime asks every 15 s and after each 1 cm water-level move, and Freeboard
 fetches only the tiles listed. With the tide rising 2 mm/s that is 2 tile fetches a minute in
-a z14 view instead of 108.
+a z14 view instead of 108. The cells of each tile and the reach of their neighbours are kept
+between requests (up to 8 MiB) and walked again when the index changes or an own sounding
+changes a cell in the tile, so a fetch after a water-level move only re-classes the cells.
 
 `GET /ukc-style.json` is a MapLibre style for these tiles. The plugin also registers a
 `plotterExtensions` resource that declares the overlay, so a plotter that supports the Plotter
@@ -658,7 +666,7 @@ flowchart TD
   P[vessel position, checked periodically] --> D{more than half the box radius from<br/>the box centre, or the edge ahead<br/>closer than a rebuild's run?}
   D -- no --> KEEP[keep the current index]
   D -- yes, and no download<br/>in the last minute or so --> W[in a worker thread: download the box<br/>centred ahead along the course<br/>DepthArea_A, DredgedArea_A, Sounding_P]
-  W --> B[rebuild the index in the same thread:<br/>ENC cells first, then the WFS cell]
+  W --> B[rebuild in the same thread the index tiles<br/>about 20 km square that the old or new box reaches;<br/>copy the others from the saved index]
   B --> S[swap the new index in;<br/>the look-ahead keeps running]
   W -- fails --> E[keep the old index, report the error,<br/>retry after a longer back-off]
 ```

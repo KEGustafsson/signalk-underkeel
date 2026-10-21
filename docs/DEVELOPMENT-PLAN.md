@@ -169,7 +169,7 @@ signalk-underkeel/
 │   │   ├── pyramid.ts            # min-depth pyramid build + query
 │   │   ├── hazards.ts            # flatbush R-tree of point/line hazards
 │   │   ├── quality.ts            # CATZOC / M_QUAL / SWPARE → σ_depth, σ_pos
-│   │   └── store.ts              # on-disk format, mmap, versioning
+│   │   └── store.ts              # on-disk format, blocks, versioning
 │   ├── model/
 │   │   ├── vessel.ts             # draft, heel curve, beam, squat coefficients
 │   │   ├── water-level.ts        # provider interface + FMI + tide + manual
@@ -242,7 +242,12 @@ signalk-underkeel/
    25 kn with 10-minute rebuilds the half-radius rule alone handed a box over with the vessel
    5.4 km past the old box's edge. A box centred ahead covers less water astern, which route
    checks of legs behind the vessel see as uncovered (`unverified`, invariant 4). A worker thread downloads the box, parses, clips and writes the cell, rebuilds
-   the index and stages it; the main thread moves it into place and swaps it in. Each page is
+   the index and stages it; the main thread moves it into place and swaps in the index the
+   worker posts, its pyramid columns moved rather than copied, so the handover reads nothing
+   back from disk (the read-back held the event loop 52–61 ms at z20 with two Nauvo cells and
+   258–292 ms with 32; the handover now 21–23 and 68–97 ms, on x86). The rebuild
+   builds only the z10 roots that the WFS cell reaches in the saved index or now, and copies
+   the others from the saved index (§4.3). Each page is
    read as a stream: more than 64 MB, or 30 s without a byte, fails the download, which then
    waits 5 minutes as after any failure, and the previous index stays. The living chart is
    moved onto the new index in slices of 1 000 cells, each its own turn of the event loop, and
@@ -365,23 +370,57 @@ CATZOC C sounding counts up to 1 km from its position.
 
 **Storage.**
 
-- `pyramid.bin`: a JSON header line, then one typed column per node field (depth, σ, flags,
-  cell reference, tile key, zoom, split bit), the columns together gzip-compressed at level 1
-  (7.5 MB → 0.56 MB for two Nauvo cells at z20; the CRC also refuses a torn body). Nodes are
-  written by zoom and then tile key, so at start the inflated columns are the store as they
-  are, and a lookup bisects its zoom's key column: 36 bytes per node resident, against
-  110–160 with a Map per zoom (which V8 also caps at 16.7 M entries). `dMin` stays a 64-bit
-  float, so a stored depth is never rounded deeper. Loading only the leaf blocks near the
-  vessel and the route is the follow-up if the full Finnish coast exceeds the RAM budget.
+- `pyramid.bin`: a JSON header line, then gzip members (level 1) of typed columns, one column
+  per node field (depth, σ, flags, cell reference, tile key, zoom, split bit). The first member
+  holds the block table and the resident nodes, zoom 15 and coarser; each further member holds
+  one block, the finer nodes under one z12 tile. Within a member nodes are written by zoom and
+  then tile key, so the inflated columns are the store as they are, and a lookup bisects its
+  zoom's key column: 38 bytes per node, against 110–160 with a Map per zoom (which V8 also
+  caps at 16.7 M entries). `dMin` stays a 64-bit float, so a stored depth is never rounded
+  deeper. On 64 copies of the Nauvo pair (13.5 M nodes, 448 blocks) the resident nodes are
+  34 k (1.6 MB) and a block at most 50 k nodes (1.9 MB inflated, 140 kB compressed); a whole z10
+  root reaches 505 k nodes (19 MB), too much to hold the four a look-ahead can straddle.
+- Blocks are read when a query first reaches them (`spatial/block-cache.ts`): one compressed to
+  256 kB or less is read and inflated on the spot, about 1 ms on x86, so the query answers from
+  it; a larger one is read off the event loop. Loaded blocks are dropped, least recently used
+  first, once they exceed 32 MB inflated (about 27 dense blocks, a 25 km square), but never
+  within the turn of the event loop that read them, so a walk never loses a block midway, and
+  never while kept: the blocks within the look-ahead's reach of the vessel (its distance or
+  horizon at SOG, the widest position buffer and chart reach) and the same reach 300 s ahead
+  along COG, updated at most every 2 s (`block-keeper.ts`). Blocks of checked routes, served
+  tiles and queries stay while they are used.
+- A block not loaded (larger than 256 kB and on its way, or refused as damaged) never reads as
+  clear water (safety invariant 3). A walk reaching a split node at zoom 15 whose block is not
+  loaded takes the node as a stand-in: its own shallowest depth, widest σ and flags plus
+  NO_COVERAGE, the shallowest charted depth of the leaves under it, and a P(UKC < 0) at least
+  any of those leaves' (at their narrowest σD where that depth is shallower than the
+  threshold, at the widest where deeper). A look-ahead footprint over it is therefore at least
+  `warn` ("no chart coverage"), a leg at least `unverified`, a query or a UKC tile cell at least
+  `unverified`, and each at least as severe as with the block loaded; with every block loaded
+  every answer equals that of the store held whole. `loadChartIndex(dir, { whole: true })` joins every block back into the store's own columns, in file order, for code that reads a store's levels directly (an incremental rebuild copying unchanged roots). A store's `loadRevision` counts block
+  loads and drops, and `blocksChangedSince(revision)` names the block tiles, for caches of
+  answers that may have read a stand-in.
 - `cells.json` (provenance) and `hazards.json` (exact hazard geometry) sit beside it. The
   hazard R-tree is rebuilt from `hazards.json` at load, packed in typed arrays (about 47 bytes
   per hazard).
-- The index is built in a worker thread, at start as for a new WFS box (§4.2); until the
-  worker hands it over the look-ahead is `off` with the reason `building chart index`, and the
-  WFS box starts only after the handover, so this build never replaces a newer box's index.
-  A saved `pyramid.bin` over 1 MB is read and inflated off the event loop the same way, `off`
-  with `loading chart index` meanwhile; a smaller one loads within `start()` (22 ms on x86 for
-  two Nauvo cells).
+- `reach.json` holds each cell's reach: the box of its features, its widest burn radius and
+  its coverage box. A build told which cells changed (the WFS cell after each download) copies
+  from the saved index every z10 root that none of them reaches, by the saved reach or the new
+  one, nor any cell whose DSID differs from `cells.json`: the features reaching such a root are
+  those of the saved build. The result is byte-identical to building every root (tested for
+  boxes moved within a root, across root edges, over ENC cells and out of or back into the
+  roots of the ENC cells). Every root is built when the saved
+  index holds other cells or another order, another leaf zoom, no `reach.json`, or fails to
+  read. As at start, a cell with the same DSID edition, update, issue date and datum areas is
+  taken as unchanged.
+- The index is built in a worker thread, at start as for a new WFS box (§4.2), and posted
+  to the main thread with its pyramid columns moved; until the worker hands it over the
+  look-ahead is `off` with the reason `building chart index`, and the WFS box starts only
+  after the handover, so this build never replaces a newer box's index.
+  A saved `pyramid.bin` over 1 MB is read off the event loop the same way, `off` with
+  `loading chart index` meanwhile; a smaller one loads within `start()` (22 ms on x86 for two
+  Nauvo cells). Either way every block is inflated once at load and dropped, so a damaged
+  file is refused and rebuilt at start rather than when a query first reaches the damage.
 - A save writes and fsyncs the three files and their staging directory, renames the staging
   directory into place and fsyncs the parent. A saved index that fails to read or parse at
   start (a power cut can still leave a file short) is rebuilt from the configured cells, with
@@ -1059,6 +1098,16 @@ level, the index) changing, a restarted server or a cursor older than the 4096 t
 answers `all`. The runtime refreshes exactly those tiles. A tile left unlisted is byte for
 byte the tile the server draws now (`__tests__/ukc-tile-feed.test.ts`).
 
+**UKC tile geometry cache.** The cells of a tile and the reach-grid slots each reaching cell
+covers do not depend on the water level, draft or σ, so the tile route keeps them per tile in
+typed arrays (`UkcTileCache`, least recently used first out beyond 8 MiB) and a request only
+classes the tile's value kinds and draws. The cache holds for one `NodeStore`: another store
+(a handover or a WFS rebuild) empties it. Every write to `NodeStore.adjustments` bumps its
+`revision` in the same call; an entry whose revision is behind compares the living-chart
+cells in its tile with those it was walked with and is walked again when they differ, so a
+cached tile never shows water deeper than an own sounding (invariant 5). Cached and uncached
+tiles equal the walk they replaced byte for byte (`__tests__/engine/ukc-tile-cache.test.ts`).
+
 **Decision (BR3a, approved).** When the change list does not answer, the runtime refreshes
 every tile on a 1 cm fall of the water level but only on a 10 cm rise. A tile kept stale by a
 rise was drawn for lower water, so it shows equal or more danger than the truth.
@@ -1193,7 +1242,7 @@ palette.
 | Interactive leg re-check        | < 80 ms p95        | only the edited legs; abort on new input    |
 | Repair, one leg                 | < 1.5 s            | bounded window                              |
 | Index build, full Finnish coast | < 15 min, one-time | worker thread; incremental on ENC updates   |
-| Index RAM                       | < 150 MB           | mmap'd pyramid levels                       |
+| Index RAM                       | < 150 MB           | pyramid blocks read on demand, 32 MB cache  |
 
 ---
 

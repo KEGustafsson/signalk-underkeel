@@ -97,6 +97,19 @@ describe("WFS box around the vessel", () => {
     expect(fs.existsSync(path.join(TMP, "box.json"))).toBe(true);
   });
 
+  test("the rebuild reuses the saved index's roots that the WFS cell does not reach", async () => {
+    const h = harness();
+    const changed: (string[] | undefined)[] = [];
+    const build = h.builder.build;
+    h.builder.build = (job, signal) => {
+      changed.push(job.changed);
+      return build(job, signal);
+    };
+    h.t.pos = [22.08, 60.07];
+    await h.service.check();
+    expect(changed).toEqual([[path.join(TMP, "FI1WFS01")]]);
+  });
+
   test("the box is replaced once the vessel is past half its radius, at most once a minute", async () => {
     const h = harness();
     h.t.pos = [22.08, 60.07];

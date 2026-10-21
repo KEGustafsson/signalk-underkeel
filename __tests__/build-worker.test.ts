@@ -52,7 +52,17 @@ describe("index build worker entry", () => {
   test("builds and stages the index, leaving the index directory to the main thread", async () => {
     const j = job();
     const messages = await runWorkerEntry(j);
-    expect(messages).toEqual([{ ok: true, staging: expect.any(String) }]);
+    expect(messages).toEqual([
+      {
+        ok: true,
+        staging: expect.any(String),
+        index: expect.objectContaining({
+          minZoom: 10,
+          leafZoom: 16,
+          roots: { built: 1, copied: 0 }
+        })
+      }
+    ]);
     expect(fs.existsSync(j.indexDir)).toBe(false);
     commitChartIndex(j.indexDir, (messages[0] as { staging: string }).staging);
     expect(loadChartIndex(j.indexDir).catalogue.cells.map((c) => c.name)).toEqual(["FI5SYNTH"]);
@@ -78,6 +88,24 @@ describe("workerBuilder (compiled lib/)", () => {
     const index = await (await builder())(j, new AbortController().signal);
     expect(index.catalogue.cells.map((c) => c.name)).toEqual(["FI5SYNTH"]);
     expect(fs.existsSync(path.join(j.indexDir, "pyramid.bin"))).toBe(true);
+  });
+
+  test("hands the index over from the worker without reading the saved files", async () => {
+    const j = job();
+    const read = jest.spyOn(fs, "readFileSync");
+    try {
+      const index = await (await builder())(j, new AbortController().signal);
+      expect(read.mock.calls.filter(([f]) => String(f).startsWith(j.indexDir))).toEqual([]);
+      const saved = loadChartIndex(j.indexDir);
+      const { serializePyramid } = (await import(LIB_STORE)) as {
+        serializePyramid: (s: unknown) => Buffer;
+      };
+      expect(serializePyramid(index.pyramid).equals(serializePyramid(saved.pyramid))).toBe(true);
+      expect(index.hazards.features).toEqual(saved.hazards.features);
+      expect(index.catalogue).toEqual(saved.catalogue);
+    } finally {
+      read.mockRestore();
+    }
   });
 
   test("rejects with the worker's error when the build fails", async () => {
@@ -121,7 +149,9 @@ describe("workerBuilder (compiled lib/)", () => {
   });
 
   test("columns built on several threads join into the single-thread index, byte for byte", async () => {
-    const lib = (await import(LIB_WORKER)) as { runBuild: (j: BuildJob) => Promise<string> };
+    const lib = (await import(LIB_WORKER)) as {
+      runBuild: (j: BuildJob) => Promise<{ staging: string }>;
+    };
     const cells = spreadCells(path.join(dir, "cells"));
     const staged = (threads: number) =>
       lib.runBuild({
@@ -130,8 +160,11 @@ describe("workerBuilder (compiled lib/)", () => {
         indexDir: path.join(dir, `index-${threads}`),
         threads
       });
-    const [one, three] = await Promise.all([staged(1), staged(3)]);
-    for (const file of ["pyramid.bin", "hazards.json", "cells.json"]) {
+    const [one, three] = (await Promise.all([staged(1), staged(3)])).map((r) => r.staging) as [
+      string,
+      string
+    ];
+    for (const file of ["pyramid.bin", "hazards.json", "cells.json", "reach.json"]) {
       expect(
         fs.readFileSync(path.join(three, file)).equals(fs.readFileSync(path.join(one, file)))
       ).toBe(true);
