@@ -214,7 +214,10 @@ describe.each([
 ])("a store read block by block (%s layout) answers as the store held whole", (_, layout) => {
   test("minDepthOver, with blocks dropped between queries", () => {
     const file = serializePyramid(built, layout);
-    const lazy = pyramidFromBuffer(file, { budgetBytes: 200_000, syncBytes: Infinity });
+    const { blocks } = parts(file);
+    // A third of the blocks' columns, so a sweep of them all must drop some.
+    const budgetBytes = (BYTES_PER_NODE * blocks.reduce((n, b) => n + b.nodes, 0)) / 3;
+    const lazy = pyramidFromBuffer(file, { budgetBytes, syncBytes: Infinity });
     const cache = cacheOf(lazy);
     expect(cache?.size).toBeGreaterThan(4);
     fc.assert(
@@ -225,7 +228,12 @@ describe.each([
       }),
       { numRuns: 300 }
     );
-    // Blocks were dropped and read again.
+    // Every block twice over, so some are dropped and read again whatever the queries reached.
+    for (const b of [...blocks, ...blocks]) {
+      cache?.trim();
+      const geom = footprintGeom(ringOf(b.key, layout.blockZoom));
+      expect(minDepthOver(lazy, geom)).toEqual(minDepthOver(built, geom));
+    }
     expect(cache?.loads).toBeGreaterThan(cache?.count ?? 0);
   });
 
