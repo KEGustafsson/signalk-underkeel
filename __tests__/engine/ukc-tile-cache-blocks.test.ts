@@ -46,7 +46,8 @@ test.each([12, 13, 14])(
 function beyondReach(key: number, x: number, y: number): number {
   const n = 2 ** FINE.blockZoom;
   const block = tileRect(FINE.blockZoom, Math.floor(key / n), key % n);
-  return rectGap(tileRect(14, x, y), block) - mercatorBuffer(block, MAX_CHART_BUFFER);
+  const tile = tileRect(14, x, y);
+  return rectGap(tile, block) - mercatorBuffer(tile, MAX_CHART_BUFFER);
 }
 
 test("a tile beyond the chart reach of a block that loads keeps its cached geometry", () => {

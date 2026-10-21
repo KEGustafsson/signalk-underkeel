@@ -244,15 +244,14 @@ export class UkcTileCache {
     if (blocks.length === 0) {
       return;
     }
-    // A tile's reach grid reads cells up to the chart reach outside it.
-    const near = blocks.map((b) => {
-      const rect = tileRect(b.z, b.x, b.y);
-      return { rect, reach: mercatorBuffer(rect, MAX_CHART_BUFFER) };
-    });
+    // A tile's reach grid reads cells up to the chart reach outside it,
+    // scaled at the tile's own latitude as reachersOf scales it.
+    const near = blocks.map((b) => tileRect(b.z, b.x, b.y));
     for (const [key, e] of this.entries) {
       const [z, x, y] = key.split("/").map(Number) as [number, number, number];
       const tile = tileRect(z, x, y);
-      if (near.some((n) => rectGap(tile, n.rect) <= n.reach)) {
+      const reach = mercatorBuffer(tile, MAX_CHART_BUFFER);
+      if (near.some((rect) => rectGap(tile, rect) <= reach)) {
         this.entries.delete(key);
         this.bytes -= e.bytes;
       }
