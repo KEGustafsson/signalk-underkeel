@@ -33,9 +33,22 @@ export interface Scoring {
   sigmaPos: number;
 }
 
+/**
+ * The most k_p · σ_pos widens a footprint, metres (decision, plan §4.8). A
+ * 2 km GNSS jump set σ_pos to 2 km, and each tick then read the chart 4 km
+ * around every footprint for 1.5 s; beyond this the state is at least warn.
+ */
+export const MAX_POSITION_BUFFER = 500;
+
 /** Ground buffer around every footprint: k_p · σ_pos, never below the configured floor. */
 export function bufferAt(s: Scoring, opts: LookaheadOptions): number {
-  return Math.max(opts.positionBuffer, opts.kp * s.sigmaPos);
+  const floor = opts.positionBuffer;
+  return Math.max(floor, Math.min(opts.kp * s.sigmaPos, MAX_POSITION_BUFFER));
+}
+
+/** k_p · σ_pos exceeds the buffer the footprints get. */
+export function bufferCapped(s: Scoring, opts: LookaheadOptions): boolean {
+  return opts.kp * s.sigmaPos > bufferAt(s, opts);
 }
 
 /**
@@ -47,6 +60,10 @@ export function lengthAt(t: number, vessel: VesselModel, opts: LookaheadOptions)
   return vessel.length + 2 * opts.kp * opts.sigmaSog * t;
 }
 
+/**
+ * Scores the hull of `tracks` at `t`. With `certainStops` the chart walk
+ * may end at the first charted land at P = 1; the result is then `partial`.
+ */
 export function footprint(
   t: number,
   origin: LonLat,
@@ -55,7 +72,8 @@ export function footprint(
   vessel: VesselModel,
   index: ChartIndex,
   s: Scoring,
-  opts: LookaheadOptions
+  opts: LookaheadOptions,
+  certainStops = false
 ): FootprintResult {
   // The hull keeps its drift angle to the track as the track turns.
   const hulls = tracks.map((track) => {
@@ -76,7 +94,8 @@ export function footprint(
     bufferMetres: buffer,
     chartReachK: opts.kp,
     clearAbove: s.threshold + CLEARANCE_RESOLUTION,
-    risk: { threshold: s.threshold, sigmaExtra: s.sigmaExtra }
+    risk: { threshold: s.threshold, sigmaExtra: s.sigmaExtra },
+    stopWhenCertain: certainStops
   });
   // A query that visited no tile (a degenerate footprint) proved nothing.
   const examined = r.visits > 0;
@@ -93,6 +112,7 @@ export function footprint(
     uncovered: !examined || (r.flags & FLAGS.NO_COVERAGE) !== 0,
     flags: r.flags,
     sigmaP: r.sigmaP,
-    riskTile: r.riskTile
+    riskTile: r.riskTile,
+    partial: certainStops && r.maxRisk >= 1 && r.coveredDMin === -Infinity && r.dMin === -Infinity
   };
 }

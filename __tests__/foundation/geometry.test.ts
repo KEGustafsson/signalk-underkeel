@@ -1,5 +1,7 @@
 import type { Rect } from "../../src/foundation/geo";
 import type { Geom, PolygonGeom } from "../../src/foundation/geometry";
+import { rectGap } from "../../src/foundation/geo";
+import { REACH_SLACK } from "../../src/spatial/pyramid";
 import fc from "fast-check";
 import {
   areasCoverRect,
@@ -9,6 +11,7 @@ import {
   pointInPolygon,
   pointRectDistance,
   pointSegmentDistance,
+  rectWithin,
   segmentIntersectsRect,
   segmentRectDistance
 } from "../../src/foundation/geometry";
@@ -45,6 +48,29 @@ describe("planar geometry", () => {
     expect(pointRectDistance([5, 5], r(0, 0, 10, 10))).toBe(0);
   });
 
+  test("sqrt distances stay within the query walk's slack of Math.hypot", () => {
+    // Below 1e-3 m a square can go subnormal; no Mercator distance is that small and nonzero.
+    const coord = fc
+      .double({ min: -2e7, max: 2e7, noNaN: true })
+      .filter((v) => v === 0 || Math.abs(v) > 1e-3);
+    fc.assert(
+      fc.property(coord, coord, coord, coord, (x, y, a, b) => {
+        const rect = r(Math.min(a, b), Math.min(a, b), Math.max(a, b), Math.max(a, b));
+        const dx = Math.max(rect.minX - x, 0, x - rect.maxX);
+        const dy = Math.max(rect.minY - y, 0, y - rect.maxY);
+        const exact = Math.hypot(dx, dy);
+        expect(pointRectDistance([x, y], rect)).toBeLessThanOrEqual(exact * REACH_SLACK);
+        expect(rectGap(r(x, y, x, y), rect)).toBeLessThanOrEqual(exact * REACH_SLACK);
+        const ex = x - a;
+        const ey = y - b;
+        expect(pointSegmentDistance([x, y], [a, b], [a, b])).toBeLessThanOrEqual(
+          Math.hypot(ex, ey) * REACH_SLACK
+        );
+      }),
+      { numRuns: 2000 }
+    );
+  });
+
   test("segment-rect intersection and distance", () => {
     expect(segmentIntersectsRect([-5, 5], [15, 5], r(0, 0, 10, 10))).toBe(true);
     expect(segmentIntersectsRect([-5, 15], [15, 15], r(0, 0, 10, 10))).toBe(false);
@@ -65,6 +91,27 @@ describe("planar geometry", () => {
     expect(geomContainsRect(donutGeom, r(30, 30, 50, 50))).toBe(false);
     expect(geomContainsRect(donutGeom, r(90, 90, 110, 110))).toBe(false);
     expect(geomContainsRect({ type: "point", p: [1, 1] }, r(0, 0, 2, 2))).toBe(false);
+  });
+
+  test("a rect is within a distance only when every point of it is", () => {
+    expect(rectWithin(donutGeom, r(5, 5, 30, 30), 0)).toBe(true);
+    expect(rectWithin(donutGeom, r(30, 30, 50, 50), 0)).toBe(false);
+    expect(rectWithin(donutGeom, r(45, 45, 55, 55), 4)).toBe(false);
+    expect(rectWithin(donutGeom, r(101, 10, 104, 20), 5)).toBe(true);
+    expect(rectWithin(donutGeom, r(101, 10, 106, 20), 5)).toBe(false);
+    const point: Geom = { type: "point", p: [0, 0] };
+    expect(rectWithin(point, r(-3, -3, 3, 3), Math.hypot(3, 3))).toBe(true);
+    expect(rectWithin(point, r(-3, -3, 3, 3), 4)).toBe(false);
+    const line: Geom = {
+      type: "line",
+      coords: [
+        [0, 0],
+        [10, 0],
+        [10, 10]
+      ]
+    };
+    expect(rectWithin(line, r(2, -1, 8, 1), 1)).toBe(true);
+    expect(rectWithin(line, r(2, -1, 8, 1), 0)).toBe(false);
   });
 
   test("lines and points", () => {

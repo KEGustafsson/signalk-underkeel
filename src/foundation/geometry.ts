@@ -61,6 +61,9 @@ export function pointInRing(p: XY, ring: Ring): boolean {
 }
 
 // The query hot path calls these per tile; scalar arguments keep it allocation-free.
+// Math.hypot was 27 % of a look-ahead tick's allocation. Mercator metres (< 4e7)
+// cannot overflow a square, and the query walk widens its reach by REACH_SLACK
+// so a result 1 ulp above Math.hypot's still counts.
 
 function inRing(x: number, y: number, ring: Ring): boolean {
   let inside = false;
@@ -101,7 +104,9 @@ function segmentDistance(x: number, y: number, a: XY, b: XY): number {
   const len2 = dx * dx + dy * dy;
   const t = len2 === 0 ? 0 : ((x - a[0]) * dx + (y - a[1]) * dy) / len2;
   const c = Math.max(0, Math.min(1, t));
-  return Math.hypot(x - (a[0] + c * dx), y - (a[1] + c * dy));
+  const ex = x - (a[0] + c * dx);
+  const ey = y - (a[1] + c * dy);
+  return Math.sqrt(ex * ex + ey * ey);
 }
 
 /** Distance from p to the closest point of segment a→b (a point segment when a = b). */
@@ -113,7 +118,7 @@ export function pointSegmentDistance(p: XY, a: XY, b: XY): number {
 export function pointRectDistance(p: XY, r: Rect): number {
   const dx = Math.max(r.minX - p[0], 0, p[0] - r.maxX);
   const dy = Math.max(r.minY - p[1], 0, p[1] - r.maxY);
-  return Math.hypot(dx, dy);
+  return Math.sqrt(dx * dx + dy * dy);
 }
 
 /** One Liang–Barsky clip against edge (p, q); returns false when the segment misses. */
@@ -257,6 +262,53 @@ export function geomContainsRect(geom: Geom, r: Rect): boolean {
     (poly) =>
       corners.every((c) => pointInPolygon(c, poly)) && polygonBoundaryRectDistance(poly, r, 0) > 0
   );
+}
+
+/** All four corners of `r` lie within `d` of segment a→b. */
+function cornersNearSegment(r: Rect, a: XY, b: XY, d: number): boolean {
+  return (
+    segmentDistance(r.minX, r.minY, a, b) <= d &&
+    segmentDistance(r.maxX, r.minY, a, b) <= d &&
+    segmentDistance(r.maxX, r.maxY, a, b) <= d &&
+    segmentDistance(r.minX, r.maxY, a, b) <= d
+  );
+}
+
+function pathHoldsRect(coords: readonly XY[], closed: boolean, r: Rect, d: number): boolean {
+  const n = coords.length;
+  for (let i = closed ? 0 : 1; i < n; i++) {
+    if (cornersNearSegment(r, coords[i === 0 ? n - 1 : i - 1] as XY, coords[i] as XY, d)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * True only when every point of the rectangle lies within `d` of the
+ * geometry: inside one of its polygons, or with all four corners within `d`
+ * of one vertex or one edge. A disc or a capsule is convex, so it then
+ * holds the whole rectangle. False costs a caller work, never safety.
+ */
+export function rectWithin(geom: Geom, r: Rect, d: number): boolean {
+  if (geom.type === "point") {
+    return cornersNearSegment(r, geom.p, geom.p, d);
+  }
+  if (geom.type === "line") {
+    return d > 0 && pathHoldsRect(geom.coords, false, r, d);
+  }
+  for (const poly of geom.polygons) {
+    const inside =
+      inPolygon(r.minX, r.minY, poly) &&
+      inPolygon(r.maxX, r.minY, poly) &&
+      inPolygon(r.maxX, r.maxY, poly) &&
+      inPolygon(r.minX, r.maxY, poly) &&
+      polygonBoundaryRectDistance(poly, r, 0) > 0;
+    if (inside || (d > 0 && pathHoldsRect(poly.outer, true, r, d))) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /** Below this length (metres) an edge is not matched against its neighbours. */

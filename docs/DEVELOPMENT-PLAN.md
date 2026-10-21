@@ -341,7 +341,9 @@ whatever the thread count, and only one neighbourhood's features are held per th
 3. If the tile's bound is already hopeless, stop. That part fails, with the worst cell as
    evidence.
 4. Otherwise descend into the children, and at the leaves intersect them with the exact
-   polygon.
+   polygon. A tile that lies wholly within the buffer of the polygon (inside it, or with all
+   four corners within the buffer of one vertex or edge) passes that to its children, which
+   are then taken without distance tests.
 
 Expected cost is about 50 to 300 cell visits per look-ahead footprint.
 
@@ -568,6 +570,16 @@ both ends, still touch: a fast boat must not skip a rock between two samples. A 
 most 400 footprints: Δt grows toward that touching limit when the horizon would need more, and
 the horizon is cut only past it. Configuration caps D at 5 NM and the minimum horizon at 600 s.
 
+**Decision (step rule): coarser steps beyond the warn window.** Footprints are scored every Δt
+out to `warnWithin` (120 s), the widest window `classify` and the hysteresis raise a state in.
+Beyond it only every k-th Δt step is scored, with k the largest whole number for which k·Δt
+still leaves consecutive footprints touching, (L + 2 · positionBuffer) / SOG; footprint length
+and buffer only grow with t, so the union of the coarse footprints still covers the swept hull.
+Where a coarse footprint is the first to reach the warn or alert level or a coverage gap, the
+Δt steps it skipped are scored, so `timeToShoal` and the reason keep the Δt time. At 1 kn a
+tick scores 57 footprints instead of 361. The escape fan scores the same coarse times, so a
+heading's time to shoal beyond 120 s is known to k·Δt.
+
 **Output per tick.**
 
 - Min UKC μ and σ along the central member.
@@ -594,6 +606,13 @@ has the same TTS, or none is clear past the first step, publish null.
 This is cheap, and it directly addresses Baltic jamming and spoofing, the same gap that
 TimeZero 5.4's "Ghost Ship" now fills.
 
+**Decision (buffer ceiling): k_p · σ_pos is capped at 500 m.** σ_pos has no upper bound: a
+2 km GNSS jump made each footprint read the chart 4 km around it, 0.4 to 3.2 s per tick (x86)
+in water without land. The buffer stops at `MAX_POSITION_BUFFER` (500 m). A tick whose
+k_p · σ_pos exceeds it is at least `warn`, with the reason "position uncertainty N m" and the
+integrity monitor's reasons, never `normal` or `alert`, since a shoal beyond 500 m may be under
+the boat; `alarm` from the capped footprints stays `alarm`. The escape fan is not searched.
+
 **Suppression rules.** None of these is ever silent; each publishes the reason it is
 suppressing.
 
@@ -618,7 +637,10 @@ suppressing.
   assessed survey (§4.3), on top of the burn around point hazards.
 - The escape fan uses the maximum turn rate (default 3°/s) and stops at the first heading,
   smallest change first, that stays clear over the whole horizon. The monitor searches it at
-  most every 3 s and holds the heading in between.
+  most every 3 s and holds the heading in between. The search runs after the tick's deltas are
+  published (`setImmediate`), so the event loop is blocked in two shorter pieces, and its heading
+  is published when it is found. After a tick or a search longer than 250 ms the next search is
+  skipped, the heading is null, and the plugin status says so.
 - Integrity: dead reckoning runs on each fix's own timestamp, so a GNSS feed slower than the
   1 Hz tick is not read as divergence. σ_DR = √(σ_anchor² + σ_GNSS² + (0.2 m/s · run)²);
   a consistent run re-anchors every 60 s; a diverged one is not re-anchored, and clears
@@ -630,6 +652,10 @@ suppressing.
   through at once, so stale input is never held as an earlier state. The risk state before
   them stays held: after the gap a lower state still needs the 5 lowering ticks, and a higher
   one is taken at once.
+- A footprint stops reading the chart at the first charted land at P = 1: no later tile can
+  change its depth, P or worst tile. Its flags then hold only the tiles read, so where the state
+  turns on coverage (no warn or alarm from risk) such a footprint is read again in full, and a
+  coverage gap next to land is still reported. Route checks always read every tile.
 - Measured on the synthetic archipelago at leaf z20 (`npm run bench`, x86, plain Node):
   median 1.2 ms and p95 4 ms per tick, escape fan included. Under Jest the same run is about
   15× slower.
@@ -658,7 +684,10 @@ fired, the notification holds until SOG stays above 0.5 m/s for 10 s.
 ### 4.10 Signal K data model and REST API
 
 **Deltas.** These are published by the plugin, use plugin-scoped units in SI, and are
-proposed for the Signal K spec later.
+proposed for the Signal K spec later. `state` and `envelopeRev` go out every tick; the other
+values when they change and at least every 10 s, and the plugin status when its text changes.
+`notifications.navigation.underKeel` goes out at once on a new state, kind of reason or named
+hazard, and with only its countdown or terms changed at most every 30 s.
 
 | Path                                         | Unit         | Meaning                                                |
 | -------------------------------------------- | ------------ | ------------------------------------------------------ |

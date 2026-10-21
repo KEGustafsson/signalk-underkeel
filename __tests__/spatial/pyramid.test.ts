@@ -2,7 +2,8 @@ import { FLAGS } from "../../src/spatial/node-store";
 import { minDepthOver, footprintGeom } from "../../src/spatial/pyramid";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
 import type { Box } from "../helpers/synthetic";
-import { toMercator } from "../../src/foundation/geo";
+import { mercatorBuffer } from "../../src/spatial/pyramid";
+import { tileAt, tileRect, toMercator } from "../../src/foundation/geo";
 import { probabilityBelowZero } from "../../src/foundation/stats";
 import type { DepthFeature, QualityFeature } from "../../src/ingest/features";
 import { area, basin, boxRing, coverage, land, point, quality, swept } from "../helpers/synthetic";
@@ -236,6 +237,27 @@ describe("min-depth pyramid", () => {
     expect(r.worst?.z).toBe(18);
     expect(r.worst?.center[0]).toBeCloseTo(22.01, 3);
     expect(r.worst?.center[1]).toBeCloseTo(60.005, 3);
+  });
+
+  test("a tile whose edge lies exactly at the buffer counts", () => {
+    const shoal: Box = [22.01, 60.004, 22.012, 60.006];
+    const store = buildPyramid([...basin(AREA, 7), area(shoal, 1.2)], OPTS);
+    const [west, y] = toMercator(shoal[0], 60.005);
+    const edge = tileRect(OPTS.leafZoom, tileAt(OPTS.leafZoom, west, y).x, 0).minX;
+    const x = edge - 40;
+    const at = (metres: number) =>
+      mercatorBuffer({ minX: x, minY: y, maxX: x, maxY: y }, metres) <= edge - x;
+    // The widest ground buffer whose Mercator reach is still no more than the gap.
+    let lo = 10;
+    let hi = 30;
+    for (let i = 0; i < 200; i++) {
+      const mid = (lo + hi) / 2;
+      [lo, hi] = at(mid) ? [mid, hi] : [lo, mid];
+    }
+    const query = (metres: number) =>
+      minDepthOver(store, { type: "point", p: [x, y] }, { bufferMetres: metres }).dMin;
+    expect(query(lo)).toBe(1.2);
+    expect(query(lo * 0.99)).toBe(7);
   });
 
   test("an empty chart stores nothing", () => {

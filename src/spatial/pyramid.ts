@@ -4,19 +4,27 @@ import {
   fromMercator,
   groundToMercator,
   maxAbsLat,
+  rectContainsRect,
   rectGap,
   shiftRect,
   tileKey,
   tileRange,
   tileRect,
+  tileRectInto,
   toMercator,
   worldShifts
 } from "../foundation/geo";
 import type { Geom } from "../foundation/geometry";
-import { geomBounds, geomRectDistance, pointRectDistance, shiftGeom } from "../foundation/geometry";
+import {
+  geomBounds,
+  geomRectDistance,
+  pointRectDistance,
+  rectWithin,
+  shiftGeom
+} from "../foundation/geometry";
 import type { NodeStore, NodeValues } from "./node-store";
 import { probabilityBelowZero } from "../foundation/stats";
-import { combine, EMPTY, FLAGS, NO_DATA } from "./node-store";
+import { EMPTY, FLAGS, NO_DATA } from "./node-store";
 import type { SurveySigmaP } from "./chart-position";
 import { chartReach, surveySigmaP } from "./chart-position";
 
@@ -73,6 +81,15 @@ export interface QueryOptions {
    * the chart's position uncertainty (`chart-position.ts`); 0 by default.
    */
   chartReachK?: number;
+  /**
+   * Stop the walk once it has found charted land at P = 1 (needs `risk`):
+   * no later tile can then change dMin, coveredDMin, maxRisk, riskTile or
+   * worst. flags, σ and cellRefs then hold only the tiles visited, so a
+   * gap or an unassessed survey elsewhere in reach can go unreported; the
+   * look-ahead reads such a footprint again in full where its coverage
+   * decides the state. Route checks never set it.
+   */
+  stopWhenCertain?: boolean;
 }
 
 /** A footprint ring in WGS84, as a Mercator polygon. */
@@ -89,6 +106,8 @@ interface Walk {
   geom: Geom;
   /** Bounds of `geom`, and a point of it when it has one. */
   bounds: Rect;
+  /** `bounds` grown by `buffer`: every tile within the buffer of the footprint lies in it. */
+  hold: Rect;
   vertex?: XY;
   /** Mercator reach of a tile without chart position, and of any tile at most. */
   buffer: number;
@@ -98,7 +117,10 @@ interface Walk {
   k: number;
   survey?: SurveySigmaP;
   clearAbove: number;
+  /** Folded in place by `take`; never one of the shared constants. */
   result: NodeValues;
+  /** Scratch bounds of the tile being visited. */
+  rect: Rect;
   coveredDMin: number;
   cells: Set<number>;
   worst?: { z: number; x: number; y: number };
@@ -106,13 +128,22 @@ interface Walk {
   risk?: { threshold: number; sigmaExtra: number };
   maxRisk: number;
   riskTile?: { v: NodeValues; z: number; x: number; y: number; risk: number };
+  stopWhenCertain: boolean;
 }
 
 function take(w: Walk, v: NodeValues, z: number, x: number, y: number): void {
-  if (v.dMin < w.result.dMin || w.worst === undefined) {
+  const r = w.result;
+  if (v.dMin < r.dMin || w.worst === undefined) {
     w.worst = { z, x, y };
   }
-  w.result = combine(w.result, v);
+  // combine() folded in place: a tick takes thousands of tiles.
+  if (v.dMin < r.dMin) {
+    r.dMin = v.dMin;
+    r.cellRef = v.cellRef;
+  }
+  r.sigmaD = Math.max(r.sigmaD, v.sigmaD);
+  r.sigmaP = Math.max(r.sigmaP, v.sigmaP);
+  r.flags |= v.flags;
   if ((v.flags & FLAGS.NO_DEPTH) === 0) {
     w.coveredDMin = Math.min(w.coveredDMin, v.dMin);
   }
@@ -158,6 +189,12 @@ function canStop(w: Walk, v: NodeValues): boolean {
   return probabilityBelowZero(v.dMin - w.risk.threshold, sigma) < RISK_STOP_BELOW;
 }
 
+/**
+ * Every reach is widened by this factor, so a distance that rounds 1 ulp
+ * above its exact value still counts and the walk stays conservative.
+ */
+export const REACH_SLACK = 1 + 1e-12;
+
 /** Mercator distance at which node i still counts; a split node's bounds its subtree's. */
 function reachOf(w: Walk, i: number): number {
   if (!w.survey || i < 0) {
@@ -166,23 +203,41 @@ function reachOf(w: Walk, i: number): number {
   return w.buffer + w.perMetre * chartReach(w.k, w.survey.node[i] as number);
 }
 
-function visit(w: Walk, z: number, x: number, y: number): void {
-  const rect = tileRect(z, x, y);
+function certain(w: Walk): boolean {
+  return w.maxRisk >= 1 && w.coveredDMin === -Infinity && w.result.dMin === -Infinity;
+}
+
+/** Whether tile `rect` (node i) lies within its reach of the footprint. */
+function reaches(w: Walk, rect: Rect, i: number): boolean {
   // The gap to the footprint's bounds never exceeds the distance to the
   // footprint, and costs far less to find.
   const gap = rectGap(w.bounds, rect);
   if (gap > w.maxReach) {
-    return;
+    return false;
   }
-  const i = w.store.find(z, x, y);
   const reach = reachOf(w, i);
   if (gap > reach) {
-    return;
+    return false;
   }
   // A point of the footprint within reach settles it; most tiles inside a
   // wide chart reach are settled so.
   const close = w.vertex !== undefined && pointRectDistance(w.vertex, rect) <= reach;
-  if (!close && geomRectDistance(w.geom, rect, reach) > reach) {
+  return close || geomRectDistance(w.geom, rect, reach) <= reach;
+}
+
+/**
+ * `inside`: the tile lies wholly within `w.buffer`, the least reach any
+ * node gets, of the footprint, so it and every tile under it are in reach
+ * without testing.
+ */
+function visit(w: Walk, z: number, x: number, y: number, inside: boolean): void {
+  if (w.stopWhenCertain && certain(w)) {
+    return;
+  }
+  // Read before the children are visited, which overwrite it.
+  const rect = tileRectInto(z, x, y, w.rect);
+  const i = w.store.find(z, x, y);
+  if (!inside && !reaches(w, rect, i)) {
     return;
   }
   w.visits++;
@@ -191,15 +246,16 @@ function visit(w: Walk, z: number, x: number, y: number): void {
     return;
   }
   const v = w.store.values(i);
-  const split = w.store.isSplit(i);
-  if (!split || canStop(w, v)) {
+  if (!w.store.isSplit(i) || canStop(w, v)) {
     take(w, v, z, x, y);
     return;
   }
-  visit(w, z + 1, 2 * x, 2 * y);
-  visit(w, z + 1, 2 * x + 1, 2 * y);
-  visit(w, z + 1, 2 * x, 2 * y + 1);
-  visit(w, z + 1, 2 * x + 1, 2 * y + 1);
+  // Only a tile inside the footprint's bounds grown by the buffer can lie within the buffer.
+  const within = inside || (rectContainsRect(w.hold, rect) && rectWithin(w.geom, rect, w.buffer));
+  visit(w, z + 1, 2 * x, 2 * y, within);
+  visit(w, z + 1, 2 * x + 1, 2 * y, within);
+  visit(w, z + 1, 2 * x, 2 * y + 1, within);
+  visit(w, z + 1, 2 * x + 1, 2 * y + 1, within);
 }
 
 /** Living-chart cells near the footprint are taken beside the charted tiles. */
@@ -255,7 +311,7 @@ function walkFor(store: NodeStore, geom: Geom, opts: QueryOptions): Walk {
   // Sized for the widest reach, so every narrower one is converted at a
   // latitude at least as far poleward as its own edge.
   const ground = bufferMetres + (survey ? chartReach(k, survey.max) : 0);
-  const maxReach = mercatorBuffer(bounds, ground);
+  const maxReach = mercatorBuffer(bounds, ground) * REACH_SLACK;
   const perMetre = ground > 0 ? maxReach / ground : 0;
   // Stopping early is only conservative for risk where the bound is at or
   // past the threshold: there P rises with σ, so the parent's widest σ
@@ -268,6 +324,7 @@ function walkFor(store: NodeStore, geom: Geom, opts: QueryOptions): Walk {
     store,
     geom,
     bounds,
+    hold: bounds,
     buffer: survey ? perMetre * bufferMetres : maxReach,
     maxReach,
     perMetre,
@@ -276,7 +333,9 @@ function walkFor(store: NodeStore, geom: Geom, opts: QueryOptions): Walk {
     clearAbove,
     risk: opts.risk,
     maxRisk: 0,
-    result: EMPTY,
+    stopWhenCertain: opts.stopWhenCertain === true,
+    result: { ...EMPTY },
+    rect: { minX: 0, minY: 0, maxX: 0, maxY: 0 },
     coveredDMin: Infinity,
     cells: new Set(),
     visits: 0
@@ -297,12 +356,13 @@ export function minDepthOver(store: NodeStore, geom: Geom, opts: QueryOptions = 
   for (const shift of worldShifts(reach)) {
     w.geom = shift === 0 ? geom : shiftGeom(geom, shift);
     w.bounds = shiftRect(bounds, shift);
+    w.hold = expandRect(w.bounds, w.buffer);
     w.vertex = vertexOf(w.geom);
     const shifted = shiftRect(reach, shift);
     const range = tileRange(store.minZoom, shifted);
     for (let x = range.minX; x <= range.maxX; x++) {
       for (let y = range.minY; y <= range.maxY; y++) {
-        visit(w, store.minZoom, x, y);
+        visit(w, store.minZoom, x, y, false);
       }
     }
     if (!opts.chartOnly) {

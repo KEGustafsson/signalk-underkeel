@@ -23,6 +23,7 @@ import {
   polygonsRectDistance,
   polygonsRectRelation
 } from "./polygon-index";
+import { REACH_SLACK } from "./pyramid";
 import { sigmaFor, SWEPT_SIGMA_D } from "./quality";
 
 /**
@@ -89,7 +90,8 @@ function classify(items: Item[], rect: Rect): Hit[] {
       }
       continue;
     }
-    if (rectDistance(item, rect, r) > r) {
+    // The same slack as the query walk, so a tile at the disc's edge is never lost to rounding.
+    if (rectDistance(item, rect, r * REACH_SLACK) > r * REACH_SLACK) {
       continue;
     }
     hits.push({ item, full: item.radius === 0 && containsRect(item, world) });

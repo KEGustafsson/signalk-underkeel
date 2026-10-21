@@ -133,6 +133,50 @@ All notable changes to signalk-underkeel are documented here.
   characters), speeds, drafts, `bufferMetres`, `xteLimit` and `probability` as the plugin
   does, so a request that validates is no longer refused for those fields; size budgets are
   listed in `schemas/navigation-safety/README.md`.
+- Look-ahead and query tile walks measure distances with `Math.sqrt` instead of `Math.hypot`,
+  widen every reach by 1e-12 so a 1-ulp rounding can only add a tile, and reuse one tile
+  rectangle and result per walk. On the Nauvo test route at 6 kn the tick median fell from
+  2.6 to 1.7 ms and p95 from 7 to 3.9 ms (x86), with the same states, risks and footprints on
+  all 2296 ticks.
+- A look-ahead footprint stops reading the chart once it finds charted land at P = 1, and is
+  read again in full only where the state turns on its coverage. Alarm ticks on the Nauvo route fell from 2.6
+  to 2.2 ms median, and a tick after a 2 km GNSS jump from 770 to 270 ms (x86).
+- Look-ahead hull rectangles compute each point's ellipsoid scale and each bearing's sine and
+  cosine once instead of in six `project()` calls, with the same coordinates: footprint geometry
+  0.25 → 0.21 ms per 6 kn tick (x86).
+- Beyond the 120 s warn window the look-ahead scores only every k-th step, the most that still
+  leaves neighbouring footprints touching (every 3rd at 6 kn, every 20th at 1 kn), and scores the
+  skipped steps where one of those footprints is the first to reach P 5 %, P 1 % or a coverage
+  gap, so `timeToShoal` and the reason keep the 3 s time. On the Nauvo route at 1 kn a tick
+  scores 57 footprints instead of 361, the median fell from 30 to 2.7 ms and the envelope from
+  17 to 5 kB (x86); states, risks, clearances, times to shoal, reasons and escape headings were
+  the same on every tick at 1 kn, 6 kn and with a 5 NM horizon (90 → 20 ms).
+- `GET /envelope` drops outline vertices within 1 cm of the line through their neighbours. With
+  a 5 NM horizon (400 footprints) the envelope fell from 19.5 to 3.5 kB median and 21.4 to
+  5.6 kB at most, back within the 15 kB budget; at 6 kn from 4.1 to 2.5 kB.
+- The escape heading is searched after the tick's deltas are published, so a tick blocks the
+  server in two shorter pieces; after a tick or search over 250 ms the next search is skipped
+  and the plugin status says so. With a 5 NM horizon the longest tick fell from 264 to 185 ms
+  (x86), the search following in up to 27 ms.
+- `notifications.navigation.underKeel` is sent at once when its state, the kind of reason or the
+  named hazard changes, and while those hold its message with a new countdown at most every 30 s.
+  The countdown in the message made it go out every 3 s: on the Nauvo route at 6 kn 365
+  notifications in 2296 ticks with 28 state changes, now 77.
+- `navigation.underKeel.*` values other than `state` and `envelopeRev` are sent when they change
+  and at least every 10 s, and the plugin status only when its text changes. On the Nauvo route
+  at 6 kn the values sent fell from 18 733 to 7 063 in 2296 ticks (507 → 203 B per tick), and
+  `setPluginStatus` calls from 2297 to 329.
+- Below the low speed `navigation.underKeel.envelopeRev` no longer bumps while GPS noise moves
+  the drawn envelope less than 5 m and no class or number in it changes. At rest with 1 m of
+  position noise it bumped on 599 of 600 ticks, so every Freeboard fetched the envelope and
+  redrew its overlay once a second; now 0 (153 with 2 m of white noise).
+- The look-ahead buffer k_p · σ_pos stops at 500 m. Beyond that the state is at least `warn`
+  with the reason "position uncertainty N m" and the integrity monitor's reasons, and no escape
+  heading is searched. After a 2 km GNSS jump in water without land a tick took 0.4 to 3.2 s
+  (x86) and could still read `normal`; it now takes 3 to 27 ms and reads `warn`.
+- A depth query no longer tests the tiles under a tile that lies wholly within its buffer of
+  the footprint or polygon. A 499-vertex `POST /query` polygon of 500 m radius with a 2 km
+  buffer took 198 ms, now 48 ms (x86); jagged polygons gain nothing (124 → 128 ms).
 - The status widget changes the page only when a value it shows changes. With three Signal K
   values a second and steady readings it made 549 DOM changes and 99 layouts a minute; now
   none.

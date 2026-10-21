@@ -19,9 +19,10 @@ import type { Explanation } from "./explain";
 import { explain, sentence } from "./explain";
 import { escapeHeading } from "./escape";
 import type { Motion, Scoring } from "./fan";
-import { footprint } from "./fan";
+import { bufferCapped, footprint } from "./fan";
+import { scheduleFor, scoreSchedule } from "./schedule";
 import { fanMembers } from "./trajectory";
-import { classify, degrade } from "./verdict";
+import { classify, degrade, uncertainPosition } from "./verdict";
 
 /**
  * Look-ahead (plan §4.7–§4.8): a CTRV fan of five tracks from COG, SOG and
@@ -108,6 +109,8 @@ export interface LookaheadOptions {
 /** Configurable maxima: each footprint costs a chart query every tick. */
 export const LOOKAHEAD_LIMITS = { distance: 5 * 1852, minHorizon: 600 } as const;
 
+export { MAX_FOOTPRINTS, stepFor } from "./schedule";
+
 export const DEFAULT_LOOKAHEAD: LookaheadOptions = {
   distance: 0.3 * 1852,
   minHorizon: 60,
@@ -151,6 +154,11 @@ export interface FootprintResult {
   /** Widest source σP the footprint touched, metres. */
   sigmaP: number;
   riskTile?: RiskTile;
+  /**
+   * The chart walk stopped at charted land at P = 1, so `flags`, `sigmaP`
+   * and `uncovered` hold only the tiles read before it.
+   */
+  partial?: boolean;
 }
 
 export interface WorstPoint {
@@ -173,6 +181,11 @@ export interface LookaheadResult {
   timeToShoal: number | null;
   /** True heading with the longest time to shoal, radians; null when normal or none is better. */
   escapeHeading: number | null;
+  /**
+   * False when no escape heading may be published for this tick: at low
+   * speed or with the position buffer capped. Absent when no tick was scored.
+   */
+  escapable?: boolean;
   horizon: number;
   footprints: FootprintResult[];
   worst?: WorstPoint;
@@ -185,6 +198,8 @@ export interface LookaheadInputs {
   waterLevel: WaterLevel;
   /** 1σ position uncertainty now, metres; from HDOP when not given. */
   positionSigma?: number;
+  /** Why `positionSigma` is inflated, for the reason when it exceeds the buffer cap. */
+  positionReason?: string;
   /** Search the escape fan when not normal; it costs up to 37 extra tracks. */
   escape?: boolean;
 }
@@ -216,40 +231,6 @@ function motionOf(nav: NavState, now: number, opts: LookaheadOptions): Motion {
   const moving = known && sog >= opts.lowSpeed;
   const horizon = moving ? Math.max(opts.minHorizon, opts.distance / sog) : 0;
   return { known, moving, cog, sog, rot, heading, horizon };
-}
-
-/**
- * Seconds between footprints. The plan's Δt applies at ordinary speeds; a
- * fast boat would leave gaps between Δt-spaced hulls, so the step shrinks
- * until consecutive footprints (hull length plus the buffer at both ends)
- * still touch.
- */
-export function stepFor(sog: number, vessel: VesselModel, opts: LookaheadOptions): number {
-  const reach = vessel.length + 2 * opts.positionBuffer;
-  return sog > 0 ? Math.min(opts.step, reach / sog) : opts.step;
-}
-
-/**
- * Footprints per tick at most. Footprints a step apart still touch up to
- * reach / SOG, so a long horizon at low speed takes longer steps rather
- * than more footprints; only when that is not enough is the horizon cut.
- */
-export const MAX_FOOTPRINTS = 400;
-
-function timesFor(m: Motion, vessel: VesselModel, opts: LookaheadOptions): number[] {
-  const gapFree = m.sog > 0 ? (vessel.length + 2 * opts.positionBuffer) / m.sog : opts.step;
-  const step = Math.min(
-    gapFree,
-    Math.max(stepFor(m.sog, vessel, opts), m.horizon / (MAX_FOOTPRINTS - 1))
-  );
-  const horizon = Math.min(m.horizon, step * (MAX_FOOTPRINTS - 1));
-  const n = Math.ceil(horizon / step - 1e-9);
-  const times: number[] = [];
-  for (let i = 0; i < n; i++) {
-    times.push(i * step);
-  }
-  times.push(horizon);
-  return times;
 }
 
 function riskiest(fps: FootprintResult[]): FootprintResult | undefined {
@@ -387,18 +368,18 @@ function scoringFor(
   };
 }
 
-export function evaluateLookahead(
+/** The result when an input the look-ahead needs is missing, stale or invalid. */
+function missingInput(
   nav: NavState,
   inputs: LookaheadInputs,
   index: ChartIndex | undefined,
   now: number,
-  opts: LookaheadOptions = DEFAULT_LOOKAHEAD
-): LookaheadResult {
+  opts: LookaheadOptions
+): LookaheadResult | undefined {
   if (!index) {
     return degraded("off", "no chart index loaded");
   }
-  const vessel = inputs.vessel;
-  if (!vessel) {
+  if (!inputs.vessel) {
     return degraded("unknown", "vessel draft not configured");
   }
   if (!nav.position) {
@@ -410,11 +391,72 @@ export function evaluateLookahead(
   if (!finiteNav(nav)) {
     return degraded("unknown", "non-finite navigation input");
   }
+  return undefined;
+}
+
+/** One tick's motion, scoring and footprint times, shared by the fan and the escape search. */
+interface Setup {
+  vessel: VesselModel;
+  chart: ChartIndex;
+  origin: LonLat;
+  m: Motion;
+  s: Scoring;
+  times: number[];
+  step: number;
+  /** k_p · σ_pos exceeds the buffer cap. */
+  capped: boolean;
+}
+
+function setupOf(
+  nav: NavState,
+  inputs: LookaheadInputs,
+  index: ChartIndex,
+  now: number,
+  opts: LookaheadOptions
+): Setup {
+  const vessel = inputs.vessel as VesselModel;
   const m = motionOf(nav, now, opts);
-  const wl = inputs.waterLevel;
   const s = scoringFor(nav, inputs, vessel, now, opts);
-  const origin = nav.position.value;
-  const times = timesFor(m, vessel, opts);
+  const { times, step } = scheduleFor(m, vessel, opts);
+  const origin = (nav.position as Sample<LonLat>).value;
+  return { vessel, chart: index, origin, m, s, times, step, capped: bufferCapped(s, opts) };
+}
+
+/**
+ * The escape heading for a tick (plan §4.8), or null when none is searched:
+ * at low speed, with the buffer capped (a position this uncertain makes any
+ * heading a guess), or when an input is missing.
+ */
+export function escapeFor(
+  nav: NavState,
+  inputs: LookaheadInputs,
+  index: ChartIndex | undefined,
+  now: number,
+  opts: LookaheadOptions = DEFAULT_LOOKAHEAD
+): number | null {
+  if (!index || missingInput(nav, inputs, index, now, opts)) {
+    return null;
+  }
+  const u = setupOf(nav, inputs, index, now, opts);
+  return u.m.moving && !u.capped
+    ? escapeHeading(u.times, u.origin, u.m, u.vessel, u.chart, u.s, opts)
+    : null;
+}
+
+export function evaluateLookahead(
+  nav: NavState,
+  inputs: LookaheadInputs,
+  index: ChartIndex | undefined,
+  now: number,
+  opts: LookaheadOptions = DEFAULT_LOOKAHEAD
+): LookaheadResult {
+  const missing = missingInput(nav, inputs, index, now, opts);
+  if (missing) {
+    return missing;
+  }
+  const u = setupOf(nav, inputs, index as ChartIndex, now, opts);
+  const { m, s, times } = u;
+  const wl = inputs.waterLevel;
   const tracks = fanMembers(
     m.cog,
     m.sog,
@@ -422,11 +464,19 @@ export function evaluateLookahead(
     { cog: opts.sigmaCog, rot: opts.sigmaRot },
     opts.turnFor
   );
-  const fps = times.map((t) => footprint(t, origin, tracks, m, vessel, index, s, opts));
-  const verdict = degrade(classify(fps, opts), m, wl, fps);
+  const scored = scoreSchedule(times, u.step, (t, stop) =>
+    footprint(t, u.origin, tracks, m, u.vessel, u.chart, s, opts, stop)
+  );
+  const fps = scored.footprints;
+  const assessed = degrade(classify(fps, opts, scored), m, wl, fps);
+  const verdict = u.capped
+    ? uncertainPosition(assessed, s.sigmaPos, inputs.positionReason)
+    : assessed;
+  const escapable = m.moving && !u.capped;
+  const searched = inputs.escape === true && escapable;
   const escape =
-    inputs.escape === true && m.moving && verdict.state !== "normal" && verdict.state !== "unknown"
-      ? escapeHeading(times, origin, m, vessel, index, s, opts)
+    searched && verdict.state !== "normal" && verdict.state !== "unknown"
+      ? escapeHeading(times, u.origin, m, u.vessel, u.chart, s, opts)
       : null;
   const shallowest = shallowestOf(fps);
   return {
@@ -438,9 +488,10 @@ export function evaluateLookahead(
     risk: fps.reduce<number | null>((max, f) => Math.max(max ?? 0, f.risk), null),
     timeToShoal: verdict.tts,
     escapeHeading: escape,
+    escapable,
     horizon: times[times.length - 1] as number,
     footprints: fps,
-    worst: worstOf(fps, index, s, wl, opts.kp),
+    worst: worstOf(fps, u.chart, s, wl, opts.kp),
     waterLevel: wl
   };
 }

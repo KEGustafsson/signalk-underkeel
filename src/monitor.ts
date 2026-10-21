@@ -1,15 +1,14 @@
 import type { Delta, Path, ServerAPI, Unsubscribes } from "@signalk/server-api";
 import type { PluginConfig } from "./config";
-import { buildEnvelope, EnvelopeTracker } from "./engine/envelope";
-import type { LookaheadResult, NavState, Sample } from "./engine/lookahead";
+import { buildEnvelope, ENVELOPE_DEADBAND, EnvelopeTracker } from "./engine/envelope";
+import type { LookaheadInputs, LookaheadResult, NavState, Sample } from "./engine/lookahead";
 import type { AckStore } from "./ack-store";
 import type { Zone } from "./engine/acks";
 import { suppress } from "./engine/acks";
 import { GroundingDetector } from "./engine/grounding-detect";
 import { Hysteresis } from "./engine/hysteresis";
-import { evaluateLookahead } from "./engine/lookahead";
-import type { UnderKeelNotification } from "./engine/notify";
-import { notificationFor } from "./engine/notify";
+import { escapeFor, evaluateLookahead } from "./engine/lookahead";
+import { notificationFor, notificationKey, NOTIFY_REFRESH_MS } from "./engine/notify";
 import type { LonLat } from "./foundation/geo";
 import { PATHS, publishable } from "./foundation/state";
 import type { FetchLike } from "./model/fmi";
@@ -24,6 +23,9 @@ import type { WaterLevelStatus } from "./water-level-service";
 import { WaterLevelService } from "./water-level-service";
 import { ChangeNotifier, groundingNotification, integrityNotification } from "./notifications";
 import { asNumber, INPUT_PATHS, NavInputs, sampleTime, selfValue } from "./nav-inputs";
+import type { Deferral } from "./escape-search";
+import { EscapeSearch } from "./escape-search";
+import { StatusReporter, ValuePublisher } from "./tick-publisher";
 
 /**
  * Signal K wiring for the look-ahead: keeps the latest navigation inputs,
@@ -40,7 +42,7 @@ type App = Pick<
   | "error"
 >;
 
-export interface Clock {
+export interface Clock extends Deferral {
   now(): number;
   setInterval(fn: () => void, ms: number): unknown;
   clearInterval(handle: unknown): void;
@@ -49,11 +51,13 @@ export interface Clock {
 export const SYSTEM_CLOCK: Clock = {
   now: () => Date.now(),
   setInterval: (fn, ms) => setInterval(fn, ms),
-  clearInterval: (h) => clearInterval(h as NodeJS.Timeout)
+  clearInterval: (h) => clearInterval(h as NodeJS.Timeout),
+  defer: (fn) => setImmediate(fn),
+  cancel: (h) => clearImmediate(h as NodeJS.Immediate)
 };
 
-/** The escape fan is searched at most once in this many ms. */
-const ESCAPE_EVERY_MS = 3000;
+/** Sent every tick: the state shows the plugin is alive, and clients fetch on a new rev. */
+const EVERY_TICK = new Set<string>([PATHS.state, PATHS.envelopeRev]);
 
 export class Monitor {
   private readonly inputs = new NavInputs();
@@ -81,9 +85,11 @@ export class Monitor {
     fn: (path: string, value: unknown, at: number) => void;
   }[] = [];
   private readonly hysteresis: Hysteresis;
-  /** The escape fan is searched at most this often; the heading is held between. */
-  private escape: number | null = null;
-  private escapeAt = -Infinity;
+  private readonly escape: EscapeSearch;
+  /** The inputs of the last evaluation, which the escape search after it reuses. */
+  private inputsAt?: { inputs: LookaheadInputs; now: number };
+  private readonly values: ValuePublisher;
+  private readonly status: StatusReporter;
 
   constructor(
     private readonly app: App,
@@ -100,6 +106,14 @@ export class Monitor {
       this.grounding = new GroundingDetector(config.groundingDetector);
     }
     this.hysteresis = new Hysteresis(config.lookahead);
+    this.values = new ValuePublisher(app, pluginId, EVERY_TICK);
+    this.status = new StatusReporter(app);
+    this.escape = new EscapeSearch(
+      clock,
+      () => this.searchEscape(),
+      (heading) =>
+        this.values.send([{ path: PATHS.escapeHeading, value: publishable(heading) }], clock.now())
+    );
     this.last = this.evaluate();
     this.since = clock.now();
   }
@@ -138,6 +152,7 @@ export class Monitor {
     }
     this.subscribed.clear();
     this.levels.stop();
+    this.escape.stop();
     // A raised integrity or grounding notification must not outlive the plugin.
     this.notifier.clear(PATHS.positionIntegrity, "UKC monitoring stopped");
     this.notifier.clear(PATHS.grounding, "UKC monitoring stopped");
@@ -324,76 +339,86 @@ export class Monitor {
       };
     }
     const now = this.clock.now();
-    const escape = now - this.escapeAt >= ESCAPE_EVERY_MS;
-    const r = evaluateLookahead(
-      this.nav,
-      {
-        vessel: this.vessel(),
-        dynamics: this.config.dynamics,
-        waterLevel: this.waterLevel(),
-        positionSigma: this.checkIntegrity(now).sigmaPos,
-        escape
-      },
-      this.index,
-      now,
-      this.config.lookahead
-    );
-    if (r.state === "normal" || r.state === "unknown") {
-      this.escape = null;
-      this.escapeAt = -Infinity;
-    } else if (escape) {
-      this.escapeAt = now;
-      this.escape = r.escapeHeading;
-    }
-    return { ...r, escapeHeading: this.escape };
+    const integrity = this.checkIntegrity(now);
+    const inputs: LookaheadInputs = {
+      vessel: this.vessel(),
+      dynamics: this.config.dynamics,
+      waterLevel: this.waterLevel(),
+      positionSigma: integrity.sigmaPos,
+      positionReason: integrity.reasons.join("; ") || undefined
+    };
+    this.inputsAt = { inputs, now };
+    return evaluateLookahead(this.nav, inputs, this.index, now, this.config.lookahead);
+  }
+
+  private searchEscape(): number | null {
+    const at = this.inputsAt;
+    return at ? escapeFor(this.nav, at.inputs, this.index, at.now, this.config.lookahead) : null;
   }
 
   tick(): void {
-    this.levels.refresh(this.nav.position?.value, this.clock.now());
-    const next = this.suppressed(this.hysteresis.next(this.evaluate()));
+    const t0 = this.clock.now();
+    this.levels.refresh(this.nav.position?.value, t0);
+    const raw = this.evaluate();
+    const escapable = raw.escapable !== false;
+    const held = this.hysteresis.next({
+      ...raw,
+      escapeHeading: this.escape.headingFor(raw.state, escapable)
+    });
+    // A held state keeps its last heading, which is a guess too once the tick is not escapable.
+    const next = this.suppressed(escapable ? held : { ...held, escapeHeading: null });
     if (next.state !== this.last.state) {
       this.since = this.clock.now();
     }
     this.last = next;
-    this.envelope.update(buildEnvelope(this.last, this.config.lookahead.thresholds));
+    // A single footprint is the boat below low speed, where only GPS noise moves it.
+    const still = this.last.footprints.length === 1 ? ENVELOPE_DEADBAND : 0;
+    this.envelope.update(buildEnvelope(this.last, this.config.lookahead.thresholds), still);
     const r = this.last;
-    this.app.handleMessage(this.pluginId, {
-      updates: [
-        {
-          values: [
-            { path: PATHS.state as Path, value: r.state },
-            { path: PATHS.clearance as Path, value: publishable(r.clearance) },
-            { path: PATHS.clearanceSigma as Path, value: publishable(r.clearanceSigma) },
-            { path: PATHS.risk as Path, value: publishable(r.risk) },
-            { path: PATHS.timeToShoal as Path, value: publishable(r.timeToShoal) },
-            { path: PATHS.escapeHeading as Path, value: publishable(r.escapeHeading) },
-            { path: PATHS.envelopeRev as Path, value: this.envelope.rev },
-            { path: PATHS.waterLevel as Path, value: publishable(this.waterLevel().h) }
-          ]
-        }
-      ]
-    });
-    this.notify(notificationFor(r));
+    this.values.send(
+      [
+        { path: PATHS.state, value: r.state },
+        { path: PATHS.clearance, value: publishable(r.clearance) },
+        { path: PATHS.clearanceSigma, value: publishable(r.clearanceSigma) },
+        { path: PATHS.risk, value: publishable(r.risk) },
+        { path: PATHS.timeToShoal, value: publishable(r.timeToShoal) },
+        { path: PATHS.escapeHeading, value: publishable(r.escapeHeading) },
+        { path: PATHS.envelopeRev, value: this.envelope.rev },
+        { path: PATHS.waterLevel, value: publishable(this.waterLevel().h) }
+      ],
+      this.clock.now()
+    );
+    this.notify(r);
     if (this.integrityResult) {
       this.notifier.send(PATHS.positionIntegrity, integrityNotification(this.integrityResult));
     }
     this.checkGrounding(r);
-    const status =
-      r.state === "normal" ? "Monitoring: normal" : `Monitoring: ${r.state} — ${r.reason}`;
-    if (this.indexReason !== undefined) {
-      // A status would replace the error the server shows for a failed index load.
-      this.app.setPluginError(this.indexReason);
-      return;
-    }
-    // The WFS licence allows non-navigational use only; say so while it is on.
-    this.app.setPluginStatus(
-      this.config.wfs && r.reason !== WFS_NOTICE ? `${status} · ${WFS_NOTICE}` : status
-    );
+    this.escape.after(raw.state, this.clock.now() - t0, escapable);
+    this.report(r);
   }
 
-  /** Publishes the look-ahead notification only when its state or message changes. */
-  notify(n: UnderKeelNotification): void {
-    this.notifier.send(PATHS.notification, n);
+  private report(r: LookaheadResult): void {
+    if (this.indexReason !== undefined) {
+      // A status would replace the error the server shows for a failed index load.
+      this.status.error(this.indexReason);
+      return;
+    }
+    const notes = [
+      r.state === "normal" ? "Monitoring: normal" : `Monitoring: ${r.state} — ${r.reason}`,
+      this.escape.skipped,
+      // The WFS licence allows non-navigational use only; say so while it is on.
+      this.config.wfs && r.reason !== WFS_NOTICE ? WFS_NOTICE : undefined
+    ];
+    this.status.status(notes.filter((n) => n !== undefined).join(" · "));
+  }
+
+  /**
+   * Publishes the look-ahead notification at once when its state, reason or
+   * hazard changes, and its countdown at most every NOTIFY_REFRESH_MS.
+   */
+  notify(r: LookaheadResult): void {
+    const repeat = { key: notificationKey(r), refreshMs: NOTIFY_REFRESH_MS, now: this.clock.now() };
+    this.notifier.send(PATHS.notification, notificationFor(r), repeat);
   }
 
   /** `notifications.grounding` from the optional detector (safety invariant 7). */

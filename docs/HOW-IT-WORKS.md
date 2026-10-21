@@ -276,8 +276,12 @@ is raised by the integrity check in section 7.
 Steps are at most 3 s apart; for a fast boat the step shrinks so neighbouring footprints still
 touch. At 5 kn (2.6 m/s) the horizon is 214 s. A tick scores at most 400 footprints: a long
 horizon at low speed takes longer steps, up to where neighbouring footprints would stop
-touching, and only beyond that is the horizon cut. The look-ahead distance is at most 5 NM
-(9260 m) and the minimum horizon at most 600 s.
+touching, and only beyond that is the horizon cut. Past 120 s, the widest window a state is
+raised in, only every k-th step is scored, the most that still leaves neighbouring footprints
+touching (every 3rd at 6 kn, every 20th at 1 kn). Where one of those footprints is the first
+to reach P 5 %, P 1 % or a coverage gap, the steps it skipped are scored too, so the time
+to shoal and the time in the reason are those of the 3 s steps. The look-ahead distance is
+at most 5 NM (9260 m) and the minimum horizon at most 600 s.
 
 Below 18 kn the horizon always reaches 555.6 m ahead, so slowing down does not shorten the
 envelope. The same distance takes longer, though: 154 s at 7 kn, 270 s at 4 kn. Warn and alarm
@@ -346,20 +350,21 @@ The thresholds and time windows are set under **Look-ahead**:
 
 ![navigation.underKeel in the Data Browser](images/how-it-works/databrowser.png)
 
-Published every second:
+Published once a second: `state` and `envelopeRev` on every tick, the other values when they
+change and every 10 s:
 
-| Path                                         | Unit  | Meaning                                                                                                    |
-| -------------------------------------------- | ----- | ---------------------------------------------------------------------------------------------------------- |
-| `navigation.underKeel.state`                 |       | `normal`, `alert`, `warn`, `alarm`, `unknown`, `off`                                                       |
-| `navigation.underKeel.clearance`             | m     | lowest mean UKC over the horizon                                                                           |
-| `navigation.underKeel.clearanceSigma`        | m     | σ of that clearance, from the same footprint                                                               |
-| `navigation.underKeel.risk`                  | ratio | highest P(UKC < 0) over the horizon                                                                        |
-| `navigation.underKeel.timeToShoal`           | s     | seconds until P first reaches the warn level; null if it does not                                          |
-| `navigation.underKeel.escapeHeading`         | rad   | true heading to turn to, below; null in `normal` or no way out                                             |
-| `navigation.underKeel.envelopeRev`           |       | increments when `GET /envelope` changes; starts at the start time in ms, so no rev repeats after a restart |
-| `navigation.underKeel.waterLevel`            | m     | water level applied above chart datum                                                                      |
-| `notifications.navigation.underKeel`         |       | state, message and the explanation of every term                                                           |
-| `notifications.navigation.positionIntegrity` |       | GNSS fix doubtful, below                                                                                   |
+| Path                                         | Unit  | Meaning                                                                                                                                                                                                           |
+| -------------------------------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `navigation.underKeel.state`                 |       | `normal`, `alert`, `warn`, `alarm`, `unknown`, `off`                                                                                                                                                              |
+| `navigation.underKeel.clearance`             | m     | lowest mean UKC over the horizon                                                                                                                                                                                  |
+| `navigation.underKeel.clearanceSigma`        | m     | σ of that clearance, from the same footprint                                                                                                                                                                      |
+| `navigation.underKeel.risk`                  | ratio | highest P(UKC < 0) over the horizon                                                                                                                                                                               |
+| `navigation.underKeel.timeToShoal`           | s     | seconds until P first reaches the warn level; null if it does not                                                                                                                                                 |
+| `navigation.underKeel.escapeHeading`         | rad   | true heading to turn to, below; null in `normal` or no way out                                                                                                                                                    |
+| `navigation.underKeel.envelopeRev`           |       | increments when `GET /envelope` changes; starts at the start time in ms, so no rev repeats after a restart. Below the low speed it stays put while the drawing moves less than 5 m and no class or number changes |
+| `navigation.underKeel.waterLevel`            | m     | water level applied above chart datum                                                                                                                                                                             |
+| `notifications.navigation.underKeel`         |       | state, message and the explanation of every term                                                                                                                                                                  |
+| `notifications.navigation.positionIntegrity` |       | GNSS fix doubtful, below                                                                                                                                                                                          |
 
 `clearance` is `null` when nothing is charted, and also when a footprint reaches land, as in the
 Data Browser picture: the lowest UKC is then −∞, which JSON cannot carry. `state` and `risk`
@@ -368,7 +373,9 @@ still say what is ahead.
 When the plugin stops it publishes `state` `off` and every other `navigation.underKeel` value as
 `null`, so no reading outlives the monitoring.
 
-The notification is sent only when its state or message changes. Its `data.explanation`
+The notification is sent at once when its state, the kind of reason or the named hazard
+changes. While those hold, a new countdown or term in its message goes out at most every 30 s;
+`navigation.underKeel.timeToShoal` carries the current countdown. Its `data.explanation`
 carries each term of the sentence as a number, plus the deciding chart cell and its edition,
 and the named hazard when one set the depth. The `alarm` from the approach:
 
@@ -416,7 +423,10 @@ horizon wins; if none does, the one with the most time before shoal water. The f
 the vessel is the same on every heading and is not counted. When every heading reaches shoal
 water at the same time, or within the first step, the escape heading is null: there is no
 heading to recommend. The result is published as `navigation.underKeel.escapeHeading`. It is
-searched at most every 3 s and held in between. The plugin only publishes it; it never steers.
+searched at most every 3 s and held in between, once the second's other values are out. After
+a tick or a search that takes over 250 ms (slow hardware or a long horizon), the next search is
+skipped, the heading is null and the plugin status says why. The plugin only publishes it; it
+never steers.
 
 ### Position integrity
 
@@ -427,6 +437,10 @@ uncertainty allows, as when GNSS is jammed or spoofed:
 
 - the position σ is raised to the distance between them, so every footprint grows;
 - `notifications.navigation.positionIntegrity` is raised as `warn` with the reason.
+
+A footprint grows by at most 500 m. When 2 × σ is more than that, the chart beyond 500 m is not
+read, and the look-ahead state is at least `warn` with the reason, for example "position
+uncertainty 1996 m: GNSS and dead reckoning differ by 1996 m"; no escape heading is searched.
 
 A fix that is not a satellite fix sets the position σ to at least 50 m, and an HDOP above 4 is
 reported the same way. Without speed through water the check cannot run; the notification and
