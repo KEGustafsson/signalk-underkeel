@@ -148,7 +148,9 @@ describe("coarse steps beyond the warn window", () => {
       fc.property(navArb, (n) => {
         const coarse = evaluateLookahead(navOf(n), ctx(KEEL), index, NOW, opts);
         const dense = evaluateLookahead(navOf(n), ctx(KEEL), index, NOW, fine);
-        const beyond = (fps: FootprintResult[]) => fps.filter((f) => f.t > opts.warnWithin);
+        // From the first coarse footprint, the first on the grid at or past the window: the dense
+        // steps after it lie between it and the next coarse one.
+        const beyond = (fps: FootprintResult[]) => fps.filter((f) => f.t >= opts.warnWithin - 1e-6);
         const flags = (fps: FootprintResult[]) => fps.reduce((u, f) => u | f.flags, 0);
         expect(flags(beyond(dense.footprints)) & ~flags(beyond(coarse.footprints))).toBe(0);
         // Coarse footprints are plan-step footprints, so the extremes agree.
