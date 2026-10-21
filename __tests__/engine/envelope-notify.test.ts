@@ -198,8 +198,9 @@ describe("envelope", () => {
     const segment = recoloured.features.find((f) => f.properties.kind === "segment");
     (segment as EnvelopeFeature).properties.class = "danger";
     expect(tracker.update(recoloured, ENVELOPE_DEADBAND)).toBe(true);
-    // Under way there is no deadband.
-    expect(tracker.update(still(7), 0)).toBe(true);
+    // Under way there is no deadband: a sub-deadband move with the same properties bumps the rev.
+    expect(tracker.update(still(7), ENVELOPE_DEADBAND)).toBe(true);
+    expect(tracker.update(still(8), 0)).toBe(true);
   });
 
   test("a new tracker starts above every rev issued before it", () => {

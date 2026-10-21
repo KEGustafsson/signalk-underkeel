@@ -2,6 +2,7 @@ import fc from "fast-check";
 import type { FootprintResult, NavState } from "../../src/engine/lookahead";
 import { DEFAULT_LOOKAHEAD, evaluateLookahead } from "../../src/engine/lookahead";
 import { MAX_POSITION_BUFFER } from "../../src/engine/fan";
+import { uncertainPosition } from "../../src/engine/verdict";
 import type { VesselModel } from "../../src/model/vessel";
 import type { ChartIndex } from "../../src/spatial/chart-index";
 import { fromMercator, tileAt, tileRect, toMercator } from "../../src/foundation/geo";
@@ -204,6 +205,16 @@ describe("position uncertainty beyond the buffer cap", () => {
     expect(r.state).toBe("warn");
     expect(r.reason).toBe(`position uncertainty 1996 m: ${why}`);
     expect(r.escapeHeading).toBeNull();
+  });
+
+  test("a reason the state already had stays beside the position one", () => {
+    const stale = { state: "unknown" as const, reason: "course or speed stale", tts: null };
+    expect(uncertainPosition(stale, 1996).reason).toBe(
+      "position uncertainty 1996 m; course or speed stale"
+    );
+    expect(uncertainPosition({ ...stale, reason: "" }, 1996).reason).toBe(
+      "position uncertainty 1996 m"
+    );
   });
 
   test("land within the capped buffer still alarms", () => {
