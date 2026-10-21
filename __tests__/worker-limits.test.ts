@@ -1,6 +1,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
+import { usableMemory } from "../src/foundation/memory";
 import { runWorker, workerHeapLimitMb } from "../src/wfs-service";
 
 /** Real worker threads running plain JavaScript written for each test. */
@@ -50,5 +51,14 @@ describe("build worker limits", () => {
     expect(workerHeapLimitMb(1 * 2 ** 30)).toBe(256);
     expect(workerHeapLimitMb(4 * 2 ** 30)).toBe(1024);
     expect(workerHeapLimitMb(64 * 2 ** 30)).toBe(2048);
+  });
+
+  test("a container's memory limit, not the host's RAM, is the RAM", () => {
+    const GiB = 2 ** 30;
+    expect(usableMemory(64 * GiB, 2 * GiB)).toBe(2 * GiB);
+    // No limit set: 0, or a cgroup's "max" read as a huge number.
+    expect(usableMemory(64 * GiB, 0)).toBe(64 * GiB);
+    expect(usableMemory(64 * GiB, 2 ** 63)).toBe(64 * GiB);
+    expect(workerHeapLimitMb(usableMemory(64 * GiB, 2 * GiB))).toBe(512);
   });
 });
