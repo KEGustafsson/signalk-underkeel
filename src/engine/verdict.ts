@@ -119,6 +119,7 @@ export function uncertainPosition(c: Verdict, sigmaPos: number, why?: string): V
   if (c.state === "warn" || c.state === "alarm") {
     return c;
   }
-  const reason = `position uncertainty ${sigmaPos.toFixed(0)} m${why ? `: ${why}` : ""}`;
-  return { ...c, state: "warn", reason };
+  const position = `position uncertainty ${sigmaPos.toFixed(0)} m${why ? `: ${why}` : ""}`;
+  // A stale course or a fallback water level still needs saying beside it.
+  return { ...c, state: "warn", reason: c.reason ? `${position}; ${c.reason}` : position };
 }

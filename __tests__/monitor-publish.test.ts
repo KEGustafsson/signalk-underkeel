@@ -211,6 +211,33 @@ describe("escape search after the tick", () => {
     expect(r.statuses.at(-1)).not.toMatch(/skipped/);
   });
 
+  test("a tick that turns normal publishes no heading, nor does the slow tick that clears it", () => {
+    const r = rig(true);
+    r.tick(approach(40, T0 + 1000));
+    r.tick(approach(39, T0 + 2000));
+    r.flush();
+    const heading = () =>
+      values(r.deltas)
+        .filter((v) => v.path === "navigation.underKeel.escapeHeading")
+        .at(-1)?.value;
+    expect(heading()).toEqual(expect.any(Number));
+    // Clear of the rock: the heading goes on the tick the held alarm lifts, not a tick later.
+    const clear = (at: number) => navDelta(ROCK[0] - 1000 / M_PER_DEG_LON, ROCK[1] + 0.01, 0, at);
+    for (let i = 0; i < 30 && r.monitor.last.state !== "normal"; i++) {
+      r.tick(clear(T0 + 3000 + i * 1000));
+    }
+    expect(r.monitor.last.state).toBe("normal");
+    expect(r.monitor.last.escapeHeading).toBeNull();
+    expect(heading()).toBeNull();
+    r.tick(approach(40, T0 + 10_000));
+    r.tick(approach(39, T0 + 11_000));
+    r.flush();
+    expect(heading()).toEqual(expect.any(Number));
+    r.lookupMs = SLOW_TICK_MS;
+    r.tick(approach(38, T0 + 12_000));
+    expect(heading()).toBeNull();
+  });
+
   test("stop cancels a pending search", () => {
     const r = rig(true);
     r.tick(approach(40, T0 + 1000));

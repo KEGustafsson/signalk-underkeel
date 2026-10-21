@@ -35,9 +35,14 @@ export class EscapeSearch {
     private readonly publish: (heading: number | null) => void
   ) {}
 
+  /** The heading a tick whose engine state is `state` publishes: none once the danger has passed. */
+  headingFor(state: UnderKeelState): number | null {
+    return calm(state) ? null : this.heading;
+  }
+
   /** After a tick whose engine state was `state` and which took `tickMs`. */
   after(state: UnderKeelState, tickMs: number): void {
-    if (state === "normal" || state === "unknown" || state === "off") {
+    if (calm(state)) {
       this.heading = null;
       this.at = -Infinity;
       this.skipped = undefined;
@@ -47,8 +52,12 @@ export class EscapeSearch {
     this.slowMs = 0;
     if (slow > SLOW_TICK_MS) {
       this.skipped = `escape search skipped: a tick took ${slow.toFixed(0)} ms`;
-      this.heading = null;
       this.at = -Infinity;
+      if (this.heading !== null) {
+        // The tick already went out with the heading; clear it now, not a tick later.
+        this.heading = null;
+        this.publish(null);
+      }
       return;
     }
     this.skipped = undefined;
@@ -82,3 +91,6 @@ export class EscapeSearch {
     }
   }
 }
+
+const calm = (state: UnderKeelState): boolean =>
+  state === "normal" || state === "unknown" || state === "off";

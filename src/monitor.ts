@@ -361,7 +361,7 @@ export class Monitor {
     this.levels.refresh(this.nav.position?.value, t0);
     const raw = this.evaluate();
     const next = this.suppressed(
-      this.hysteresis.next({ ...raw, escapeHeading: this.escape.heading })
+      this.hysteresis.next({ ...raw, escapeHeading: this.escape.headingFor(raw.state) })
     );
     if (next.state !== this.last.state) {
       this.since = this.clock.now();
