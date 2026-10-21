@@ -209,11 +209,13 @@ signalk-underkeel/
 - `better-sqlite3` for soundings and acknowledgements.
 - `worker_threads` for the index build. The worker's old-generation heap is capped at a
   quarter of the RAM (256 MB to 2 GB), and the root threads it starts share a second such
-  cap, so a build never holds more than half the RAM; the threads run only with at least
-  2 GiB, one per GiB (`defaultThreads`). A build too large for the machine ends the worker
-  with an error in the status and the previous index stays in use, instead of growing until
-  the kernel ends the server. A server started with `--max-old-space-size` overrides the cap,
-  because V8 flags apply to every isolate in the process.
+  cap, so the build's old-generation heaps total at most half the RAM; the threads run only
+  with at least 2 GiB, one per GiB (`defaultThreads`). These caps bound the V8 heaps, not the
+  process RSS (buffers and typed arrays sit outside them). A build whose heap outgrows them
+  ends the worker with an error in the status and the previous index stays in use, rather
+  than growing the heap until the kernel ends the server. A server started with
+  `--max-old-space-size` overrides the cap, because V8 flags apply to every isolate in the
+  process.
 - GDAL/OGR, run in a container through `signalk-container`, for reading S-57. This keeps the
   same container approach as `signalk-charts-provider-simple`.
 - Must run on a Raspberry Pi 4 as well as on the Jetson Orin. Budget: index RAM under 150 MB,
