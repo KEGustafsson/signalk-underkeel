@@ -238,6 +238,24 @@ describe("escape search after the tick", () => {
     expect(heading()).toBeNull();
   });
 
+  test("a tick at low speed publishes no heading, even while the alarm is held", () => {
+    const r = rig(true);
+    r.tick(approach(40, T0 + 1000));
+    r.tick(approach(39, T0 + 2000));
+    r.flush();
+    const heading = () =>
+      values(r.deltas)
+        .filter((v) => v.path === "navigation.underKeel.escapeHeading")
+        .at(-1)?.value;
+    expect(heading()).toEqual(expect.any(Number));
+    // Stopped short of the rock: still in danger, but there is no course to turn from.
+    r.tick(navDelta(ROCK[0] - 30 / M_PER_DEG_LON, ROCK[1], 0, T0 + 3000));
+    expect(r.monitor.last.state).toBe("alarm");
+    expect(r.monitor.last.escapeHeading).toBeNull();
+    expect(heading()).toBeNull();
+    expect(r.deferred.length).toBe(0);
+  });
+
   test("stop cancels a pending search", () => {
     const r = rig(true);
     r.tick(approach(40, T0 + 1000));

@@ -205,6 +205,9 @@ describe("position uncertainty beyond the buffer cap", () => {
     expect(r.state).toBe("warn");
     expect(r.reason).toBe(`position uncertainty 1996 m: ${why}`);
     expect(r.escapeHeading).toBeNull();
+    // Nor may the monitor publish one it found before the cap.
+    expect(r.escapable).toBe(false);
+    expect(evaluateLookahead(open, inputs(200), index, NOW).escapable).toBe(true);
   });
 
   test("a reason the state already had stays beside the position one", () => {
