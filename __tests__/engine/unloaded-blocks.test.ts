@@ -95,8 +95,14 @@ describe("look-ahead", () => {
           const loaded = run(index, p, cog, sog, draft);
           const cold = run(partly(mask), p, cog, sog, draft);
           expect(RANK[cold.state]).toBeGreaterThanOrEqual(RANK[loaded.state]);
+          // A block beyond the footprints' flag reach adds only its risk bound by its chart
+          // position (plan §4.3): a normal state reads the same flags, at least the risk.
           if (cold.state === "normal") {
-            expect(cold).toEqual(loaded);
+            expect(loaded.state).toBe("normal");
+            expect(cold.footprints.map((f) => f.flags)).toEqual(
+              loaded.footprints.map((f) => f.flags)
+            );
+            expect(cold.risk ?? 0).toBeGreaterThanOrEqual((loaded.risk ?? 0) - 1e-4);
           }
         }
       ),
@@ -137,10 +143,14 @@ describe("route check", () => {
           const loaded = checkRoute(index, input(route, draft), NOW).legs;
           const cold = checkRoute(partly(mask), input(route, draft), NOW).legs;
           cold.forEach((leg, i) => {
-            const was = loaded[i]?.status as LegStatus;
-            expect(RANK[leg.status]).toBeGreaterThanOrEqual(RANK[was]);
+            const was = loaded[i] as (typeof loaded)[number];
+            expect(RANK[leg.status]).toBeGreaterThanOrEqual(RANK[was.status]);
+            // A block beyond the corridor's flag reach adds only its risk bound by its
+            // chart position (plan §4.3): an ok leg reads the same flags, at least the risk.
             if (leg.status === "ok") {
-              expect(leg).toEqual(loaded[i]);
+              expect(leg.flags).toEqual(was.flags);
+              expect(leg.charted).toBe(was.charted);
+              expect(leg.risk).toBeGreaterThanOrEqual(was.risk - 1e-4);
             }
           });
         }
@@ -193,8 +203,13 @@ describe("query", () => {
           const loaded = q(index, ring, draft, buffer);
           const cold = q(partly(mask), ring, draft, buffer);
           expect(RANK[cold.class]).toBeGreaterThanOrEqual(RANK[loaded.class]);
+          // A block beyond the query's flag reach adds only its risk bound by its chart
+          // position (plan §4.3): a clear answer reads the same flags, at least the risk.
           if (cold.class === "clear") {
-            expect(cold).toEqual(loaded);
+            expect(loaded.class).toBe("clear");
+            expect(cold.flags).toEqual(loaded.flags);
+            expect(cold.charted).toBe(loaded.charted);
+            expect(cold.risk).toBeGreaterThanOrEqual(loaded.risk - 1e-4);
           }
         }
       ),
@@ -203,10 +218,23 @@ describe("query", () => {
   });
 
   test("open water that is clear loaded is unverified with no block loaded", () => {
-    // West of 22.016° E the fairway's leaves are resident, so no block is read there.
-    const p: LonLat = [22.022, 60.005];
+    // The point's own leaves are in a block, so with none loaded it reads their stand-in.
+    const p: LonLat = [22.022, 60.0];
     expect(q(index, [p], 1.5, 0).class).toBe("clear");
     expect(q(partly(0), [p], 1.5, 0).class).toBe("unverified");
+  });
+
+  test("a block only in chart reach adds its resident bound, not a coverage gap", () => {
+    // The point's leaves are resident. A block around it counts by its chart position
+    // (plan §4.3) with the bound of its resident node: its shallowest survey depth and
+    // widest σ, which is at least the risk of any leaf in it, but its gap is beyond the
+    // point's flag reach, as the loaded leaves' flags would be.
+    const p: LonLat = [22.022, 60.005];
+    const loaded = q(index, [p], 1.5, 0);
+    const cold = q(partly(0), [p], 1.5, 0);
+    expect(cold.class).toBe(loaded.class);
+    expect(cold.flags).toEqual(loaded.flags);
+    expect(cold.risk).toBeGreaterThanOrEqual(loaded.risk);
   });
 });
 

@@ -100,7 +100,14 @@ export function ukcStyle(): Record<string, unknown> {
             ...Object.entries(UKC_COLOURS).flat(),
             "#000000"
           ],
-          "fill-opacity": ["match", ["get", "class"], "clear", 0.25, 0.55]
+          // A cell raised only by a nearby cell's chart position is drawn fainter
+          // than one the chart itself classes so.
+          "fill-opacity": [
+            "case",
+            ["==", ["get", "reach"], "1"],
+            0.25,
+            ["match", ["get", "class"], "clear", 0.25, 0.55]
+          ]
         }
       }
     ]

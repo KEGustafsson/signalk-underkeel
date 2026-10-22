@@ -64,13 +64,14 @@ afterEach(() => {
 });
 
 onPosix("scripts/enc-to-geojson.sh", () => {
-  test("exports the layers the cell has and exits 0", () => {
+  test("exports the layers the cell has, and its positional quality, and exits 0", () => {
     const r = run();
     expect(r.status).toBe(0);
     expect(fs.readdirSync(r.out).sort()).toEqual([
       "DEPARE.geojson",
       "DSID.geojson",
-      "M_COVR.geojson"
+      "M_COVR.geojson",
+      "QUAPOS.geojson"
     ]);
   });
 

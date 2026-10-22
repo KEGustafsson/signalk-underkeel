@@ -11,6 +11,7 @@ import {
   tileRange,
   tileRect,
   tileRectInto,
+  tileSize,
   toMercator,
   worldShifts
 } from "../foundation/geo";
@@ -22,11 +23,11 @@ import {
   rectWithin,
   shiftGeom
 } from "../foundation/geometry";
-import type { NodeStore, NodeValues, StandIn } from "./node-store";
-import { probabilityBelowZero } from "../foundation/stats";
+import type { NodeStore, NodeValues } from "./node-store";
 import { EMPTY, FLAGS, NO_DATA } from "./node-store";
-import type { SurveySigmaP } from "./chart-position";
-import { chartReach, surveySigmaP } from "./chart-position";
+import type { Walk } from "./walk";
+import { certain, foldFlags, riskAt, take, takeStandIn } from "./walk";
+import { chartReach, chartSigma, chartWeight, flagReach } from "./chart-position";
 
 /**
  * `minDepthOver` (plan §4.3): the shallowest charted depth any part of a
@@ -34,10 +35,27 @@ import { chartReach, surveySigmaP } from "./chart-position";
  * exactly; split tiles are descended until the footprint is resolved.
  */
 
+/** How a tile beyond the buffer counted, by its chart position (`chart-position.ts`). */
+export interface ChartReach {
+  /** Ground metres from the buffer's edge to the tile. */
+  distance: number;
+  /** σ of the position that placed it, metres. */
+  sigmaP: number;
+  /** Φ(−distance/σP): the chance it lies under the footprint. */
+  weight: number;
+  /** Placed by its survey (CATZOC) or by its land and shoreline objects' own accuracy. */
+  source: "survey" | "topography";
+  /** Ground metres across the tile's diagonal: what it stands for lies within it. */
+  extent: number;
+}
+
 /** The tile with the highest P(UKC < 0) and the values that gave it. */
 export interface RiskTile extends NodeValues {
+  /** P(UKC < 0), times `chart.weight` for a tile beyond the buffer. */
   risk: number;
   center: LonLat;
+  /** Set for a tile beyond the buffer; dMin is then the depth it spreads. */
+  chart?: ChartReach;
 }
 
 export interface DepthResult extends NodeValues {
@@ -45,7 +63,8 @@ export interface DepthResult extends NodeValues {
    * Shallowest charted depth, leaving out tiles with no depth data at all;
    * Infinity when nothing is charted. A footprint straddling a coverage
    * edge reports dMin = -Infinity with NO_COVERAGE, and this keeps the
-   * charted part's answer visible.
+   * charted part's answer visible. Like dMin, it reads the tiles within the
+   * buffer only: a tile beyond it counts by its weighted P.
    */
   coveredDMin: number;
   /** Catalogue indices of the cells that set each examined tile's depth. */
@@ -77,10 +96,12 @@ export interface QueryOptions {
   /** Leave living-chart adjustments out, to read the chart alone. */
   chartOnly?: boolean;
   /**
-   * Also count a tile within k·σP of its own survey beyond the buffer, for
-   * the chart's position uncertainty (`chart-position.ts`); 0 by default.
+   * Also count tiles beyond the buffer by the chart's position uncertainty
+   * (`chart-position.ts`): with `risk`, a tile's P(UKC < 0) times the chance
+   * the chart is off by its distance; its flags and cell within
+   * FLAG_SIGMAS·σP of its survey.
    */
-  chartReachK?: number;
+  chartPosition?: boolean;
   /**
    * Stop the walk once it has found charted land at P = 1 (needs `risk`):
    * no later tile can then change dMin, coveredDMin, maxRisk, riskTile or
@@ -99,94 +120,6 @@ export function footprintGeom(ring: readonly LonLat[]): Geom {
     return { type: "point", p: outer[0] as readonly [number, number] };
   }
   return { type: "polygon", polygons: [{ outer, holes: [] }] };
-}
-
-interface Walk {
-  store: NodeStore;
-  geom: Geom;
-  /** Bounds of `geom`, and a point of it when it has one. */
-  bounds: Rect;
-  /** `bounds` grown by `buffer`: every tile within the buffer of the footprint lies in it. */
-  hold: Rect;
-  vertex?: XY;
-  /** Mercator reach of a tile without chart position, and of any tile at most. */
-  buffer: number;
-  maxReach: number;
-  /** Mercator metres per ground metre of chart reach. */
-  perMetre: number;
-  k: number;
-  survey?: SurveySigmaP;
-  clearAbove: number;
-  /** Folded in place by `take`; never one of the shared constants. */
-  result: NodeValues;
-  /** Scratch bounds of the tile being visited. */
-  rect: Rect;
-  coveredDMin: number;
-  cells: Set<number>;
-  worst?: { z: number; x: number; y: number };
-  visits: number;
-  risk?: { threshold: number; sigmaExtra: number };
-  maxRisk: number;
-  riskTile?: { v: NodeValues; z: number; x: number; y: number; risk: number };
-  stopWhenCertain: boolean;
-}
-
-/** Folds a tile's depth, σ, flags and cell into the result. */
-function fold(w: Walk, v: NodeValues, flags: number, z: number, x: number, y: number): void {
-  const r = w.result;
-  if (v.dMin < r.dMin || w.worst === undefined) {
-    w.worst = { z, x, y };
-  }
-  // combine() folded in place: a tick takes thousands of tiles.
-  if (v.dMin < r.dMin) {
-    r.dMin = v.dMin;
-    r.cellRef = v.cellRef;
-  }
-  r.sigmaD = Math.max(r.sigmaD, v.sigmaD);
-  r.sigmaP = Math.max(r.sigmaP, v.sigmaP);
-  r.flags |= flags;
-  if (v.cellRef >= 0) {
-    w.cells.add(v.cellRef);
-  }
-}
-
-/** Counts a charted tile's P(UKC < 0) from its dMin and σD. */
-function weigh(w: Walk, t: NodeValues, z: number, x: number, y: number): void {
-  if (w.risk) {
-    const sigma = Math.hypot(t.sigmaD, w.risk.sigmaExtra);
-    const risk = probabilityBelowZero(t.dMin - w.risk.threshold, sigma);
-    if (w.riskTile === undefined || risk > w.riskTile.risk) {
-      w.riskTile = { v: t, z, x, y, risk };
-      w.maxRisk = risk;
-    }
-  }
-}
-
-function take(w: Walk, v: NodeValues, z: number, x: number, y: number): void {
-  fold(w, v, v.flags, z, x, y);
-  if ((v.flags & FLAGS.NO_DEPTH) === 0) {
-    w.coveredDMin = Math.min(w.coveredDMin, v.dMin);
-    weigh(w, v, z, x, y);
-  }
-}
-
-/**
- * Takes a split tile whose children are in a block not loaded, as no
- * coverage and with bounds no loaded child could exceed: its own shallowest
- * depth, widest σ and flags, the shallowest charted depth under it, and a
- * risk at least any charted child's. Below the threshold a child's P is
- * highest at its least σ, above it at its widest, so the stand-in's σ is
- * picked by the side its charted depth is on.
- */
-function takeStandIn(w: Walk, v: NodeValues, s: StandIn, z: number, x: number, y: number): void {
-  const flags = v.flags | FLAGS.NO_COVERAGE;
-  fold(w, v, flags, z, x, y);
-  if (s.covered === Infinity) {
-    return;
-  }
-  w.coveredDMin = Math.min(w.coveredDMin, s.covered);
-  const below = w.risk !== undefined && s.covered < w.risk.threshold;
-  weigh(w, { ...v, dMin: s.covered, sigmaD: below ? s.sigmaDMin : v.sigmaD, flags }, z, x, y);
 }
 
 /**
@@ -214,8 +147,7 @@ function canStop(w: Walk, v: NodeValues): boolean {
   if (!w.risk) {
     return true;
   }
-  const sigma = Math.hypot(v.sigmaD, w.risk.sigmaExtra);
-  return probabilityBelowZero(v.dMin - w.risk.threshold, sigma) < RISK_STOP_BELOW;
+  return riskAt(w, v.dMin, v.sigmaD) < RISK_STOP_BELOW;
 }
 
 /**
@@ -226,32 +158,151 @@ export const REACH_SLACK = 1 + 1e-12;
 
 /** Mercator distance at which node i still counts; a split node's bounds its subtree's. */
 function reachOf(w: Walk, i: number): number {
-  if (!w.survey || i < 0) {
+  if (!w.graded || i < 0) {
     return w.buffer;
   }
-  return w.buffer + w.perMetre * chartReach(w.k, w.store.surveySigma(i));
+  const survey = w.store.surveySigma(i);
+  const ground = Math.max(chartReach(Math.max(survey, w.store.topoSigma(i))), flagReach(survey));
+  return w.buffer + w.perMetre * ground;
 }
 
-function certain(w: Walk): boolean {
-  return w.maxRisk >= 1 && w.coveredDMin === -Infinity && w.result.dMin === -Infinity;
-}
-
-/** Whether tile `rect` (node i) lies within its reach of the footprint. */
-function reaches(w: Walk, rect: Rect, i: number): boolean {
+/**
+ * The Mercator distance from the footprint to tile `rect` when it is within
+ * `reach`, else Infinity. A distance at most `w.buffer` may come back as
+ * any value at most `w.buffer`: within the buffer it only matters that it is.
+ */
+function distanceTo(w: Walk, rect: Rect, reach: number): number {
   // The gap to the footprint's bounds never exceeds the distance to the
   // footprint, and costs far less to find.
-  const gap = rectGap(w.bounds, rect);
-  if (gap > w.maxReach) {
-    return false;
+  if (rectGap(w.bounds, rect) > reach) {
+    return Infinity;
   }
-  const reach = reachOf(w, i);
-  if (gap > reach) {
-    return false;
+  if (w.vertex !== undefined) {
+    const d = pointRectDistance(w.vertex, rect);
+    if (d <= w.buffer) {
+      return d;
+    }
   }
-  // A point of the footprint within reach settles it; most tiles inside a
-  // wide chart reach are settled so.
-  const close = w.vertex !== undefined && pointRectDistance(w.vertex, rect) <= reach;
-  return close || geomRectDistance(w.geom, rect, reach) <= reach;
+  return geomRectDistance(w.geom, rect, reach);
+}
+
+/**
+ * P(UKC < 0) at most of the survey depth `bathy` under node i with σD
+ * `sigmaD`. A split node's bathy is its subtree's shallowest and its σD the
+ * widest: past the threshold P rises with σ and is bounded so, short of it
+ * a child's P may reach 1.
+ */
+function bathyRisk(w: Walk, bathy: number, sigmaD: number, bound: boolean): number {
+  const r = w.risk as { threshold: number; sigmaExtra: number };
+  if (bound && bathy < r.threshold) {
+    return 1;
+  }
+  return riskAt(w, bathy, sigmaD);
+}
+
+/**
+ * The weighted P a tile beyond the buffer adds, `ground` metres past it:
+ * its survey depth's P times the chance its survey is off that far, or the
+ * chance its land is. Exact for a leaf, a bound for a split node.
+ */
+function reachRisk(
+  w: Walk,
+  i: number,
+  v: NodeValues,
+  ground: number,
+  bound: boolean
+): { risk: number; chart: Omit<ChartReach, "extent">; dMin: number } | undefined {
+  const survey = w.store.surveySigma(i);
+  const topo = w.store.topoSigma(i);
+  const bathy = w.store.bathyDMinOf(i);
+  let best: { risk: number; chart: Omit<ChartReach, "extent">; dMin: number } | undefined;
+  // A split node's flags hold NO_DEPTH when any leaf under it has no depth;
+  // its bathyDMin is Infinity only when none has any.
+  if (survey > 0 && bathy !== Infinity) {
+    const weight = chartWeight(ground, survey);
+    const risk = bathyRisk(w, bathy, v.sigmaD, bound) * weight;
+    best = {
+      risk,
+      dMin: bathy,
+      chart: { distance: ground, sigmaP: survey, weight, source: "survey" }
+    };
+  }
+  if (topo > 0) {
+    const weight = chartWeight(ground, topo);
+    if (!best || weight > best.risk) {
+      best = {
+        risk: weight,
+        dMin: -Infinity,
+        chart: { distance: ground, sigmaP: topo, weight, source: "topography" }
+      };
+    }
+  }
+  return best;
+}
+
+/** Counts a leaf, or a stand-in, beyond the buffer by its chart position. */
+function takeBeyond(
+  w: Walk,
+  i: number,
+  v: NodeValues,
+  flags: number,
+  ground: number,
+  bound: boolean,
+  z: number,
+  x: number,
+  y: number
+): void {
+  if (ground <= flagReach(w.store.surveySigma(i))) {
+    foldFlags(w, v, flags);
+  }
+  if (!w.risk) {
+    return;
+  }
+  const r = reachRisk(w, i, v, ground, bound);
+  if (r && (w.riskTile === undefined || r.risk > w.riskTile.risk)) {
+    const sigmaD = r.chart.source === "topography" ? 0 : v.sigmaD;
+    w.riskTile = {
+      v: { ...v, dMin: r.dMin, sigmaD, flags },
+      z,
+      x,
+      y,
+      risk: r.risk,
+      chart: r.chart
+    };
+    w.maxRisk = r.risk;
+  }
+}
+
+/**
+ * A tile beyond the buffer: its flags count within its survey's flag reach,
+ * its P weighted by its chart position. A split tile is descended unless
+ * its weighted bound cannot raise the footprint's P and its flags, if they
+ * count, need no locating.
+ */
+function visitBeyond(w: Walk, i: number, ground: number, z: number, x: number, y: number): void {
+  const v = w.store.values(i);
+  if (!w.store.isSplit(i)) {
+    takeBeyond(w, i, v, v.flags, ground, false, z, x, y);
+    return;
+  }
+  const inFlags = ground <= flagReach(w.store.surveySigma(i));
+  const bound = w.risk ? (reachRisk(w, i, v, ground, true)?.risk ?? 0) : 0;
+  const settled = bound <= Math.max(w.maxRisk, RISK_STOP_BELOW);
+  if (settled && (!inFlags || (v.flags & PRECISE_FLAGS) === 0)) {
+    if (inFlags) {
+      foldFlags(w, v, v.flags);
+    }
+    return;
+  }
+  const s = w.store.standIn(i, z, x, y);
+  if (s) {
+    takeBeyond(w, i, v, v.flags | FLAGS.NO_COVERAGE, ground, true, z, x, y);
+    return;
+  }
+  visit(w, z + 1, 2 * x, 2 * y, false);
+  visit(w, z + 1, 2 * x + 1, 2 * y, false);
+  visit(w, z + 1, 2 * x, 2 * y + 1, false);
+  visit(w, z + 1, 2 * x + 1, 2 * y + 1, false);
 }
 
 /**
@@ -266,8 +317,19 @@ function visit(w: Walk, z: number, x: number, y: number, inside: boolean): void 
   // Read before the children are visited, which overwrite it.
   const rect = tileRectInto(z, x, y, w.rect);
   const i = w.store.find(z, x, y);
-  if (!inside && !reaches(w, rect, i)) {
-    return;
+  if (!inside) {
+    const reach = reachOf(w, i);
+    const d = distanceTo(w, rect, reach);
+    if (d > reach) {
+      return;
+    }
+    if (d > w.buffer) {
+      w.visits++;
+      // Ground metres past the buffer, at the reach's poleward edge: never
+      // more than the true distance, so the weight is never less (invariant 2).
+      visitBeyond(w, i, (d - w.buffer) / w.perMetre, z, x, y);
+      return;
+    }
   }
   w.visits++;
   if (i < 0) {
@@ -340,11 +402,10 @@ export function mercatorBuffer(bounds: Rect, metres: number): number {
 function walkFor(store: NodeStore, geom: Geom, opts: QueryOptions): Walk {
   const bounds = geomBounds(geom);
   const bufferMetres = opts.bufferMetres ?? 0;
-  const k = opts.chartReachK ?? 0;
-  const survey = k > 0 ? surveySigmaP(store) : undefined;
+  const graded = opts.chartPosition === true && chartSigma(store).max > 0;
   // Sized for the widest reach, so every narrower one is converted at a
   // latitude at least as far poleward as its own edge.
-  const ground = bufferMetres + (survey ? chartReach(k, survey.max) : 0);
+  const ground = bufferMetres + (graded ? chartReach(chartSigma(store).max) : 0);
   const maxReach = mercatorBuffer(bounds, ground) * REACH_SLACK;
   const perMetre = ground > 0 ? maxReach / ground : 0;
   // Stopping early is only conservative for risk where the bound is at or
@@ -359,11 +420,10 @@ function walkFor(store: NodeStore, geom: Geom, opts: QueryOptions): Walk {
     geom,
     bounds,
     hold: bounds,
-    buffer: survey ? perMetre * bufferMetres : maxReach,
+    buffer: graded ? perMetre * bufferMetres : maxReach,
     maxReach,
     perMetre,
-    k,
-    survey,
+    graded,
     clearAbove,
     risk: opts.risk,
     maxRisk: 0,
@@ -378,10 +438,10 @@ function walkFor(store: NodeStore, geom: Geom, opts: QueryOptions): Walk {
 
 /**
  * Conservative minimum depth over `geom` widened by the ground buffer, and
- * with `chartReachK` by each tile's chart position reach.
- * Tiles never built (outside the chart) count as NO_DATA. A footprint or
- * buffer reaching past ±180° is also walked one world over, so the tiles
- * at the other end of the world count too.
+ * with `chartPosition` the risk of the tiles beyond it weighted by the chart's
+ * position uncertainty. Tiles never built (outside the chart) count as
+ * NO_DATA. A footprint or buffer reaching past ±180° is also walked one world
+ * over, so the tiles at the other end of the world count too.
  */
 export function minDepthOver(store: NodeStore, geom: Geom, opts: QueryOptions = {}): DepthResult {
   const w = walkFor(store, geom, opts);
@@ -418,6 +478,11 @@ export function minDepthOver(store: NodeStore, geom: Geom, opts: QueryOptions = 
       risk: t.risk,
       center: fromMercator((r.minX + r.maxX) / 2, (r.minY + r.maxY) / 2)
     };
+    if (t.chart) {
+      const lat = out.riskTile.center[1];
+      const extent = tileSize(t.z) * Math.cos((lat * Math.PI) / 180) * Math.SQRT2;
+      out.riskTile.chart = { ...t.chart, extent };
+    }
   }
   if (w.worst) {
     const r = tileRect(w.worst.z, w.worst.x, w.worst.y);

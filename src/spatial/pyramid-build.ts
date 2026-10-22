@@ -14,8 +14,8 @@ import { areasCoverRect, geomContainsRect, geomRectDistance } from "../foundatio
 import type { ChartFeature, QualityFeature } from "../ingest/features";
 import type { BuildOptions, Item } from "./build-items";
 import { DEFAULT_BUILD, prepareItems } from "./build-items";
-import type { NodeColumns, NodeValues } from "./node-store";
-import { combine, EMPTY, FLAGS, NO_DATA, NodeStore } from "./node-store";
+import type { ChartPosition, NodeColumns, NodeValues } from "./node-store";
+import { combine, EMPTY, FLAGS, joinPosition, NO_DATA, NodeStore } from "./node-store";
 import {
   FULL,
   MISS,
@@ -341,11 +341,55 @@ function surveySigma(hits: Hit[], opts: BuildOptions): number {
   return sigmaP;
 }
 
+/**
+ * What a leaf spreads by its chart position (plan §4.3). Land and shoreline
+ * objects with a σ of their own (`DepthFeature.topoSigma`) are left out of
+ * the depth the survey places and spread by that σ instead, widened to the
+ * survey's σ (or the unassessed one) where a record under them is not
+ * surveyed, and to half a stated POSACC.
+ */
+function chartPosition(hits: Hit[], v: NodeValues, opts: BuildOptions): ChartPosition {
+  const surveySigmaP = surveySigma(hits, opts);
+  if (v.flags & FLAGS.NO_DEPTH) {
+    return { surveySigmaP, topoSigmaP: 0, bathyDMin: Infinity };
+  }
+  let topo = 0;
+  let bathy = Infinity;
+  for (const h of hits) {
+    const f = h.item.f;
+    const d = depthOf(f);
+    if (f.role === "depth" && f.topoSigma !== undefined) {
+      topo = Math.max(topo, f.topoSigma);
+    } else if (d !== undefined) {
+      bathy = Math.min(bathy, d);
+    }
+  }
+  if (topo === 0) {
+    return { surveySigmaP, topoSigmaP: 0, bathyDMin: v.dMin };
+  }
+  const unsurveyed =
+    surveySigmaP > 0 ? surveySigmaP : sigmaFor(undefined, 0, {}, opts.quality).sigmaP;
+  for (const h of hits) {
+    const f = h.item.f;
+    if (f.role === "position") {
+      if (f.posacc !== undefined) {
+        topo = Math.max(topo, f.posacc / 2);
+      }
+      if (f.lowAccuracy) {
+        topo = Math.max(topo, unsurveyed);
+      }
+    }
+  }
+  return { surveySigmaP, topoSigmaP: topo, bathyDMin: bathy };
+}
+
 interface Evaluated {
   v: NodeValues;
-  /** Widest leaf `surveySigma` under the node. */
-  survey: number;
+  /** The node's chart position: widest σ and shallowest survey depth under it. */
+  position: ChartPosition;
 }
+
+const NO_POSITION: ChartPosition = { surveySigmaP: 0, topoSigmaP: 0, bathyDMin: Infinity };
 
 function evaluate(
   store: NodeStore,
@@ -358,20 +402,20 @@ function evaluate(
   const rect = tileRect(z, x, y);
   const all = classify(items, rect);
   if (!all.some((h) => h.item.f.role === "coverage")) {
-    store.add(z, x, y, NO_DATA, false, 0);
-    return { v: NO_DATA, survey: 0 };
+    store.add(z, x, y, NO_DATA, false, NO_POSITION);
+    return { v: NO_DATA, position: NO_POSITION };
   }
   const tileGround = (rect.maxX - rect.minX) / groundToMercator(1, maxAbsLat(rect));
   const a = analyse(all, rect, tileGround);
   if (!a.needsSplit || z === opts.leafZoom) {
     const v = uniformValues(a, rect, opts);
-    const survey = surveySigma(a.hits, opts);
-    store.add(z, x, y, v, false, survey);
-    return { v, survey };
+    const position = chartPosition(a.hits, v, opts);
+    store.add(z, x, y, v, false, position);
+    return { v, position };
   }
   const passed = forChildren(all, a);
   let v = EMPTY;
-  let survey = 0;
+  let position = NO_POSITION;
   for (const [dx, dy] of [
     [0, 0],
     [1, 0],
@@ -380,10 +424,10 @@ function evaluate(
   ] as const) {
     const child = evaluate(store, opts, z + 1, 2 * x + dx, 2 * y + dy, passed);
     v = combine(v, child.v);
-    survey = Math.max(survey, child.survey);
+    position = joinPosition(position, child.position);
   }
-  store.add(z, x, y, v, true, survey);
-  return { v, survey };
+  store.add(z, x, y, v, true, position);
+  return { v, position };
 }
 
 export type { BuildOptions } from "./build-items";
@@ -449,6 +493,8 @@ export function rootColumns(store: NodeStore, x: number, y: number): NodeColumns
     cols.sigmaD[at] = store.sigmaD[i] as number;
     cols.sigmaP[at] = store.sigmaP[i] as number;
     cols.surveySigmaP[at] = store.surveySigmaP[i] as number;
+    cols.topoSigmaP[at] = store.topoSigmaP[i] as number;
+    cols.bathyDMin[at] = store.bathyDMin[i] as number;
     cols.flags[at] = store.flags[i] as number;
     cols.cellRef[at] = store.cellRef[i] as number;
     cols.split[at] = store.split[i] as number;

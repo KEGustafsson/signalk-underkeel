@@ -56,8 +56,12 @@ export function scheduleFor(m: Motion, vessel: VesselModel, opts: LookaheadOptio
   return { times, step };
 }
 
-/** Scores the footprint at t; `stop` lets its chart walk end at certain land. */
-export type Score = (t: number, stop: boolean) => FootprintResult;
+/**
+ * Scores the footprint at t; `stop` lets its chart walk end at certain land.
+ * `from`, the previous scheduled time, is set for a coarse footprint, which
+ * then also covers the steps it skipped.
+ */
+export type Score = (t: number, stop: boolean, from?: number) => FootprintResult;
 
 /**
  * The schedule's footprints, each walk allowed to stop at certain land,
@@ -70,7 +74,7 @@ export function scoreSchedule(
   step: number,
   score: Score
 ): Refine & { footprints: FootprintResult[] } {
-  const footprints = times.map((t) => score(t, true));
+  const footprints = times.map((t, i) => score(t, true, times[i - 1]));
   return {
     footprints,
     complete(i: number): FootprintResult {

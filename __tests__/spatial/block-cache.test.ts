@@ -251,7 +251,7 @@ describe.each([
         const y = Math.floor(((1 - Math.log(Math.tan(lat) + 1 / Math.cos(lat)) / Math.PI) / 2) * n);
         expect(cellsInTile(lazy, z, x, y, z + 6)).toEqual(cellsInTile(built, z, x, y, z + 6));
         const rect = tileRect(z, x, y);
-        expect(reachersOf(lazy, rect, 2, z + 6)).toEqual(reachersOf(built, rect, 2, z + 6));
+        expect(reachersOf(lazy, rect, z + 6)).toEqual(reachersOf(built, rect, z + 6));
       }),
       { numRuns: 200 }
     );

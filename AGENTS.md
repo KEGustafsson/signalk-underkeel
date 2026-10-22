@@ -45,10 +45,12 @@ These hold in every change. A change that weakens one needs an explicit decision
 `docs/DEVELOPMENT-PLAN.md` first.
 
 1. **Conservative spatial queries.** `minDepthOver(polygon)` never returns a depth deeper than
-   any source feature intersecting the polygon plus its position-uncertainty buffer. Covered
-   by a fast-check property test.
-2. **Monotonic risk.** A deeper draft, a lower water level or a larger position uncertainty
-   never lowers P(UKC < 0).
+   any source feature intersecting the polygon plus its position-uncertainty buffer. A
+   feature beyond the buffer counts by its chart position: its P(UKC < 0) weighted by
+   Φ(−g/σP), never less (plan §4.3, graded chart position). Covered by fast-check property
+   tests.
+2. **Monotonic risk.** A deeper draft, a lower water level, a larger position uncertainty or
+   a worse chart position σ never lowers P(UKC < 0).
 3. **Never silent.** Stale position, stale water level, missing index or no chart coverage
    produce `unknown`, `off` or a warning with a reason. They never produce `normal`.
 4. **Unchecked is never safe.** Route legs without coverage or with unassessed survey quality

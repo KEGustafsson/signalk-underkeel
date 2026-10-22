@@ -1,16 +1,17 @@
 import fs from "fs";
 import path from "path";
 import type { CellInfo } from "./cells";
-import { usageBandFromName } from "./cells";
+import { compilationSigma, usageBandFromName } from "./cells";
 import type { ChartFeature } from "./features";
 import type { GeoJsonFeatureCollection } from "./s57-geojson";
-import { parseLayer, S57_LAYERS } from "./s57-geojson";
+import { parseLayer, POSITION_LAYER, S57_LAYERS } from "./s57-geojson";
 import { WFS_SOURCE } from "./wfs";
 
 /**
  * Reads one exported ENC cell: a directory holding `<LAYER>.geojson` files
  * plus `DSID.geojson` (the dataset identification record) and the datum
- * areas `M_SDAT.geojson` / `M_VDAT.geojson` for provenance.
+ * areas `M_SDAT.geojson` / `M_VDAT.geojson` for provenance, and
+ * `QUAPOS.geojson`, the spatial records whose position is not surveyed.
  * `scripts/enc-to-geojson.sh` produces this layout from a `.000` file.
  */
 
@@ -35,6 +36,9 @@ function numeric(value: unknown): number | undefined {
   return typeof n === "number" && Number.isFinite(n) ? n : undefined;
 }
 
+const positive = (n: number | undefined): number | undefined =>
+  n !== undefined && n > 0 ? n : undefined;
+
 /** Cell provenance from GDAL's DSID layer attributes. */
 export function cellInfoFromDsid(
   props: Record<string, unknown>,
@@ -50,7 +54,8 @@ export function cellInfoFromDsid(
     band: usageBandFromName(name),
     verticalDatum: numeric(props.DSPM_VDAT),
     soundingDatum: numeric(props.DSPM_SDAT),
-    source: typeof props.UK_SOURCE === "string" ? props.UK_SOURCE : undefined
+    source: typeof props.UK_SOURCE === "string" ? props.UK_SOURCE : undefined,
+    compilationScale: positive(numeric(props.DSPM_CSCL))
   };
 }
 
@@ -68,7 +73,9 @@ function otherDatums(file: string, datum: number | undefined): number[] {
  */
 export function readCellInfo(dir: string): ReturnType<typeof cellInfoFromDsid> {
   const dsid = readCollection(path.join(dir, "DSID.geojson"));
-  const info = cellInfoFromDsid(dsid?.features[0]?.properties ?? {}, path.basename(dir));
+  const dsidInfo = cellInfoFromDsid(dsid?.features[0]?.properties ?? {}, path.basename(dir));
+  const positioned = fs.existsSync(path.join(dir, `${POSITION_LAYER}.geojson`));
+  const info = positioned ? { ...dsidInfo, positionQuality: true } : dsidInfo;
   const areas = new Set([
     ...otherDatums(path.join(dir, "M_SDAT.geojson"), info.soundingDatum),
     ...otherDatums(path.join(dir, "M_VDAT.geojson"), info.verticalDatum)
@@ -91,11 +98,17 @@ export function readCellDirectory(dir: string, cellRef: number, bandOverride?: n
   }
   const info: CellInfo = { ...partial, band };
   const advisory = info.source === WFS_SOURCE ? true : undefined;
+  // Without the positional quality an approximate shoreline cannot be told
+  // from a surveyed one, so the shoreline keeps the survey's σ.
+  const topoSigma =
+    info.positionQuality && info.compilationScale !== undefined
+      ? compilationSigma(info.compilationScale)
+      : undefined;
   const features: ChartFeature[] = [];
   for (const layer of S57_LAYERS) {
     const collection = readCollection(path.join(dir, `${layer}.geojson`));
     if (collection) {
-      features.push(...parseLayer(layer, collection, { cellRef, band, advisory }));
+      features.push(...parseLayer(layer, collection, { cellRef, band, advisory, topoSigma }));
     }
   }
   if (!features.some((f) => f.role === "coverage")) {

@@ -317,9 +317,12 @@ function savedCells(indexDir: string): CellInfo[] {
     .cells;
 }
 
-const cellKey = (c: Pick<CellInfo, "name" | "edition" | "update" | "datumAreas">): string =>
+const cellKey = (
+  c: Pick<CellInfo, "name" | "edition" | "update" | "datumAreas" | "positionQuality">
+): string =>
   `${c.name} edition ${c.edition} update ${c.update}` +
-  (c.datumAreas ? ` datum areas ${c.datumAreas.join(",")}` : "");
+  (c.datumAreas ? ` datum areas ${c.datumAreas.join(",")}` : "") +
+  (c.positionQuality ? " with position quality" : "");
 
 /**
  * Why the saved index no longer matches the cells directory, from each

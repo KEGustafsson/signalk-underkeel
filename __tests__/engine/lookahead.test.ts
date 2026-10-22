@@ -398,8 +398,9 @@ describe("probabilistic look-ahead on the synthetic chart", () => {
 });
 
 describe("chart position uncertainty", () => {
-  // A drying patch 60 m north of a stopped boat: beyond the 10 m buffer, in
-  // reach once the survey's k_p·σP (B 50 m, C 500 m) is added.
+  // A drying patch 60 m north of a stopped boat, about 50 m beyond its buffer:
+  // it counts with P times Φ(−50/σP), about 42 % under C (σP 250 m), 2 to 11 %
+  // under B (σP 25 m, a tile up to a leaf nearer), nothing under A1.
   const box = [22.0, 60.0, 22.06, 60.03] as const;
   const north = 60 / 111195;
   const chart = (catzoc: 1 | 3 | 4): ChartIndex => ({
@@ -415,13 +416,19 @@ describe("chart position uncertainty", () => {
     ),
     hazards: new HazardIndex([])
   });
-  test.each<[3 | 4, string]>([
-    [3, "B"],
-    [4, "C"]
-  ])("a drying area 60 m off under CATZOC %s (%s) alarms", (catzoc) => {
-    const r = evaluateLookahead(nav(22.03, 60.015, EAST, 0), ctx(SHALLOW_KEEL), chart(catzoc), NOW);
+  test("a drying area 60 m off under CATZOC C alarms; the boat itself is over 15 m", () => {
+    const r = evaluateLookahead(nav(22.03, 60.015, EAST, 0), ctx(SHALLOW_KEEL), chart(4), NOW);
     expect(r.state).toBe("alarm");
-    expect(r.footprints[0]?.charted).toBe(-1);
+    expect(r.footprints[0]?.charted).toBe(15);
+    expect(r.worst?.explanation.chartPosition?.source).toBe("survey");
+  });
+
+  test("under CATZOC B the same area raises the state by its smaller weight", () => {
+    const r = evaluateLookahead(nav(22.03, 60.015, EAST, 0), ctx(SHALLOW_KEEL), chart(3), NOW);
+    expect(r.state).not.toBe("normal");
+    expect(r.state).not.toBe("alarm");
+    expect(r.footprints[0]?.risk).toBeGreaterThan(0.02);
+    expect(r.footprints[0]?.risk).toBeLessThan(0.12);
   });
 
   test("under CATZOC A1 (±5 m) the same area is out of reach", () => {

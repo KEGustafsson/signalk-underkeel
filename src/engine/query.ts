@@ -69,7 +69,7 @@ export function queryUkc(index: ChartIndex, input: QueryInput): QueryResult {
   };
   const r = minDepthOver(index.pyramid, footprintGeom(input.ring), {
     bufferMetres: input.bufferMetres,
-    chartReachK: DEFAULT_BUILD.k,
+    chartPosition: true,
     risk
   });
   const covered = r.coveredDMin;

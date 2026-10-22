@@ -408,15 +408,17 @@ describe("long legs", () => {
 });
 
 describe("chart position uncertainty", () => {
-  // 60 m north of the leg: outside its ±30 m corridor, inside it once CATZOC B (±50 m) or
-  // C (±500 m) position accuracy is added.
+  // 60 m north of the leg: 30 m beyond its ±30 m corridor. It counts with P times the
+  // chance the chart is off by that much: Φ(−30/25) ≈ 12 % under CATZOC B (±50 m),
+  // Φ(−30/250) ≈ 45 % under C (±500 m), nothing worth naming under A1 (±5 m).
   const north = 60 / 111195;
-  test.each<[Catzoc, string]>([
-    [3, "B"],
-    [4, "C"]
-  ])("a drying area 60 m off the leg under CATZOC %s (%s) fails it", (catzoc) => {
+  const leg: LonLat[] = [
+    [22.01, 60.015],
+    [22.05, 60.015]
+  ];
+  const chart = (catzoc: Catzoc): ChartIndex => {
     const box = [22.0, 60.0, 22.06, 60.03] as const;
-    const index: ChartIndex = {
+    return {
       catalogue: { version: 1, cells: [] },
       pyramid: buildPyramid(
         [
@@ -429,12 +431,22 @@ describe("chart position uncertainty", () => {
       ),
       hazards: new HazardIndex([])
     };
-    const leg: LonLat[] = [
-      [22.01, 60.015],
-      [22.05, 60.015]
-    ];
-    const r = checkRoute(index, input(leg, 1.8), NOW).legs[0];
+  };
+
+  test.each<[Catzoc, string]>([
+    [3, "B"],
+    [4, "C"]
+  ])("a drying area 60 m off the leg under CATZOC %s (%s) fails it by its weight", (catzoc) => {
+    const r = checkRoute(chart(catzoc), input(leg, 1.8), NOW).legs[0];
     expect(r?.status).toBe("fail");
-    expect(r?.charted).toBe(-1);
+    // The corridor itself is 15 m water: the leg fails on the drying area's chance to lie in it.
+    expect(r?.charted).toBe(15);
+    expect(r?.explanation?.charted).toBe(-1);
+    expect(r?.explanation?.chartPosition?.distance).toBeGreaterThan(10);
+    expect(r?.explanation?.chartPosition?.distance).toBeLessThanOrEqual(30);
+  });
+
+  test("under CATZOC A1 the same area leaves the leg ok", () => {
+    expect(checkRoute(chart(1), input(leg, 1.8), NOW).legs[0]?.status).toBe("ok");
   });
 });

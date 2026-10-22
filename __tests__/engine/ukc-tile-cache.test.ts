@@ -8,7 +8,8 @@ import { parseConfig } from "../../src/config";
 import { DEFAULT_LOOKAHEAD } from "../../src/engine/lookahead";
 import { geometryBytes, tileGeometry, UkcTileCache } from "../../src/engine/ukc-tile-geometry";
 import type { UkcTileInput } from "../../src/engine/ukc-tiles";
-import { ukcTileWithRange } from "../../src/engine/ukc-tiles";
+import { ukcTile, ukcTileWithRange } from "../../src/engine/ukc-tiles";
+import type { UkcTileCache as Cache } from "../../src/engine/ukc-tile-geometry";
 import { project, tileAt, tileKey, toMercator } from "../../src/foundation/geo";
 import type { LonLat } from "../../src/foundation/geo";
 import { LivechartService } from "../../src/livechart-service";
@@ -24,12 +25,37 @@ import { referenceUkcTile } from "../helpers/reference-ukc-tiles";
 import { area, basin, coverage, quality } from "../helpers/synthetic";
 
 /**
- * RT5: a UKC tile drawn from its cached geometry is the tile the walk at
- * 24bcf8a draws, whatever the inputs, the living-chart cells and the index
- * did in between.
+ * RT5: a UKC tile drawn from its cached geometry is the tile the brute-force
+ * drawing gives, whatever the inputs, the living-chart cells and the index
+ * did in between, and is drawn the same at every threshold of its range.
  */
 
 const EXTENT = 4096;
+
+/**
+ * The tile drawn (from `cache` when given) is `want`, by default the brute
+ * force, and its range holds: drawn at its ends it is the same.
+ */
+function expectDrawn(
+  store: NodeStore,
+  t: { z: number; x: number; y: number },
+  extent: number,
+  input: UkcTileInput,
+  cache?: Cache,
+  want = referenceUkcTile(store, t.z, t.x, t.y, extent, input)
+): void {
+  const got = ukcTileWithRange(store, t.z, t.x, t.y, extent, input, cache);
+  expect(got.rects).toEqual(want);
+  expect(got.range.lo).toBeLessThanOrEqual(input.threshold);
+  expect(got.range.hi).toBeGreaterThanOrEqual(input.threshold);
+  const ends = [
+    Math.max(got.range.lo, input.threshold - 3),
+    Math.min(got.range.hi, input.threshold + 3)
+  ];
+  for (const threshold of ends) {
+    expect(ukcTile(store, t.z, t.x, t.y, extent, { ...input, threshold })).toEqual(want);
+  }
+}
 
 function tileOf(z: number, lonLat: LonLat) {
   const [mx, my] = toMercator(lonLat[0], lonLat[1]);
@@ -102,7 +128,7 @@ describe("UKC tile geometry cache", () => {
   // The two bank stores hold the same tiles, so only the store's identity tells them apart.
   const stores = [fixtureIndex().pyramid, banks(), banks(12)];
 
-  test("cached and uncached tiles equal the walk at 24bcf8a across adjustments and index swaps", () => {
+  test("cached tiles equal uncached ones across adjustments and index swaps", () => {
     fc.assert(
       fc.property(fc.array(stepArb, { minLength: 1, maxLength: 40 }), (steps) => {
         expect(stores[1]?.count).toBe(stores[2]?.count);
@@ -127,9 +153,8 @@ describe("UKC tile geometry cache", () => {
             }
           } else {
             const t = tileOf(step.z, SPOTS[step.spot] as LonLat);
-            const want = referenceUkcTile(store, t.z, t.x, t.y, EXTENT, step.input);
-            expect(ukcTileWithRange(store, t.z, t.x, t.y, EXTENT, step.input)).toEqual(want);
-            expect(ukcTileWithRange(store, t.z, t.x, t.y, EXTENT, step.input, cache)).toEqual(want);
+            const want = ukcTile(store, t.z, t.x, t.y, EXTENT, step.input);
+            expectDrawn(store, t, EXTENT, step.input, cache, want);
           }
         }
         stores.forEach((s) => s.adjustments.clear());
@@ -138,7 +163,22 @@ describe("UKC tile geometry cache", () => {
     );
   });
 
-  test("an extent the slots do not divide sorts the rectangles as the walk at 24bcf8a", () => {
+  test("tiles equal the brute force over the charts, zooms and inputs (property)", () => {
+    fc.assert(
+      fc.property(
+        fc.constantFrom(0, 1),
+        fc.constantFrom(11, 12, 14, 16, 18),
+        fc.integer({ min: 0, max: SPOTS.length - 1 }),
+        inputArb,
+        (s, z, spot, input) => {
+          expectDrawn(stores[s] as NodeStore, tileOf(z, SPOTS[spot] as LonLat), EXTENT, input);
+        }
+      ),
+      { numRuns: 40 }
+    );
+  });
+
+  test("an extent the slots do not divide sorts the rectangles as the brute force", () => {
     const input: UkcTileInput = {
       threshold: 3.6,
       sigmaExtra: 0.3,
@@ -148,9 +188,7 @@ describe("UKC tile geometry cache", () => {
     for (const z of [11, 14, 16]) {
       const t = tileOf(z, ROCK);
       const store = stores[0] as NodeStore;
-      expect(ukcTileWithRange(store, t.z, t.x, t.y, 1000, input)).toEqual(
-        referenceUkcTile(store, t.z, t.x, t.y, 1000, input)
-      );
+      expectDrawn(store, t, 1000, input);
     }
   });
 

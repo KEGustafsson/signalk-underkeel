@@ -29,6 +29,14 @@ export interface DepthFeature extends FeatureBase {
   /** Point/line hazards and soundings carry exact geometry for explanations. */
   hazard: boolean;
   dredged: boolean;
+  /**
+   * Land and shoreline objects (`TOPOGRAPHY`): the 1σ of their own charted
+   * position in metres, from the cell's compilation scale (plan §4.4). Set
+   * only when the export carries the cell's positional quality
+   * (`QUAPOS.geojson`); without it the object is placed by the survey's
+   * CATZOC like the depths around it.
+   */
+  topoSigma?: number;
 }
 
 /** M_COVR with CATCOV = 1: the source cell has data here. */
@@ -57,5 +65,25 @@ export interface UnsurveyedFeature extends FeatureBase {
   role: "unsurveyed";
 }
 
+/**
+ * A spatial record (edge or node) whose position the cell does not give as
+ * surveyed: QUAPOS other than 1 (surveyed), 10 (precisely known) or 11
+ * (calculated), or a stated POSACC. Land and shoreline objects on it keep
+ * the survey's position σ, or POSACC when stated, rather than the
+ * compilation scale's.
+ */
+export interface PositionFeature extends FeatureBase {
+  role: "position";
+  /** QUAPOS says the position is not surveyed, e.g. 4 (approximated). */
+  lowAccuracy: boolean;
+  /** Stated positional accuracy, metres. */
+  posacc?: number;
+}
+
 export type ChartFeature =
-  DepthFeature | CoverageFeature | QualityFeature | SweptFeature | UnsurveyedFeature;
+  | DepthFeature
+  | CoverageFeature
+  | QualityFeature
+  | SweptFeature
+  | UnsurveyedFeature
+  | PositionFeature;

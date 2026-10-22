@@ -1,10 +1,9 @@
 import type { Rect } from "../foundation/geo";
 import { rectGap, tileRect, tileSize } from "../foundation/geo";
-import type { Reacher } from "../spatial/chart-position";
-import { MAX_CHART_BUFFER, reachersOf } from "../spatial/chart-position";
+import { chartReach, chartSigma, flagReach, reachersOf } from "../spatial/chart-position";
 import type { NodeStore, NodeValues } from "../spatial/node-store";
+import { FLAGS } from "../spatial/node-store";
 import { mercatorBuffer } from "../spatial/pyramid";
-import { DEFAULT_BUILD } from "../spatial/pyramid-build";
 import type { Adjusted } from "../spatial/tile-walk";
 import { adjustmentsIn, cellsInTile } from "../spatial/tile-walk";
 
@@ -14,15 +13,21 @@ export const DETAIL_ZOOMS = 6;
 /** Cells per tile side of the reach grid: one per drawing cell at the finest zoom. */
 export const SLOTS = 2 ** DETAIL_ZOOMS;
 
-/** Uint32 words of one reach mask: a bit per slot, row by row from the north edge. */
+/** Uint32 words of one flag mask: a bit per slot, row by row from the north edge. */
 export const MASK_WORDS = (SLOTS * SLOTS) / 32;
+
+/** Flags that keep a cell from reading clear (invariant 4). */
+export const UNVERIFIED =
+  FLAGS.NO_COVERAGE | FLAGS.UNASSESSED | FLAGS.NO_DEPTH | FLAGS.NOT_FOR_NAVIGATION;
 
 /**
  * What a UKC tile is drawn from that the water level, draft and σ leave
- * unchanged (plan §4.10): the pyramid cells in the tile, and the slots of
- * the SLOTS × SLOTS reach grid that each reaching cell's chart reach covers.
- * Cells and reachers with the same values share a kind, so a request classes
- * each kind once; a tile over the Nauvo charts holds 5 to 17 kinds.
+ * unchanged (plan §4.10): the pyramid cells in the tile; the cells whose
+ * chart position reaches into it, as sources whose P is weighted by their
+ * distance when the tile is drawn (`chart-position.ts`); and, per kind of
+ * unverified cell, the slots of the SLOTS × SLOTS grid within its flag reach.
+ * Cells and sources with the same values share a kind, so a request classes
+ * each kind once.
  */
 export interface TileGeometry {
   /** Per kind: the values its class depends on. */
@@ -36,10 +41,20 @@ export interface TileGeometry {
   cellX: Uint16Array;
   cellY: Uint16Array;
   cellKind: Uint32Array;
-  /** The kinds whose reach covers some slot; kind reachKind[m] covers mask m. */
-  reachKind: Uint32Array;
-  /** MASK_WORDS words per entry of reachKind. */
-  reachMask: Uint32Array;
+  /**
+   * Per source: its kind (a survey depth, or land placed by its own σ), its
+   * position σ in metres, slots per ground metre at the poleward edge of its
+   * reach, and four entries of `sourceRect`: its west, north, east and south
+   * edges in slots from the tile's west and north edges.
+   */
+  sourceKind: Uint32Array;
+  sourceSigma: Float64Array;
+  sourceScale: Float64Array;
+  sourceRect: Float64Array;
+  /** The unverified kinds whose flag reach covers some slot; flagKind[m] covers mask m. */
+  flagKind: Uint32Array;
+  /** MASK_WORDS words per entry of flagKind. */
+  flagMask: Uint32Array;
 }
 
 /** The geometry of tile (z, x, y), walked from the store and its living-chart cells. */
@@ -58,8 +73,8 @@ export function tileGeometry(store: NodeStore, z: number, x: number, y: number):
     cellY[i] = c.y - y * scale;
     cellKind[i] = kinds.of(c.values, c.bound);
   });
-  const { reachKind, reachMask } = reachMasks(store, z, x, y, kinds);
-  return { ...kinds.columns(), cellZ, cellX, cellY, cellKind, reachKind, reachMask };
+  const reach = reachOf(store, z, x, y, kinds);
+  return { ...kinds.columns(), cellZ, cellX, cellY, cellKind, ...reach };
 }
 
 /** Bytes of a geometry's columns. */
@@ -106,47 +121,182 @@ class Kinds {
   }
 }
 
-function reachMasks(
-  store: NodeStore,
-  z: number,
-  x: number,
-  y: number,
-  kinds: Kinds
-): Pick<TileGeometry, "reachKind" | "reachMask"> {
-  const tile = tileRect(z, x, y);
-  const slot = tileSize(z) / SLOTS;
-  const masks = new Map<number, Uint32Array>();
-  for (const r of reachersOf(store, tile, DEFAULT_BUILD.k, z + DETAIL_ZOOMS)) {
-    const k = kinds.of(r.values, r.bound);
-    let mask = masks.get(k);
-    if (!mask) {
-      mask = new Uint32Array(MASK_WORDS);
-      masks.set(k, mask);
-    }
-    cover(mask, r, tile, slot);
-  }
-  const used = [...masks].filter(([, m]) => m.some((w) => w !== 0));
-  const reachMask = new Uint32Array(used.length * MASK_WORDS);
-  used.forEach(([, m], i) => reachMask.set(m, i * MASK_WORDS));
-  return { reachKind: Uint32Array.from(used, ([k]) => k), reachMask };
+/** Land placed by its own σ, as a source kind: P = 1 wherever it lies. */
+const LAND: NodeValues = { dMin: -Infinity, sigmaD: 0, sigmaP: 0, flags: 0, cellRef: -1 };
+
+type Reach = Pick<
+  TileGeometry,
+  "sourceKind" | "sourceSigma" | "sourceScale" | "sourceRect" | "flagKind" | "flagMask"
+>;
+
+/** A source as gathered: kind, σ, slots per ground metre, and west, north, east, south in slots. */
+interface Gathered {
+  k: number;
+  sigma: number;
+  scale: number;
+  r: [number, number, number, number];
 }
 
 /**
- * Sets in `mask` the slots within `r.reach` of `r.rect`. Along a row the gap
- * is the larger of a rising and a falling term, so the slots within reach
- * are one run: found from both ends, they need no test in between.
+ * Sources of one kind, σ and scale that touch end to end along `axis` (0
+ * west–east, 1 north–south) with the same extent across it, joined: the gap
+ * from a slot to rectangles that touch so is the least of their gaps, and to
+ * their union.
  */
-function cover(mask: Uint32Array, r: Reacher, tile: Rect, slot: number): void {
+function joined(list: Gathered[], axis: 0 | 1): Gathered[] {
+  const lines = new Map<string, Gathered[]>();
+  const across = 1 - axis;
+  for (const g of list) {
+    const key = `${g.k} ${g.sigma} ${g.scale} ${g.r[across]} ${g.r[across + 2]}`;
+    const line = lines.get(key);
+    if (line) {
+      line.push(g);
+    } else {
+      lines.set(key, [g]);
+    }
+  }
+  const out: Gathered[] = [];
+  for (const line of lines.values()) {
+    line.sort((a, b) => a.r[axis] - b.r[axis]);
+    let run: Gathered | undefined;
+    for (const g of line) {
+      if (run && g.r[axis] === run.r[axis + 2]) {
+        run.r[axis + 2] = Math.max(run.r[axis + 2] as number, g.r[axis + 2] as number);
+      } else {
+        run = { ...g, r: [...g.r] };
+        out.push(run);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * The sources of each kind, σ and scale that touch the edge of their
+ * union: one whose ring of slots all round is covered by others of its group
+ * is left out. A slot outside the union is nearer an edge source than it,
+ * and a slot inside it lies in a cell of the group, whose own P is at least
+ * the P its depth spreads (its dMin is never deeper than its bathyDMin), so
+ * the group never raises it. Sources are whole slots: a cell no finer than
+ * the slots, on their grid.
+ */
+function edges(list: Gathered[]): Gathered[] {
+  const groups = new Map<string, Gathered[]>();
+  for (const g of list) {
+    const key = `${g.k} ${g.sigma} ${g.scale}`;
+    const group = groups.get(key);
+    if (group) {
+      group.push(g);
+    } else {
+      groups.set(key, [g]);
+    }
+  }
+  const out: Gathered[] = [];
+  for (const group of groups.values()) {
+    if (group.length < 9) {
+      out.push(...group);
+      continue;
+    }
+    const box = group.map((g) => g.r.map(Math.round) as [number, number, number, number]);
+    const x0 = Math.min(...box.map((b) => b[0])) - 1;
+    const y0 = Math.min(...box.map((b) => b[1])) - 1;
+    const w = Math.max(...box.map((b) => b[2])) + 1 - x0;
+    const h = Math.max(...box.map((b) => b[3])) + 1 - y0;
+    const held = new Uint8Array(w * h);
+    for (const [a, b, c, d] of box) {
+      for (let j = b; j < d; j++) {
+        held.fill(1, (j - y0) * w + (a - x0), (j - y0) * w + (c - x0));
+      }
+    }
+    const inner = ([a, b, c, d]: [number, number, number, number]): boolean => {
+      for (let j = b - 1; j <= d; j++) {
+        const row = (j - y0) * w - x0;
+        const side = j === b - 1 || j === d;
+        for (let i = a - 1; i <= c; i += side ? 1 : c - a + 1) {
+          if (held[row + i] !== 1) {
+            return false;
+          }
+        }
+      }
+      return true;
+    };
+    group.forEach((g, n) => {
+      if (!inner(box[n] as [number, number, number, number])) {
+        out.push(g);
+      }
+    });
+  }
+  return out;
+}
+
+function reachOf(store: NodeStore, z: number, x: number, y: number, kinds: Kinds): Reach {
+  const tile = tileRect(z, x, y);
+  const slot = tileSize(z) / SLOTS;
+  const gathered: Gathered[] = [];
+  const masks = new Map<number, Uint32Array>();
+  for (const r of reachersOf(store, tile, z + DETAIL_ZOOMS)) {
+    const add = (k: number, sigma: number): void => {
+      gathered.push({
+        k,
+        sigma,
+        scale: r.perMetre / slot,
+        r: [
+          (r.rect.minX - tile.minX) / slot,
+          (tile.maxY - r.rect.maxY) / slot,
+          (r.rect.maxX - tile.minX) / slot,
+          (tile.maxY - r.rect.minY) / slot
+        ]
+      });
+    };
+    // A bound's flags hold NO_DEPTH when any cell under it has no depth;
+    // its bathyDMin is Infinity only when none has any.
+    if (r.surveySigma > 0 && r.bathyDMin !== Infinity) {
+      const v = { ...LAND, dMin: r.bathyDMin, sigmaD: r.values.sigmaD };
+      add(kinds.of(v, r.bound), r.surveySigma);
+    }
+    if (r.topoSigma > 0) {
+      add(kinds.of(LAND, false), r.topoSigma);
+    }
+    if (r.surveySigma > 0 && (r.values.flags & UNVERIFIED) !== 0) {
+      const k = kinds.of(r.values, r.bound);
+      let mask = masks.get(k);
+      if (!mask) {
+        mask = new Uint32Array(MASK_WORDS);
+        masks.set(k, mask);
+      }
+      cover(mask, r.rect, r.perMetre * flagReach(r.surveySigma), tile, slot);
+    }
+  }
+  const used = [...masks].filter(([, m]) => m.some((w) => w !== 0));
+  const flagMask = new Uint32Array(used.length * MASK_WORDS);
+  used.forEach(([, m], i) => flagMask.set(m, i * MASK_WORDS));
+  const sources = edges(joined(joined(gathered, 0), 1));
+  return {
+    sourceKind: Uint32Array.from(sources, (g) => g.k),
+    sourceSigma: Float64Array.from(sources, (g) => g.sigma),
+    sourceScale: Float64Array.from(sources, (g) => g.scale),
+    sourceRect: Float64Array.from(sources.flatMap((g) => g.r)),
+    flagKind: Uint32Array.from(used, ([k]) => k),
+    flagMask
+  };
+}
+
+/**
+ * Sets in `mask` the slots within `reach` (Mercator) of `rect`. Along a row
+ * the gap is the larger of a rising and a falling term, so the slots within
+ * reach are one run: found from both ends, they need no test in between.
+ */
+function cover(mask: Uint32Array, rect: Rect, reach: number, tile: Rect, slot: number): void {
   const clamp = (v: number): number => Math.max(0, Math.min(SLOTS - 1, Math.floor(v)));
-  const i0 = clamp((r.rect.minX - r.reach - tile.minX) / slot);
-  const i1 = clamp((r.rect.maxX + r.reach - tile.minX) / slot);
-  const j0 = clamp((tile.maxY - r.rect.maxY - r.reach) / slot);
-  const j1 = clamp((tile.maxY - r.rect.minY + r.reach) / slot);
+  const i0 = clamp((rect.minX - reach - tile.minX) / slot);
+  const i1 = clamp((rect.maxX + reach - tile.minX) / slot);
+  const j0 = clamp((tile.maxY - rect.maxY - reach) / slot);
+  const j1 = clamp((tile.maxY - rect.minY + reach) / slot);
   const s = { minX: 0, minY: 0, maxX: 0, maxY: 0 };
   const within = (i: number): boolean => {
     s.minX = tile.minX + i * slot;
     s.maxX = s.minX + slot;
-    return rectGap(s, r.rect) <= r.reach;
+    return rectGap(s, rect) <= reach;
   };
   for (let j = j0; j <= j1; j++) {
     s.maxY = tile.maxY - j * slot;
@@ -158,6 +308,9 @@ function cover(mask: Uint32Array, r: Reacher, tile: Rect, slot: number): void {
     let b = i1;
     while (b > a && !within(b)) {
       b--;
+    }
+    if (a > b) {
+      continue;
     }
     for (let k = j * SLOTS + a, end = j * SLOTS + b; k <= end;) {
       const lo = k & 31;
@@ -214,7 +367,7 @@ export class UkcTileCache {
     if (store.loadRevision !== this.loads) {
       // A tile walked over a block read from its stand-ins is safe but no longer what the
       // loaded block gives; a block dropped since reads its stand-ins again.
-      this.dropOver(store.blocksChangedSince(this.loads));
+      this.dropOver(store, store.blocksChangedSince(this.loads));
       this.loads = store.loadRevision;
     }
     const key = `${z}/${x}/${y}`;
@@ -240,17 +393,18 @@ export class UkcTileCache {
     return geometry;
   }
 
-  private dropOver(blocks: readonly { z: number; x: number; y: number }[]): void {
+  private dropOver(store: NodeStore, blocks: readonly { z: number; x: number; y: number }[]): void {
     if (blocks.length === 0) {
       return;
     }
-    // A tile's reach grid reads cells up to the chart reach outside it,
-    // scaled at the tile's own latitude as reachersOf scales it.
+    // A tile's sources are cells up to the store's widest chart reach outside
+    // it, scaled at the tile's own latitude as reachersOf scales it.
+    const ground = chartReach(chartSigma(store).max);
     const near = blocks.map((b) => tileRect(b.z, b.x, b.y));
     for (const [key, e] of this.entries) {
       const [z, x, y] = key.split("/").map(Number) as [number, number, number];
       const tile = tileRect(z, x, y);
-      const reach = mercatorBuffer(tile, MAX_CHART_BUFFER);
+      const reach = mercatorBuffer(tile, ground);
       if (near.some((rect) => rectGap(tile, rect) <= reach)) {
         this.entries.delete(key);
         this.bytes -= e.bytes;

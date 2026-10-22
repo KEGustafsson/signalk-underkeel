@@ -1,7 +1,7 @@
 import type { Geom, PolygonGeom } from "../foundation/geometry";
 import type { XY } from "../foundation/geo";
 import { toMercator } from "../foundation/geo";
-import type { Catzoc, ChartFeature } from "./features";
+import type { Catzoc, ChartFeature, DepthFeature, PositionFeature } from "./features";
 
 /**
  * Reads S-57 object classes that GDAL's S-57 driver exported as one GeoJSON
@@ -30,7 +30,34 @@ export interface LayerContext {
   cellRef: number;
   band: number;
   advisory?: boolean;
+  /** 1σ position of the cell's land and shoreline objects, metres (`DepthFeature.topoSigma`). */
+  topoSigma?: number;
 }
+
+/**
+ * Land and shoreline objects. Their charted position comes from the
+ * shoreline compilation, not from the hydrographic survey CATZOC rates, so
+ * they are placed by their own accuracy where the export states it.
+ */
+export const TOPOGRAPHY: ReadonlySet<string> = new Set([
+  "LNDARE",
+  "COALNE",
+  "SLCONS",
+  "PONTON",
+  "FLODOC",
+  "HULKES"
+]);
+
+/**
+ * Not an S-57 object class: the spatial records of a cell whose position is
+ * not surveyed, exported by `scripts/enc-to-geojson.sh` from GDAL's
+ * primitive layers. Its presence, even empty, says the export states the
+ * cell's positional quality.
+ */
+export const POSITION_LAYER = "QUAPOS";
+
+/** QUAPOS 1 (surveyed), 10 (precisely known) and 11 (calculated); absent means surveyed. */
+const SURVEYED_QUAPOS: ReadonlySet<number> = new Set([1, 10, 11]);
 
 /** Layers the index uses (plan §4.2). */
 export const S57_LAYERS = [
@@ -49,7 +76,8 @@ export const S57_LAYERS = [
   "HULKES",
   "UNSARE",
   "M_QUAL",
-  "M_COVR"
+  "M_COVR",
+  POSITION_LAYER
 ] as const;
 
 export type S57Layer = (typeof S57_LAYERS)[number];
@@ -207,13 +235,28 @@ function depthOf(layer: S57Layer, props: Record<string, unknown>, part: Part): n
   }
 }
 
+/** A spatial record of QUAPOS.geojson, when it is not surveyed or states its accuracy. */
+function positionFeature(
+  props: Record<string, unknown>,
+  base: Omit<PositionFeature, "role" | "lowAccuracy" | "posacc">
+): PositionFeature | undefined {
+  const quapos = num(props, "QUAPOS");
+  const posacc = num(props, "POSACC");
+  const lowAccuracy = quapos !== undefined && !SURVEYED_QUAPOS.has(quapos);
+  return lowAccuracy || posacc !== undefined
+    ? { ...base, role: "position", lowAccuracy, posacc }
+    : undefined;
+}
+
 function featureFor(
   layer: S57Layer,
   props: Record<string, unknown>,
   part: Part,
   ctx: LayerContext
 ): ChartFeature | undefined {
-  const base = { objectClass: layer, geom: part.geom, ...ctx, lnam: str(props, "LNAM") };
+  // Only land and shoreline objects take the cell's topographic σ (`placed`).
+  const { topoSigma, ...where } = ctx;
+  const base = { objectClass: layer, geom: part.geom, ...where, lnam: str(props, "LNAM") };
   const isArea = part.geom.type === "polygon";
   switch (layer) {
     case "M_COVR":
@@ -241,13 +284,75 @@ function featureFor(
     default:
       break;
   }
-  return {
+  return placed(topoSigma, {
     ...base,
     role: "depth",
     depth: depthOf(layer, props, part),
     hazard: !isArea,
     dredged: layer === "DRGARE"
-  };
+  });
+}
+
+/** A land or shoreline object with the cell's own position σ, when the export states it. */
+function placed(topoSigma: number | undefined, f: DepthFeature): DepthFeature {
+  return topoSigma !== undefined && TOPOGRAPHY.has(f.objectClass) ? { ...f, topoSigma } : f;
+}
+
+/**
+ * GDAL's primitive Edge layer holds an edge's interior vertices only; its
+ * ends are the connected nodes NODE0 and NODE1, exported beside it as
+ * `cnode` records. The whole edge is rebuilt from them, as a line, or as a
+ * point when only one position is known.
+ */
+function edgeGeometry(
+  f: GeoJsonFeature,
+  nodes: ReadonlyMap<number, unknown>
+): GeoJsonGeometry | null {
+  const props = f.properties ?? {};
+  const interior = f.geometry?.type === "LineString" ? list(f.geometry.coordinates ?? []) : [];
+  const ends = [num(props, "NODE0"), num(props, "NODE1")].map((r) =>
+    r === undefined ? undefined : nodes.get(r)
+  );
+  const coords = [ends[0], ...interior, ends[1]].filter((c) => c !== undefined);
+  if (coords.length === 0) {
+    return null;
+  }
+  return coords.length === 1
+    ? { type: "Point", coordinates: coords[0] }
+    : { type: "LineString", coordinates: coords };
+}
+
+/**
+ * The records of `QUAPOS.geojson` whose position is not surveyed or that
+ * state their accuracy: edges rebuilt whole, connected and isolated nodes.
+ */
+function parsePositions(collection: GeoJsonFeatureCollection, ctx: LayerContext): ChartFeature[] {
+  const nodes = new Map<number, unknown>();
+  for (const f of collection.features) {
+    const rcid = num(f.properties ?? {}, "RCID");
+    if (f.properties?.PRIM === "cnode" && rcid !== undefined && f.geometry?.type === "Point") {
+      nodes.set(rcid, f.geometry.coordinates);
+    }
+  }
+  const where = { cellRef: ctx.cellRef, band: ctx.band, advisory: ctx.advisory };
+  const out: ChartFeature[] = [];
+  collection.features.forEach((f, i) => {
+    const props = f.properties ?? {};
+    const geometry = props.PRIM === "edge" ? edgeGeometry(f, nodes) : f.geometry;
+    let parts: Part[];
+    try {
+      parts = toParts(geometry);
+    } catch (err) {
+      throw new Error(`${POSITION_LAYER} feature ${i}: ${(err as Error).message}`, { cause: err });
+    }
+    for (const part of parts) {
+      const p = positionFeature(props, { objectClass: POSITION_LAYER, geom: part.geom, ...where });
+      if (p) {
+        out.push(p);
+      }
+    }
+  });
+  return out;
 }
 
 /**
@@ -260,6 +365,9 @@ export function parseLayer(
   collection: GeoJsonFeatureCollection,
   ctx: LayerContext
 ): ChartFeature[] {
+  if (layer === POSITION_LAYER) {
+    return parsePositions(collection, ctx);
+  }
   const out: ChartFeature[] = [];
   collection.features.forEach((f, i) => {
     const props = f.properties ?? {};

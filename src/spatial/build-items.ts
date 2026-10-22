@@ -13,7 +13,7 @@ import { DEFAULT_QUALITY, sigmaFor } from "./quality";
 export interface BuildOptions {
   minZoom: number;
   leafZoom: number;
-  /** Point hazards and soundings are burned within k·σP of their position. */
+  /** Point hazards and soundings outside assessed water are burned within k·σP of their position. */
   k: number;
   quality: QualityOptions;
 }
@@ -47,9 +47,12 @@ const burns = (f: ChartFeature): boolean =>
   f.role === "depth" && f.hazard === true && f.geom.type === "point";
 
 /**
- * Burn radius of a point hazard or sounding: k·σP of the quality zones of
- * its own cell that contain it. Lines and areas are not widened; the query
- * buffer (plan §4.7) carries their position uncertainty.
+ * Burn radius of a point hazard or sounding. In assessed water it is 0: the
+ * leaf it falls in spreads it by its survey's σP at query time, graded by
+ * distance (`chart-position.ts`), as areas and lines are. Unassessed water
+ * spreads nothing at query time, so a point there, or in a cell of its own
+ * zone set reaching an unassessed zone, is burned within k·σP of the widest
+ * zone containing it, the unassessed σP when none does.
  */
 function burnRadius(f: ChartFeature, bbox: Rect, zones: Zone[], opts: BuildOptions): number {
   if (!burns(f)) {
@@ -57,11 +60,16 @@ function burnRadius(f: ChartFeature, bbox: Rect, zones: Zone[], opts: BuildOptio
   }
   let sigmaP = 0;
   let covered = false;
+  let unassessed = false;
   for (const z of zones) {
     if (rectsOverlap(z.bbox, bbox) && geomRectDistance(z.q.geom, bbox, 0) === 0) {
       covered = true;
+      unassessed ||= z.q.catzoc === 6 || z.q.advisory === true;
       sigmaP = Math.max(sigmaP, z.sigmaP);
     }
+  }
+  if (covered && !unassessed) {
+    return 0;
   }
   if (!covered) {
     sigmaP = sigmaFor(undefined, 0, {}, opts.quality).sigmaP;

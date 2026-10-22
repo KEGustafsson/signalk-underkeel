@@ -221,6 +221,16 @@ export class BlockCache implements BlockSource {
     return b ? b.store.surveySigma(i - b.base) : 0;
   }
 
+  topoSigma(i: number): number {
+    const b = this.at(i);
+    return b ? b.store.topoSigma(i - b.base) : 0;
+  }
+
+  bathyDMin(i: number): number {
+    const b = this.at(i);
+    return b ? b.store.bathyDMinOf(i - b.base) : Infinity;
+  }
+
   standIn(i: number, x: number, y: number): StandIn | undefined {
     if (this.block(this.keyOf(this.cutZoom, x, y))) {
       return undefined;

@@ -23,6 +23,22 @@ export interface CellInfo {
   datumAreas?: number[];
   /** Set for cells built from a non-ENC source, e.g. "traficom-wfs". */
   source?: string;
+  /** Compilation scale denominator (DSPM_CSCL), e.g. 12000. */
+  compilationScale?: number;
+  /**
+   * The export states which spatial records are not surveyed
+   * (`QUAPOS.geojson`), so land and shoreline objects are placed by the
+   * compilation scale rather than by the survey's CATZOC (plan §4.4).
+   */
+  positionQuality?: boolean;
+}
+
+/**
+ * Plotting accuracy of a chart compiled at scale 1:`scale`, as a 1σ in
+ * metres: 1 mm on the chart read as a ~95 % bound, as CATZOC bounds are.
+ */
+export function compilationSigma(scale: number): number {
+  return (scale * 0.001) / 2;
 }
 
 export interface CellCatalogue {
@@ -74,7 +90,9 @@ function parseCell(raw: unknown, index: number): CellInfo {
     verticalDatum: finiteOrUndefined(r.verticalDatum),
     soundingDatum: finiteOrUndefined(r.soundingDatum),
     datumAreas: codes(r.datumAreas),
-    source: typeof r.source === "string" ? r.source : undefined
+    source: typeof r.source === "string" ? r.source : undefined,
+    compilationScale: finiteOrUndefined(r.compilationScale),
+    positionQuality: r.positionQuality === true ? true : undefined
   };
 }
 

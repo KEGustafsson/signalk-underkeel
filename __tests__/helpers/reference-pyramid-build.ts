@@ -1,6 +1,8 @@
 /**
- * The pyramid builder as it was before the build-speed work (IX-1), kept verbatim
- * so tests can prove the current builder produces the same nodes.
+ * The pyramid builder as it was before the build-speed work (IX-1), kept so
+ * tests can prove the current builder produces the same nodes. Its rules
+ * follow the current build: graded chart position (plan §4.3) burns only
+ * points outside assessed water and keeps each node's chart position.
  */
 
 import type { Rect } from "../../src/foundation/geo";
@@ -22,7 +24,7 @@ import {
   geomRectDistance
 } from "../../src/foundation/geometry";
 import type { ChartFeature, QualityFeature } from "../../src/ingest/features";
-import type { NodeValues } from "../../src/spatial/node-store";
+import type { ChartPosition, NodeValues } from "../../src/spatial/node-store";
 import { combine, EMPTY, FLAGS, NO_DATA, NodeStore } from "../../src/spatial/node-store";
 import type { QualityOptions } from "../../src/spatial/quality";
 import { DEFAULT_QUALITY, sigmaFor, SWEPT_SIGMA_D } from "../../src/spatial/quality";
@@ -78,11 +80,16 @@ function burnRadius(f: ChartFeature, bbox: Rect, zones: Zone[], opts: BuildOptio
   }
   let sigmaP = 0;
   let covered = false;
+  let unassessed = false;
   for (const { q, bbox: qb } of zones) {
     if (rectsOverlap(qb, bbox) && geomRectDistance(q.geom, bbox, 0) === 0) {
       covered = true;
+      unassessed ||= q.catzoc === 6 || q.advisory === true;
       sigmaP = Math.max(sigmaP, sigmaFor(q.catzoc, 0, q, opts.quality).sigmaP);
     }
+  }
+  if (covered && !unassessed) {
+    return 0;
   }
   if (!covered) {
     sigmaP = sigmaFor(undefined, 0, {}, opts.quality).sigmaP;
@@ -379,11 +386,49 @@ function surveySigma(hits: Hit[], opts: BuildOptions): number {
   return sigmaP;
 }
 
+/** A leaf's chart position: survey σ, its land's own σ, and the depth the survey places. */
+function chartPosition(hits: Hit[], v: NodeValues, opts: BuildOptions): ChartPosition {
+  const survey = surveySigma(hits, opts);
+  if (v.flags & FLAGS.NO_DEPTH) {
+    return { surveySigmaP: survey, topoSigmaP: 0, bathyDMin: Infinity };
+  }
+  let topo = 0;
+  let bathy = Infinity;
+  for (const h of hits) {
+    const f = h.item.f;
+    if (f.role === "depth" && f.topoSigma !== undefined) {
+      topo = Math.max(topo, f.topoSigma);
+    } else if (f.role === "depth" || f.role === "swept") {
+      bathy = Math.min(bathy, f.depth);
+    }
+  }
+  if (topo === 0) {
+    return { surveySigmaP: survey, topoSigmaP: 0, bathyDMin: v.dMin };
+  }
+  for (const h of hits) {
+    const f = h.item.f;
+    if (f.role === "position") {
+      if (f.posacc !== undefined) {
+        topo = Math.max(topo, f.posacc / 2);
+      }
+      if (f.lowAccuracy) {
+        topo = Math.max(
+          topo,
+          survey > 0 ? survey : sigmaFor(undefined, 0, {}, opts.quality).sigmaP
+        );
+      }
+    }
+  }
+  return { surveySigmaP: survey, topoSigmaP: topo, bathyDMin: bathy };
+}
+
 interface Evaluated {
   v: NodeValues;
-  /** Widest leaf `surveySigma` under the node. */
-  survey: number;
+  /** The widest σ and shallowest survey depth under the node. */
+  position: ChartPosition;
 }
+
+const NO_POSITION: ChartPosition = { surveySigmaP: 0, topoSigmaP: 0, bathyDMin: Infinity };
 
 function evaluate(
   store: NodeStore,
@@ -396,20 +441,20 @@ function evaluate(
   const rect = tileRect(z, x, y);
   const all = classify(items, rect);
   if (!all.some((h) => h.item.f.role === "coverage")) {
-    store.add(z, x, y, NO_DATA, false, 0);
-    return { v: NO_DATA, survey: 0 };
+    store.add(z, x, y, NO_DATA, false, NO_POSITION);
+    return { v: NO_DATA, position: NO_POSITION };
   }
   const tileGround = (rect.maxX - rect.minX) / groundToMercator(1, maxAbsLat(rect));
   const a = analyse(all, rect, tileGround);
   if (!a.needsSplit || z === opts.leafZoom) {
     const v = uniformValues(a, rect, opts);
-    const survey = surveySigma(a.hits, opts);
-    store.add(z, x, y, v, false, survey);
-    return { v, survey };
+    const position = chartPosition(a.hits, v, opts);
+    store.add(z, x, y, v, false, position);
+    return { v, position };
   }
   const passed = forChildren(all, a);
   let v = EMPTY;
-  let survey = 0;
+  let position = NO_POSITION;
   for (const [dx, dy] of [
     [0, 0],
     [1, 0],
@@ -418,10 +463,14 @@ function evaluate(
   ] as const) {
     const child = evaluate(store, opts, z + 1, 2 * x + dx, 2 * y + dy, passed);
     v = combine(v, child.v);
-    survey = Math.max(survey, child.survey);
+    position = {
+      surveySigmaP: Math.max(position.surveySigmaP, child.position.surveySigmaP),
+      topoSigmaP: Math.max(position.topoSigmaP, child.position.topoSigmaP),
+      bathyDMin: Math.min(position.bathyDMin, child.position.bathyDMin)
+    };
   }
-  store.add(z, x, y, v, true, survey);
-  return { v, survey };
+  store.add(z, x, y, v, true, position);
+  return { v, position };
 }
 
 /**

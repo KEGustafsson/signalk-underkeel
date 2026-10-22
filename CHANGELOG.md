@@ -60,6 +60,22 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Changed
 
+- Chart position is graded (plan §4.3). A charted object beyond a footprint and its buffer
+  counts with its P(UKC < 0) times Φ(−g/σP), the chance the chart is off by its distance g,
+  instead of in full within 2σP. The depth reported under a footprint is the depth charted
+  there, so a route leg no longer fails on land within 500 m of a CATZOC C shore, and points in
+  assessed water are no longer burned as discs. Flags still count within 2σP.
+- Land and shoreline objects are placed by their own accuracy: the cell's compilation scale,
+  or the survey's σP on edges and nodes whose QUAPOS says they are not surveyed.
+  `scripts/enc-to-geojson.sh` exports those records as `QUAPOS.geojson`; cells exported
+  without it keep the survey's σP for their shoreline.
+- UKC tiles mark cells raised only by a nearby cell's chart position with `reach`, which the
+  style draws fainter, so the solid classes follow the chart's own depth areas.
+- Explanations of a deciding tile beyond the footprint give its distance, its position σ and
+  the chance it lies under the keel.
+- A look-ahead footprint scored beyond the warn window covers the hulls of the steps it skips,
+  so in a turn its P is never below scoring every step.
+- Pyramid format version 7: an index built by an earlier version is rebuilt at start.
 - A Traficom WFS refresh builds only the z10 index roots that the old or new box reaches, or a
   cell with a new DSID, and copies the other roots from the saved index, which now keeps each
   cell's reach in `reach.json`; the result is byte-identical to a full build. With 16 copies of

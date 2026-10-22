@@ -1,8 +1,9 @@
 import { rectGap, tileAt, tileRect, toMercator } from "../../src/foundation/geo";
 import { tileGeometry, UkcTileCache } from "../../src/engine/ukc-tile-geometry";
 import { cacheOf } from "../../src/spatial/block-cache";
-import { MAX_CHART_BUFFER } from "../../src/spatial/chart-position";
+import { chartReach, chartSigma } from "../../src/spatial/chart-position";
 import { mercatorBuffer } from "../../src/spatial/pyramid";
+import type { NodeStore } from "../../src/spatial/node-store";
 import type { BlockLayout } from "../../src/spatial/pyramid-blocks";
 import { pyramidFromBuffer, serializePyramid } from "../../src/spatial/store";
 import { FAIRWAY_LAT, fixtureIndex } from "../helpers/fixture-index";
@@ -42,19 +43,19 @@ test.each([12, 13, 14])(
   }
 );
 
-/** A block's tile rectangle, and how far the tile at the fairway is from it beyond the chart reach. */
-function beyondReach(key: number, x: number, y: number): number {
+/** How far the tile at the fairway is from a block beyond the store's widest chart reach. */
+function beyondReach(pyramid: NodeStore, key: number, x: number, y: number): number {
   const n = 2 ** FINE.blockZoom;
   const block = tileRect(FINE.blockZoom, Math.floor(key / n), key % n);
   const tile = tileRect(14, x, y);
-  return rectGap(tile, block) - mercatorBuffer(tile, MAX_CHART_BUFFER);
+  return rectGap(tile, block) - mercatorBuffer(tile, chartReach(chartSigma(pyramid).max));
 }
 
 test("a tile beyond the chart reach of a block that loads keeps its cached geometry", () => {
   const { pyramid, cache } = cold();
   const [mx, my] = toMercator(22.004, FAIRWAY_LAT);
   const { x, y } = tileAt(14, mx, my);
-  const far = cache.keys().find((key) => beyondReach(key, x, y) > 0);
+  const far = cache.keys().find((key) => beyondReach(pyramid, key, x, y) > 0);
   expect(far).toBeDefined();
   cache.keys().forEach((key) => key !== far && cache.loadNow(key));
   const tiles = new UkcTileCache();
@@ -69,7 +70,7 @@ test("a tile beside a block that loads, within its chart reach, is walked again"
   const [mx, my] = toMercator(22.004, FAIRWAY_LAT);
   const { x, y } = tileAt(14, mx, my);
   const own = (x >> 1) * n + (y >> 1);
-  const near = cache.keys().find((key) => key !== own && beyondReach(key, x, y) <= 0);
+  const near = cache.keys().find((key) => key !== own && beyondReach(pyramid, key, x, y) <= 0);
   expect(near).toBeDefined();
   cache.keys().forEach((key) => key !== near && cache.loadNow(key));
   const tiles = new UkcTileCache();

@@ -2,7 +2,7 @@ import type { LonLat } from "../foundation/geo";
 import type { VesselModel } from "../model/vessel";
 import type { ChartIndex } from "../spatial/chart-index";
 import type { Motion, Scoring } from "./fan";
-import { footprint } from "./fan";
+import { footprint, spanOf } from "./fan";
 import type { LookaheadOptions } from "./lookahead";
 import type { Track } from "./trajectory";
 import { escapeTrack } from "./trajectory";
@@ -17,6 +17,7 @@ import { escapeTrack } from "./trajectory";
 function trackTts(
   track: Track,
   times: number[],
+  step: number,
   origin: LonLat,
   m: Motion,
   vessel: VesselModel,
@@ -24,11 +25,13 @@ function trackTts(
   s: Scoring,
   opts: LookaheadOptions
 ): number {
-  for (const t of times) {
+  for (let i = 0; i < times.length; i++) {
+    const t = times[i] as number;
     if (t <= 0) {
       continue;
     }
-    const fp = footprint(t, origin, [track], m, vessel, index, s, opts, true);
+    const span = spanOf(times[i - 1], step);
+    const fp = footprint(t, origin, [track], m, vessel, index, s, opts, true, span);
     if (fp.uncovered || fp.risk >= opts.thresholds.warn) {
       return t;
     }
@@ -47,6 +50,7 @@ const TWO_PI = 2 * Math.PI;
  */
 export function escapeHeading(
   times: number[],
+  step: number,
   origin: LonLat,
   m: Motion,
   vessel: VesselModel,
@@ -60,7 +64,7 @@ export function escapeHeading(
   for (let k = 0; k <= steps; k++) {
     for (const change of k === 0 ? [0] : [k * opts.escapeStep, -k * opts.escapeStep]) {
       const track = escapeTrack(m.cog, m.sog, change, opts.maxTurnRate);
-      const tts = trackTts(track, times, origin, m, vessel, index, s, opts);
+      const tts = trackTts(track, times, step, origin, m, vessel, index, s, opts);
       if (tts > best.tts) {
         best = { change, tts };
       }

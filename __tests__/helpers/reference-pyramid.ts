@@ -11,8 +11,6 @@ import {
 import type { Geom } from "../../src/foundation/geometry";
 import { geomBounds, geomRectDistance, shiftGeom } from "../../src/foundation/geometry";
 import { probabilityBelowZero } from "../../src/foundation/stats";
-import { chartReach, surveySigmaP } from "../../src/spatial/chart-position";
-import type { SurveySigmaP } from "../../src/spatial/chart-position";
 import type { NodeStore, NodeValues } from "../../src/spatial/node-store";
 import { combine, EMPTY, FLAGS, NO_DATA } from "../../src/spatial/node-store";
 import type { DepthResult, QueryOptions } from "../../src/spatial/pyramid";
@@ -22,7 +20,9 @@ import { mercatorBuffer, RISK_STOP_BELOW } from "../../src/spatial/pyramid";
  * The tile walk of `minDepthOver` as it stood at ea8277a, before the
  * look-ahead speed-ups: Math.hypot distances, a fresh rectangle and value
  * object per tile, no early stop and no inside flag. Equality tests run it
- * beside the current walk on random stores and footprints.
+ * beside the current walk on random stores and footprints. It reads the
+ * tiles within the buffer only: chart position is checked against
+ * `reference-chart-position.ts`.
  */
 
 const rectGap = (a: Rect, b: Rect): number =>
@@ -41,9 +41,6 @@ interface Walk {
   vertex?: XY;
   buffer: number;
   maxReach: number;
-  perMetre: number;
-  k: number;
-  survey?: SurveySigmaP;
   clearAbove: number;
   result: NodeValues;
   coveredDMin: number;
@@ -92,13 +89,6 @@ function canStop(w: Walk, v: NodeValues): boolean {
   return probabilityBelowZero(v.dMin - w.risk.threshold, sigma) < RISK_STOP_BELOW;
 }
 
-function reachOf(w: Walk, i: number): number {
-  if (!w.survey || i < 0) {
-    return w.buffer;
-  }
-  return w.buffer + w.perMetre * chartReach(w.k, w.store.surveySigma(i));
-}
-
 function visit(w: Walk, z: number, x: number, y: number): void {
   const rect = tileRect(z, x, y);
   const gap = rectGap(w.bounds, rect);
@@ -106,7 +96,7 @@ function visit(w: Walk, z: number, x: number, y: number): void {
     return;
   }
   const i = w.store.find(z, x, y);
-  const reach = reachOf(w, i);
+  const reach = w.buffer;
   if (gap > reach) {
     return;
   }
@@ -170,12 +160,7 @@ function vertexOf(g: Geom): XY | undefined {
 
 function walkFor(store: NodeStore, geom: Geom, opts: QueryOptions): Walk {
   const bounds = geomBounds(geom);
-  const bufferMetres = opts.bufferMetres ?? 0;
-  const k = opts.chartReachK ?? 0;
-  const survey = k > 0 ? surveySigmaP(store) : undefined;
-  const ground = bufferMetres + (survey ? chartReach(k, survey.max) : 0);
-  const maxReach = mercatorBuffer(bounds, ground);
-  const perMetre = ground > 0 ? maxReach / ground : 0;
+  const maxReach = mercatorBuffer(bounds, opts.bufferMetres ?? 0);
   const clearAbove = Math.max(
     opts.clearAbove ?? (opts.risk ? -Infinity : Infinity),
     opts.risk?.threshold ?? -Infinity
@@ -184,11 +169,8 @@ function walkFor(store: NodeStore, geom: Geom, opts: QueryOptions): Walk {
     store,
     geom,
     bounds,
-    buffer: survey ? perMetre * bufferMetres : maxReach,
+    buffer: maxReach,
     maxReach,
-    perMetre,
-    k,
-    survey,
     clearAbove,
     risk: opts.risk,
     maxRisk: 0,

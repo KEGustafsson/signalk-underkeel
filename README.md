@@ -111,6 +111,13 @@ Update files (`.001`, `.002`, …) next to the `.000` are applied during the exp
 refuses a non-empty output directory, so export each new edition into a new or emptied
 directory. A cell without an `M_COVR` coverage layer is rejected.
 
+The export also writes `QUAPOS.geojson`: the cell's edges and nodes whose position is not
+surveyed. With it the plugin places land and shoreline by the cell's compilation scale (6 m at
+1:12 000) rather than by the survey's CATZOC (500 m in zone C), so a jetty or a beach does not
+spread across navigable water. A cell exported before this file existed still works, with its
+shoreline placed by the survey; export it again to use it. Re-exporting rebuilds the index at
+the next start.
+
 Set **Exported ENC cells directory** to the parent directory (`~/charts/cells` above). At the
 first start the plugin builds a chart index in a worker thread and saves it under the plugin
 data directory, `~/.signalk/plugin-config-data/signalk-underkeel/index` unless **Chart index

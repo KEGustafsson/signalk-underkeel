@@ -3,8 +3,11 @@ import type { LonLat } from "../../src/foundation/geo";
 import { project, tileAt, tileKey, toMercator } from "../../src/foundation/geo";
 import type { Catzoc } from "../../src/ingest/features";
 import { FLAGS } from "../../src/spatial/node-store";
+import type { Geom } from "../../src/foundation/geometry";
+import type { NodeStore } from "../../src/spatial/node-store";
 import type { QueryOptions } from "../../src/spatial/pyramid";
-import { footprintGeom, minDepthOver } from "../../src/spatial/pyramid";
+import { footprintGeom, minDepthOver, RISK_STOP_BELOW } from "../../src/spatial/pyramid";
+import { referenceChartPosition } from "../helpers/reference-chart-position";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
 import { fraction, uniform } from "../helpers/arbitraries";
 import { referenceMinDepthOver } from "../helpers/reference-pyramid";
@@ -14,10 +17,33 @@ import { area, basin, boxRing, coverage, land, point, quality } from "../helpers
 /**
  * The tile walk's speed-ups (sqrt distances, a reused tile rectangle,
  * in-place folding, skipping the tests under a tile wholly in reach) must
- * not change any query's answer:
- * the current walk and the ea8277a walk agree on every field, visits
- * included, over random charts, footprints and options.
+ * not change any query's answer: without chart position the current walk
+ * and the ea8277a walk agree on every field, visits included, over random
+ * charts, footprints and options. With it, the tiles within the buffer
+ * answer the same, and P and the flags beyond it agree with the brute force
+ * of every leaf: P to within the RISK_STOP_BELOW the walk may prune or stop
+ * on, the coverage and assessment flags exactly.
  */
+
+const PRECISE = FLAGS.NO_COVERAGE | FLAGS.UNASSESSED | FLAGS.NO_DEPTH | FLAGS.NOT_FOR_NAVIGATION;
+
+function expectWalk(store: NodeStore, geom: Geom, opts: QueryOptions): void {
+  const got = minDepthOver(store, geom, opts);
+  if (!opts.chartPosition) {
+    expect(got).toEqual(referenceMinDepthOver(store, geom, opts));
+    return;
+  }
+  const within = referenceMinDepthOver(store, geom, { ...opts, chartPosition: false });
+  expect(got.dMin).toBe(within.dMin);
+  expect(got.coveredDMin).toBe(within.coveredDMin);
+  expect(got.sigmaD).toBe(within.sigmaD);
+  expect(got.worst).toEqual(within.worst);
+  const beyond = referenceChartPosition(store, geom, opts);
+  const want = Math.max(within.maxRisk, beyond.maxRisk);
+  expect(Math.abs(got.maxRisk - want)).toBeLessThanOrEqual(RISK_STOP_BELOW);
+  expect(got.flags & PRECISE).toBe((within.flags | beyond.flags) & PRECISE);
+  expect((within.flags | beyond.flags) & ~got.flags).toBe(0);
+}
 
 const W = 22.0;
 const S = 60.0;
@@ -54,7 +80,7 @@ const footprintArb = fc.record({
 
 const optionsArb = fc.record({
   bufferMetres: uniform(0, 300),
-  chartReachK: fc.constantFrom(0, 2),
+  chartPosition: fc.boolean(),
   clearAbove: fc.option(uniform(-5, 30), { nil: undefined }),
   risk: fc.option(fc.record({ threshold: uniform(-1, 12), sigmaExtra: uniform(0.05, 1.5) }), {
     nil: undefined
@@ -121,10 +147,7 @@ describe("tile walk equality (property)", () => {
         (c, queries) => {
           const store = storeOf(c);
           for (const [f, opts] of queries) {
-            const geom = footprintGeom(ring(f));
-            expect(minDepthOver(store, geom, opts)).toEqual(
-              referenceMinDepthOver(store, geom, opts)
-            );
+            expectWalk(store, footprintGeom(ring(f)), opts);
           }
         }
       ),
@@ -140,10 +163,7 @@ describe("tile walk equality (property)", () => {
         (c, queries) => {
           const store = storeOf(c);
           for (const [b, opts] of queries) {
-            const geom = footprintGeom(blob(b));
-            expect(minDepthOver(store, geom, opts)).toEqual(
-              referenceMinDepthOver(store, geom, opts)
-            );
+            expectWalk(store, footprintGeom(blob(b)), opts);
           }
         }
       ),
@@ -162,7 +182,9 @@ describe("tile walk equality (property)", () => {
           const store = storeOf(c);
           for (const [f, opts, r] of queries) {
             const geom = footprintGeom(ring(f));
-            const full = referenceMinDepthOver(store, geom, { ...opts, risk: r });
+            const full = opts.chartPosition
+              ? minDepthOver(store, geom, { ...opts, risk: r })
+              : referenceMinDepthOver(store, geom, { ...opts, risk: r });
             const fast = minDepthOver(store, geom, { ...opts, risk: r, stopWhenCertain: true });
             const fields = (x: typeof full) => ({
               dMin: x.dMin,

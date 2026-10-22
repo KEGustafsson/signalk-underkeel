@@ -40,12 +40,20 @@ describe("σ depth in swept areas", () => {
     expect(inFairway.maxRisk).toBeGreaterThanOrEqual(ALARM_P);
   });
 
-  test("a sounding's burn disc reaching into the fairway keeps the survey σ", () => {
-    // ~55 m south of the fairway; CATZOC C burns it 500 m out.
+  test("a sounding reaching into the fairway by its chart position keeps the survey σ", () => {
+    // ~55 m south of the fairway's centre line, in CATZOC C water (σP 250 m).
     const sounding = point(22.01, 60.0035, 4.0, { objectClass: "SOUNDG" });
-    const r = minDepthOver(chart([sounding]), at(22.01, 60.005), { risk: RISK });
-    expect(r.dMin).toBe(4);
+    const r = minDepthOver(chart([sounding]), at(22.01, 60.005), {
+      risk: RISK,
+      chartPosition: true
+    });
+    // The fairway itself is swept to 8 m; the sounding counts by its weight.
+    expect(r.dMin).toBe(8);
+    expect(r.riskTile?.dMin).toBe(4);
+    expect(r.riskTile?.chart?.source).toBe("survey");
+    // P(4 m) with the survey's σ, about 19 %, times Φ(−g/250 m), about 40 %.
     expect(r.riskTile?.sigmaD).toBeCloseTo(sigmaFor(4, 4).sigmaD, 6);
-    expect(r.maxRisk).toBeGreaterThan(0.15);
+    expect(r.maxRisk).toBeGreaterThan(0.05);
+    expect(r.maxRisk).toBeLessThan(0.1);
   });
 });

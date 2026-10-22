@@ -232,7 +232,7 @@ describe("UKC classes", () => {
           const under = rects.filter((r) => r.x0 <= px && px <= r.x1 && r.y0 <= py && py <= r.y1);
           // As a route check or POST /query reads the point, chart position included.
           const at = minDepthOver(store, footprintGeom([fromMercator(mx, my)]), {
-            chartReachK: 2,
+            chartPosition: true,
             risk: { threshold, sigmaExtra: 0.3 }
           });
           const onLand = at.coveredDMin === -Infinity;
