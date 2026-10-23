@@ -82,7 +82,7 @@
   },
   "license": "EUPL-1.2",
   "jest": {
-    "testEnvironment": "node",
+    "testEnvironment": "<rootDir>/__tests__/helpers/node-realm-environment.js",
     "reporters": [
       "default",
       "github-actions"
