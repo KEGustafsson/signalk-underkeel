@@ -6,6 +6,7 @@ import { BOX_WAITING_REASON } from "../src/index-loader";
 import { boxAround } from "../src/ingest/wfs";
 import { runBuild } from "../src/spatial/build-worker";
 import { commitChartIndex, loadChartIndex } from "../src/spatial/chart-index";
+import { withoutPaths } from "../src/status-report";
 import type { IndexBuilder, WfsBox } from "../src/wfs-service";
 import underkeel = require("../src/index");
 import { CELLS, prepareFixtureIndex, ROCK } from "./helpers/fixture-index";
@@ -92,7 +93,10 @@ describe("chart box service", () => {
     // Not "waiting for the vessel position": the position is known and the build failed.
     expect(h.errors).toContain(why);
     expect(h.statuses).not.toContain(BOX_WAITING_REASON);
-    expect((call("/v1/status").body as { index: { reason: string } }).index.reason).toBe(why);
+    // GET /status keeps only the last part of a server path; the error log has it whole.
+    expect((call("/v1/status").body as { index: { reason: string } }).index.reason).toBe(
+      withoutPaths(why)
+    );
     expect(lastValue(h.deltas, "navigation.underKeel.state")).toBe("off");
     plugin.stop();
   });
