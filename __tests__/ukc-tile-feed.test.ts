@@ -6,17 +6,21 @@ import { tileAt, toMercator } from "../src/foundation/geo";
 import type { WaterLevel } from "../src/model/uncertainty";
 import type { QueryServiceDeps } from "../src/query-service";
 import { ukcTileChangesReply, ukcTileReply } from "../src/query-service";
+import { cacheOf } from "../src/spatial/block-cache";
+import type { ChartIndex } from "../src/spatial/chart-index";
+import { pyramidFromBuffer, serializePyramid } from "../src/spatial/store";
 import { fixtureIndex, ROCK } from "./helpers/fixture-index";
 
 /** What a plotter holding the UKC tiles sees: GET /tiles/ukc/changes against the tiles served. */
 
 function feed(
   level: { h: number; sigma?: number; waves?: number; degraded?: string },
-  lookahead: Record<string, unknown> = {}
+  lookahead: Record<string, unknown> = {},
+  index: ChartIndex = fixtureIndex()
 ) {
   const tileChanges = new UkcTileChanges();
   const deps: QueryServiceDeps = {
-    index: fixtureIndex(),
+    index,
     indexReason: undefined,
     config: parseConfig({ vessel: { draft: 3.2, length: 12, beam: 4 }, lookahead }),
     vessel: () => ({ draft: 3.2, length: 12, beam: 4 }),
@@ -109,5 +113,29 @@ describe("UKC tile change feed", () => {
     const f = feed(level, { warnRisk: 0.6 });
     level.sigma = 0.102;
     expect(f.poll().all).toBe(true);
+  });
+
+  test("a tile drawn from stand-ins is listed once its block loads", () => {
+    // Every block starts unloaded and loads only when asked, as one over syncBytes does.
+    const base = fixtureIndex();
+    const file = serializePyramid(base.pyramid, { residentZoom: 15, blockZoom: 13 });
+    const pyramid = pyramidFromBuffer(file, { budgetBytes: Infinity, syncBytes: -1 });
+    const blocks = cacheOf(pyramid);
+    expect(blocks).toBeDefined();
+    const f = feed({ h: 0.3 }, {}, { ...base, pyramid });
+    let listed = 0;
+    for (const key of blocks?.keys() ?? []) {
+      blocks?.loadNow(key);
+      const reply = f.poll();
+      expect(reply.all).toBe(false);
+      reply.tiles.forEach(([z, x, y]) => f.fetchTile(z, x, y));
+      listed += reply.tiles.length;
+      for (const [z, x, y] of f.tiles) {
+        const now = Buffer.from(ukcTileReply(z, x, y, f.deps).body as Uint8Array);
+        expect(now.equals(f.held.get(`${z}/${x}/${y}`) as Buffer)).toBe(true);
+      }
+    }
+    expect(listed).toBeGreaterThan(0);
+    expect(f.poll()).toMatchObject({ all: false, tiles: [] });
   });
 });
