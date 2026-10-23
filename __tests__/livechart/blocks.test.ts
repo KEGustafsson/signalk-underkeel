@@ -5,8 +5,10 @@ import type { LonLat } from "../../src/foundation/geo";
 import { tileAt, toMercator } from "../../src/foundation/geo";
 import { LivechartService } from "../../src/livechart-service";
 import type { LivechartConfig } from "../../src/livechart-service";
+import type { CellPosterior } from "../../src/livechart/posterior";
 import { chartPrior } from "../../src/livechart/posterior";
-import { cacheOf } from "../../src/spatial/block-cache";
+import { cacheOf, RETRY_MS } from "../../src/spatial/block-cache";
+import type { BlockReader } from "../../src/spatial/block-reader";
 import type { NodeStore } from "../../src/spatial/node-store";
 import { footprintGeom, minDepthOver } from "../../src/spatial/pyramid";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
@@ -85,6 +87,12 @@ function sound(
 }
 
 const shoalDepth = (store: NodeStore) => minDepthOver(store, footprintGeom([SHOAL])).dMin;
+
+const cellsOf = (svc: LivechartService): CellPosterior[] => [
+  ...(
+    svc as unknown as { posteriors: { cells: Map<number, CellPosterior> } }
+  ).posteriors.cells.values()
+];
 
 describe("living chart on an index read block by block", () => {
   test("the fixture's stand-in prior for the shoal cell is the rock's depth", () => {
@@ -174,6 +182,85 @@ describe("living chart on an index read block by block", () => {
     svc.stop();
     await svc.whenSettled();
     expect(svc.status()).toMatchObject({ unsettled: 1, discrepancies: 0 });
+  });
+
+  test("cells whose blocks are dropped during a settle run are each judged against the chart", async () => {
+    const saved = path.join(tmp(), "livechart.json");
+    const first = service(whole, saved);
+    // Four soundings in each of six cells, in z13 blocks of their own.
+    const spots: LonLat[] = [22.01, 22.06, 22.09].flatMap((lon) => [
+      [lon, 60.01],
+      [lon, 60.08]
+    ]);
+    for (const p of spots) {
+      sound(first, 9, 4, p);
+    }
+    first.save();
+    // Every block over budget: each is dropped once the next one loads.
+    const store = pyramidFromBuffer(file, { budgetBytes: 1, syncBytes: -1 });
+    const svc = service(store, saved);
+    expect(svc.status()).toMatchObject({ cells: 6, unsettled: 6 });
+    await svc.whenSettled();
+    expect(svc.status()).toMatchObject({ unsettled: 0 });
+    const cache = cacheOf(store);
+    expect(cache?.loads).toBeGreaterThanOrEqual(3);
+    expect(cache?.count).toBeLessThanOrEqual(1);
+    for (const c of cellsOf(svc)) {
+      expect(c.chartDepth).toBe(10);
+    }
+  });
+
+  test("a block that fails to read for a while leaves its cell unsettled until a retry reads it", async () => {
+    const saved = path.join(tmp(), "livechart.json");
+    const first = service(whole, saved);
+    sound(first, 6, 4);
+    first.save();
+    const store = cold();
+    // The first read is refused as busy, as a passing EBUSY or EMFILE would be.
+    const reader = (cacheOf(store) as unknown as { reader: BlockReader }).reader;
+    const read = reader.read.bind(reader);
+    let refused = 0;
+    reader.read = (offset, bytes) =>
+      refused++ === 0
+        ? Promise.reject(Object.assign(new Error("resource busy"), { code: "EBUSY" }))
+        : read(offset, bytes);
+    const svc = service(store, saved);
+    await svc.whenSettled();
+    // Not settled against the stand-ins, whose prior is the 2 m rock.
+    expect(svc.status()).toMatchObject({ unsettled: 1 });
+    expect(cellsOf(svc)[0]?.chartDepth).toBeNaN();
+    const now = Date.now();
+    const later = jest.spyOn(Date, "now").mockReturnValue(now + RETRY_MS + 1000);
+    try {
+      svc.flush();
+      await svc.whenSettled();
+    } finally {
+      later.mockRestore();
+    }
+    expect(svc.status()).toMatchObject({ unsettled: 0 });
+    expect(cellsOf(svc)[0]?.chartDepth).toBe(10);
+    sound(svc, 6, 1);
+    expect(svc.discrepancies()[0]).toMatchObject({ charted: 10, samples: 5 });
+  });
+
+  test("a cell sounded between a prepared rebind and its apply waits for its block", async () => {
+    const svc = service(away());
+    sound(svc, 6, 6);
+    // The block is read for the rebind and dropped again before the apply.
+    const store = pyramidFromBuffer(file, { budgetBytes: 1, syncBytes: -1 });
+    const apply = await svc.prepareRebind(
+      store,
+      () => true,
+      () => new Promise((r) => setImmediate(r))
+    );
+    expect(cacheOf(store)?.count).toBe(0);
+    sound(svc, 6, 1);
+    apply();
+    expect(svc.status()).toMatchObject({ unsettled: 1, discrepancies: 0 });
+    await svc.whenSettled();
+    expect(svc.status()).toMatchObject({ unsettled: 0 });
+    expect(svc.discrepancies()[0]).toMatchObject({ charted: 10, samples: 7 });
+    expect(shoalDepth(store)).toBeLessThan(7);
   });
 });
 
