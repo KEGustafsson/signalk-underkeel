@@ -230,9 +230,7 @@ function* searchSteps(
   // stops at its next step.
   const costOf = (i: number): number => {
     if (!grid.known[i]) {
-      const cx = grid.x0 + ((i % grid.nx) + 0.5) * grid.cell;
-      const cy = grid.y0 + (Math.floor(i / grid.nx) + 0.5) * grid.cell;
-      const c = score(grid.frame.toLonLat(cx, cy), corridor + grid.cell / 2);
+      const c = score(cellCentre(grid, i), corridor + grid.cell / 2);
       if (c === undefined) {
         return Infinity;
       }
