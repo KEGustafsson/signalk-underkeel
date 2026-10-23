@@ -203,10 +203,43 @@ function iso(t: number): string {
 }
 
 /**
- * The level to apply at time `t`. No provider means chart datum; a
- * provider that is unhealthy, stale for more than 30 minutes or without a
- * value for `t` falls back to chart datum, or its last level when lower,
- * with σ 0.3 m and a `degraded` reason, never silently.
+ * S-57 VERDAT codes of low-water datums: the tide seldom leaves less water
+ * than charted, so chart datum with σ 0.3 m stands in for an unknown level.
+ */
+const LOW_WATER_DATUMS = new Set([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 22, 23, 27]);
+
+/**
+ * Chart datum, as the level with no source. Where a cell states a datum that
+ * is not low water (mean water in the Baltic, high water, local) the water
+ * is often well below it, so the level is degraded with those datums named
+ * rather than applied as if measured. A cell that states none, in practice
+ * the advisory Traficom WFS cell, is taken at chart datum as before.
+ */
+function noSource(uses: readonly DatumUse[]): WaterLevel {
+  const other = new Set<number>();
+  for (const use of uses) {
+    for (const verdat of [use.verdat, ...(use.datumAreas ?? [])]) {
+      if (verdat !== undefined && !LOW_WATER_DATUMS.has(verdat)) {
+        other.add(verdat);
+      }
+    }
+  }
+  if (other.size === 0) {
+    return CHART_DATUM;
+  }
+  const datums = [...other].map((v) => `VERDAT ${v}`).join(", ");
+  return {
+    ...CHART_DATUM,
+    degraded: `no water-level source: chart datum assumed, which is not low water (${datums})`
+  };
+}
+
+/**
+ * The level to apply at time `t`. No provider means chart datum, degraded
+ * where a cell states a datum that is not low water; a provider that is unhealthy,
+ * stale for more than 30 minutes or without a value for `t` falls back to
+ * chart datum, or its last level when lower, with σ 0.3 m and a `degraded`
+ * reason, never silently.
  */
 export function resolveWaterLevel(
   p: WaterLevelProvider | undefined,
@@ -216,7 +249,7 @@ export function resolveWaterLevel(
   now: number
 ): WaterLevel {
   if (!p) {
-    return CHART_DATUM;
+    return noSource(uses);
   }
   const wl = unusable(p, now) ?? sampleAt(p, uses, position, t);
   return typeof wl === "string" ? fallback(wl, lastLevel(p, uses, now)) : wl;
