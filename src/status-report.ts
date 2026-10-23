@@ -6,13 +6,25 @@ import type { WfsService } from "./wfs-service";
 
 /** Body of `GET /status`: engine state, index provenance and look-ahead summary; `?summary` without the per-cell lists. */
 
+/** An absolute path, not one inside a URL; its last part is kept. */
+const ABSOLUTE_PATH = /(?<![\w:/.~-])(?:\/[^\s/'"`;,()]+)*\/([^\s/'"`;,()]+)/g;
+
+/**
+ * `text` with each absolute path cut to `…/` and its last part. `/status` is read-only, so
+ * the server's directories stay off the wire; the full text is in the plugin status and log.
+ */
+export function withoutPaths(text: string): string;
+export function withoutPaths(text: string | undefined): string | undefined;
+export function withoutPaths(text: string | undefined): string | undefined {
+  return text?.replace(ABSOLUTE_PATH, "…/$1");
+}
+
 function indexSection(load: IndexLoad | undefined, summary: boolean): Record<string, unknown> {
   const index = load?.index;
   return {
-    dir: load?.indexDir,
     loaded: index !== undefined,
     built: load?.built ?? false,
-    reason: load?.reason,
+    reason: withoutPaths(load?.reason),
     nodes: index?.pyramid.count ?? 0,
     hazards: index?.hazards.size ?? 0,
     ...(summary ? {} : { cells: index?.catalogue.cells ?? [] })
@@ -22,7 +34,11 @@ function indexSection(load: IndexLoad | undefined, summary: boolean): Record<str
 function monitorSection(m: Monitor, summary: boolean): Record<string, unknown> {
   const { datums, ...waterLevel } = m.waterLevelStatus();
   return {
-    engine: { state: m.last.state, reason: m.last.reason, since: new Date(m.since).toISOString() },
+    engine: {
+      state: m.last.state,
+      reason: withoutPaths(m.last.reason),
+      since: new Date(m.since).toISOString()
+    },
     lookahead: {
       clearance: m.last.clearance,
       timeToShoal: m.last.timeToShoal,
@@ -50,11 +66,12 @@ export function statusReport(s: {
   summary?: boolean;
 }): unknown {
   const summary = s.summary ?? false;
+  const wfs = s.wfs?.status();
   return {
     ...(s.monitor ? monitorSection(s.monitor, summary) : { engine: s.stopped, vessel: [] }),
     index: indexSection(s.load, summary),
     livechart: s.livechart?.status() ?? null,
-    wfs: s.wfs?.downloads ? s.wfs.status() : null,
+    wfs: wfs && s.wfs?.downloads ? { ...wfs, lastError: withoutPaths(wfs.lastError) } : null,
     chartBox: s.wfs ? boxSection(s.wfs) : null,
     mooringZones: {
       loaded: s.monitor?.zones.map((z) => z.name) ?? [],
@@ -67,5 +84,5 @@ export function statusReport(s: {
 /** The box the index is built in around the vessel, as the box service keeps it. */
 function boxSection(box: WfsService): unknown {
   const { busy, lastError } = box.status();
-  return { box: box.current ?? null, busy, lastError: lastError ?? null };
+  return { box: box.current ?? null, busy, lastError: withoutPaths(lastError) ?? null };
 }
