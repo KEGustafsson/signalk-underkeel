@@ -79,6 +79,9 @@ jobs:
       # Tests run against src/ via ts-jest, except the worker thread above.
       - name: Verify (check:ts + lint + test)
         run: npm run verify
+        env:
+          # AGENTS.md: npm test stays under 120 s; the budget reporter fails the run past it.
+          UNDERKEEL_TEST_BUDGET_S: "120"
 
       # Enforce the coverageThreshold configured in package.json. Gated on a
       # single Node version so coverage runs once per workflow, not 3x.
