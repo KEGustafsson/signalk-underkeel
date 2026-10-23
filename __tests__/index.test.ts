@@ -791,6 +791,48 @@ describe("plugin lifecycle", () => {
     plugin.stop();
   });
 
+  test("POST /v1/query takes the FMI level only where the forecast reaches", async () => {
+    // An hourly forecast 30 cm above mean water from an hour before T0, for 48 h.
+    const members = Array.from({ length: 50 }, (_, i) => {
+      const t = new Date(T0 + (i - 1) * 3600 * 1000).toISOString().replace(".000", "");
+      return `<wfs:member><BsWfs:BsWfsElement gml:id="e${i}"><BsWfs:Time>${t}</BsWfs:Time>
+        <BsWfs:ParameterName>SeaLevel</BsWfs:ParameterName>
+        <BsWfs:ParameterValue>30</BsWfs:ParameterValue></BsWfs:BsWfsElement></wfs:member>`;
+    });
+    const xml = `<wfs:FeatureCollection>${members.join("")}</wfs:FeatureCollection>`;
+    const fetch = (url: string) =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve(url.includes("forecast") ? xml : "")
+      });
+    const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 1.5 } } });
+    const clock = fakeClock(T0);
+    const plugin = underkeel(f.app, clock, fetch);
+    const { router, post } = fakeRouter();
+    plugin.registerWithRouter?.(router as never);
+    seedFixtureIndex(dataDir);
+    plugin.start(
+      { cellsDir: CELLS, boxRadiusKm: 0, leafZoom: 18, waterLevel: { source: "fmi" } },
+      () => undefined
+    );
+    f.send(navDelta(ROCK[0], ROCK[1], 0, clock.now()));
+    clock.advance(1000);
+    for (let i = 0; i < 20; i++) {
+      await settle();
+    }
+    const at = async (lon: number) =>
+      (await post("/v1/query", { geometry: { type: "Point", coordinates: [lon, ROCK[1]] } }))
+        .body as { waterLevelDegraded?: string; explanation?: { waterLevelSource: string } };
+    const near = await at(ROCK[0]);
+    expect(near.explanation?.waterLevelSource).toMatch(/^fmi/);
+    expect(near.waterLevelDegraded).toBeUndefined();
+    // 60 km east: the forecast fetched at the vessel does not hold there.
+    const far = await at(ROCK[0] + 60000 / M_PER_DEG_LON);
+    expect(far.waterLevelDegraded).toMatch(/fmi/);
+    plugin.stop();
+  });
+
   test("registers the plotterExtensions manifest", async () => {
     const f = fakeApp(dataDir);
     const plugin = underkeel(f.app, fakeClock(T0));
