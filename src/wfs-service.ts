@@ -6,10 +6,18 @@ import type { LonLat } from "./foundation/geo";
 import { haversine, project } from "./foundation/geo";
 import type { WfsConfig } from "./config";
 import type { Bbox, WfsFetch } from "./ingest/wfs";
-import { boxAround, downloadWfsCell, edgeAhead, WFS_CELL_NAME, WFS_NOTICE } from "./ingest/wfs";
+import {
+  boxAround,
+  downloadWfsCell,
+  edgeAhead,
+  WFS_CELL_NAME,
+  WFS_NOTICE,
+  WFS_SOURCE
+} from "./ingest/wfs";
 import type { WfsCounts, WfsJob, WfsReply } from "./wfs-worker";
-import { NO_FEATURES } from "./wfs-worker";
+import { NO_FEATURES, refreshBuild, refreshCells } from "./wfs-worker";
 import type { Clock } from "./monitor";
+import { readBox } from "./spatial/build-box";
 import type { BuildJob, BuildReply, IndexParts } from "./spatial/build-worker";
 import { adoptIndex } from "./spatial/build-worker";
 import { readsSettled } from "./spatial/block-reader";
@@ -177,11 +185,12 @@ export const workerRefresher: WfsRefresher = async (job, signal) => {
 /** The download on this thread with `fetch`, then `build`: for an injected fetch or builder. */
 export function inThreadRefresher(fetch: WfsFetch, build: IndexBuilder): WfsRefresher {
   return async (job, signal) => {
+    const cells = refreshCells(job);
     const features = job.download
       ? await downloadWfsCell({ ...job.download, now: new Date(job.download.now), fetch, signal })
       : NO_FEATURES;
     await readsSettled(job.build.indexDir);
-    return { index: await build(job.build, signal), features };
+    return { index: await build(refreshBuild(job, cells), signal), features };
   };
 }
 
@@ -216,13 +225,15 @@ export interface WfsServiceDeps {
   dir: string;
   indexDir: string;
   leafZoom: number;
-  /** ENC cell directories, built before the WFS cell so they keep their catalogue order. */
-  encDirs: () => string[];
   /**
-   * The sources' stamps, recorded with an index built in the box; given, the ENC cells
-   * are built in the box too (plan §4.2), not whole.
+   * The S-57 cells directory, scanned by the refresh off the event loop; its cells are built
+   * before the WFS cell so they keep their catalogue order.
    */
-  boxSources?: (dirs: string[]) => string[];
+  cellsDir?: string;
+  /** Builds the ENC cells in the box too (plan §4.2), not whole. */
+  inBox: boolean;
+  /** The index in use; with none, a refresh is due whatever the saved box says. */
+  index: () => ChartIndex | undefined;
   refresh: WfsRefresher;
   clock: Pick<Clock, "now" | "setInterval" | "clearInterval">;
   position: () => LonLat | undefined;
@@ -250,8 +261,16 @@ const REFRESH_MARGIN = 1.5;
 /** The next box is centred at most this share of the radius ahead of the vessel. */
 const MAX_LEAD = 0.8;
 
+const sameBbox = (a: Bbox | undefined, b: Bbox | undefined): boolean =>
+  a !== undefined && b !== undefined && a.every((v, i) => v === b[i]);
+
 export class WfsService {
   private box?: WfsBox;
+  /**
+   * Whether the index saved in `indexDir` was built in `box`. A whole build, another
+   * `indexDir` or a crash between the two saves leaves them apart.
+   */
+  private indexed: boolean;
   /** The box of the last index this service handed over in this run. */
   private handed?: Bbox;
   private busy = false;
@@ -262,6 +281,7 @@ export class WfsService {
 
   constructor(private readonly deps: WfsServiceDeps) {
     this.box = this.readBox();
+    this.indexed = !deps.inBox || sameBbox(readBox(deps.indexDir)?.bbox, this.box?.bbox);
   }
 
   /** Whether this box downloads Traficom WFS depths, not only builds ENC cells around the vessel. */
@@ -284,8 +304,10 @@ export class WfsService {
   }
 
   start(): void {
-    this.timer = this.deps.clock.setInterval(() => void this.check(), CHECK_EVERY_MS);
-    void this.check();
+    const check = (): void =>
+      void this.check().catch((err: Error) => this.deps.error(`${this.label}: ${err.message}`));
+    this.timer = this.deps.clock.setInterval(check, CHECK_EVERY_MS);
+    check();
   }
 
   stop(): void {
@@ -309,6 +331,8 @@ export class WfsService {
     const b = this.box;
     return (
       b === undefined ||
+      !this.indexed ||
+      this.deps.index() === undefined ||
       b.radiusKm !== this.deps.config.radiusKm ||
       b.catzoc !== this.catzoc() ||
       haversine(pos, b.centre) > (b.radiusKm * 1000) / 2 ||
@@ -329,6 +353,10 @@ export class WfsService {
     const reach = Math.max(this.deps.lookahead.distance, m.sog * this.deps.lookahead.minHorizon);
     const travel = (m.sog * REFRESH_MARGIN * this.refreshMs()) / 1000;
     return edgeAhead(pos, m.cog, b.bbox) < travel + reach;
+  }
+
+  private get label(): string {
+    return this.downloads ? "Traficom WFS depths" : "chart box around the vessel";
   }
 
   private catzoc(): number | undefined {
@@ -360,13 +388,14 @@ export class WfsService {
     this.lastAttempt = now;
     const controller = new AbortController();
     this.controller = controller;
-    const radiusKm = this.deps.config.radiusKm;
-    const centre = this.centreAhead(pos, radiusKm);
-    const bbox = boxAround(centre, radiusKm);
-    const config = this.deps.config;
-    const dirs = [...this.deps.encDirs(), ...("url" in config ? [this.cellDir] : [])];
-    const boxSources = this.deps.boxSources;
     try {
+      const radiusKm = this.deps.config.radiusKm;
+      const centre = this.centreAhead(pos, radiusKm);
+      const bbox = boxAround(centre, radiusKm);
+      const config = this.deps.config;
+      const { inBox, cellsDir } = this.deps;
+      // With WFS depths alone in use an empty cells directory loses nothing.
+      const cells = this.deps.index()?.catalogue.cells.some((c) => c.source !== WFS_SOURCE);
       const { index, features } = await this.deps.refresh(
         {
           download:
@@ -379,13 +408,14 @@ export class WfsService {
                   catzoc: config.catzoc
                 }
               : undefined,
+          cellsDir,
+          cellsRequired: !("url" in config) || cells === true,
+          box: inBox ? bbox : undefined,
           build: {
-            dirs,
+            dirs: "url" in config ? [this.cellDir] : [],
             leafZoom: this.deps.leafZoom,
             indexDir: this.deps.indexDir,
-            ...(boxSources
-              ? { box: { bbox, sources: boxSources(dirs) } }
-              : { changed: [this.cellDir] })
+            ...(inBox ? {} : { changed: [this.cellDir] })
           }
         },
         controller.signal
@@ -401,6 +431,7 @@ export class WfsService {
       };
       fs.writeFileSync(path.join(this.deps.dir, "box.json"), JSON.stringify(box));
       this.box = box;
+      this.indexed = true;
       this.lastError = undefined;
       const changed = this.handed && [this.handed, bbox];
       this.handed = bbox;
@@ -410,9 +441,7 @@ export class WfsService {
         return;
       }
       this.lastError = (err as Error).message;
-      this.deps.error(
-        `${this.downloads ? "Traficom WFS depths" : "chart box around the vessel"}: ${this.lastError}`
-      );
+      this.deps.error(`${this.label}: ${this.lastError}`);
     } finally {
       this.busy = false;
     }
