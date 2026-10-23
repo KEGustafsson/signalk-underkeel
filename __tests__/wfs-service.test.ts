@@ -321,6 +321,29 @@ describe("WFS box around the vessel", () => {
     expect(again.service.savedCell()).toBeUndefined();
     expect(again.service.status().lastError).toMatch(/saved cell unreadable/);
     expect(again.errors).toEqual([expect.stringMatching(/saved cell unreadable/)]);
+    // The index loaded at start is in use and the vessel is still inside the box.
+    again.t.index = first.indexes[0];
+    again.t.pos = [22.08, 60.07];
+    await again.service.check();
+    expect(downloads(again.fetched)).toBe(1);
+    expect(again.service.status().lastError).toBeUndefined();
+    expect(again.service.savedCell()).toBe(path.join(TMP, "FI1WFS01"));
+    again.t.now += 120_000;
+    await again.service.check();
+    expect(downloads(again.fetched)).toBe(1);
+  });
+
+  test("a saved cell gone missing is downloaded again although the box still holds", async () => {
+    const first = harness();
+    first.t.pos = [22.08, 60.07];
+    await first.service.check();
+    fs.rmSync(path.join(TMP, "FI1WFS01"), { recursive: true });
+    const again = harness();
+    expect(again.service.savedCell()).toBeUndefined();
+    again.t.index = first.indexes[0];
+    again.t.pos = [22.08, 60.07];
+    await again.service.check();
+    expect(downloads(again.fetched)).toBe(1);
   });
 });
 

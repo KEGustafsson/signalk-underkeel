@@ -5,7 +5,7 @@ import type { CellInfo } from "./ingest/cells";
 import { parseCatalogue } from "./ingest/cells";
 import type { CellScan } from "./ingest/cell-source";
 import { currentInfo, readCell, scanCellSources } from "./ingest/cell-source";
-import { WFS_SOURCE } from "./ingest/wfs";
+import { WFS_CELL_NAME, WFS_SOURCE } from "./ingest/wfs";
 import { readBox } from "./spatial/build-box";
 import type { BuildBox } from "./spatial/build-box";
 import type { BuildJob } from "./spatial/build-worker";
@@ -257,6 +257,9 @@ export function sourceKeys(dirs: readonly string[]): string[] {
   return dirs.map(sourceKey).sort();
 }
 
+/** The Traficom WFS cell's stamp among a box's sources. */
+const isWfsKey = (key: string): boolean => key.startsWith(`${WFS_CELL_NAME} edition `);
+
 const boxWaiting = (indexDir: string, notes: string[]): IndexPlan => ({
   load: withNotes({ indexDir, built: false, reason: BOX_WAITING_REASON }, notes)
 });
@@ -301,7 +304,10 @@ function boxPlan(
     return boxWaiting(indexDir, p.notes);
   }
   const sources = keys();
-  const sameCells = sources.join("\n") === box.sources.join("\n");
+  // A WFS cell left out of the start, torn or gone, is downloaded again by the box service;
+  // the saved index still holds its depths meanwhile.
+  const was = sources.some(isWfsKey) ? box.sources : box.sources.filter((k) => !isWfsKey(k));
+  const sameCells = sources.join("\n") === was.join("\n");
   const sameZoom = box.leafZoom === cfg.leafZoom;
   if (!p.mismatch && !cfg.rebuildIndex && sameCells && sameZoom) {
     return p.fromSaved(p.notes);

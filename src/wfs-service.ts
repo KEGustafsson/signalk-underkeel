@@ -284,6 +284,8 @@ export class WfsService {
   private indexed?: boolean;
   /** The box of the last index this service handed over in this run. */
   private handed?: Bbox;
+  /** The saved WFS cell was missing or unreadable at start: the box is downloaded again. */
+  private cellLost = false;
   private busy = false;
   private lastAttempt = -Infinity;
   private lastError?: string;
@@ -311,16 +313,21 @@ export class WfsService {
   /**
    * The saved cell, when one was downloaded and indexed before and its DSID still reads. A
    * cell torn by a power cut would otherwise fail the start's whole plan, ENC cells included;
-   * it is left out and downloaded again.
+   * it is left out and downloaded again at the first check, as is a cell gone missing.
    */
   savedCell(): string | undefined {
-    if (!this.box || !fs.existsSync(this.cellDir)) {
+    if (!this.box || !this.downloads) {
+      return undefined;
+    }
+    if (!fs.existsSync(this.cellDir)) {
+      this.cellLost = true;
       return undefined;
     }
     try {
       readCellInfo(this.cellDir);
       return this.cellDir;
     } catch (err) {
+      this.cellLost = true;
       this.lastError = `saved cell unreadable, downloading it again: ${(err as Error).message}`;
       this.deps.error(`${this.label}: ${this.lastError}`);
       return undefined;
@@ -356,6 +363,7 @@ export class WfsService {
     this.indexed ??= !this.deps.inBox || sameBbox(readBox(this.deps.indexDir)?.bbox, b?.bbox);
     return (
       b === undefined ||
+      this.cellLost ||
       !this.indexed ||
       this.deps.index() === undefined ||
       b.radiusKm !== this.deps.config.radiusKm ||
@@ -460,6 +468,7 @@ export class WfsService {
       fs.writeFileSync(path.join(this.deps.dir, "box.json"), JSON.stringify(box));
       this.box = box;
       this.indexed = true;
+      this.cellLost = false;
       this.lastError = undefined;
       const changed = this.handed && [this.handed, bbox];
       this.handed = bbox;

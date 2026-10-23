@@ -364,6 +364,20 @@ describe("a saved index built in a box around the vessel", () => {
     expect(readBox(indexDir())?.leafZoom).toBe(16);
   });
 
+  test("with its WFS cell left out of the start, torn or gone, it is loaded, not rebuilt", () => {
+    const box = readBox(indexDir());
+    const sources = [...(box?.sources ?? []), "FI1WFS01 edition 1 update 0"].sort();
+    const file = path.join(indexDir(), BOX_FILE);
+    fs.writeFileSync(file, JSON.stringify({ version: 1, ...box, sources }));
+    const p = planIndex(config({ wfs: { enabled: true } }), dataDir);
+    expect("load" in p && p.load.index?.catalogue.cells).toHaveLength(2);
+    // An ENC cell changed is still rebuilt in the box.
+    fs.rmSync(path.join(cellsDir, "FI5SYNTH"), { recursive: true });
+    expect(planIndex(config({ wfs: { enabled: true } }), dataDir)).toMatchObject({
+      build: { box: { bbox: BOX } }
+    });
+  });
+
   test("each cell is stamped once at start", () => {
     const stamp = jest.spyOn(encWasm, "encStamp");
     try {
