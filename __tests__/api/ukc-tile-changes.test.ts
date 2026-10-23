@@ -202,3 +202,78 @@ describe("UKC tile change list with a level source's reach", () => {
     expect(list.since(after).tiles).toEqual([]);
   });
 });
+
+describe("UKC tile change list and block loads", () => {
+  /** A store read block by block: `load` marks a z13 block loaded at the next revision. */
+  function blockStore() {
+    const changed = new Map<string, number>();
+    let revision = 0;
+    const store = {
+      adjustments: new AdjustmentMap(),
+      adjustZoom: 18,
+      count: 0,
+      minZoom: 12,
+      entries: () => [],
+      surveySigma: () => 0,
+      topoSigma: () => 0,
+      get loadRevision() {
+        return revision;
+      },
+      blocksChangedSince: (rev: number) =>
+        [...changed]
+          .filter(([, at]) => at > rev)
+          .map(([k]) => {
+            const [x, y] = k.split("/").map(Number) as [number, number];
+            return { z: 13, x, y };
+          })
+    } as unknown as NodeStore;
+    const load = (x: number, y: number) => changed.set(`${x}/${y}`, ++revision);
+    return { store, load };
+  }
+
+  test("a tile is listed for a block that changed after it was drawn, not for one its drawing loaded", () => {
+    const { store, load } = blockStore();
+    const list = new UkcTileChanges();
+    const observe = () => list.observe({ store, key: "k", threshold: 2 });
+    observe();
+    // z14 (20, 20) lies in z13 block (10, 10); (40, 40) lies far from it.
+    list.serve(14, 40, 40, { lo: 0, hi: 5 });
+    const start = list.since(undefined);
+    observe();
+    load(10, 10); // read on the spot while (20, 20) was drawn
+    list.serve(14, 20, 20, { lo: 0, hi: 5 });
+    observe();
+    expect(list.since(start).tiles).toEqual([]);
+    load(10, 10); // dropped later
+    observe();
+    expect(list.since(start).tiles).toEqual([[14, 20, 20]]);
+  });
+
+  test("a tile drawn before a neighbour's drawing loaded a block it reaches is listed", () => {
+    const { store, load } = blockStore();
+    const list = new UkcTileChanges();
+    const observe = () => list.observe({ store, key: "k", threshold: 2 });
+    observe();
+    list.serve(14, 20, 20, { lo: 0, hi: 5 });
+    const start = list.since(undefined);
+    observe();
+    load(10, 10); // read while (21, 21), in the same block, was drawn
+    list.serve(14, 21, 21, { lo: 0, hi: 5 });
+    observe();
+    expect(list.since(start).tiles).toEqual([[14, 20, 20]]);
+  });
+
+  test("a second copy drawn after a block loaded keeps the tile listable for the first", () => {
+    const { store, load } = blockStore();
+    const list = new UkcTileChanges();
+    const observe = () => list.observe({ store, key: "k", threshold: 2 });
+    observe();
+    list.serve(14, 20, 20, { lo: 0, hi: 5 });
+    const start = list.since(undefined);
+    observe();
+    load(10, 10); // the second drawing read the block the first copy drew stand-ins for
+    list.serve(14, 20, 20, { lo: 0, hi: 5 });
+    observe();
+    expect(list.since(start).tiles).toEqual([[14, 20, 20]]);
+  });
+});

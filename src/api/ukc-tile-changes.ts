@@ -14,10 +14,10 @@ import { mercatorBuffer } from "../spatial/pyramid";
  * A tile is listed once the threshold of the level it was drawn at leaves
  * the range of a copy served, a moved forecast point carries it across the
  * reach edge, an own sounding changes a cell in it, or a block within its
- * chart reach loads or is dropped (a tile drawn while it was out read its
- * stand-ins). Any other input changing
- * lists every tile: σ, risk levels or the fallback flag of either level, the
- * reach appearing or going, or the index. Clients hold a cursor: the
+ * chart reach loads or is dropped after the tile was drawn (a tile drawn
+ * while the block was out read its stand-ins). Any other input changing
+ * lists every tile: σ, risk levels or the fallback flag of either level,
+ * the reach appearing or going, or the index. Clients hold a cursor: the
  * server's epoch and a revision.
  */
 
@@ -55,6 +55,8 @@ interface Served {
   range: ThresholdRange;
   /** Whether it was drawn inside the level source's reach, or beyond it. */
   inside: boolean;
+  /** `store.loadRevision` after the oldest of those copies was drawn. */
+  loads: number;
 }
 
 export class UkcTileChanges {
@@ -126,8 +128,10 @@ export class UkcTileChanges {
     const both = had
       ? { lo: Math.max(had.range.lo, range.lo), hi: Math.min(had.range.hi, range.hi) }
       : range;
+    // The oldest copy held is the one a block loaded since may have changed.
+    const loads = had ? had.loads : (this.store?.loadRevision ?? 0);
     this.served.delete(k);
-    this.served.set(k, { z, x, y, range: both, inside });
+    this.served.set(k, { z, x, y, range: both, inside, loads });
     if (this.served.size > this.maxServed) {
       const [oldest] = this.served.keys();
       this.rev++;
@@ -167,19 +171,33 @@ export class UkcTileChanges {
 
   /**
    * Whether a served tile lies within chart reach of a block loaded or dropped
-   * since the last call, as UkcTileCache drops its geometry.
+   * since the last call and after the tile was drawn, as UkcTileCache drops
+   * its geometry. A small block a tile's own drawing read on the spot loaded
+   * before it was served, so that copy already has it.
    */
   private changedBlocks(store: NodeStore): (s: Served) => boolean {
     if (store.loadRevision === this.loads) {
       return () => false;
     }
-    const blocks: Rect[] = store.blocksChangedSince(this.loads).map((b) => tileRect(b.z, b.x, b.y));
+    const since = this.loads;
     this.loads = store.loadRevision;
-    if (blocks.length === 0) {
-      return () => false;
-    }
-    const ground = chartReach(chartSigma(store).max);
+    // Only tiles served since the last call were drawn after it: a handful of revisions.
+    const after = new Map<number, Rect[]>();
+    const blocksAfter = (revision: number): Rect[] => {
+      let blocks = after.get(revision);
+      if (!blocks) {
+        blocks = store.blocksChangedSince(revision).map((b) => tileRect(b.z, b.x, b.y));
+        after.set(revision, blocks);
+      }
+      return blocks;
+    };
+    let ground: number | undefined;
     return (s) => {
+      const blocks = blocksAfter(Math.max(since, s.loads));
+      if (blocks.length === 0) {
+        return false;
+      }
+      ground ??= chartReach(chartSigma(store).max);
       const tile = tileRect(s.z, s.x, s.y);
       const reach = mercatorBuffer(tile, ground);
       return blocks.some((b) => rectGap(tile, b) <= reach);

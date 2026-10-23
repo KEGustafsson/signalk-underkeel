@@ -243,4 +243,28 @@ describe("UKC tile change feed", () => {
     expect(listed).toBeGreaterThan(0);
     expect(f.poll()).toMatchObject({ all: false, tiles: [] });
   });
+
+  test("a tile is not listed for the small blocks its own drawing read", () => {
+    // Every block small enough to read on the spot: drawing a tile loads the blocks it reaches.
+    const base = fixtureIndex();
+    const file = serializePyramid(base.pyramid, { residentZoom: 15, blockZoom: 13 });
+    const pyramid = pyramidFromBuffer(file, { budgetBytes: Infinity, syncBytes: Infinity });
+    const blocks = cacheOf(pyramid);
+    const f = feed({ h: 0.3 }, {}, { ...base, pyramid }, false);
+    const [z, x, y] = f.tiles[f.tiles.length - 5] as [number, number, number];
+    f.fetchTile(z, x, y);
+    expect(blocks?.loads).toBeGreaterThan(0);
+    expect(f.poll()).toMatchObject({ all: false, tiles: [] });
+    f.current();
+    // Tiles drawn before a neighbour loaded a block they reach read its stand-ins: still listed
+    // when their copy may differ, and every tile left unlisted is current.
+    f.tiles.forEach(([tz, tx, ty]) => f.fetchTile(tz, tx, ty));
+    const reply = f.poll();
+    expect(reply.all).toBe(false);
+    reply.tiles.forEach(([tz, tx, ty]) => f.fetchTile(tz, tx, ty));
+    f.current();
+    const loads = blocks?.loads;
+    expect(f.poll()).toMatchObject({ all: false, tiles: [] });
+    expect(blocks?.loads).toBe(loads);
+  });
 });
