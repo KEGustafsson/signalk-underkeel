@@ -14,9 +14,10 @@ const SLICE = 1000;
 
 const nextTurn = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
-/** A cell rebased onto a new prior, and its sample count then. */
+/** A cell rebased onto a new prior, and its sample count and last sounding then. */
 export interface Rebased {
   samples: number;
+  lastAt: number;
   c: CellPosterior;
 }
 
@@ -33,6 +34,7 @@ export async function rebaseOnto(
   const rebase = (c: CellPosterior) =>
     done.set(tileKey(c.z, c.x, c.y), {
       samples: c.samples,
+      lastAt: c.lastAt,
       c: rebasePrior(c, chartPrior(store, c.z, c.x, c.y))
     });
   await withBlocksLoaded(store, cells, rebase, { slice: SLICE, pause });
@@ -52,8 +54,15 @@ export class PriorSettler {
   constructor(
     private readonly posteriors: Posteriors,
     private readonly current: () => NodeStore,
-    /** A cell settled: its posterior if it has one, and whether the cell or adjustment changed. */
-    private readonly settled: (c: CellPosterior | undefined, changed: boolean) => void,
+    /**
+     * A cell settled: its posterior if it has one, whether the cell or adjustment changed, and
+     * the posterior before.
+     */
+    private readonly settled: (
+      c: CellPosterior | undefined,
+      changed: boolean,
+      before: CellPosterior | undefined
+    ) => void,
     private readonly error: (message: string) => void
   ) {}
 
@@ -84,6 +93,12 @@ export class PriorSettler {
   }
 
   private async settle(store: NodeStore): Promise<void> {
+    const live = () => !this.stopped && this.current() === store;
+    // Never in the turn that asked: a start, a rebind or a sounding reads no chart prior.
+    await nextTurn();
+    if (!live()) {
+      return;
+    }
     const z = store.adjustZoom;
     const n = 2 ** z;
     const cells = [...this.posteriors.unsettled].map((key) => ({
@@ -97,7 +112,6 @@ export class PriorSettler {
         this.settleCell(store, c.key, c.x, c.y);
       }
     };
-    const live = () => !this.stopped && this.current() === store;
     await withBlocksLoaded(store, cells, settle, { slice: SLICE, pause: nextTurn, live });
   }
 
@@ -114,6 +128,6 @@ export class PriorSettler {
     if (a && a.cellRef !== cellRef) {
       store.adjustments.set(key, { ...a, cellRef });
     }
-    this.settled(c, c !== old || (a !== undefined && a.cellRef !== cellRef));
+    this.settled(c, c !== old || (a !== undefined && a.cellRef !== cellRef), old);
   }
 }

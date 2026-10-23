@@ -114,10 +114,10 @@ describe("living chart on an index read block by block", () => {
 
   test("cells restored at start wait for their block, then are judged against it", async () => {
     // Four soundings: not yet a discrepancy, and saved so.
-    const first = service(whole);
+    const saved = path.join(tmp(), "livechart.json");
+    const first = service(whole, saved);
     sound(first, 6, 4);
     first.save();
-    const saved = (first as unknown as { file: string }).file;
 
     const store = cold();
     const svc = service(store, saved);

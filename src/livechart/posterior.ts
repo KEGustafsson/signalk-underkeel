@@ -25,6 +25,12 @@ export interface CellPosterior {
   /** Visits separated by more than PASS_GAP_MS. */
   passes: number;
   lastAt: number;
+  /**
+   * The most σ the posterior has read shallower than a charted prior, (chartDepth − mean)/σ,
+   * from its first sample on; never lowered, and absent while it never had one. It survives a
+   * rebase onto a chart that does not chart the cell, as after the index box moves away.
+   */
+  peakZ?: number;
 }
 
 /** Samples further apart in time than this belong to different passes. */
@@ -119,9 +125,64 @@ export class Posteriors {
       c.passes += 1;
     }
     c.lastAt = Math.max(c.lastAt, s.at);
+    const peak = shoalZ(c);
+    if (peak > (c.peakZ ?? -Infinity)) {
+      c.peakZ = peak;
+    }
     return c;
   }
+
+  /**
+   * Bounds the cells kept (plan §4.13): once more than `max` could be dropped, drops those last
+   * sounded longest ago until `low` such cells remain, and returns how many it dropped. A cell
+   * with an adjustment, one waiting for its chart block and one that has read PROTECT_Z or more
+   * shallower than a charted prior are never dropped, so a shoal still gathering its samples or
+   * its second pass keeps its evidence. A dropped cell sounded again starts from the chart.
+   */
+  prune(max: number, low: number): number {
+    if (this.cells.size <= max) {
+      return 0;
+    }
+    const droppable: [number, number][] = [];
+    for (const [key, c] of this.cells) {
+      if (!this.store.adjustments.has(key) && !this.unsettled.has(key) && !isProtectedMark(c)) {
+        droppable.push([c.lastAt, key]);
+      }
+    }
+    if (droppable.length <= max) {
+      return 0;
+    }
+    droppable.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    const drop = droppable.length - low;
+    for (const [, key] of droppable.slice(0, drop)) {
+      this.cells.delete(key);
+    }
+    return drop;
+  }
 }
+
+/** A cell that has read this many σ shallower than a charted prior is never dropped. */
+export const PROTECT_Z = 1;
+
+/** How many σ the posterior reads shallower than its prior; -Infinity without a charted one. */
+export function shoalZ(c: CellPosterior): number {
+  return Number.isFinite(c.chartDepth) && c.samples > 0
+    ? (c.chartDepth - c.mean) / c.sigma
+    : -Infinity;
+}
+
+/** `c` with its peakZ raised to its shoalZ() when that is higher. */
+export function withPeak(c: CellPosterior): CellPosterior {
+  const z = shoalZ(c);
+  return z > (c.peakZ ?? -Infinity) ? { ...c, peakZ: z } : c;
+}
+
+/** The cell has read PROTECT_Z or more shallower than a charted prior, at some time. */
+export const isProtectedMark = (c?: CellPosterior): boolean => (c?.peakZ ?? -Infinity) >= PROTECT_Z;
+
+/** A rebase marked the cell protected: its line must be saved so the mark survives a cut. */
+export const raisedMark = (before: CellPosterior | undefined, after: CellPosterior): boolean =>
+  !isProtectedMark(before) && isProtectedMark(after);
 
 /**
  * Moves a posterior onto another chart prior, for a saved cell meeting a rebuilt index:
@@ -151,14 +212,14 @@ export function rebasePrior(
     cellRef: prior.cellRef
   };
   if (!(evidenceP > 0)) {
-    return { ...rebased, mean: newP > 0 ? prior.depth : c.mean, sigma: prior.sigma };
+    return withPeak({ ...rebased, mean: newP > 0 ? prior.depth : c.mean, sigma: prior.sigma });
   }
   const prec = evidenceP + newP;
-  return {
+  return withPeak({
     ...rebased,
     mean: (evidenceW + (newP > 0 ? prior.depth * newP : 0)) / prec,
     sigma: Math.sqrt(1 / prec)
-  };
+  });
 }
 
 /**

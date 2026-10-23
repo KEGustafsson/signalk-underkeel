@@ -2,6 +2,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import type { LivechartConfig } from "../../src/livechart-service";
+import type { CellPosterior } from "../../src/livechart/posterior";
 import { LivechartService, MAX_SAMPLES, startLivechart } from "../../src/livechart-service";
 import type { RawSounding } from "../../src/livechart/soundings";
 import { parseConfig } from "../../src/config";
@@ -36,10 +37,12 @@ const store = () => buildPyramid(basin([22.0, 60.0, 22.1, 60.1], 8), { minZoom: 
 let dir: string;
 let file: string;
 let log: string;
+let cellLog: string;
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-lc-save-"));
   file = path.join(dir, "livechart.json");
   log = path.join(dir, "soundings.ndjson");
+  cellLog = path.join(dir, "cells.ndjson");
 });
 afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
@@ -55,11 +58,20 @@ function service(errors: string[] = []) {
 
 const saved = () =>
   JSON.parse(fs.readFileSync(file, "utf8")) as {
-    cells: unknown[];
+    cells?: unknown[];
     adjustments: unknown[];
     samples?: unknown[];
   };
 const logLines = () => fs.readFileSync(log, "utf8").split("\n").filter(Boolean);
+const cellLines = (): CellPosterior[] =>
+  fs.existsSync(cellLog)
+    ? fs
+        .readFileSync(cellLog, "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => JSON.parse(l) as CellPosterior)
+    : [];
+const cellKeys = () => new Set(cellLines().map((c) => `${c.x}/${c.y}`));
 
 describe("living-chart save schedule", () => {
   test("a new adjustment is on disk within 10 s; other changes wait for the 10-minute save", () => {
@@ -82,21 +94,26 @@ describe("living-chart save schedule", () => {
     }
     h.t.now += 15 * 60_000;
     h.svc.flush();
-    expect(saved()).toMatchObject({ cells: [expect.anything()], adjustments: [] });
+    expect(cellLines()).toHaveLength(1);
+    expect(saved()).toEqual({ version: 1, zoom: 18, adjustments: [] });
     sound(5.2);
     expect(h.svc.discrepancies()).toHaveLength(1);
     expect(saved().adjustments).toHaveLength(1);
+    expect(saved().cells).toBeUndefined();
     expect(saved().samples).toBeUndefined();
+    // The shoal cell's line is appended with the adjustment.
+    expect(cellLines()).toHaveLength(2);
     // The next cell's posterior changes are written with the 10-minute save.
     const at = h.t.now;
     h.t.now += 1000;
     h.svc.onSounding(raw(9, h.t.now, [22.06, 60.06]));
     h.t.now = at + 9 * 60_000;
     h.svc.flush();
-    expect(saved().cells).toHaveLength(1);
+    expect(cellKeys().size).toBe(1);
     h.t.now = at + 10 * 60_000;
     h.svc.flush();
-    expect(saved().cells).toHaveLength(2);
+    expect(cellKeys().size).toBe(2);
+    expect(cellLines()).toHaveLength(3);
   });
 
   test("the saves run on the timer, never inside the depth callback", () => {
@@ -135,7 +152,7 @@ describe("living-chart save schedule", () => {
       lc?.stop();
     }
     expect(logLines()).toHaveLength(120);
-    expect(saved().cells).toHaveLength(1);
+    expect(cellKeys().size).toBe(1);
   });
 
   test("a state file that could not be set aside does not bring the log save forward", () => {
@@ -324,5 +341,162 @@ describe("living-chart save schedule", () => {
     h.svc.save();
     expect(fs.readFileSync(log, "utf8")).toBe("");
     expect(service().errors).toEqual([]);
+  });
+});
+
+/** Two cells sounded and saved as this version saves them; returns their posteriors. */
+function twoCells(): Map<number, CellPosterior> {
+  const h = service();
+  h.svc.onSounding(raw(8.2, T0));
+  h.svc.onSounding(raw(7.5, T0 + 1000, [22.06, 60.06]));
+  h.svc.save();
+  return new Map(posteriorsOf(h.svc).cells);
+}
+
+/** Rewrites the files in the version-1 layout: the cells in livechart.json, no cells.ndjson. */
+function toVersion1(): void {
+  fs.writeFileSync(file, JSON.stringify({ ...saved(), cells: cellLines() }));
+  fs.rmSync(cellLog);
+}
+
+const posteriorsOf = (svc: LivechartService) =>
+  (svc as unknown as { posteriors: { cells: Map<number, CellPosterior> } }).posteriors;
+
+function expectSameCells(a: Map<number, CellPosterior>, b: Map<number, CellPosterior>): void {
+  expect([...a.keys()].sort()).toEqual([...b.keys()].sort());
+  for (const [key, c] of a) {
+    expect(b.get(key)).toMatchObject({ samples: c.samples, lastAt: c.lastAt });
+    expect(b.get(key)?.mean).toBeCloseTo(c.mean, 9);
+    expect(b.get(key)?.sigma).toBeCloseTo(c.sigma, 9);
+  }
+}
+
+describe("cells.ndjson", () => {
+  test("at anchor each 10-minute save appends one line, and livechart.json is not rewritten", () => {
+    const h = service();
+    const rename = jest.spyOn(fs, "renameSync");
+    try {
+      // Six hours in one cell, a reading and a check every 10 s, agreeing with the chart.
+      for (let s = 10; s <= 6 * 3600; s += 10) {
+        h.t.now = T0 + s * 1000;
+        h.svc.onSounding(raw(8.2, h.t.now));
+        h.svc.flush();
+      }
+      expect(cellLines()).toHaveLength(36);
+      // Written once, at the first save, to record the zoom; no adjustment changed after.
+      expect(rename.mock.calls.filter(([, to]) => to === file)).toHaveLength(1);
+      expect(rename.mock.calls.filter(([, to]) => to === cellLog)).toHaveLength(0);
+    } finally {
+      rename.mockRestore();
+    }
+  });
+
+  test("a version-1 livechart.json holding the cells loads them, and they move at the first save", async () => {
+    const before = twoCells();
+    toVersion1();
+    const h = service();
+    await h.svc.whenSettled();
+    expectSameCells(before, posteriorsOf(h.svc).cells);
+    const rename = jest.spyOn(fs, "renameSync");
+    try {
+      h.svc.save();
+      // cells.ndjson whole first, then livechart.json without the cells.
+      expect(rename.mock.calls.map(([, to]) => to)).toEqual([cellLog, file]);
+    } finally {
+      rename.mockRestore();
+    }
+    expect(cellLines()).toHaveLength(2);
+    expect(saved().cells).toBeUndefined();
+    expect(h.errors).toEqual([]);
+    const again = service();
+    await again.svc.whenSettled();
+    expectSameCells(before, posteriorsOf(again.svc).cells);
+  });
+
+  test("cells stay in livechart.json until cells.ndjson can be written whole", async () => {
+    twoCells();
+    toVersion1();
+    const h = service();
+    await h.svc.whenSettled();
+    // A directory where the temporary file goes makes the rewrite throw.
+    fs.mkdirSync(`${cellLog}.tmp-${process.pid}`);
+    h.svc.save();
+    expect(h.errors).toEqual([expect.stringMatching(/cells\.ndjson not saved/)]);
+    expect(saved().cells).toHaveLength(2);
+    expect(fs.existsSync(cellLog)).toBe(false);
+    // The failed write removed what was in its way: the next save moves the cells.
+    h.svc.save();
+    expect(cellLines()).toHaveLength(2);
+    expect(saved().cells).toBeUndefined();
+  });
+
+  test("a cell in both files loads with the copy with more samples, livechart.json's on a tie", async () => {
+    twoCells();
+    const [a, b] = cellLines() as [CellPosterior, CellPosterior];
+    // The log holds a newer a and an older b; livechart.json the other way round, b tied.
+    fs.writeFileSync(
+      cellLog,
+      [
+        { ...a, samples: 3, lastAt: 1 },
+        { ...b, lastAt: 2 }
+      ]
+        .map((c) => JSON.stringify(c) + "\n")
+        .join("")
+    );
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        ...saved(),
+        cells: [
+          { ...a, samples: 2, lastAt: 3 },
+          { ...b, lastAt: 4 }
+        ]
+      })
+    );
+    const h = service();
+    await h.svc.whenSettled();
+    const lastAt = [...posteriorsOf(h.svc).cells.values()].map((c) => c.lastAt).sort();
+    expect(lastAt).toEqual([1, 4]);
+  });
+
+  test("a malformed or unreadable cells.ndjson is moved aside and rewritten from what read", () => {
+    twoCells();
+    fs.appendFileSync(cellLog, "not json\n");
+    const h = service();
+    expect(h.errors).toEqual([
+      expect.stringMatching(/cells\.ndjson had 1 malformed lines, skipped; moved to .*\.bad-\d+$/)
+    ]);
+    h.svc.save();
+    expect(cellLines()).toHaveLength(2);
+
+    fs.rmSync(cellLog);
+    fs.mkdirSync(cellLog);
+    const unreadable = service();
+    expect(unreadable.errors).toEqual([
+      expect.stringMatching(/cells\.ndjson is not readable, starting empty: .*; moved to /)
+    ]);
+    unreadable.svc.onSounding(raw(8.2, T0 + 5000));
+    unreadable.svc.save();
+    expect(cellLines()).toHaveLength(1);
+  });
+
+  test("a cells.ndjson that cannot be moved aside is never written; its cells go in livechart.json", () => {
+    twoCells();
+    fs.appendFileSync(cellLog, "not json\n");
+    const content = fs.readFileSync(cellLog, "utf8");
+    const rename = jest.spyOn(fs, "renameSync").mockImplementation(() => {
+      throw new Error("read-only");
+    });
+    let h: ReturnType<typeof service>;
+    try {
+      h = service();
+    } finally {
+      rename.mockRestore();
+    }
+    expect(h.errors.join()).toMatch(/cells\.ndjson had 1 malformed lines.*not moved aside/);
+    h.svc.onSounding(raw(8.2, T0 + 5000, [22.07, 60.07]));
+    h.svc.save();
+    expect(fs.readFileSync(cellLog, "utf8")).toBe(content);
+    expect(saved().cells).toHaveLength(3);
   });
 });
