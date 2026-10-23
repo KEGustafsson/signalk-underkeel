@@ -27,7 +27,7 @@ import type { NodeStore, NodeValues } from "./node-store";
 import { EMPTY, FLAGS, NO_DATA } from "./node-store";
 import type { Walk } from "./walk";
 import { certain, foldFlags, riskAt, take, takeStandIn } from "./walk";
-import { chartReach, chartSigma, chartWeight, flagReach } from "./chart-position";
+import { chartReach, chartSigma, chartWeight, flagReach, MAX_CHART_SIGMA } from "./chart-position";
 
 /**
  * `minDepthOver` (plan §4.3): the shallowest charted depth any part of a
@@ -224,7 +224,13 @@ function reachRisk(
     best = {
       risk,
       dMin: bathy,
-      chart: { distance: ground, sigmaP: survey, weight, source: "survey" }
+      // The σ the weight used: chartWeight caps it at MAX_CHART_SIGMA.
+      chart: {
+        distance: ground,
+        sigmaP: Math.min(MAX_CHART_SIGMA, survey),
+        weight,
+        source: "survey"
+      }
     };
   }
   if (topo > 0) {
@@ -233,7 +239,12 @@ function reachRisk(
       best = {
         risk: weight,
         dMin: -Infinity,
-        chart: { distance: ground, sigmaP: topo, weight, source: "topography" }
+        chart: {
+          distance: ground,
+          sigmaP: Math.min(MAX_CHART_SIGMA, topo),
+          weight,
+          source: "topography"
+        }
       };
     }
   }

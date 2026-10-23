@@ -205,7 +205,11 @@ describe("Traficom WFS ingest", () => {
   describe("with a count from a hits request, pages are read side by side", () => {
     const BOX: [number, number, number, number] = [21.95, 59.95, 22.05, 60.05];
     const numbered = (n: number) =>
-      Array.from({ length: n }, (_, i) => ({ ...sounding, id: `Sounding_P.${i}` }));
+      Array.from({ length: n }, (_, i) => ({
+        ...sounding,
+        id: `Sounding_P.${i}`,
+        properties: { ...sounding.properties, IDENTIFIER: `S${i}` }
+      }));
     /** A server holding `soundings` that answers hits, and pages by startIndex and count. */
     const server = (soundings: unknown[], o: { matched?: number; ignoreStart?: boolean } = {}) => {
       const log = { urls: [] as string[], inFlight: 0, maxInFlight: 0 };
@@ -236,7 +240,8 @@ describe("Traficom WFS ingest", () => {
       });
 
     test("every feature is read once, in order, with at most `concurrency` requests at once", async () => {
-      const n = 2 * WFS_LIMITS.pageSize + 7;
+      // Each of the four runs needs two pages.
+      const n = 4 * WFS_LIMITS.pageSize + 7;
       const { fetch, log } = server(numbered(n));
       await expect(download(fetch, "counted")).resolves.toMatchObject({ soundings: n });
       expect(log.maxInFlight).toBeLessThanOrEqual(WFS_LIMITS.concurrency);
@@ -247,8 +252,10 @@ describe("Traficom WFS ingest", () => {
       expect(pages.every((q) => Number(q.get("count")) <= WFS_LIMITS.pageSize)).toBe(true);
       const written = JSON.parse(
         fs.readFileSync(path.join(TMP, "counted", "SOUNDG.geojson"), "utf8")
-      ) as { features: unknown[] };
-      expect(written.features).toHaveLength(n);
+      ) as { features: { properties: { LNAM: string } }[] };
+      expect(written.features.map((f) => f.properties.LNAM)).toEqual(
+        Array.from({ length: n }, (_, i) => `S${i}`)
+      );
     });
 
     test("a count above maxFeatures is refused before any page is fetched", async () => {

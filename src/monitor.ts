@@ -400,7 +400,7 @@ export class Monitor {
 
   private report(r: LookaheadResult): void {
     if (!this.index) {
-      // The engine is off either way; only a failed load is a server error.
+      // The engine is off either way; a pending reason is a status, any other an error.
       const reason = this.indexReason ?? "no chart index loaded";
       if (PENDING_REASONS.has(reason)) {
         this.status.status(reason);

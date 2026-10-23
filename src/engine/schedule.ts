@@ -82,7 +82,7 @@ export function scoreSchedule(
       if (!f.partial) {
         return f;
       }
-      const full = score(f.t, false);
+      const full = score(f.t, false, times[i - 1]);
       footprints[i] = full;
       return full;
     },

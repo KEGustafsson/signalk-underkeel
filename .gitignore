@@ -41,5 +41,5 @@ data/
 
 # Vendored browser client, copied by scripts/vendor-bus.js
 public/vendor/
-enc
-enc_depth
+/enc/
+/enc_depth/

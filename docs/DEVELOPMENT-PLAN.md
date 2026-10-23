@@ -739,8 +739,9 @@ suppressing.
 - σ_pos combines GNSS (HDOP × 3 m, 5 m without HDOP) and, from the integrity monitor, its
   inflation. The buffer is max(10 m, k_p · σ_pos). Speed error (σ_SOG 0.1 m/s) lengthens each
   footprint by k_p · σ_SOG · t fore and aft instead of widening it, since it moves the boat
-  along its track. The chart's σP widens the buffer per tile by k_p·σP of the tile's own
-  assessed survey (§4.3), on top of the burn around point hazards.
+  along its track. A tile beyond the buffer counts with its P weighted by Φ(−g/σP) of its
+  chart position, and its flags within 2σP of its survey (§4.3), on top of the burn around
+  point hazards.
 - The escape fan uses the maximum turn rate (default 3°/s) and stops at the first heading,
   smallest change first, that stays clear over the whole horizon. The monitor searches it at
   most every 3 s and holds the heading in between. The search runs after the tick's deltas are

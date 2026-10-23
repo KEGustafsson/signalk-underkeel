@@ -23,7 +23,9 @@ export function referenceChartPosition(
   const ground = bufferMetres + chartReach(chartSigma(store).max);
   const maxReach = mercatorBuffer(bounds, ground) * REACH_SLACK;
   const perMetre = maxReach / ground;
-  const buffer = perMetre * bufferMetres;
+  // The plain walk's buffer; ground metres past it start from the poleward conversion.
+  const buffer = mercatorBuffer(bounds, bufferMetres) * REACH_SLACK;
+  const reachBase = perMetre * bufferMetres;
   const area = expandRect(bounds, maxReach);
   let maxRisk = 0;
   let flags = 0;
@@ -45,7 +47,7 @@ export function referenceChartPosition(
       if (d <= buffer) {
         continue;
       }
-      const g = (d - buffer) / perMetre;
+      const g = Math.max(0, (d - reachBase) / perMetre);
       const v = store.values(i);
       const survey = store.surveySigma(i);
       if (g <= flagReach(survey)) {
