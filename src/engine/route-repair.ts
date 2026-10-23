@@ -116,9 +116,10 @@ interface Budget {
  * `repairLeg` split at every few hundred searched cells and between the
  * corridor queries of its checks, with the work it did (work.ts). The work
  * is counted, never timed, so the answer is the same on any machine; a leg
- * that needs more than `maxWork` is refused with a reason.
+ * that needs more than `maxWork` is refused with a reason. The benchmark
+ * reads the work to calibrate its unit.
  */
-function* repairSteps(
+export function* repairSteps(
   index: ChartIndex,
   input: RouteCheckInput,
   leg: LegResult,
