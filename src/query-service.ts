@@ -8,6 +8,7 @@ import type { RequestQueue } from "./route-service";
 import { queryUkc } from "./engine/query";
 import type { UkcTileCache } from "./engine/ukc-tile-geometry";
 import type { UkcTileInput } from "./engine/ukc-tiles";
+import type { LonLat } from "./foundation/geo";
 import { ukcTileWithRange } from "./engine/ukc-tiles";
 import type { WaterLevel } from "./model/uncertainty";
 import { sigmaExtra, thresholdDepth } from "./model/uncertainty";
@@ -22,7 +23,11 @@ export interface QueryServiceDeps {
   indexReason: string | undefined;
   config: PluginConfig;
   vessel(): VesselModel | undefined;
-  waterLevel(): WaterLevel;
+  /**
+   * The level applied now; with `at`, the lowest at those positions, and a
+   * fallback where the source does not reach one of them (plan §4.5).
+   */
+  waterLevel(at?: readonly LonLat[]): WaterLevel;
   waveHeight(): number | undefined;
   /** Which served tiles changed, for `GET /tiles/ukc/changes`. */
   tileChanges?: UkcTileChanges;
@@ -72,7 +77,9 @@ export async function query(
         ring: req.ring,
         bufferMetres: req.bufferMetres ?? 0,
         terms,
-        waterLevel: deps.waterLevel(),
+        // At the ring, not the vessel: a forecast for the vessel's sea area adds water
+        // that may not be there a few tens of kilometres away.
+        waterLevel: deps.waterLevel(req.ring),
         thresholds: deps.config.lookahead.thresholds
       })
     })
