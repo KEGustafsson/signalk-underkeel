@@ -9,7 +9,7 @@ import type { EncLayers } from "../ingest/enc-wasm";
 import { encCell, readEncLayers } from "../ingest/enc-wasm";
 import type { ChartFeature, DepthFeature } from "../ingest/features";
 import type { CellReach } from "./build-items";
-import { cellReach, DEFAULT_BUILD, prepareItems } from "./build-items";
+import { buildArea, cellReach, DEFAULT_BUILD, prepareItems } from "./build-items";
 import type { SavedIndex } from "./build-reuse";
 import { copiedRoots, savedIndex, unchangedInfo, writeReach } from "./build-reuse";
 import type { ChartIndex } from "./chart-index";
@@ -63,9 +63,10 @@ export interface BuildJob {
    */
   changed?: string[];
   /**
-   * Builds only around the vessel: the cells reaching this box are read and only its tiles
-   * built, every other tile being no coverage (plan §4.2). Not with `changed`: roots of a
-   * saved index built in another box are not copied.
+   * Builds only around the vessel: the cells reaching this box are read and only the tiles
+   * within chart position reach of it built, every tile not inside it being no coverage
+   * (plan §4.2). Not with `changed`: roots of a saved index built in another box are not
+   * copied.
    */
   box?: BuildBox;
 }
@@ -76,7 +77,7 @@ export interface RegionJob {
   cells: { dir: string; ref: number; layers?: EncLayers }[];
   leafZoom: number;
   region: RootRange;
-  /** Tiles outside this Mercator rectangle are no coverage. */
+  /** The box in Mercator metres (`BuildOptions.within`): no tile outside it reads as covered. */
   within?: Rect;
 }
 
@@ -203,7 +204,10 @@ export async function buildByRegion(whole: BuildJob, run: RegionRunner): Promise
   const saved = job.changed ? savedIndex(job.indexDir, job.dirs, job.leafZoom) : undefined;
   const reads = new EncReads();
   const s = await survey(job, saved, reads);
-  const range = clipRange(cellsRootRange(s.reaches, minZoom), within && tileRange(minZoom, within));
+  const range = clipRange(
+    cellsRootRange(s.reaches, minZoom),
+    within && tileRange(minZoom, buildArea(within))
+  );
   const roots = range ? rootRegions(range) : [];
   const copies = saved
     ? copiedRoots(

@@ -24,6 +24,7 @@ import {
   geomRectDistance
 } from "../../src/foundation/geometry";
 import type { ChartFeature, QualityFeature } from "../../src/ingest/features";
+import { MAX_CHART_BUFFER } from "../../src/spatial/chart-position";
 import type { ChartPosition, NodeValues } from "../../src/spatial/node-store";
 import { combine, EMPTY, FLAGS, NO_DATA, NodeStore } from "../../src/spatial/node-store";
 import type { QualityOptions } from "../../src/spatial/quality";
@@ -43,6 +44,11 @@ interface BuildOptions {
   /** Point hazards and soundings are burned within k·σP of their position. */
   k: number;
   quality: QualityOptions;
+  /**
+   * A box around the vessel: tiles are built out to the chart position
+   * reach past it, and none not wholly inside it reads as covered.
+   */
+  within?: Rect;
 }
 
 const DEFAULT_BUILD: BuildOptions = {
@@ -450,6 +456,26 @@ const NO_POSITION: ChartPosition = {
   topoDMin: Infinity
 };
 
+/** Interior overlap: `a` and `b` share more than an edge. */
+function interiorsMeet(a: Rect, b: Rect): boolean {
+  return a.minX < b.maxX && b.minX < a.maxX && a.minY < b.maxY && b.minY < a.maxY;
+}
+
+function inside(outer: Rect, inner: Rect): boolean {
+  return (
+    inner.minX >= outer.minX &&
+    inner.maxX <= outer.maxX &&
+    inner.minY >= outer.minY &&
+    inner.maxY <= outer.maxY
+  );
+}
+
+/** The box grown by the widest chart position reach, rounded up to a km. */
+function areaOf(box: Rect): Rect {
+  const reach = Math.ceil(MAX_CHART_BUFFER / 1000) * 1000;
+  return expandRect(box, groundToMercator(reach, maxAbsLat(box)));
+}
+
 function evaluate(
   store: NodeStore,
   opts: BuildOptions,
@@ -459,15 +485,22 @@ function evaluate(
   items: Item[]
 ): Evaluated {
   const rect = tileRect(z, x, y);
-  const all = classify(items, rect);
+  const box = opts.within;
+  const area = box && areaOf(box);
+  const all = area && !interiorsMeet(rect, area) ? [] : classify(items, rect);
   if (!all.some((h) => h.item.f.role === "coverage")) {
     store.add(z, x, y, NO_DATA, false, NO_POSITION);
     return { v: NO_DATA, position: NO_POSITION };
   }
   const tileGround = (rect.maxX - rect.minX) / groundToMercator(1, maxAbsLat(rect));
   const a = analyse(all, rect, tileGround);
-  if (!a.needsSplit || z >= Math.min(opts.leafZoom, a.finest)) {
-    const v = uniformValues(a, rect, opts);
+  // Tiles across the box's edge or its area's split to the leaf zoom.
+  const across = (r: Rect) => interiorsMeet(rect, r) && !inside(r, rect);
+  const edge = box !== undefined && area !== undefined && (across(box) || across(area));
+  if (z >= opts.leafZoom || (!edge && (!a.needsSplit || z >= a.finest))) {
+    const built = uniformValues(a, rect, opts);
+    const v =
+      box && !inside(box, rect) ? { ...built, flags: built.flags | FLAGS.NO_COVERAGE } : built;
     const position = chartPosition(a.hits, v, opts);
     store.add(z, x, y, v, false, position);
     return { v, position };

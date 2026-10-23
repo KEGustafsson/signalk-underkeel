@@ -94,10 +94,22 @@ describe("index built in a box", () => {
     const boxed = await inline(boxJob(ROCK, 1));
     expect(at(boxed.pyramid, ROCK)).toEqual(at(whole.pyramid, ROCK));
     // BANK lies 2.3 km south of ROCK: charted in the whole build, never clear in the box's.
+    // It is within chart position reach of the box, so it keeps its depth to spread risk in.
     expect(at(whole.pyramid, BANK).flags & FLAGS.NO_COVERAGE).toBe(0);
     const outside = at(boxed.pyramid, BANK);
     expect(outside.flags & FLAGS.NO_COVERAGE).not.toBe(0);
-    expect(outside.dMin).toBe(-Infinity);
+    expect(outside.coveredDMin).toBeLessThanOrEqual(at(whole.pyramid, BANK).coveredDMin);
+  });
+
+  test("past the box only the tiles within chart position reach of it are built", async () => {
+    const boxed = await inline(boxJob(ROCK, 0.5));
+    // 2.3 km south of ROCK is 1.8 km past a 0.5 km box: in reach, kept as no coverage.
+    expect(at(boxed.pyramid, BANK).flags & FLAGS.NO_COVERAGE).not.toBe(0);
+    expect(at(boxed.pyramid, BANK).coveredDMin).not.toBe(Infinity);
+    // 4 km north of ROCK lies past the reach: nothing is kept there.
+    const far = at(boxed.pyramid, [ROCK[0], ROCK[1] + 0.036]);
+    expect(far.flags & FLAGS.NO_COVERAGE).not.toBe(0);
+    expect(far.dMin).toBe(-Infinity);
   });
 
   test("a box away from every cell reads no cell and builds no root", async () => {

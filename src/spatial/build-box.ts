@@ -9,8 +9,10 @@ import type { Bbox } from "../ingest/wfs-fetch";
 
 /**
  * The box an index is built in around the vessel (plan §4.2): only the cells
- * reaching it are read and only its tiles are built; every tile outside it is
- * no coverage, so the look-ahead and route checks there are `unknown` or
+ * reaching it are read and only the tiles within chart position reach of it
+ * (`buildArea`) are built, so a hazard charted just past the box still
+ * spreads its risk into it. Every tile not wholly inside the box is no
+ * coverage, so the look-ahead and route checks there are `unknown` or
  * `unverified`, never clear. The box is saved beside the index with the cell
  * stamps it was chosen from, so a start finds whether the saved index still
  * serves the box.
@@ -18,8 +20,13 @@ import type { Bbox } from "../ingest/wfs-fetch";
 
 export const BOX_FILE = "box.json";
 
-/** Cells are read this far beyond the box: past it no feature can set a tile inside. */
-export const BOX_MARGIN_KM = 5;
+/**
+ * Cells are read this far beyond the box: past it no feature can set a built
+ * tile. That is the build area's reach (BOX_REACH, 2 km), a leaf across its
+ * edge at the coarsest leaf zoom (14: 2.4 km) and the widest burn radius
+ * (k · the unassessed σP: 1 km).
+ */
+export const BOX_MARGIN_KM = 6;
 
 export interface BuildBox {
   bbox: Bbox;
