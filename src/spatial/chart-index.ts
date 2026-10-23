@@ -200,6 +200,14 @@ function isCompleteIndex(dir: string): boolean {
 
 const STAGING_WRITER = /^(\d+)-(\d+)-/;
 
+/**
+ * The suffixes `commitChartIndex` gives a moved-aside index: its staging's
+ * `pid-thread-hex`, eight hex digits, or the bare process id of versions before
+ * 2026-10-17. Anything else beside the index, such as a user's
+ * `index.old-before-upgrade`, is not ours to restore or remove.
+ */
+const MOVED_ASIDE = /^(?:\d+(?:-\d+-[0-9a-f]+)?|[0-9a-f]{8})$/;
+
 function isAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -253,7 +261,7 @@ export function recoverChartIndex(dir: string): boolean {
   }
   const moved = fs
     .readdirSync(parent)
-    .filter((name) => name.startsWith(prefix))
+    .filter((name) => name.startsWith(prefix) && MOVED_ASIDE.test(name.slice(prefix.length)))
     .map((name) => path.join(parent, name));
   if (fs.existsSync(dir)) {
     if (isCompleteIndex(dir)) {

@@ -133,6 +133,26 @@ describe("leftovers at recovery", () => {
     expect(names(dir)).toEqual(["index", "index.old-notes"]);
   });
 
+  test("a user's copy named like a moved-aside index is neither removed nor restored", () => {
+    const target = path.join(dir, "index");
+    saveChartIndex(target, synth());
+    const backup = path.join(dir, "index.old-before-upgrade");
+    fs.cpSync(target, backup, { recursive: true });
+    expect(recoverChartIndex(target)).toBe(false);
+    expect(names(dir)).toEqual(["index", "index.old-before-upgrade"]);
+    fs.rmSync(target, { recursive: true });
+    expect(recoverChartIndex(target)).toBe(false);
+    expect(names(dir)).toEqual(["index.old-before-upgrade"]);
+  });
+
+  test("an index moved aside by a version before 2026-10-17 is still restored", () => {
+    const target = path.join(dir, "index");
+    saveChartIndex(target, synth());
+    fs.renameSync(target, path.join(dir, "index.old-12345"));
+    expect(recoverChartIndex(target)).toBe(true);
+    expect(names(dir)).toEqual(["index"]);
+  });
+
   test("a moved-aside index stays while the directory is incomplete", () => {
     const target = path.join(dir, "index");
     saveChartIndex(target, synth());
