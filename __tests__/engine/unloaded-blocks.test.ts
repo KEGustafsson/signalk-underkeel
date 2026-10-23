@@ -284,9 +284,15 @@ describe("UKC tiles", () => {
         (p, z, threshold, mask) => {
           const loaded = draw(index, z, p, threshold);
           const cold = draw(partly(mask), z, p, threshold);
+          // One assertion per run, not per point (§7 Test runtime); NaN still fails.
+          const bad: Array<{ k: number; cold: number; loaded: number }> = [];
           cold.forEach((rank, k) => {
-            expect(rank).toBeGreaterThanOrEqual(loaded[k] as number);
+            const want = loaded[k] as number;
+            if (!(rank >= want)) {
+              bad.push({ k, cold: rank, loaded: want });
+            }
           });
+          expect({ count: bad.length, first: bad.slice(0, 10) }).toEqual({ count: 0, first: [] });
         }
       ),
       { numRuns: 80 }
