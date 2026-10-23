@@ -6,6 +6,8 @@ import type { Geom, PolygonGeom } from "../../src/foundation/geometry";
 import { geomContainsRect, geomRectDistance, pointInPolygon } from "../../src/foundation/geometry";
 import { readCellDirectory } from "../../src/ingest/cell-reader";
 import type { ChartFeature, DepthFeature } from "../../src/ingest/features";
+import { boxAround } from "../../src/ingest/wfs";
+import { boxRect } from "../../src/spatial/build-box";
 import {
   FULL,
   indexPolygon,
@@ -147,7 +149,10 @@ function depthArea(geom: Geom, depth: number, objectClass = "DEPARE"): DepthFeat
   };
 }
 
-const same = (features: ChartFeature[], opts: { minZoom: number; leafZoom: number }) =>
+const same = (
+  features: ChartFeature[],
+  opts: { minZoom: number; leafZoom: number; within?: Rect }
+) =>
   expect(
     serializePyramid(buildPyramid(features, opts)).equals(
       serializePyramid(referenceBuildPyramid(features, opts))
@@ -161,6 +166,17 @@ describe("pyramid build equals the reference builder", () => {
     );
     same(features, { minZoom: 10, leafZoom });
   });
+
+  test.each([16, 18])(
+    "the fixture cells in a box around the vessel at leaf zoom %i",
+    (leafZoom) => {
+      const features = ["FI4SYNTH", "FI5SYNTH"].flatMap(
+        (name, i) => readCellDirectory(path.join(FIXTURES, name), i).features
+      );
+      const within = boxRect(boxAround([22.02, 60.01], 1));
+      same(features, { minZoom: 10, leafZoom, within });
+    }
+  );
 
   test("random many-vertex areas, land, soundings and quality zones", () => {
     const box = [21.99, 59.995, 22.02, 60.015] as const;
