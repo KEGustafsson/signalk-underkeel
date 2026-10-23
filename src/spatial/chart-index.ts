@@ -96,6 +96,8 @@ function syncDirectory(dir: string): void {
  * and returns its path; `commitChartIndex` swaps it in.
  */
 export function stageChartIndex(dir: string, index: ChartIndex): string {
+  // A trailing separator would put the staging inside `dir`, where no commit can move it.
+  dir = path.resolve(dir);
   // A worker thread shares the process id, so the id alone would let a WFS
   // rebuild and a save on the main thread remove each other's directories.
   const suffix = `${process.pid}-${threadId}-${randomBytes(4).toString("hex")}`;
@@ -118,7 +120,9 @@ export function stageChartIndex(dir: string, index: ChartIndex): string {
  * pyramid from another.
  */
 export function commitChartIndex(dir: string, staging: string): void {
-  const previous = `${dir}.old-${path.basename(staging).slice(`${path.basename(dir)}.tmp-`.length)}`;
+  dir = path.resolve(dir);
+  const suffix = /\.tmp-(.+)$/.exec(path.basename(staging))?.[1] ?? randomBytes(4).toString("hex");
+  const previous = `${dir}.old-${suffix}`;
   const hadIndex = fs.existsSync(dir);
   if (hadIndex) {
     fs.renameSync(dir, previous);
@@ -131,6 +135,7 @@ export function commitChartIndex(dir: string, staging: string): void {
 }
 
 export function saveChartIndex(dir: string, index: ChartIndex): void {
+  dir = path.resolve(dir);
   commitChartIndex(dir, stageChartIndex(dir, index));
 }
 
@@ -152,6 +157,7 @@ function isAlive(pid: number): boolean {
 
 /** Removes the staging directories beside `dir` whose writer `owned` claims. */
 export function removeStaging(dir: string, owned: (pid: number, thread: number) => boolean): void {
+  dir = path.resolve(dir);
   const parent = path.dirname(dir);
   const prefix = `${path.basename(dir)}.tmp-`;
   if (!fs.existsSync(parent)) {
@@ -172,6 +178,7 @@ export function removeStaging(dir: string, owned: (pid: number, thread: number) 
  * process which has since exited left half-written is removed first.
  */
 export function recoverChartIndex(dir: string): boolean {
+  dir = path.resolve(dir);
   // The index directory is configurable and may be shared, so only staging
   // whose writer has gone is removed; another live server may still commit it.
   removeStaging(dir, (pid) => pid !== process.pid && !isAlive(pid));
