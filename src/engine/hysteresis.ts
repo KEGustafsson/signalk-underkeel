@@ -81,13 +81,14 @@ export class Hysteresis {
     ) {
       return this.take(raw);
     }
-    // Hold the state and its reason; the numbers stay current.
+    // Hold the state and its reason; the numbers stay current. So does the
+    // escape heading: one found from an earlier position and course may now
+    // point at the shoal, so none is better than the held one.
     return {
       ...raw,
       state: held.state,
       reason: held.reason,
-      worst: raw.worst ?? held.worst,
-      escapeHeading: raw.escapeHeading ?? held.escapeHeading
+      worst: raw.worst ?? held.worst
     };
   }
 
