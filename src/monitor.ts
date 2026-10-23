@@ -22,12 +22,7 @@ import { PENDING_REASONS } from "./index-loader";
 import { WFS_NOTICE } from "./ingest/wfs";
 import type { WaterLevelStatus } from "./water-level-service";
 import { WaterLevelService } from "./water-level-service";
-import {
-  ChangeNotifier,
-  groundingNotification,
-  integrityKey,
-  integrityNotification
-} from "./notifications";
+import { ChangeNotifier, groundingNotification, integrityUpdate } from "./notifications";
 import { asNumber, INPUT_PATHS, NavInputs, sampleTime, selfValue } from "./nav-inputs";
 import type { Deferral } from "./escape-search";
 import { EscapeSearch } from "./escape-search";
@@ -208,9 +203,8 @@ export class Monitor {
   /**
    * Acknowledged passages and mooring zones act on the published state,
    * after hysteresis: they change the state, not P, so hysteresis would
-   * otherwise never let an acknowledged warn go. A mooring zone needs no
-   * heading, so a boat at rest with neither heading nor COG is still in it;
-   * only acknowledgements, which hold for a heading sector, need one.
+   * otherwise never let an acknowledged warn go. Only acknowledgements hold
+   * for a heading; a boat at rest with no heading or COG is still in a zone.
    */
   private suppressed(r: LookaheadResult): LookaheadResult {
     const vessel = this.vessel();
@@ -399,11 +393,8 @@ export class Monitor {
     );
     this.notify(r);
     if (this.integrityResult) {
-      this.notifier.send(PATHS.positionIntegrity, integrityNotification(this.integrityResult), {
-        key: integrityKey(this.integrityResult),
-        refreshMs: NOTIFY_REFRESH_MS,
-        now: this.clock.now()
-      });
+      const integrity = integrityUpdate(this.integrityResult, this.clock.now());
+      this.notifier.send(PATHS.positionIntegrity, integrity.value, integrity.repeat);
     }
     this.checkGrounding(r);
     this.escape.after(raw.state, this.clock.now() - t0, escapable);

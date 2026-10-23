@@ -1,6 +1,7 @@
 import type { Path, ServerAPI } from "@signalk/server-api";
 import type { GroundingCheck } from "./engine/grounding-detect";
 import type { UnderKeelNotification } from "./engine/notify";
+import { NOTIFY_REFRESH_MS } from "./engine/notify";
 import type { IntegrityResult } from "./model/integrity";
 
 /** Notification values the plugin publishes beside the look-ahead's own. */
@@ -24,13 +25,17 @@ export function integrityNotification(r: IntegrityResult): NotificationValue {
 }
 
 /**
- * What a new integrity notification must go out for at once: its state and
- * the kinds of reason. The divergence and HDOP in the message change with
- * every fix and are sent at most every refresh interval while these hold.
+ * The integrity notification and how it repeats: at once when its state or
+ * kind of reason changes, while the divergence and HDOP in the message,
+ * which change with every fix, go out at most every NOTIFY_REFRESH_MS.
  */
-export function integrityKey(r: IntegrityResult): string {
-  const n = integrityNotification(r);
-  return `${n.state}|${n.message.replace(/\d+(\.\d+)?/g, "#")}`;
+export function integrityUpdate(
+  r: IntegrityResult,
+  now: number
+): { value: NotificationValue; repeat: Repeat } {
+  const value = integrityNotification(r);
+  const key = `${value.state}|${value.message.replace(/\d+(\.\d+)?/g, "#")}`;
+  return { value, repeat: { key, refreshMs: NOTIFY_REFRESH_MS, now } };
 }
 
 export function groundingNotification(g: GroundingCheck): NotificationValue {
