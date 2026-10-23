@@ -254,7 +254,7 @@ datum mapping.
 
 ```mermaid
 flowchart LR
-  ENC[ENC cells as GeoJSON] --> IDX[(chart index:<br/>min-depth pyramid<br/>and hazard tree)]
+  ENC[S-57 ENC cells,<br/>read with GDAL] --> IDX[(chart index:<br/>min-depth pyramid<br/>and hazard tree)]
   NAV[Signal K position,<br/>course, attitude] --> LA
   WL[water level] --> LA
   IDX --> LA[look-ahead, 1 Hz]
@@ -279,7 +279,7 @@ and ESLint (`no-restricted-imports`) enforces it:
 | Layer      | Directory         | Responsibility                                                 |
 | ---------- | ----------------- | -------------------------------------------------------------- |
 | foundation | `src/foundation/` | shared types, Signal K paths, geodesy and geometry             |
-| ingest     | `src/ingest/`     | S-57 GeoJSON reading, coverage mosaic, vertical datums, WFS    |
+| ingest     | `src/ingest/`     | S-57 reading with GDAL, coverage mosaic, vertical datums, WFS  |
 | spatial    | `src/spatial/`    | min-depth pyramid, hazard R-tree, index storage, build worker  |
 | model      | `src/model/`      | vessel, water level providers, uncertainty, position integrity |
 | engine     | `src/engine/`     | look-ahead, hysteresis, route check, repair, departure window  |
@@ -321,9 +321,10 @@ hook formats and lints staged files.
 Tests are behaviour tests under `__tests__/`, mirroring `src/`. Property tests use fast-check;
 the conservative-depth query, monotonic risk, heel and the coverage mosaic have them. Contract
 tests check the REST responses and request parsers against the schemas in
-`schemas/navigation-safety/`. `scripts/make-synthetic-enc.js` regenerates the fixtures; real
-chart data and built indexes stay under `data/`, which git ignores along with `*.000` and
-`*.fgb`.
+`schemas/navigation-safety/`. `scripts/make-synthetic-enc.js` regenerates the GeoJSON fixtures
+in `fixtures/enc/`, and `fixtures/s57/generate.js` writes the same scenario as S-57 cells from
+them. Real chart data and built indexes stay under `data/`; git ignores it, and `*.000` and
+`*.fgb` files outside `fixtures/s57/`.
 
 To run a working copy in a local Signal K server, build it and install the folder, which npm
 links instead of copying:
