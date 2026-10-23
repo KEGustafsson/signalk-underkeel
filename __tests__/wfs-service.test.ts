@@ -337,6 +337,35 @@ describe("box service and the index in use", () => {
   const indexOf = (...cells: { name: string; source?: string }[]) =>
     ({ catalogue: { version: 1, cells } }) as unknown as ChartIndex;
 
+  test("a refresh starts before the no-coverage band inside the box edge comes in reach", async () => {
+    fs.writeFileSync(
+      path.join(TMP, "box.json"),
+      JSON.stringify({ ...savedBox(), durationMs: 600_000 })
+    );
+    const h = harness();
+    h.t.index = indexOf({ name: "FI5ENC01" });
+    h.t.motion = { sog: 3, cog: Math.PI / 2 };
+    // 5.4 km to the east edge: past SOG × 1.5 × 10 min (2.7 km) and the look-ahead (556 m)
+    // by 2.1 km, but tiles across the edge flag a footprint up to 1 km plus its buffer inside.
+    h.t.pos = project(POS, Math.PI / 2, 4600);
+    await h.service.check();
+    expect(h.indexes).toHaveLength(1);
+  });
+
+  test("a box too small to hold that band is not rebuilt every minute for a drifting vessel", async () => {
+    const box = { ...savedBox(), bbox: boxAround(POS, 2), radiusKm: 2, durationMs: 60_000 };
+    fs.writeFileSync(path.join(TMP, "box.json"), JSON.stringify(box));
+    const h = harness(okReply, { config: { url: "https://wfs.test/wfs", radiusKm: 2, catzoc: 3 } });
+    h.t.index = indexOf({ name: "FI5ENC01" });
+    h.t.motion = { sog: 0.1, cog: 0 };
+    h.t.pos = POS;
+    for (let i = 0; i < 5; i++) {
+      h.t.now += 120_000;
+      await h.service.check();
+    }
+    expect(h.indexes).toHaveLength(0);
+  });
+
   test("a saved box at the vessel is built again while no index is in use", async () => {
     // As after an upgrade from a whole build, or with the index directory deleted.
     fs.writeFileSync(path.join(TMP, "box.json"), JSON.stringify(savedBox()));

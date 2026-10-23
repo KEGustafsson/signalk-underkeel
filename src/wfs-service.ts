@@ -1,6 +1,7 @@
 import fs from "fs";
 import { usableMemory } from "./foundation/memory";
 import path from "path";
+import { MAX_POSITION_BUFFER } from "./engine/fan";
 import { Worker } from "worker_threads";
 import type { LonLat } from "./foundation/geo";
 import { haversine, project } from "./foundation/geo";
@@ -19,6 +20,7 @@ import type { WfsCounts, WfsJob, WfsReply } from "./wfs-worker";
 import { NO_FEATURES, refreshBuild, refreshCells } from "./wfs-worker";
 import type { Clock } from "./monitor";
 import { readBox } from "./spatial/build-box";
+import { MAX_CHART_BUFFER } from "./spatial/chart-position";
 import type { BuildJob, BuildReply, IndexParts } from "./spatial/build-worker";
 import { adoptIndex } from "./spatial/build-worker";
 import { readsSettled } from "./spatial/block-reader";
@@ -28,8 +30,8 @@ import { commitChartIndex, loadChartIndexAsync, removeStaging } from "./spatial/
 /**
  * Keeps a Traficom WFS box around the vessel (plan §4.2). When the vessel
  * is more than half the box radius from its centre, or at its speed would
- * reach the box edge less the look-ahead before another refresh could
- * arrive, a box centred ahead along its course is downloaded and the index
+ * reach the box edge less the look-ahead and the no-coverage band inside the
+ * edge before another refresh could arrive, a box centred ahead along its course is downloaded and the index
  * rebuilt off the event loop, then handed over; until then the previous
  * index stays in use.
  */
@@ -261,6 +263,13 @@ const DEFAULT_REFRESH_MS = 600_000;
 const REFRESH_MARGIN = 1.5;
 /** The next box is centred at most this share of the radius ahead of the vessel. */
 const MAX_LEAD = 0.8;
+/**
+ * How far inside the box edge a footprint can read no coverage, beyond the look-ahead's reach:
+ * the widest position buffer and chart reach, as `block-keeper.ts` keeps. A tile across the
+ * edge is no coverage and keeps its survey σ, so its flag reaches 2σ (1 km in CATZOC D) past
+ * the footprint's buffer.
+ */
+const EDGE_BAND = MAX_POSITION_BUFFER + MAX_CHART_BUFFER;
 
 const sameBbox = (a: Bbox | undefined, b: Bbox | undefined): boolean =>
   a !== undefined && b !== undefined && a.every((v, i) => v === b[i]);
@@ -356,16 +365,19 @@ export class WfsService {
   }
 
   /**
-   * Whether the vessel would reach the box edge, less the look-ahead's reach, before a
-   * refresh started now, with the margin, could be handed over. At 15 kn the half-radius
-   * rule left 10.8 min of the 10 km box ahead, and a Pi 3 takes 11–14 min.
+   * Whether the vessel would reach the box edge, less the look-ahead's reach and EDGE_BAND,
+   * before a refresh started now, with the margin, could be handed over. At 15 kn the
+   * half-radius rule left 10.8 min of the 10 km box ahead, and a Pi 3 takes 11–14 min. A box
+   * too small to hold the band can at best be kept around the vessel: the band counts up to
+   * half the radius, or a drifting vessel would rebuild a 2 km box every minute.
    */
   private edgeSoon(pos: LonLat, b: WfsBox): boolean {
     const m = this.deps.motion();
     if (!m || !(m.sog > 0)) {
       return false;
     }
-    const reach = Math.max(this.deps.lookahead.distance, m.sog * this.deps.lookahead.minHorizon);
+    const look = Math.max(this.deps.lookahead.distance, m.sog * this.deps.lookahead.minHorizon);
+    const reach = Math.max(look, Math.min(look + EDGE_BAND, (b.radiusKm * 1000) / 2));
     const travel = (m.sog * REFRESH_MARGIN * this.refreshMs()) / 1000;
     return edgeAhead(pos, m.cog, b.bbox) < travel + reach;
   }
