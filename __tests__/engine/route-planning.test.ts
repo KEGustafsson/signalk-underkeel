@@ -186,6 +186,35 @@ describe("route repair", () => {
     expect(repair.legs.every((l) => l.status === "ok")).toBe(true);
   });
 
+  test("a rock just past a long leg's end, inside the end's cell, is passed", () => {
+    // The 30 km leg's ends lie on corners of their 500 m cells; a 1 m rock 200 m along the leg
+    // from either end lies in that end's cell, on the leg. Lines out of the start cell and into
+    // the goal cell must be checked from the end itself, or the path's first or last line runs
+    // over the rock and the repair is lost.
+    const long: LonLat[] = [
+      [22.0, 60.0],
+      [22.54, 60.0]
+    ];
+    for (const lon of [22.0 + 200 / 55597, 22.54 - 200 / 55597]) {
+      const rocky: ChartIndex = {
+        ...index,
+        pyramid: buildPyramid(
+          [
+            ...basin([21.6, 59.8, 22.9, 60.2], 10),
+            area([lon - 2e-4, 59.9999, lon + 2e-4, 60.0001], 1)
+          ],
+          { minZoom: 10, leafZoom: 18 }
+        )
+      };
+      const checked = checkRoute(rocky, input(long), NOW).legs[0] as LegResult;
+      expect(checked.status).toBe("fail");
+      const repair = repairLeg(rocky, input(long), checked);
+      expect(repair.reason).toBeUndefined();
+      expect(repair.waypoints.length).toBeGreaterThan(0);
+      expect(repair.legs.every((l) => l.status === "ok")).toBe(true);
+    }
+  });
+
   test("the search keeps the chart's position uncertainty clear of the shoal", async () => {
     // CATZOC B: depth areas may lie 50 m from where they are drawn.
     const box = [22.0, 60.0, 22.06, 60.03] as const;

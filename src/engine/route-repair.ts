@@ -1,5 +1,6 @@
 import type { LonLat } from "../foundation/geo";
 import { haversine } from "../foundation/geo";
+import type { Geom } from "../foundation/geometry";
 import { sigmaExtra, thresholdDepth } from "../model/uncertainty";
 import { vesselTerms } from "../model/vessel";
 import type { ChartIndex } from "../spatial/chart-index";
@@ -7,9 +8,16 @@ import { FLAGS } from "../spatial/node-store";
 import { footprintGeom, minDepthOver } from "../spatial/pyramid";
 import { DEFAULT_BUILD } from "../spatial/pyramid-build";
 import type { LegResult, RouteCheckInput, Steps } from "./route-check";
-import { checkLeg, checkRouteYielding, drain, legsSteps, UNCHECKED } from "./route-check";
-import type { Grid } from "./route-repair-search";
-import { cellOf, frameAt, thetaStar } from "./route-repair-search";
+import {
+  checkLeg,
+  checkRouteYielding,
+  corridorRing,
+  drain,
+  legsSteps,
+  UNCHECKED
+} from "./route-check";
+import type { EndCheck, Grid } from "./route-repair-search";
+import { cellCentre, cellOf, frameAt, thetaStar } from "./route-repair-search";
 import { queryWork } from "./work";
 
 /**
@@ -192,22 +200,19 @@ function* searchSteps(
   const wl = input.waterLevel(start, Math.max(Date.parse(leg.eta.end), reach), [leg.from, leg.to]);
   const terms = vesselTerms(input.vessel, { speed, waveHeight: input.waveHeight }, input.dynamics);
   const risk = { threshold: thresholdDepth(terms, wl), sigmaExtra: sigmaExtra(terms, wl) };
-  /** The cost of the water around `at`; undefined, not queried, once the search's work is spent. */
-  const score = (at: LonLat, bufferMetres: number): number | undefined => {
+  /** The cost of the water in `geom`; undefined, not queried, once the search's work is spent. */
+  const query = (geom: Geom, bufferMetres?: number): number | undefined => {
     if (budget.work >= limit) {
       return undefined;
     }
-    const r = minDepthOver(index.pyramid, footprintGeom([at]), {
-      bufferMetres,
-      chartPosition: true,
-      risk
-    });
+    const r = minDepthOver(index.pyramid, geom, { bufferMetres, chartPosition: true, risk });
     budget.work += queryWork(r);
     const unchecked = (r.flags & UNCHECKED) !== 0;
     return unchecked || r.maxRisk >= input.probability
       ? Infinity
       : 1 + (opts.alpha * r.maxRisk) / input.probability;
   };
+  const score = (at: LonLat, bufferMetres: number) => query(footprintGeom([at]), bufferMetres);
   // The path starts and ends on the leg's own ends, so their cells are scored there with the
   // corridor alone: around the cell centre, grown by half a cell, a shoal hundreds of metres
   // from a waypoint on a long leg's coarse grid would block the whole search. The final check
@@ -235,12 +240,59 @@ function* searchSteps(
     }
     return grid.cost[i] as number;
   };
-  return yield* thetaStar(grid, leg.from, leg.to, costOf, {
-    add: (units) => {
+  const work = {
+    add: (units: number) => {
       budget.work += units;
     },
     stopped: () => budget.work >= limit
-  });
+  };
+  const ends = endChecks(grid, leg, corridor, query);
+  return yield* thetaStar(grid, leg.from, leg.to, costOf, work, ends);
+}
+
+/**
+ * The start and goal cells are opened on their ends' own score, so a line
+ * leaving or reaching them could cross a shoal elsewhere in the cell that
+ * no score looked at. Within 1.5 cells of its end, past the end's cell
+ * whatever corner of it the end lies in, each such line is checked as the
+ * corridor it is. Where the water within that reach of an end is clear,
+ * one query stands for all its lines.
+ */
+function endChecks(
+  grid: Grid,
+  leg: LegResult,
+  corridor: number,
+  query: (geom: Geom, bufferMetres?: number) => number | undefined
+): EndCheck {
+  const reach = 1.5 * grid.cell;
+  const open = (c: number | undefined) => c !== undefined && c !== Infinity;
+  const clear = new Map<"from" | "to", boolean>();
+  const lines = { from: new Map<number, boolean>(), to: new Map<number, boolean>() };
+  return (end, cell) => {
+    const [at, other] = end === "from" ? [leg.from, leg.to] : [leg.to, leg.from];
+    if (!clear.has(end)) {
+      clear.set(end, open(query(footprintGeom([at]), reach + corridor)));
+    }
+    if (clear.get(end)) {
+      return true;
+    }
+    const known = lines[end].get(cell);
+    if (known !== undefined) {
+      return known;
+    }
+    // Into the other end's cell, the line runs to that end itself.
+    const to = cell === cellOf(grid, other) ? other : cellCentre(grid, cell);
+    const [ax, ay] = grid.frame.toXY(at);
+    const [bx, by] = grid.frame.toXY(to);
+    const k = Math.min(1, reach / Math.max(Math.hypot(bx - ax, by - ay), 1e-9));
+    const tip = grid.frame.toLonLat(ax + (bx - ax) * k, ay + (by - ay) * k);
+    const c = query(footprintGeom(corridorRing(at, tip, corridor)));
+    // Unchecked once the work is spent: blocked, and asked again should the search go on.
+    if (c !== undefined) {
+      lines[end].set(cell, c !== Infinity);
+    }
+    return open(c);
+  };
 }
 
 function gridFor(a: LonLat, b: LonLat, corridor: number, opts: RepairOptions): Grid {
