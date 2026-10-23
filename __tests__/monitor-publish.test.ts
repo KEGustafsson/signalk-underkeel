@@ -188,6 +188,30 @@ describe("tick publishing", () => {
   });
 });
 
+test("a position-integrity warning whose numbers drift is refreshed at most every 30 s", () => {
+  const r = rig(false);
+  const still = (at: number, hdop: number): Delta => {
+    const d = navDelta(22.003, 60.0125, 0, at);
+    return {
+      updates: d.updates.map((u) => ({
+        ...u,
+        values: [...u.values, { path: "navigation.gnss.horizontalDilution", value: hdop }]
+      }))
+    } as Delta;
+  };
+  const ticks = 20;
+  for (let i = 0; i < ticks; i++) {
+    r.tick(still(T0 + (i + 1) * 1000, 6 + i / 10));
+  }
+  const warns = values(r.deltas).filter(
+    (v) =>
+      v.path === "notifications.navigation.positionIntegrity" &&
+      (v.value as { state: string }).state === "warn"
+  );
+  expect(warns[0]?.value).toMatchObject({ message: expect.stringMatching(/HDOP 6\.0/) });
+  expect(warns.length).toBeLessThanOrEqual(Math.ceil((ticks * 1000) / NOTIFY_REFRESH_MS));
+});
+
 describe("escape search after the tick", () => {
   test("runs once the tick's result is out and publishes its heading", () => {
     const r = rig(true);

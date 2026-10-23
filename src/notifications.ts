@@ -23,6 +23,16 @@ export function integrityNotification(r: IntegrityResult): NotificationValue {
   };
 }
 
+/**
+ * What a new integrity notification must go out for at once: its state and
+ * the kinds of reason. The divergence and HDOP in the message change with
+ * every fix and are sent at most every refresh interval while these hold.
+ */
+export function integrityKey(r: IntegrityResult): string {
+  const n = integrityNotification(r);
+  return `${n.state}|${n.message.replace(/\d+(\.\d+)?/g, "#")}`;
+}
+
 export function groundingNotification(g: GroundingCheck): NotificationValue {
   return g.grounded
     ? {
