@@ -26,8 +26,11 @@ export interface Discrepancy {
   /** Posterior depth below chart datum and its σ, metres. */
   measured: number;
   sigma: number;
-  /** Shallowest charted depth in the cell, metres. */
-  charted: number;
+  /**
+   * Shallowest charted depth in the cell, metres; null when the chart in use gives none, as
+   * after a rebind onto an index that does not chart the cell (the adjustment stays).
+   */
+  charted: number | null;
   samples: number;
   passes: number;
   lastSeen: string;
@@ -42,7 +45,7 @@ export function discrepancyOf(c: CellPosterior): Discrepancy {
     position: { latitude, longitude },
     measured: round(c.mean),
     sigma: round(c.sigma),
-    charted: round(c.chartDepth),
+    charted: Number.isFinite(c.chartDepth) ? round(c.chartDepth) : null,
     samples: c.samples,
     passes: c.passes,
     lastSeen: new Date(c.lastAt).toISOString()
@@ -74,11 +77,16 @@ export function noteOf(c: CellPosterior): Record<string, unknown> {
 
 /** The Signal K note body for a discrepancy. */
 function noteFor(d: Discrepancy): Record<string, unknown> {
+  const charted = d.charted === null ? "not charted" : `charted ${d.charted} m`;
+  const against =
+    d.charted === null
+      ? "where the chart in use gives no depth"
+      : `shallower than the charted ${d.charted} m`;
   return {
-    name: `Suspected shoal ${d.measured} m (charted ${d.charted} m)`,
+    name: `Suspected shoal ${d.measured} m (${charted})`,
     description:
       `Own soundings put this cell at ${d.measured} m ± ${d.sigma} m below chart datum, ` +
-      `shallower than the charted ${d.charted} m, from ${d.samples} samples on ${d.passes} passes. ` +
+      `${against}, from ${d.samples} samples on ${d.passes} passes. ` +
       `Last seen ${d.lastSeen}. Advisory: verify before relying on it.`,
     position: d.position,
     properties: { source: "signalk-underkeel", ...d }
