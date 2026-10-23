@@ -7,6 +7,8 @@ import {
   navState
 } from "../../src/engine/lookahead";
 import { Hysteresis } from "../../src/engine/hysteresis";
+import { trackAt } from "../../src/engine/trajectory";
+import type { LonLat } from "../../src/foundation/geo";
 import { haversine } from "../../src/foundation/geo";
 import type { VesselModel } from "../../src/model/vessel";
 import type { ChartIndex } from "../../src/spatial/chart-index";
@@ -488,6 +490,33 @@ describe("probabilistic look-ahead on the synthetic chart", () => {
     const alert = at(300, 50);
     expect(alert.state).toBe("alert");
     expect(alert.escapeHeading).toBeNull();
+  });
+
+  test("a boat turning toward a rock is told to steady on its heading", () => {
+    // A 1°/s turn to starboard at 3 m/s reaches the rock 60 s on; held straight it passes.
+    const origin: LonLat = [22.0, 60.01];
+    const rot = (1 * Math.PI) / 180;
+    const p = trackAt(origin, { course: EAST, sog: 3, rot, turnFor: 60 }, 60).position;
+    const rock: ChartIndex = {
+      catalogue: { version: 1, cells: [] },
+      pyramid: buildPyramid([...basin([21.98, 59.98, 22.06, 60.03], 10), point(p[0], p[1], 1)], {
+        minZoom: 12,
+        leafZoom: 18
+      }),
+      hazards: new HazardIndex([])
+    };
+    const start = nav(origin[0], origin[1], EAST, 3);
+    const inputs = { ...ctx(DEEP_KEEL), escape: true };
+    expect(evaluateLookahead(start, inputs, rock, NOW).state).toBe("normal");
+    const turning = evaluateLookahead(
+      { ...start, rot: { value: rot, at: NOW } },
+      inputs,
+      rock,
+      NOW
+    );
+    expect(["warn", "alarm"]).toContain(turning.state);
+    // Stopping the turn is the way out, so the current heading is published, not none.
+    expect(turning.escapeHeading).toBeCloseTo(EAST, 9);
   });
 
   test("an escape heading never counts water off the chart as clear", () => {
