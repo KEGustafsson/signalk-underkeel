@@ -1,7 +1,9 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
+import * as durable from "../src/foundation/durable-file";
 import type { BuildJob } from "../src/spatial/build-worker";
+import { runBuild } from "../src/spatial/build-worker";
 import { readCellDirectory } from "../src/ingest/cell-reader";
 import { buildChartIndex, commitChartIndex, loadChartIndex } from "../src/spatial/chart-index";
 import type { IndexBuilder } from "../src/wfs-service";
@@ -71,6 +73,22 @@ describe("index build worker entry", () => {
   test("reports a failed build as a message instead of throwing", async () => {
     const messages = await runWorkerEntry(job([path.join(dir, "missing")]));
     expect(messages).toEqual([{ ok: false, error: expect.any(String) }]);
+  });
+});
+
+describe("staging", () => {
+  test("a failed reach.json write removes the staging it was written into", async () => {
+    const write = jest.spyOn(durable, "writeFileDurable").mockImplementation((file) => {
+      if (String(file).endsWith("reach.json")) {
+        throw new Error("ENOSPC: no space left on device");
+      }
+    });
+    try {
+      await expect(runBuild({ ...job(), threads: 1 })).rejects.toThrow(/ENOSPC/);
+      expect(fs.readdirSync(dir)).toEqual([]);
+    } finally {
+      write.mockRestore();
+    }
   });
 });
 
