@@ -7,6 +7,7 @@ import type { CellScan } from "./ingest/cell-source";
 import { currentInfo, readCell, scanCellSources } from "./ingest/cell-source";
 import { WFS_SOURCE } from "./ingest/wfs";
 import { readBox } from "./spatial/build-box";
+import type { BuildBox } from "./spatial/build-box";
 import type { BuildJob } from "./spatial/build-worker";
 import type { ChartIndex } from "./spatial/chart-index";
 import {
@@ -199,36 +200,46 @@ function plan(
     }));
   }
   const scan = scanCellSources(cfg.cellsDir);
-  const change = cellsChange(cfg.cellsDir, saved, scan.sources);
+  // Each cell is stamped once, for the saved catalogue and the saved box alike.
+  let stamps: string[] | undefined;
+  const encKeys = (): string[] => (stamps ??= scan.sources.map(sourceKey));
+  const change = cellsChange(cfg.cellsDir, saved, encKeys);
   const notes = [...(change ? [change] : []), ...skippedNote(cfg.cellsDir, scan)];
   const sources = Boolean(cfg.cellsDir) || extraDirs.length > 0;
-  const rebuild = (why: string[]): IndexPlan =>
-    buildPlan(cfg, indexDir, [...scan.sources, ...extraDirs], why);
-  // A power cut during a save can leave a file empty or short; the cells are read again.
-  const unreadable = (err: unknown): IndexPlan =>
-    sources
-      ? rebuild([
-          `rebuilt the index: the saved one could not be read (${(err as Error).message})`,
-          ...notes
-        ])
-      : { load: failedLoad(indexDir, err) };
+  const dirs = [...scan.sources, ...extraDirs];
+  const keys = (): string[] => [...encKeys(), ...extraDirs.map(sourceKey)].sort();
+  const rebuild = (why: string[]): IndexPlan => buildPlan(cfg, indexDir, dirs, why);
+  // A power cut during a save can leave a file empty or short; the cells are read again, in
+  // the saved box when the index is built around the vessel.
+  const unreadable = (err: unknown): IndexPlan => {
+    const why = `the saved one could not be read (${(err as Error).message})`;
+    if (!sources) {
+      return { load: failedLoad(indexDir, err) };
+    }
+    return boxed(cfg, sources)
+      ? boxUnreadable(cfg, indexDir, dirs, keys, why, skippedNote(cfg.cellsDir, scan))
+      : rebuild([`rebuilt the index: ${why}`, ...notes]);
+  };
   if (error) {
     return unreadable(error);
   }
   if (boxed(cfg, sources)) {
-    return boxPlan(
-      cfg,
-      indexDir,
-      saved !== undefined && !mismatch,
-      [...scan.sources, ...extraDirs],
-      {
-        fromSaved: (why) => fromSaved(why, unreadable),
-        notes: skippedNote(cfg.cellsDir, scan)
-      }
-    );
+    return boxPlan(cfg, indexDir, dirs, keys, {
+      mismatch,
+      fromSaved: (why) => fromSaved(why, unreadable),
+      notes: skippedNote(cfg.cellsDir, scan)
+    });
   }
-  if (sources && (cfg.rebuildIndex || mismatch || !saved || change)) {
+  // With no index saved, `mismatch` says so.
+  if (sources && (cfg.rebuildIndex || mismatch || change)) {
     return rebuild(notes);
+  }
+  // An index built in a box is no coverage past it, and boxRadiusKm 0 indexes every cell.
+  if (sources && readBox(indexDir)) {
+    return rebuild([
+      "rebuilt the index: the saved one was built in a box around the vessel",
+      ...notes
+    ]);
   }
   if (!saved) {
     return { load: { indexDir, built: false, reason: missingReason(cfg, indexDir, false) } };
@@ -239,45 +250,70 @@ function plan(
 /** Whether the index is built around the vessel rather than from every cell. */
 const boxed = (cfg: PluginConfig, sources: boolean): boolean => sources && cfg.boxRadiusKm > 0;
 
+const sourceKey = (dir: string): string => cellKey(currentInfo(dir));
+
 /** Each source's stamp, sorted: what a box build records of the cells it chose from. */
 export function sourceKeys(dirs: readonly string[]): string[] {
-  return dirs.map((d) => cellKey(currentInfo(d))).sort();
+  return dirs.map(sourceKey).sort();
+}
+
+const boxWaiting = (indexDir: string, notes: string[]): IndexPlan => ({
+  load: withNotes({ indexDir, built: false, reason: BOX_WAITING_REASON }, notes)
+});
+
+/** A box index that could not be read: rebuilt in its saved box, or with none, nothing yet. */
+function boxUnreadable(
+  cfg: PluginConfig,
+  indexDir: string,
+  dirs: string[],
+  keys: () => string[],
+  why: string,
+  notes: string[]
+): IndexPlan {
+  const box = readBox(indexDir);
+  return box
+    ? buildPlan(cfg, indexDir, dirs, [`rebuilt the index: ${why}`, ...notes], {
+        bbox: box.bbox,
+        sources: keys()
+      })
+    : boxWaiting(indexDir, [`not using the saved index: ${why}`, ...notes]);
 }
 
 /**
  * The plan when the index is built around the vessel: the saved index while
  * it was built in a box from the same cells, else a build in that box; with
  * no saved box nothing until the box service has a position (invariant 3).
+ * `mismatch` says why the saved index cannot be used whatever its box.
  */
 function boxPlan(
   cfg: PluginConfig,
   indexDir: string,
-  usable: boolean,
   dirs: string[],
-  p: { fromSaved: (notes: string[]) => IndexPlan; notes: string[] }
+  keys: () => string[],
+  p: {
+    mismatch: string | undefined;
+    fromSaved: (notes: string[]) => IndexPlan;
+    notes: string[];
+  }
 ): IndexPlan {
   const box = readBox(indexDir);
   if (!box) {
-    return { load: withNotes({ indexDir, built: false, reason: BOX_WAITING_REASON }, p.notes) };
+    return boxWaiting(indexDir, p.notes);
   }
-  const keys = sourceKeys(dirs);
-  const sameCells = keys.join("\n") === box.sources.join("\n");
+  const sources = keys();
+  const sameCells = sources.join("\n") === box.sources.join("\n");
   const sameZoom = box.leafZoom === cfg.leafZoom;
-  if (usable && !cfg.rebuildIndex && sameCells && sameZoom) {
+  if (!p.mismatch && !cfg.rebuildIndex && sameCells && sameZoom) {
     return p.fromSaved(p.notes);
   }
   const why = cfg.rebuildIndex
-    ? []
-    : sameCells
-      ? [
-          `rebuilt the index: leaf zoom ${cfg.leafZoom} differs from the saved ${box.leafZoom ?? "?"}`
-        ]
-      : [`rebuilt the index: cells in ${cfg.cellsDir ?? "cellsDir"} changed since it was saved`];
-  return {
-    build: { dirs, leafZoom: cfg.leafZoom, indexDir, box: { bbox: box.bbox, sources: keys } },
-    indexDir,
-    notes: [...why, ...p.notes]
-  };
+    ? undefined
+    : (p.mismatch ??
+      (sameCells
+        ? `leaf zoom ${cfg.leafZoom} differs from the saved ${box.leafZoom ?? "?"}`
+        : `cells in ${cfg.cellsDir ?? "cellsDir"} changed since it was saved`));
+  const notes = [...(why ? [`rebuilt the index: ${why}`] : []), ...p.notes];
+  return buildPlan(cfg, indexDir, dirs, notes, { bbox: box.bbox, sources });
 }
 
 function savedPlan(
@@ -301,13 +337,15 @@ function buildPlan(
   cfg: PluginConfig,
   indexDir: string,
   dirs: string[],
-  notes: string[]
+  notes: string[],
+  box?: BuildBox
 ): IndexPlan {
   if (dirs.length === 0) {
     const none = { indexDir, built: false, reason: `no cells in ${cfg.cellsDir ?? "cellsDir"}` };
     return { load: withNotes(none, notes) };
   }
-  return { build: { dirs, leafZoom: cfg.leafZoom, indexDir }, indexDir, notes };
+  const build: BuildJob = { dirs, leafZoom: cfg.leafZoom, indexDir };
+  return { build: box ? { ...build, box } : build, indexDir, notes };
 }
 
 function missingReason(cfg: PluginConfig, indexDir: string, stale: boolean): string {
@@ -318,23 +356,29 @@ function missingReason(cfg: PluginConfig, indexDir: string, stale: boolean): str
 }
 
 /**
- * `stale`: the saved index holds WFS depths and the source is off. `mismatch`: that, the
- * source is on and the saved index lacks its cell, or the index was built under an older
- * pyramid version. Either way the saved index is not used as is.
+ * `stale`: the saved index holds WFS depths and the source is off. `mismatch`, why the saved
+ * index is not used as is: none is saved, that, the source is on and the saved index lacks
+ * its cell, or the index was built under an older pyramid version.
  */
 function savedMatches(
   cfg: PluginConfig,
   indexDir: string,
   saved: readonly CellInfo[] | undefined,
   extraDirs: string[]
-): { stale: boolean; mismatch: boolean } {
+): { stale: boolean; mismatch: string | undefined } {
   const holds = saved?.some((c) => c.source === WFS_SOURCE) ?? false;
   const stale = holds && !cfg.wfs;
-  const outdated = saved !== undefined && !savedIndexIsCurrent(indexDir);
-  return {
-    stale,
-    mismatch: stale || outdated || (saved !== undefined && extraDirs.length > 0 && !holds)
-  };
+  const mismatch =
+    saved === undefined
+      ? `no index saved in ${indexDir}`
+      : stale
+        ? "the saved one holds Traficom WFS depths and that source is off"
+        : !savedIndexIsCurrent(indexDir)
+          ? "the saved one is from an older pyramid version or its header is damaged"
+          : extraDirs.length > 0 && !holds
+            ? "the saved one lacks the Traficom WFS cell"
+            : undefined;
+  return { stale, mismatch };
 }
 
 function savedCells(indexDir: string): CellInfo[] {
@@ -358,7 +402,7 @@ const cellKey = (c: Partial<CellInfo>): string =>
 function cellsChange(
   cellsDir: string | undefined,
   saved: readonly CellInfo[] | undefined,
-  dirs: string[]
+  keys: () => string[]
 ): string | undefined {
   if (!cellsDir || !saved) {
     return undefined;
@@ -367,7 +411,7 @@ function cellsChange(
     .filter((c) => c.source !== WFS_SOURCE)
     .map(cellKey)
     .sort();
-  const now = dirs.map((d) => cellKey(currentInfo(d))).sort();
+  const now = [...keys()].sort();
   if (was.join("\n") === now.join("\n")) {
     return undefined;
   }
