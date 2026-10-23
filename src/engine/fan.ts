@@ -79,11 +79,17 @@ export function spanOf(from: number | undefined, step: number): Span | undefined
   return from === undefined ? undefined : { from, step };
 }
 
-/** The step times after `span.from` and before `t`, then `t`. */
+/**
+ * The times on the step grid, j · `span.step`, after `span.from` and before
+ * `t`, then `t`. The grid is the one plan steps are scored on, also where
+ * `from` lies off it, so every plan step's footprint is one the hull takes in.
+ */
 function hullTimes(t: number, span: Span | undefined): number[] {
   const out: number[] = [];
-  for (let j = 1; span && span.from + j * span.step < t - 1e-9; j++) {
-    out.push(span.from + j * span.step);
+  if (span) {
+    for (let j = Math.floor(span.from / span.step + 1e-9) + 1; j * span.step < t - 1e-9; j++) {
+      out.push(j * span.step);
+    }
   }
   out.push(t);
   return out;
