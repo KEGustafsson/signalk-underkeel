@@ -99,16 +99,18 @@ to three folders deep. The cells are read in place with GDAL compiled to WebAsse
 Nothing is converted or written next to the cells. A cell without an `M_COVR` coverage layer
 is rejected.
 
-Land and shoreline are placed by the cell's compilation scale (6 m at 1:12 000) rather than by
-the survey's CATZOC (500 m in zone C), so a jetty or a beach does not spread across navigable
-water. Where the cell marks an edge or node as not surveyed (QUAPOS) the survey's σ applies
-there, and where it states a POSACC, half of it.
+Land, shoreline and depth areas are placed by the cell's compilation scale (6 m at 1:12 000,
+or an `M_CSCL` area's smaller scale) rather than by the survey's CATZOC (500 m in zone C), so a
+jetty, a beach or a drying contour does not spread across navigable water; soundings and point
+dangers keep the survey's CATZOC. Where the cell marks an edge or node as not surveyed (QUAPOS)
+the drawing there is read as four times less accurate (24 m at 1:12 000), and where it states a
+POSACC, half of it.
 
 The index covers a box around the vessel, **Index box around the vessel (km)** (default 10 km
 each way), and is rebuilt off the event loop as the vessel moves, so a large exchange set such
 as NOAA's 698 East and Gulf coast cells is never indexed whole: only the cells reaching the box
 are read (21 of them around Miami, 22 s at leaf zoom 20 on x86). Outside the box the plugin
-reports no coverage, never clear water. Until the first position arrives the engine is `off`
+reports no coverage, never clear water; a radius under 2 km is raised to 2. Until the first position arrives the engine is `off`
 with the reason `waiting for the vessel position to build the chart box`. Set the box to 0 to
 index every cell.
 

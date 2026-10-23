@@ -242,15 +242,28 @@ build time plus the look-ahead's reach). A whole build of the 698-cell NOAA US E
 set at z20 ran for over 15 minutes on 4 threads without finishing; the 10 km box around Bal
 Harbour reads 21 of the cells and builds in 22 s (x86). Cells are chosen by their extent,
 read from the SG2D/SG3D coordinates of the `.000` and its updates without GDAL
-(`ingest/enc-bounds.ts`, 3.3 s for the 698 cells, in the build worker), grown by 5 km; a
-cell whose extent cannot be read is always taken. Only the z10 roots meeting the box are
-built, and every tile outside it is `NO_COVERAGE` (pyramid build `within`), so the
-look-ahead there is never `normal` and route legs there are `unverified` (invariants 3 and
-4). The box and the cell stamps it was chosen from are saved beside the index
-(`box.json`); a start loads the saved index while the stamps match, rebuilds in the saved box
-when they do not, and with no saved box stays `off` with "waiting for the vessel position to
-build the chart box" until the first position. With the WFS on, its box is the one the ENC
-cells are built in. `boxRadiusKm: 0` keeps the whole build.
+(`ingest/enc-bounds.ts`, 3.3 s for the 698 cells, in the build worker); a cell whose extent
+cannot be read is always taken. Tiles are built out to the box grown by `BOX_REACH`, the widest
+chart position reach rounded up to 2 km, and a tile crossing the edge of the box or of that
+area splits to the leaf zoom, so no coarse tile carries a value past what was read. Every tile
+not wholly inside the box keeps its depth and σ but carries `NO_COVERAGE`: a hazard just
+outside the box still spreads its graded risk inward (invariant 1), nothing outside reads as
+covered, and a footprint within `FLAG_SIGMAS`·σP of the edge reads `NO_COVERAGE` as at any
+coverage gap (invariants 3 and 4). Cells are read to `BOX_MARGIN_KM` = 6 km past the box: the
+2 km reach, a z14 leaf across the edge (2.4 km) and the widest burn radius (1 km).
+
+The box, the cell stamps it was chosen from and the leaf zoom are saved beside the index
+(`box.json`). A start loads the saved index while they match and rebuilds in the saved box
+when they do not, also when the saved index cannot be read; it never falls back to a build of
+every cell. With no saved box it stays `off` with "waiting for the vessel position to build
+the chart box" until the first position. The refresh worker scans `cellsDir` and stamps the
+cells off the event loop. A refresh is due, besides the WFS rules, whenever no index of the
+service's box is in use. A configured `cellsDir` holding no S-57 cell fails the refresh and
+keeps the index in use, and with no index in use the failure is the published reason. A saved
+WFS cell whose DSID no longer reads is left out of the start plan and downloaded again. With
+the WFS on, its box is the one the ENC cells are built in. `boxRadiusKm: 0` keeps the whole
+build (an index built in a box is then rebuilt whole); a radius between 0 and 2 km is raised
+to 2.
 
 **Sources, in priority order:**
 
@@ -319,7 +332,7 @@ cells are built in. `boxRadiusKm: 0` keeps the whole build.
 | `M_QUAL`                      | `CATZOC`, `POSACC`, `SOUACC`           | survey quality zones                                                            |
 | `M_COVR`                      | `CATCOV`                               | coverage; no coverage means _unverified_, not _safe_                            |
 | DSID / `M_SDAT`, `M_VDAT`     | sounding / vertical datum              | water-level reduction (§4.5); `DSPM_CSCL` compilation scale (§4.4)              |
-| Edge, nodes (GDAL primitives) | `QUAPOS`, `POSACC`                     | spatial records not surveyed: their shoreline keeps the survey's σP (§4.3)      |
+| Edge, nodes (GDAL primitives) | `QUAPOS`, `POSACC`                     | spatial records not surveyed: the drawing they bound widens to 4× its σ (§4.3)  |
 
 **Coverage mosaic.** For every location, use the cell from the **largest-scale usage band**
 that covers it. Where bands overlap, the larger scale wins, and the smaller scale is used only
@@ -430,9 +443,10 @@ restated accordingly (below and in AGENTS.md).
 shoreline objects (`LNDARE`, `COALNE`, `SLCONS`, `PONTON`, `FLODOC`, `HULKES`) come
 from the shoreline compilation, so they spread by their own σ (§4.4), kept per node in `topoSigmaP`, and the depth the survey
 spreads (`bathyDMin`) leaves them out. A leaf on a spatial record that is not surveyed
-(QUAPOS other than 1, 10 or 11) takes its survey's σP for them (the unassessed one where it
-has none), and half a stated POSACC. A cell without a compilation scale keeps them on the
-survey's σP.
+(QUAPOS other than 1, 10 or 11) reads them as drawn from a source four times smaller in
+scale (`NOT_SURVEYED_SCALE`, 24 m at 1:12 000), or by its survey's σP (the unassessed one
+where it has none) in a cell with no compilation scale; a stated POSACC widens the σ to half
+of it.
 
 **Decision (depth areas placed by the drawing, 2026-10-23, invariant 1).** CATZOC's position
 accuracy rates where the survey put its soundings and dangers. A cell's depth areas
@@ -452,6 +466,11 @@ the inlet and the water off the beach read by their charted depths, and `danger`
 within a few hundred metres of the zone's charted obstructions (0 m and 1.8 m, ±500 m by the
 survey) and `unverified` within 500 m of its zone U. A deeper draft, a lower water level or a
 wider σ still never lowers P (invariant 2): the weight and P(UKC < 0) both rise with each.
+The compilation scale is the cell's `DSPM_CSCL`, or the `CSCALE` of an `M_CSCL` area a drawn
+feature's box meets where that scale is smaller; the σ is never narrowed. A split tile passes
+a partial depth feature to its children unless a feature containing the whole tile dominates
+it in depth and placement (survey-placed against survey-placed, drawn against drawn with a σ
+at least as wide), so a sounding inside a shallower drawn area keeps its survey spread.
 
 A leaf's survey σP comes from `surveySigmaP`, the widest σP of the assessed, non-advisory
 quality zones reaching it, so a leaf only partly assessed keeps the reach of its assessed part.
@@ -516,8 +535,14 @@ widest σ modelled is 500 m.
   `loading chart index` meanwhile; a smaller one loads within `start()` (22 ms on x86 for two
   Nauvo cells). Either way every block is inflated once at load and dropped, so a damaged
   file is refused and rebuilt at start rather than when a query first reaches the damage.
+- `indexDir` belongs to the plugin: a save replaces it whole, so it must be new, empty or an
+  earlier index, and a directory holding anything else is refused with the entry named
+  rather than overwritten. A trailing separator is resolved away first.
 - A save writes and fsyncs the three files and their staging directory, renames the staging
-  directory into place and fsyncs the parent. A saved index that fails to read or parse at
+  directory into place and fsyncs the parent. A failed save removes its staging and keeps the
+  previous index; staging left under this process id by an earlier run (a container restart
+  reuses ids) is removed at start, and moved-aside `.old-*` copies once a whole index is in
+  place. A saved index that fails to read or parse at
   start (a power cut can still leave a file short) is rebuilt from the configured cells, with
   the read error in the index reason; without cells the read error is the reason.
 - The same data is also exported as UKC tiles (§4.10).
@@ -547,13 +572,15 @@ These are treated as ~95 % bounds, so σ ≈ value / 2.
 
 **Topographic accuracy.** CATZOC rates the hydrographic survey, not the shoreline
 compilation. Land and shoreline objects are placed by the plotting accuracy of the cell's
-compilation scale (`DSPM_CSCL`), 1 mm on the chart read as a ~95 % bound: σ = 6 m at
+compilation scale (`DSPM_CSCL`, or a smaller `M_CSCL` area's `CSCALE`), 1 mm on the chart
+read as a ~95 % bound: σ = 6 m at
 1:12 000, 22.5 m at 1:45 000, capped at 500 m for overview cells. QUAPOS lives on the spatial
 records (edges and nodes), not on the objects: the reader takes those not surveyed (QUAPOS
 other than 1 surveyed, 10 precisely known, 11 calculated) or with a POSACC from GDAL's
 primitive layers, with the connected nodes each edge ends at, since GDAL's Edge geometry holds
-only the interior vertices, and rebuilds every edge whole. Shoreline on such a
-record keeps its survey's σP, or half the stated POSACC (§4.3). An absent QUAPOS means
+only the interior vertices, and rebuilds every edge whole. Land, shoreline and depth areas
+on such a record are read as drawn from a source four times smaller in scale, or by half the
+stated POSACC where that is wider (§4.3). An absent QUAPOS means
 surveyed (S-52 draws such lines solid).
 
 Two overrides apply on top of the table:
