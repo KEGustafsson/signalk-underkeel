@@ -157,11 +157,13 @@ flowchart TD
   it by its survey's position uncertainty like a depth area (section 5). One in unassessed
   water, which spreads nothing, is burned into a disc of radius 2 × σP of the unassessed survey,
   1 km.
-- Each tile also keeps what it spreads by its chart position: its survey's σP, the σ of its
-  land and shoreline objects' own positions, and the shallowest depth its survey places. Land
-  and shoreline are placed by the cell's compilation scale (1 mm on the chart, so 6 m at
-  1:12 000), not by CATZOC; on an edge or node whose QUAPOS, read from GDAL's primitive
-  layers, says it is not surveyed they keep the survey's σP.
+- Each tile also keeps what it spreads by its chart position: its survey's σP with the
+  shallowest depth the survey places (soundings and point dangers), and the σ of the chart's
+  drawing with the shallowest depth it places (land, shoreline and depth areas). The drawing
+  is placed by the cell's compilation scale (1 mm on the chart, so 6 m at 1:12 000), or by an
+  `M_CSCL` area's smaller scale where one reaches the tile, not by CATZOC; on an edge or node
+  whose QUAPOS, read from GDAL's primitive layers, says it is not surveyed it is read as four
+  times less accurate (24 m at 1:12 000).
 - A leaf zoom of 20 makes the smallest tile about 19 m across at 60° N. The Nauvo box built
   158,784 tiles.
 - Each stored tile also carries flags: `NO_COVERAGE`, `UNASSESSED` (no survey quality, or
