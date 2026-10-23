@@ -355,6 +355,10 @@
       end: function (key) {
         running.delete(key);
         return again.delete(key);
+      },
+      /** Drops a remembered start, so the run in progress is not followed by another. */
+      forget: function (key) {
+        again.delete(key);
       }
     };
   }

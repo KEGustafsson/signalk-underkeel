@@ -356,6 +356,9 @@ async function checkAll() {
   }
   try {
     const { routes } = await client.call("route.list");
+    // A route no longer listed keeps no legs on the chart, whichever check left them there.
+    const listed = new Set(routes.map((r) => r.routeId));
+    [...results.keys()].filter((id) => !listed.has(id)).forEach((id) => results.delete(id));
     routes.forEach((r) => clearTimeout(timers.get(r.routeId)));
     for (const r of routes) {
       await check(r.routeId);
@@ -392,6 +395,8 @@ if (has("routes")) {
     await client.subscribe(["route.**"], (name, params) => {
       if (name === "route.hidden") {
         clearTimeout(timers.get(params.routeId));
+        // An edit during the running check must not bring the route back after it.
+        checking.forget(params.routeId);
         nextSeq(params.routeId);
         results.delete(params.routeId);
         publishSoon();
