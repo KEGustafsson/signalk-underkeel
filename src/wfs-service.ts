@@ -278,9 +278,10 @@ export class WfsService {
   private box?: WfsBox;
   /**
    * Whether the index saved in `indexDir` was built in `box`. A whole build, another
-   * `indexDir` or a crash between the two saves leaves them apart.
+   * `indexDir` or a crash between the two saves leaves them apart. Found at the first check,
+   * after the start plan has recovered a crash-left index or built one.
    */
-  private indexed: boolean;
+  private indexed?: boolean;
   /** The box of the last index this service handed over in this run. */
   private handed?: Bbox;
   private busy = false;
@@ -291,7 +292,6 @@ export class WfsService {
 
   constructor(private readonly deps: WfsServiceDeps) {
     this.box = this.readBox();
-    this.indexed = !deps.inBox || sameBbox(readBox(deps.indexDir)?.bbox, this.box?.bbox);
   }
 
   /** Whether this box downloads Traficom WFS depths, not only builds ENC cells around the vessel. */
@@ -353,6 +353,7 @@ export class WfsService {
       return false;
     }
     const b = this.box;
+    this.indexed ??= !this.deps.inBox || sameBbox(readBox(this.deps.indexDir)?.bbox, b?.bbox);
     return (
       b === undefined ||
       !this.indexed ||

@@ -388,6 +388,21 @@ describe("box service and the index in use", () => {
     expect(h.indexes).toHaveLength(1);
   });
 
+  test("in box mode an index the start plan recovers after the service is made is kept", async () => {
+    fs.writeFileSync(path.join(TMP, "box.json"), JSON.stringify(savedBox()));
+    const h = harness(okReply, { inBox: true });
+    // A power cut between a commit's two renames left no index directory until the start plan
+    // moved `<indexDir>.old-*` back, after the service was made.
+    const indexDir = path.join(TMP, "index");
+    fs.mkdirSync(indexDir);
+    const built = { version: 1, bbox: savedBox().bbox, sources: [] };
+    fs.writeFileSync(path.join(indexDir, "box.json"), JSON.stringify(built));
+    h.t.index = indexOf({ name: "FI5ENC01" }, { name: "FI1WFS01", source: WFS_SOURCE });
+    h.t.pos = POS;
+    await h.service.check();
+    expect(h.indexes).toHaveLength(0);
+  });
+
   test("the cells are found and stamped by the refresh, after the download", async () => {
     const jobs: BuildJob[] = [];
     const h = harness(okReply, { inBox: true });
