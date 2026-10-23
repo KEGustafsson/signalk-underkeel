@@ -83,6 +83,10 @@
   "license": "EUPL-1.2",
   "jest": {
     "testEnvironment": "node",
+    "reporters": [
+      "default",
+      "github-actions"
+    ],
     "maxWorkers": 1,
     "coverageDirectory": "coverage",
     "collectCoverageFrom": [
