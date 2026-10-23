@@ -12,6 +12,12 @@ import type { WaterLevel } from "./model/uncertainty";
 /** Default half-width of the heading sector (plan §4.12). */
 export const DEFAULT_SECTOR_DEG = 20;
 
+/**
+ * Unexpired acknowledgements kept at most. Each is tested on every warn or
+ * alarm tick, so a client posting in a loop cannot grow that cost without end.
+ */
+export const MAX_ACKS = 100;
+
 export interface AckServiceDeps {
   store: AckStore;
   /** The look-ahead now; its footprints are the default polygon. */
@@ -63,6 +69,12 @@ export function addAck(body: unknown, deps: AckServiceDeps): ApiReply {
     return { status: 409, body: { errors: ["no look-ahead area to acknowledge"] } };
   }
   const now = deps.now();
+  if (deps.store.list(now).length >= MAX_ACKS) {
+    return {
+      status: 409,
+      body: { errors: [`${MAX_ACKS} acknowledgements already; delete one first`] }
+    };
+  }
   const ack: Ack = {
     id: randomUUID(),
     created: new Date(now).toISOString(),
@@ -75,14 +87,14 @@ export function addAck(body: unknown, deps: AckServiceDeps): ApiReply {
     draft
   };
   return saving(deps, () => {
-    deps.store.add(ack);
+    deps.store.add(ack, now);
     return { status: 201, body: ack };
   });
 }
 
 export function deleteAck(id: string, deps: AckServiceDeps): ApiReply {
   return saving(deps, () =>
-    deps.store.remove(id)
+    deps.store.remove(id, deps.now())
       ? { status: 204, body: undefined }
       : { status: 404, body: { errors: [`no acknowledgement ${id}`] } }
   );
