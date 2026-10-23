@@ -81,6 +81,8 @@ interface Saved {
   zoom: number;
   cells: CellPosterior[];
   adjustments: [number, NodeValues][];
+  /** Soundings of an older version's file that the log does not hold yet. */
+  samples?: Sounding[];
 }
 
 export class LivechartService {
@@ -97,6 +99,11 @@ export class LivechartService {
   accepted = 0;
   /** Set when a state file that did not load whole could not be moved aside: never overwrite it. */
   private keepFile = false;
+  /**
+   * Soundings an older version's `livechart.json` held and the log does not: written back
+   * with the state until a log save holds them, so a failed one never loses them.
+   */
+  private legacy: Sounding[] = [];
   private readonly notes = new NoteSchedule((key) => this.writeNote(key));
 
   constructor(
@@ -240,7 +247,7 @@ export class LivechartService {
     // A state file that could not be set aside is never written, so it never brings the log forward.
     const state =
       !this.keepFile && this.dirty && (this.adjusted || now - this.stateAt >= STATE_EVERY_MS);
-    // Soundings first: the state file may still hold soundings only the log will keep.
+    // Soundings first: the state file keeps an older version's soundings until the log does.
     if (state || now - this.samplesAt >= SAMPLES_EVERY_MS) {
       this.saveSamples(now);
     }
@@ -290,6 +297,9 @@ export class LivechartService {
     try {
       fs.mkdirSync(path.dirname(this.log.file), { recursive: true });
       this.log.save();
+      if (!this.log.keep) {
+        this.legacy = [];
+      }
     } catch (err) {
       this.deps.error(`${this.log.file} not saved: ${(err as Error).message}`);
     }
@@ -306,7 +316,8 @@ export class LivechartService {
       version: 1,
       zoom: this.store.adjustZoom,
       cells: [...this.posteriors.cells.values()],
-      adjustments: [...this.store.adjustments]
+      adjustments: [...this.store.adjustments],
+      ...(this.legacy.length > 0 ? { samples: this.legacy } : {})
     };
     const tmp = `${this.file}.tmp-${process.pid}`;
     try {
@@ -389,7 +400,8 @@ export class LivechartService {
     }
     const logged = read?.samples ?? [];
     const first = logged[0]?.at ?? Infinity;
-    log.samples = [...legacy.filter((s) => s.at < first), ...logged].slice(-MAX_SAMPLES);
+    this.legacy = legacy.filter((s) => s.at < first);
+    log.samples = [...this.legacy, ...logged].slice(-MAX_SAMPLES);
     log.rewrite ||= legacy.length > 0;
   }
   /** The saved state file as a version-1 record, or undefined with the reason reported. */
