@@ -224,6 +224,37 @@ describe("route repair", () => {
     const fails = (q: LonLat[]) => !(q[0] === pts[0] && (q[1] === pts[3] || q[1] === pts[2]));
     expect(simplify(pts, fails)).toEqual([pts[0], pts[1], pts[2], pts[3]]);
   });
+
+  test("each chord is checked at the time the simplified path reaches its start", () => {
+    // A zigzag no chord over more than two spans passes, so every point but one stays.
+    const pts: LonLat[] = [
+      [22.0, 60.0],
+      [22.01, 60.004],
+      [22.02, 60.0],
+      [22.03, 60.004],
+      [22.04, 60.0],
+      [22.05, 60.004]
+    ];
+    const speed = 3;
+    const calls: { from: LonLat; departure: number }[] = [];
+    const passes = (q: LonLat[], departure: number): boolean => {
+      calls.push({ from: q[0] as LonLat, departure });
+      return pts.indexOf(q[1] as LonLat) - pts.indexOf(q[0] as LonLat) <= 2;
+    };
+    const kept = simplify(pts, passes, NOW, speed);
+    expect(kept.length).toBeLessThan(pts.length);
+    // The route check chains whole-millisecond ETAs leg by leg; the chords must use the same.
+    const eta = new Map<LonLat, number>([[kept[0] as LonLat, NOW]]);
+    for (let i = 1; i < kept.length; i++) {
+      const a = kept[i - 1] as LonLat;
+      const t = (eta.get(a) as number) + (haversine(a, kept[i] as LonLat) / speed) * 1000;
+      eta.set(kept[i] as LonLat, Date.parse(new Date(t).toISOString()));
+    }
+    expect(calls.some((c) => c.departure > NOW)).toBe(true);
+    for (const c of calls) {
+      expect(c.departure).toBe(eta.get(c.from));
+    }
+  });
 });
 
 describe("departure window", () => {
