@@ -23,7 +23,7 @@ import {
   geomContainsRect,
   geomRectDistance
 } from "../../src/foundation/geometry";
-import type { ChartFeature, QualityFeature } from "../../src/ingest/features";
+import type { ChartFeature, DepthFeature, QualityFeature } from "../../src/ingest/features";
 import { MAX_CHART_BUFFER } from "../../src/spatial/chart-position";
 import type { ChartPosition, NodeValues } from "../../src/spatial/node-store";
 import { combine, EMPTY, FLAGS, NO_DATA, NodeStore } from "../../src/spatial/node-store";
@@ -49,6 +49,8 @@ interface BuildOptions {
    * reach past it, and none not wholly inside it reads as covered.
    */
   within?: Rect;
+  /** Drop features the children cannot need (`forChildren`); on by default. */
+  prune?: boolean;
 }
 
 const DEFAULT_BUILD: BuildOptions = {
@@ -253,17 +255,38 @@ function analyse(all: Hit[], rect: Rect, tileGround: number): Analysis {
 }
 
 /**
- * Features handed to the children. A partial depth feature no shallower
- * than an area containing the whole tile cannot lower any child's dMin, so
- * it is dropped; dredged and swept features stay for their flags. Where a
- * larger-scale cell's coverage ends inside the tile, the children may
- * switch to that cell and drop the current areas, so nothing is pruned.
+ * Features handed to the children. A partial depth feature is dropped when
+ * a feature containing the whole tile is no deeper and placed the same way
+ * (survey, or drawing with a σ no narrower): it then cannot lower any
+ * child's dMin or chart position. With `prune` off nothing is dropped.
+ * Dredged and swept features stay for their flags. Where a larger-scale
+ * cell's coverage ends inside the tile, the children may switch to that
+ * cell and drop the current areas, so nothing is pruned.
  */
-function forChildren(all: Hit[], a: Analysis): Item[] {
+function forChildren(all: Hit[], a: Analysis, prune: boolean): Item[] {
   const coverageItems = all.filter((h) => h.item.f.role === "coverage").map((h) => h.item);
+  const full = a.hits.filter((h) => h.full).map((h) => h.item.f);
+  const covers = (f: DepthFeature, g: ChartFeature): boolean => {
+    const d = depthOf(g);
+    const drawn = g.role === "depth" ? g.topoSigma : undefined;
+    if (d === undefined || d > f.depth) {
+      return false;
+    }
+    if (f.topoSigma === undefined) {
+      return drawn === undefined;
+    }
+    return drawn !== undefined && drawn >= f.topoSigma;
+  };
   const kept = a.hits.filter((h) => {
     const f = h.item.f;
-    return a.coverageEdge || h.full || f.role !== "depth" || f.dredged || f.depth < a.shallowest;
+    return (
+      !prune ||
+      a.coverageEdge ||
+      h.full ||
+      f.role !== "depth" ||
+      f.dredged ||
+      !full.some((g) => covers(f, g))
+    );
   });
   return [...coverageItems, ...kept.map((h) => h.item)];
 }
@@ -505,7 +528,7 @@ function evaluate(
     store.add(z, x, y, v, false, position);
     return { v, position };
   }
-  const passed = forChildren(all, a);
+  const passed = forChildren(all, a, opts.prune ?? true);
   let v = EMPTY;
   let position = NO_POSITION;
   for (const [dx, dy] of [

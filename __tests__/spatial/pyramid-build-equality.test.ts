@@ -1,6 +1,6 @@
 import fc from "fast-check";
 import path from "path";
-import { tileAt, tileRect, toMercator } from "../../src/foundation/geo";
+import { fromMercator, tileAt, tileRect, toMercator } from "../../src/foundation/geo";
 import type { Rect, XY } from "../../src/foundation/geo";
 import type { Geom, PolygonGeom } from "../../src/foundation/geometry";
 import { geomContainsRect, geomRectDistance, pointInPolygon } from "../../src/foundation/geometry";
@@ -23,7 +23,7 @@ import { serializePyramid } from "../../src/spatial/store";
 import { fraction } from "../helpers/arbitraries";
 import { FIXTURES } from "../helpers/fixture-index";
 import { referenceBuildPyramid } from "../helpers/reference-pyramid-build";
-import { coverage, point, quality } from "../helpers/synthetic";
+import { boxGeom, coverage, point, quality } from "../helpers/synthetic";
 
 /**
  * The build's indexed polygon tests (IX-1) are an exact speed-up: the same
@@ -216,6 +216,66 @@ describe("pyramid build equals the reference builder", () => {
             )
           ];
           same(features, { minZoom: 12, leafZoom: 19 });
+        }
+      ),
+      { numRuns: 25 }
+    );
+  });
+});
+
+describe("pruning drops only what no child needs", () => {
+  // Depth areas placed by their drawing, two σ apart, and soundings and rocks placed by the
+  // survey: a sounding inside a shallower drawn area still sets its survey's depth.
+  test("the build equals one that hands every feature down", () => {
+    const box = [21.99, 59.995, 22.02, 60.015] as const;
+    const drawn = (g: Geom, depth: number, topoSigma: number): DepthFeature => ({
+      ...depthArea(g, depth, depth === -Infinity ? "LNDARE" : "DEPARE"),
+      topoSigma
+    });
+    // Areas and points share a window some 300 m across, so many points lie inside an area
+    // no deeper than they are, beside a shallower point that splits their tile.
+    const [lon0, lat0] = fromMercator(CENTRE[0], CENTRE[1]);
+    const at = (u: number, v: number): [number, number] => [
+      lon0 + (u - 0.5) * 0.006,
+      lat0 + (v - 0.5) * 0.003
+    ];
+    fc.assert(
+      fc.property(
+        fc.array(
+          fc.tuple(
+            fraction,
+            fraction,
+            fraction,
+            fc.integer({ min: -1, max: 12 }),
+            fc.constantFrom(6, 24)
+          ),
+          { minLength: 1, maxLength: 4 }
+        ),
+        fc.array(fc.tuple(fraction, fraction, fc.integer({ min: 0, max: 12 }), fc.boolean()), {
+          minLength: 2,
+          maxLength: 20
+        }),
+        (areas, points) => {
+          const features: ChartFeature[] = [
+            coverage(box),
+            quality(box, 4),
+            drawn(boxGeom(box), 25, 6),
+            ...areas.map(([u, v, r, d, s]) => {
+              const [lon, lat] = at(u, v);
+              const h = 0.0003 + r * 0.002;
+              const g = boxGeom([lon - h, lat - h / 2, lon + h, lat + h / 2]);
+              return drawn(g, d < 0 ? -Infinity : d, s);
+            }),
+            ...points.map(([u, v, d, rock]) =>
+              point(...at(u, v), d, { objectClass: rock ? "UWTROC" : "SOUNDG" })
+            )
+          ];
+          const opts = { minZoom: 12, leafZoom: 18 };
+          expect(
+            serializePyramid(buildPyramid(features, opts)).equals(
+              serializePyramid(referenceBuildPyramid(features, { ...opts, prune: false }))
+            )
+          ).toBe(true);
         }
       ),
       { numRuns: 25 }

@@ -256,6 +256,22 @@ describe("depth areas placed by the chart's drawing (decision 2026-10-23)", () =
     expect(r.riskTile?.dMin).toBe(-0.5);
   });
 
+  test("a wreck in a shallower drawn area keeps its survey's spread when a rock splits its tile", () => {
+    // A 2 m drawn area from 50 m north of AT, a 4 m wreck in it 100 m north, a draft of 4.5 m.
+    const patch = drawn(area([22.0, north(50), 22.08, north(1500)], 2));
+    const wreck = point(AT[0], north(100), 4, { objectClass: "WRECKS" });
+    const rock = point(AT[0] + 0.006, north(400), 1);
+    const deep = { risk: { threshold: 4.5, sigmaExtra: 0.3 } };
+    const alone = query([...chart(patch), wreck], deep);
+    expect(alone.riskTile?.chart).toMatchObject({ source: "survey", sigmaP: 250 });
+    expect(alone.riskTile?.dMin).toBe(4);
+    // Adding a hazard never lowers P (invariant 2): the wreck still spreads by the survey's σP.
+    // Its leaf is finer beside the rock, so its distance may differ by a rounding.
+    const both = query([...chart(patch), wreck, rock], deep);
+    expect(both.maxRisk).toBeGreaterThanOrEqual(alone.maxRisk - 1e-9);
+    expect(both.riskTile?.dMin).toBe(4);
+  });
+
   test("a wider drawing σ never lowers P (invariant 2)", () => {
     const risks = [6, 12, 24, 100].map((sigma) => query(chart(drawn(drying, sigma))).maxRisk);
     risks.slice(1).forEach((r, i) => expect(r).toBeGreaterThanOrEqual(risks[i] as number));
