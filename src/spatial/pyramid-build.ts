@@ -463,6 +463,7 @@ export function rootColumns(store: NodeStore, x: number, y: number): NodeColumns
     cols.surveySigmaP[at] = store.surveySigmaP[i] as number;
     cols.topoSigmaP[at] = store.topoSigmaP[i] as number;
     cols.bathyDMin[at] = store.bathyDMin[i] as number;
+    cols.topoDMin[at] = store.topoDMin[i] as number;
     cols.flags[at] = store.flags[i] as number;
     cols.cellRef[at] = store.cellRef[i] as number;
     cols.split[at] = store.split[i] as number;

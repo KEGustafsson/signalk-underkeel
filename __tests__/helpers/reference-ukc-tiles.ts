@@ -59,7 +59,7 @@ function reachRisk(dMin: number, sigmaD: number, bound: boolean, input: UkcTileI
   return probabilityBelowZero(dMin - input.threshold, Math.hypot(sigmaD, input.sigmaExtra));
 }
 
-/** The risk sources of a reaching cell: its survey depth and its land, each with its σ. */
+/** The risk sources of a reaching cell: its survey depth and its drawn depth, each with its σ. */
 function sources(r: Reacher, input: UkcTileInput): { risk: number; sigma: number }[] {
   const out: { risk: number; sigma: number }[] = [];
   if (r.surveySigma > 0 && r.bathyDMin !== Infinity) {
@@ -68,8 +68,11 @@ function sources(r: Reacher, input: UkcTileInput): { risk: number; sigma: number
       sigma: r.surveySigma
     });
   }
-  if (r.topoSigma > 0) {
-    out.push({ risk: 1, sigma: r.topoSigma });
+  if (r.topoSigma > 0 && r.topoDMin !== Infinity) {
+    out.push({
+      risk: reachRisk(r.topoDMin, r.values.sigmaD, r.bound, input),
+      sigma: r.topoSigma
+    });
   }
   return out;
 }

@@ -76,14 +76,20 @@ export const EMPTY: NodeValues = {
 export interface ChartPosition {
   /** Widest assessed survey σP, metres (`NodeStore.surveySigmaP`). */
   surveySigmaP: number;
-  /** Widest σ of its land and shoreline objects' own positions, metres; 0 when none. */
+  /**
+   * Widest σ of what the chart places by its own drawing, metres; 0 when none:
+   * land and shoreline objects, and depth areas and lines of a cell with a
+   * compilation scale (plan §4.3).
+   */
   topoSigmaP: number;
   /**
-   * Shallowest depth of what the survey places: every depth feature but land
-   * and shoreline objects placed by their own σ. Infinity when none, and for
-   * a tile with no depth (it adds no risk; its flags count).
+   * Shallowest depth of what the survey places: soundings and point dangers,
+   * and every depth feature of a source with no compilation scale. Infinity
+   * when none, and for a tile with no depth (it adds no risk; its flags count).
    */
   bathyDMin: number;
+  /** Shallowest depth the drawing places, −Infinity for land; Infinity when none. */
+  topoDMin: number;
 }
 
 /** The chart position of a parent from its children's: the widest σ, the shallowest depth. */
@@ -91,7 +97,8 @@ export function joinPosition(a: ChartPosition, b: ChartPosition): ChartPosition 
   return {
     surveySigmaP: Math.max(a.surveySigmaP, b.surveySigmaP),
     topoSigmaP: Math.max(a.topoSigmaP, b.topoSigmaP),
-    bathyDMin: Math.min(a.bathyDMin, b.bathyDMin)
+    bathyDMin: Math.min(a.bathyDMin, b.bathyDMin),
+    topoDMin: Math.min(a.topoDMin, b.topoDMin)
   };
 }
 
@@ -100,6 +107,7 @@ export function surveyOnly(v: NodeValues, surveySigmaP: number): ChartPosition {
   return {
     surveySigmaP,
     topoSigmaP: 0,
-    bathyDMin: v.flags & FLAGS.NO_DEPTH ? Infinity : v.dMin
+    bathyDMin: v.flags & FLAGS.NO_DEPTH ? Infinity : v.dMin,
+    topoDMin: Infinity
   };
 }

@@ -434,6 +434,25 @@ spreads (`bathyDMin`) leaves them out. A leaf on a spatial record that is not su
 has none), and half a stated POSACC. A cell without a compilation scale keeps them on the
 survey's σP.
 
+**Decision (depth areas placed by the drawing, 2026-10-23, invariant 1).** CATZOC's position
+accuracy rates where the survey put its soundings and dangers. A cell's depth areas
+(`DEPARE`, `DRGARE`) are contours compiled at its scale and fitted to its shoreline, so in a
+cell with a compilation scale and positional quality they are placed by the drawing like land:
+σ = 0.5 mm at the compilation scale (6 m at 1:12 000), kept per node with the shallowest
+depth the drawing places (`topoDMin`, −∞ for land; pyramid version 9). Soundings, rocks,
+wrecks and obstructions keep the survey's σP, and the survey's depth accuracy stays in σD
+(C: ±2 m + 5 %). A spatial record that is not surveyed (QUAPOS 4 approximate and the like)
+widens the drawing's σ to 4 × its compilation σ, as if drawn from a source four times smaller
+in scale (24 m at 1:12 000), rather than to the survey's σP. Sources with no compilation
+scale (Traficom WFS, synthetic) and cells without positional quality are placed by the survey
+as before. Over NOAA US5MIAEC (zone C, surveyed 1939) the survey's 250 m spread drawing and
+land had closed Bakers Haulover Inlet (charted 3.6 m) to a 0.9 m draft: every water cell
+within about 300 m of a drying contour or the shore read `danger`. Placed by the drawing,
+the inlet and the water off the beach read by their charted depths, and `danger` remains
+within a few hundred metres of the zone's charted obstructions (0 m and 1.8 m, ±500 m by the
+survey) and `unverified` within 500 m of its zone U. A deeper draft, a lower water level or a
+wider σ still never lowers P (invariant 2): the weight and P(UKC < 0) both rise with each.
+
 A leaf's survey σP comes from `surveySigmaP`, the widest σP of the assessed, non-advisory
 quality zones reaching it, so a leaf only partly assessed keeps the reach of its assessed part.
 A split tile stores the widest σ and shallowest `bathyDMin` of its leaves, which bound the

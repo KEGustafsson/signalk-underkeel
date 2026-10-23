@@ -108,6 +108,7 @@ test("columns out of zoom order are refused rather than misread", () => {
     surveySigmaP: new Float32Array(2),
     topoSigmaP: new Float32Array(2),
     bathyDMin: new Float32Array(2),
+    topoDMin: new Float32Array(2),
     flags: new Uint16Array(2),
     cellRef: new Int32Array(2),
     split: new Uint8Array(2)

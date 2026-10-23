@@ -14,7 +14,7 @@ import { standInCell } from "./tile-walk";
 /**
  * Chart position (plan §4.3, §4.7). A charted object may lie off its drawn
  * position by the accuracy of its source: CATZOC for the survey's depths,
- * the compilation scale or QUAPOS for land and shoreline objects. Depth
+ * the compilation scale or QUAPOS for land, shoreline and depth areas. Depth
  * areas and lines are not widened when the pyramid is built, and neither are
  * points in assessed water, so a query carries it.
  *
@@ -109,8 +109,10 @@ export interface Reacher {
   bathyDMin: number;
   /** σ of its survey, metres; 0 when unassessed. */
   surveySigma: number;
-  /** σ of its land and shoreline objects, metres; 0 when it has none. */
+  /** σ of what the chart's drawing places (land, depth areas), metres; 0 when none. */
   topoSigma: number;
+  /** The depth the drawing places (`NodeStore.topoDMinOf`), −Infinity for land; Infinity when none. */
+  topoDMin: number;
   /** Mercator metres per ground metre at the poleward edge of the reach. */
   perMetre: number;
 }
@@ -148,6 +150,7 @@ export function reachersOf(store: NodeStore, rect: Rect, maxZoom: number): Reach
       values,
       bound,
       bathyDMin: store.bathyDMinOf(i),
+      topoDMin: store.topoDMinOf(i),
       surveySigma,
       topoSigma,
       perMetre

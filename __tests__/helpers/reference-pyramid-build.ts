@@ -396,24 +396,30 @@ function surveySigma(hits: Hit[], opts: BuildOptions): number {
   return sigmaP;
 }
 
-/** A leaf's chart position: survey σ, its land's own σ, and the depth the survey places. */
+/**
+ * A leaf's chart position: survey σ with the depth the survey places
+ * (soundings, point dangers), and the drawing's σ with the depth it places
+ * (land, depth areas).
+ */
 function chartPosition(hits: Hit[], v: NodeValues, opts: BuildOptions): ChartPosition {
   const survey = surveySigma(hits, opts);
   if (v.flags & FLAGS.NO_DEPTH) {
-    return { surveySigmaP: survey, topoSigmaP: 0, bathyDMin: Infinity };
+    return { ...NO_POSITION, surveySigmaP: survey };
   }
   let topo = 0;
+  let drawn = Infinity;
   let bathy = Infinity;
   for (const h of hits) {
     const f = h.item.f;
     if (f.role === "depth" && f.topoSigma !== undefined) {
       topo = Math.max(topo, f.topoSigma);
+      drawn = Math.min(drawn, f.depth);
     } else if (f.role === "depth" || f.role === "swept") {
       bathy = Math.min(bathy, f.depth);
     }
   }
   if (topo === 0) {
-    return { surveySigmaP: survey, topoSigmaP: 0, bathyDMin: v.dMin };
+    return { surveySigmaP: survey, topoSigmaP: 0, bathyDMin: v.dMin, topoDMin: Infinity };
   }
   for (const h of hits) {
     const f = h.item.f;
@@ -422,14 +428,13 @@ function chartPosition(hits: Hit[], v: NodeValues, opts: BuildOptions): ChartPos
         topo = Math.max(topo, f.posacc / 2);
       }
       if (f.lowAccuracy) {
-        topo = Math.max(
-          topo,
-          survey > 0 ? survey : sigmaFor(undefined, 0, {}, opts.quality).sigmaP
-        );
+        const unsurveyed = survey > 0 ? survey : sigmaFor(undefined, 0, {}, opts.quality).sigmaP;
+        // Read as drawn from a source four times smaller in scale (`NOT_SURVEYED_SCALE`).
+        topo = Math.max(topo, f.scale === undefined ? unsurveyed : 4 * ((f.scale * 0.001) / 2));
       }
     }
   }
-  return { surveySigmaP: survey, topoSigmaP: topo, bathyDMin: bathy };
+  return { surveySigmaP: survey, topoSigmaP: topo, bathyDMin: bathy, topoDMin: drawn };
 }
 
 interface Evaluated {
@@ -438,7 +443,12 @@ interface Evaluated {
   position: ChartPosition;
 }
 
-const NO_POSITION: ChartPosition = { surveySigmaP: 0, topoSigmaP: 0, bathyDMin: Infinity };
+const NO_POSITION: ChartPosition = {
+  surveySigmaP: 0,
+  topoSigmaP: 0,
+  bathyDMin: Infinity,
+  topoDMin: Infinity
+};
 
 function evaluate(
   store: NodeStore,
@@ -476,7 +486,8 @@ function evaluate(
     position = {
       surveySigmaP: Math.max(position.surveySigmaP, child.position.surveySigmaP),
       topoSigmaP: Math.max(position.topoSigmaP, child.position.topoSigmaP),
-      bathyDMin: Math.min(position.bathyDMin, child.position.bathyDMin)
+      bathyDMin: Math.min(position.bathyDMin, child.position.bathyDMin),
+      topoDMin: Math.min(position.topoDMin, child.position.topoDMin)
     };
   }
   store.add(z, x, y, v, true, position);
