@@ -111,7 +111,11 @@
       "/node_modules/",
       "/lib/",
       "/__tests__/benchmarks/",
-      "/__tests__/helpers/"
+      "/__tests__/helpers/",
+      "<rootDir>/.claude/"
+    ],
+    "modulePathIgnorePatterns": [
+      "<rootDir>/.claude/"
     ],
     "coverageThreshold": {
       "global": {
