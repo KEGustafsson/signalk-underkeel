@@ -292,11 +292,13 @@ export async function readEncCell(
 
 /**
  * The base cell and its updates (`.001`, `.002`, …) beside it, in order. A
- * linked `.000` has its updates beside the link's target, where GDAL reads them.
+ * linked `.000` has its updates beside the link's target and named after
+ * it, where GDAL reads them: it opens the target (`readEncLayers`).
  */
 export function encFiles(file: string): string[] {
-  const dir = path.dirname(fs.realpathSync(file));
-  const base = path.basename(file, path.extname(file));
+  const real = fs.realpathSync(file);
+  const dir = path.dirname(real);
+  const base = path.basename(real, path.extname(real));
   const updates = fs
     .readdirSync(dir)
     .filter(
