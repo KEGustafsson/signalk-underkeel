@@ -316,3 +316,40 @@ describe("index status", () => {
     expect(r.errors).toEqual([]);
   });
 });
+
+describe("mooring zones", () => {
+  /** At rest 30 m short of the rock, with no heading and a null COG. */
+  const berth = (at: number): Delta => {
+    const d = navDelta(ROCK[0] - 30 / M_PER_DEG_LON, ROCK[1], 0, at);
+    return {
+      updates: d.updates.map((u) => ({
+        ...u,
+        values: u.values
+          .filter((v) => v.path !== "navigation.headingTrue")
+          .map((v) => (v.path === "navigation.courseOverGroundTrue" ? { ...v, value: null } : v))
+      }))
+    } as Delta;
+  };
+  const zone = {
+    name: "berth",
+    polygon: [
+      [ROCK[0] - 0.01, ROCK[1] - 0.01],
+      [ROCK[0] + 0.01, ROCK[1] - 0.01],
+      [ROCK[0] + 0.01, ROCK[1] + 0.01],
+      [ROCK[0] - 0.01, ROCK[1] + 0.01]
+    ] as [number, number][],
+    holes: []
+  };
+
+  test("suppress a warning without a heading or COG", () => {
+    const outside = rig(false);
+    outside.tick(berth(T0 + 1000));
+    expect(outside.monitor.heading()).toBeUndefined();
+    expect(["warn", "alarm"]).toContain(outside.monitor.last.state);
+    const inside = rig(false);
+    inside.monitor.setZones([zone]);
+    inside.tick(berth(T0 + 1000));
+    expect(inside.monitor.last.state).toBe("alert");
+    expect(inside.monitor.last.reason).toMatch(/^in mooring zone berth: /);
+  });
+});
