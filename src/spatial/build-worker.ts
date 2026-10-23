@@ -2,7 +2,11 @@ import os from "os";
 import { parentPort, Worker, workerData } from "worker_threads";
 import type { CellCatalogue, CellInfo } from "../ingest/cells";
 import { usableMemory } from "../foundation/memory";
+import type { ReadCell } from "../ingest/cell-reader";
 import { readCellDirectory } from "../ingest/cell-reader";
+import { isEncFile } from "../ingest/cell-source";
+import type { EncLayers } from "../ingest/enc-wasm";
+import { encCell, readEncLayers } from "../ingest/enc-wasm";
 import type { ChartFeature, DepthFeature } from "../ingest/features";
 import type { CellReach } from "./build-items";
 import { cellReach, DEFAULT_BUILD, prepareItems } from "./build-items";
@@ -38,7 +42,7 @@ import { storeOnBody } from "./store";
  */
 
 export interface BuildJob {
-  /** Cell directories in catalogue order. */
+  /** Cell sources in catalogue order: S-57 `.000` files, and the Traficom WFS cell's directory. */
   dirs: string[];
   leafZoom: number;
   indexDir: string;
@@ -58,7 +62,8 @@ export interface BuildJob {
 
 /** One region of roots and the cells that reach it, by directory and catalogue index. */
 export interface RegionJob {
-  cells: { dir: string; ref: number }[];
+  /** An S-57 cell comes with its layers, read once by the build; a directory is read here. */
+  cells: { dir: string; ref: number; layers?: EncLayers }[];
   leafZoom: number;
   region: RootRange;
 }
@@ -73,7 +78,35 @@ export const defaultThreads = (): number =>
   Math.max(1, Math.min(4, os.availableParallelism() - 1, Math.floor(usableMemory() / 2 ** 30)));
 
 function readFeatures(job: RegionJob): ChartFeature[] {
-  return job.cells.flatMap(({ dir, ref }) => readCellDirectory(dir, ref).features);
+  return job.cells.flatMap(({ dir, ref, layers }) =>
+    layers ? encCell(dir, layers, ref).features : readCellDirectory(dir, ref).features
+  );
+}
+
+/**
+ * S-57 cells read through gdal3.js, each once per build, on this thread: the
+ * WebAssembly memory goes when the build's worker exits. Directories are read
+ * by whoever needs them.
+ */
+class EncReads {
+  private readonly layers = new Map<string, Promise<EncLayers>>();
+
+  of(source: string): Promise<EncLayers> | undefined {
+    if (!isEncFile(source)) {
+      return undefined;
+    }
+    let read = this.layers.get(source);
+    if (!read) {
+      read = readEncLayers(source);
+      this.layers.set(source, read);
+    }
+    return read;
+  }
+
+  async cell(source: string, ref: number): Promise<ReadCell> {
+    const layers = this.of(source);
+    return layers ? encCell(source, await layers, ref) : readCellDirectory(source, ref);
+  }
 }
 
 /**
@@ -100,24 +133,28 @@ interface Survey {
  * hazards and reach. A cell the saved index holds unchanged keeps its saved
  * hazards and reach, and only its DSID is read.
  */
-function survey(job: BuildJob, saved: SavedIndex | undefined): Survey {
+async function survey(
+  job: BuildJob,
+  saved: SavedIndex | undefined,
+  reads: EncReads
+): Promise<Survey> {
   const opts = { ...DEFAULT_BUILD, leafZoom: job.leafZoom };
   const out: Survey = { infos: [], hazards: [], reaches: [], changed: [] };
-  job.dirs.forEach((dir, i) => {
+  for (const [i, dir] of job.dirs.entries()) {
     const was = saved?.cells[i];
     const info = was && !job.changed?.includes(dir) ? unchangedInfo(dir, was) : undefined;
     if (saved && info) {
       out.infos.push(info);
       out.hazards.push(...(saved.hazards.get(i) ?? []));
       out.reaches.push(saved.reaches[i] as CellReach);
-      return;
+      continue;
     }
-    const cell = readCellDirectory(dir, i);
+    const cell = await reads.cell(dir, i);
     out.infos.push(cell.info);
     out.hazards.push(...cell.features.filter(isNamedHazard));
     out.reaches.push(cellReach(cell.features, opts));
     out.changed.push(i);
-  });
+  }
   return out;
 }
 
@@ -133,7 +170,8 @@ export interface BuiltIndex extends ChartIndex {
 export async function buildByRegion(job: BuildJob, run: RegionRunner): Promise<BuiltIndex> {
   const { minZoom } = DEFAULT_BUILD;
   const saved = job.changed ? savedIndex(job.indexDir, job.dirs, job.leafZoom) : undefined;
-  const s = survey(job, saved);
+  const reads = new EncReads();
+  const s = await survey(job, saved, reads);
   const range = cellsRootRange(s.reaches, minZoom);
   const roots = range ? rootRegions(range) : [];
   const copies = saved
@@ -149,10 +187,13 @@ export async function buildByRegion(job: BuildJob, run: RegionRunner): Promise<B
       cols:
         copies.get(k) ??
         (await run({
-          cells: cellsReaching(region, minZoom, s.reaches).map((ref) => ({
-            dir: job.dirs[ref] as string,
-            ref
-          })),
+          cells: await Promise.all(
+            cellsReaching(region, minZoom, s.reaches).map(async (ref) => {
+              const dir = job.dirs[ref] as string;
+              const layers = reads.of(dir);
+              return layers ? { dir, ref, layers: await layers } : { dir, ref };
+            })
+          ),
           leafZoom: job.leafZoom,
           region
         }))

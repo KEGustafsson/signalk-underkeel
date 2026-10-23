@@ -60,9 +60,8 @@ and never steers the boat. The full list is under [Guarantees](#guarantees).
 ## Requirements
 
 - A Signal K server on Node.js 22 or newer.
-- Unencrypted S-57 ENC cells for your area, and [GDAL](https://gdal.org/) (`ogr2ogr`,
-  `ogrinfo`) to export them, for example from the `gdal-bin` package on Debian and Raspberry
-  Pi OS. Encrypted S-63 cells are not supported.
+- Unencrypted S-57 ENC cells for your area. The plugin reads them with its own WebAssembly
+  build of GDAL; nothing needs installing. Encrypted S-63 cells are not supported.
 - The vessel's draft, set in the plugin or in Signal K `design.draft.maximum`.
 - GNSS position, course and speed over ground. Heading, rate of turn, attitude (roll), speed
   through water, significant wave height and depth are used when present.
@@ -87,45 +86,36 @@ npm install /path/to/signalk-underkeel/signalk-underkeel-0.1.0.tgz
 ```
 
 Restart the server, then enable **Under-Keel Awareness** under _Server → Plugin Config_ in the
-Signal K admin UI. The package has no runtime dependencies.
+Signal K admin UI. Its one runtime dependency is gdal3.js (about 40 MB), which reads the S-57
+cells.
 
 ## Prepare the charts
 
-The plugin reads ENC cells that GDAL has exported to GeoJSON, one directory per cell. The
-export script ships with the plugin:
+The plugin reads unencrypted S-57 ENC cells as they are delivered: each `.000` base cell with
+its `.001`, `.002`, … updates beside it. Copy the exchange set, for example its `ENC_ROOT`
+folder, under one directory and set **ENC cells directory** to it; `.000` files are found down
+to three folders deep. The cells are read in place with GDAL compiled to WebAssembly
+(gdal3.js), which the plugin installs with it, and the updates are applied as they are read.
+Nothing is converted or written next to the cells. A cell without an `M_COVR` coverage layer
+is rejected.
 
-```sh
-SCRIPT=~/.signalk/node_modules/signalk-underkeel/scripts/enc-to-geojson.sh
-$SCRIPT ENC_ROOT/FI5ABCDE/FI5ABCDE.000 ~/charts/cells/FI5ABCDE
-```
+Land and shoreline are placed by the cell's compilation scale (6 m at 1:12 000) rather than by
+the survey's CATZOC (500 m in zone C), so a jetty or a beach does not spread across navigable
+water. Where the cell marks an edge or node as not surveyed (QUAPOS) the survey's σ applies
+there, and where it states a POSACC, half of it.
 
-To export a whole exchange set:
+At the first start the plugin builds a chart index from the cells in a worker thread and saves
+it under the plugin data directory, `~/.signalk/plugin-config-data/signalk-underkeel/index`
+unless **Chart index directory** says otherwise. Until the index is ready the engine is `off`
+with the reason `building chart index`. The 12 NOAA cells around Miami (6.8 MB of `.000` and
+updates) build in 19 s at leaf zoom 18 on x86. Later starts load the saved index, 0.1 s for
+those cells, and rebuild it when a cell was added or removed, or a cell's `.000` or update files
+changed; `GET /status` names the cells that caused the rebuild. **Rebuild index at start**
+forces a rebuild on every start. A cell folder may be a symbolic link.
 
-```sh
-for cell in ENC_ROOT/*/*.000; do
-  "$SCRIPT" "$cell" ~/charts/cells/"$(basename "$cell" .000)"
-done
-```
-
-Update files (`.001`, `.002`, …) next to the `.000` are applied during the export. The script
-refuses a non-empty output directory, so export each new edition into a new or emptied
-directory. A cell without an `M_COVR` coverage layer is rejected.
-
-The export also writes `QUAPOS.geojson`: the cell's edges and nodes whose position is not
-surveyed. With it the plugin places land and shoreline by the cell's compilation scale (6 m at
-1:12 000) rather than by the survey's CATZOC (500 m in zone C), so a jetty or a beach does not
-spread across navigable water. A cell exported before this file existed still works, with its
-shoreline placed by the survey; export it again to use it. Re-exporting rebuilds the index at
-the next start.
-
-Set **Exported ENC cells directory** to the parent directory (`~/charts/cells` above). At the
-first start the plugin builds a chart index in a worker thread and saves it under the plugin
-data directory, `~/.signalk/plugin-config-data/signalk-underkeel/index` unless **Chart index
-directory** says otherwise. Until the index is ready the engine is `off` with the reason
-`building chart index`. Later starts load the saved index and rebuild it when a cell directory was added
-or removed, or a cell's edition or update changed; `GET /status` names the cells that caused
-the rebuild. **Rebuild index at start** forces a rebuild on every start. A cell directory may
-be a symbolic link.
+Folders of GeoJSON layers exported by `scripts/enc-to-geojson.sh` for earlier versions are no
+longer read: point **ENC cells directory** at the original `.000` cells instead. Such a folder
+named like a cell is listed in `GET /status` as skipped.
 
 ## Settings
 
@@ -256,7 +246,7 @@ datum mapping.
 | `position stale`                                              | no recent `navigation.position`; check the GNSS source                 |
 | `course or speed stale: only the current position is checked` | no recent COG or SOG                                                   |
 | `no chart index loaded`                                       | set the cells directory; an index error is shown as the plugin's error |
-| `no chart coverage`                                           | the boat or its footprints are outside every exported cell             |
+| `no chart coverage`                                           | the boat or its footprints are outside every ENC cell                  |
 
 # For developers
 
@@ -264,7 +254,7 @@ datum mapping.
 
 ```mermaid
 flowchart LR
-  ENC[ENC cells as GeoJSON] --> IDX[(chart index:<br/>min-depth pyramid<br/>and hazard tree)]
+  ENC[S-57 ENC cells,<br/>read with GDAL] --> IDX[(chart index:<br/>min-depth pyramid<br/>and hazard tree)]
   NAV[Signal K position,<br/>course, attitude] --> LA
   WL[water level] --> LA
   IDX --> LA[look-ahead, 1 Hz]
@@ -289,7 +279,7 @@ and ESLint (`no-restricted-imports`) enforces it:
 | Layer      | Directory         | Responsibility                                                 |
 | ---------- | ----------------- | -------------------------------------------------------------- |
 | foundation | `src/foundation/` | shared types, Signal K paths, geodesy and geometry             |
-| ingest     | `src/ingest/`     | S-57 GeoJSON reading, coverage mosaic, vertical datums, WFS    |
+| ingest     | `src/ingest/`     | S-57 reading with GDAL, coverage mosaic, vertical datums, WFS  |
 | spatial    | `src/spatial/`    | min-depth pyramid, hazard R-tree, index storage, build worker  |
 | model      | `src/model/`      | vessel, water level providers, uncertainty, position integrity |
 | engine     | `src/engine/`     | look-ahead, hysteresis, route check, repair, departure window  |
@@ -305,8 +295,9 @@ and ESLint (`no-restricted-imports`) enforces it:
 | `lib/`                       | compiled output of `npm run build`; never edited, not in git                      |
 | `public/`                    | Freeboard pages: background runtime, status widget, details panel, shared helpers |
 | `schemas/navigation-safety/` | JSON Schemas of the provider-neutral navigation-safety contract (Apache-2.0)      |
-| `scripts/`                   | ENC export, synthetic fixture generator, bus vendoring, release and audit checks  |
+| `scripts/`                   | synthetic fixture generator, bus vendoring, release and audit checks              |
 | `fixtures/enc/`              | small synthetic cells used by the tests                                           |
+| `fixtures/s57/`              | the same synthetic cells as S-57 `.000` files, and the script that writes them    |
 | `__tests__/`                 | Jest tests, property tests, contract tests and benchmarks                         |
 | `docs/`                      | user guide, development plan, release checklist, RFC drafts                       |
 
@@ -330,9 +321,10 @@ hook formats and lints staged files.
 Tests are behaviour tests under `__tests__/`, mirroring `src/`. Property tests use fast-check;
 the conservative-depth query, monotonic risk, heel and the coverage mosaic have them. Contract
 tests check the REST responses and request parsers against the schemas in
-`schemas/navigation-safety/`. `scripts/make-synthetic-enc.js` regenerates the fixtures; real
-chart data and built indexes stay under `data/`, which git ignores along with `*.000` and
-`*.fgb`.
+`schemas/navigation-safety/`. `scripts/make-synthetic-enc.js` regenerates the GeoJSON fixtures
+in `fixtures/enc/`, and `fixtures/s57/generate.js` writes the same scenario as S-57 cells from
+them. Real chart data and built indexes stay under `data/`; git ignores it, and `*.000` and
+`*.fgb` files outside `fixtures/s57/`.
 
 To run a working copy in a local Signal K server, build it and install the folder, which npm
 links instead of copying:

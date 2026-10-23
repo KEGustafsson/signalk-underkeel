@@ -8,8 +8,15 @@ import * as routeCheckModule from "../../src/engine/route-check";
 import type { RouteServiceDeps } from "../../src/route-service";
 import { departureWindowReply, MAX_WAITING, RequestQueue } from "../../src/route-service";
 import underkeel = require("../../src/index");
-import { FIXTURES, fixtureIndex, seedFixtureIndex } from "../helpers/fixture-index";
+import {
+  CELLS,
+  fixtureIndex,
+  prepareFixtureIndex,
+  seedFixtureIndex
+} from "../helpers/fixture-index";
 import { fakeApp, fakeClock, fakeRouter, T0 } from "../helpers/plugin-harness";
+
+beforeAll(prepareFixtureIndex);
 
 /** Admission control and cancellation of the heavy REST work. */
 
@@ -147,7 +154,7 @@ describe("REST cancellation", () => {
       const { router, open } = fakeRouter();
       plugin.registerWithRouter?.(router as never);
       seedFixtureIndex(dataDir);
-      plugin.start({ cellsDir: FIXTURES, leafZoom: 18 }, () => undefined);
+      plugin.start({ cellsDir: CELLS, leafZoom: 18 }, () => undefined);
       const started = new Promise<void>((resolve) => {
         const checkLeg = routeCheckModule.checkLeg;
         jest.spyOn(routeCheckModule, "checkLeg").mockImplementation((...args) => {

@@ -214,7 +214,10 @@ function reachRisk(
 ): { risk: number; chart: Omit<ChartReach, "extent">; dMin: number } | undefined {
   const survey = w.store.surveySigma(i);
   const topo = w.store.topoSigma(i);
-  const bathy = w.store.bathyDMinOf(i);
+  // The survey depth is never shallower than dMin, the least of every depth under the node,
+  // but it is stored as a float32 rounded shallower and could read one ulp under dMin: a
+  // tile just past the buffer would then read a higher P than within it.
+  const bathy = Math.max(w.store.bathyDMinOf(i), v.dMin);
   let best: { risk: number; chart: Omit<ChartReach, "extent">; dMin: number } | undefined;
   // A split node's flags hold NO_DEPTH when any leaf under it has no depth;
   // its bathyDMin is Infinity only when none has any.

@@ -52,9 +52,8 @@ export const TOPOGRAPHY: ReadonlySet<string> = new Set([
 
 /**
  * Not an S-57 object class: the spatial records of a cell whose position is
- * not surveyed, exported by `scripts/enc-to-geojson.sh` from GDAL's
- * primitive layers. Its presence, even empty, says the export states the
- * cell's positional quality.
+ * not surveyed, built by the gdal3.js reader from GDAL's primitive layers.
+ * Its presence, even empty, says the cell's positional quality is known.
  */
 export const POSITION_LAYER = "QUAPOS";
 

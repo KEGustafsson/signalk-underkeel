@@ -1,9 +1,10 @@
 import fs from "fs";
 import path from "path";
 import type { PluginConfig } from "./config";
-import { readCellDirectory, readCellInfo } from "./ingest/cell-reader";
 import type { CellInfo } from "./ingest/cells";
-import { parseCatalogue, usageBandFromName } from "./ingest/cells";
+import { parseCatalogue } from "./ingest/cells";
+import type { CellScan } from "./ingest/cell-source";
+import { currentInfo, readCell, scanCellSources } from "./ingest/cell-source";
 import { WFS_SOURCE } from "./ingest/wfs";
 import type { BuildJob } from "./spatial/build-worker";
 import type { ChartIndex } from "./spatial/chart-index";
@@ -16,7 +17,7 @@ import {
 } from "./spatial/chart-index";
 
 /**
- * Finds the chart index at start: builds it from exported cells when asked
+ * Finds the chart index at start: builds it from the S-57 cells when asked
  * to, when none exists yet or when the cells changed since it was saved,
  * otherwise loads the saved one. Failure is reported as a reason, so the
  * engine can publish `off` with it. A build is returned as a job, so the
@@ -75,53 +76,17 @@ function exists(dir: string): boolean {
   return fs.existsSync(path.join(dir, "pyramid.bin"));
 }
 
-interface CellScan {
-  dirs: string[];
-  /** Entries named like a cell that are not a directory or a link to one. */
-  skipped: string[];
-}
-
-function isDirectory(p: string): boolean {
-  try {
-    return fs.statSync(p).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
-/** A dangling link or a file such as `FI5ABCDE.000` is most likely a cell the user expects read. */
-function looksLikeCell(e: fs.Dirent): boolean {
-  return e.isSymbolicLink() || (!e.name.startsWith(".") && usageBandFromName(e.name) !== undefined);
-}
-
-function scanCells(cellsDir: string | undefined): CellScan {
-  const scan: CellScan = { dirs: [], skipped: [] };
-  if (!cellsDir) {
-    return scan;
-  }
-  for (const e of fs.readdirSync(cellsDir, { withFileTypes: true })) {
-    const full = path.join(cellsDir, e.name);
-    if (e.isDirectory() || (e.isSymbolicLink() && isDirectory(full))) {
-      scan.dirs.push(full);
-    } else if (looksLikeCell(e)) {
-      scan.skipped.push(e.name);
-    }
-  }
-  scan.dirs.sort();
-  scan.skipped.sort();
-  return scan;
-}
-
-export function cellDirectories(cellsDir: string | undefined): string[] {
-  return scanCells(cellsDir).dirs;
+/** The S-57 base cells (`.000` files) under `cellsDir`, in path order. */
+export function cellSources(cellsDir: string | undefined): string[] {
+  return scanCellSources(cellsDir).sources;
 }
 
 function skippedNote(cellsDir: string | undefined, scan: CellScan): string[] {
   return scan.skipped.length === 0
     ? []
     : [
-        `skipped ${scan.skipped.join(", ")} in ${cellsDir ?? "cellsDir"}: not a cell directory; ` +
-          "export each .000 with scripts/enc-to-geojson.sh"
+        `skipped ${scan.skipped.join(", ")} in ${cellsDir ?? "cellsDir"}: ` +
+          "no S-57 cell (.000) in it, a dangling link, or a cell name met twice"
       ];
 }
 
@@ -162,11 +127,11 @@ export function loadOrBuildIndex(
   cfg: PluginConfig,
   dataDir: string,
   extraDirs: string[] = []
-): IndexLoad {
+): Promise<IndexLoad> {
   return settle(planIndex(cfg, dataDir, extraDirs));
 }
 
-function settle(p: IndexPlan): IndexLoad {
+async function settle(p: IndexPlan): Promise<IndexLoad> {
   if ("load" in p) {
     return p.load;
   }
@@ -178,10 +143,11 @@ function settle(p: IndexPlan): IndexLoad {
     }
   }
   try {
-    const index = buildChartIndex(
-      p.build.dirs.map((d, i) => readCellDirectory(d, i)),
-      { leafZoom: p.build.leafZoom }
-    );
+    const cells = [];
+    for (const [i, d] of p.build.dirs.entries()) {
+      cells.push(await readCell(d, i));
+    }
+    const index = buildChartIndex(cells, { leafZoom: p.build.leafZoom });
     saveChartIndex(p.indexDir, index);
     return builtLoad(p, index);
   } catch (err) {
@@ -229,12 +195,12 @@ function plan(
       load: failedLoad(indexDir, err)
     }));
   }
-  const scan = scanCells(cfg.cellsDir);
-  const change = cellsChange(cfg.cellsDir, saved, scan.dirs);
+  const scan = scanCellSources(cfg.cellsDir);
+  const change = cellsChange(cfg.cellsDir, saved, scan.sources);
   const notes = [...(change ? [change] : []), ...skippedNote(cfg.cellsDir, scan)];
   const sources = Boolean(cfg.cellsDir) || extraDirs.length > 0;
   const rebuild = (why: string[]): IndexPlan =>
-    buildPlan(cfg, indexDir, [...scan.dirs, ...extraDirs], why);
+    buildPlan(cfg, indexDir, [...scan.sources, ...extraDirs], why);
   // A power cut during a save can leave a file empty or short; the cells are read again.
   const unreadable = (err: unknown): IndexPlan =>
     sources
@@ -317,12 +283,13 @@ function savedCells(indexDir: string): CellInfo[] {
     .cells;
 }
 
-const cellKey = (
-  c: Pick<CellInfo, "name" | "edition" | "update" | "datumAreas" | "positionQuality">
-): string =>
-  `${c.name} edition ${c.edition} update ${c.update}` +
-  (c.datumAreas ? ` datum areas ${c.datumAreas.join(",")}` : "") +
-  (c.positionQuality ? " with position quality" : "");
+/** An S-57 cell by its files' stamp, a directory by its DSID and datum areas. */
+const cellKey = (c: Partial<CellInfo>): string =>
+  c.files !== undefined
+    ? `${c.name} files ${c.files}`
+    : `${c.name} edition ${c.edition} update ${c.update}` +
+      (c.datumAreas ? ` datum areas ${c.datumAreas.join(",")}` : "") +
+      (c.positionQuality ? " with position quality" : "");
 
 /**
  * Why the saved index no longer matches the cells directory, from each
@@ -341,7 +308,7 @@ function cellsChange(
     .filter((c) => c.source !== WFS_SOURCE)
     .map(cellKey)
     .sort();
-  const now = dirs.map((d) => cellKey(readCellInfo(d))).sort();
+  const now = dirs.map((d) => cellKey(currentInfo(d))).sort();
   if (was.join("\n") === now.join("\n")) {
     return undefined;
   }

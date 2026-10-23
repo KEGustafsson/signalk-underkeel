@@ -1,3 +1,5 @@
+import { createHash } from "crypto";
+import fs from "fs";
 import path from "path";
 import initGdalJs = require("gdal3.js/node.js");
 import type { CellLayers, ReadCell } from "./cell-reader";
@@ -7,12 +9,11 @@ import { POSITION_LAYER, S57_LAYERS } from "./s57-geojson";
 
 /**
  * Reads an S-57 cell straight from its `.000` and update files with GDAL
- * compiled to WebAssembly (gdal3.js): no export step, no container. Each
- * layer the reader uses is converted by ogr2ogr to GeoJSON in gdal3.js's
- * in-memory file system and goes through the same reader as an exported
- * directory, so every parsing rule is shared. The options are those of
- * `scripts/enc-to-geojson.sh`, primitives included for the cell's
- * positional quality. NOAA US5FL61M (1.5 MB, 10 000 features used) reads in
+ * compiled to WebAssembly (gdal3.js): no export step, no container, nothing
+ * written. Each layer the reader uses is converted by ogr2ogr to GeoJSON in
+ * gdal3.js's in-memory file system and parsed by the same rules as the
+ * plugin's own GeoJSON cells, primitives included for the cell's positional
+ * quality. NOAA US5FL61M (1.5 MB, 10 000 features used) reads in
  * 1.7 s at 270 MB RSS; one `ogrinfo -json -features` of every layer took
  * 4.4 s at 510 MB (x86). The WebAssembly memory is never returned to the
  * system, so run this in a worker thread that exits after the build.
@@ -127,29 +128,52 @@ function positionLayer(layers: Map<string, GeoJsonFeature[]>): GeoJsonFeatureCol
   };
 }
 
-/** One layer as GeoJSON, written to and removed from gdal3.js's in-memory `/output`. */
-async function readLayer(
-  g: Gdal,
-  ds: Dataset,
-  layer: string,
-  options: string[]
-): Promise<GeoJsonFeature[]> {
+/** One layer as GeoJSON bytes, written to and removed from gdal3.js's in-memory `/output`. */
+async function readLayer(g: Gdal, ds: Dataset, layer: string, options: string[]): Promise<Buffer> {
   const out = await g.ogr2ogr(ds, ["-f", "GeoJSON", ...options, layer], layer);
   try {
-    const bytes = g.Module.FS.readFile(out.local);
-    const text = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("utf8");
-    return (JSON.parse(text) as GeoJsonFeatureCollection).features;
+    return Buffer.from(g.Module.FS.readFile(out.local));
   } finally {
     g.Module.FS.unlink(out.local);
   }
 }
 
-/** The layers the reader uses, each read once; a layer the cell lacks stays absent. */
-async function readLayers(file: string): Promise<CellLayers> {
+const PRIMITIVES = new Set(["Edge", "ConnectedNode", "IsolatedNode"]);
+
+/**
+ * A cell's layers as GeoJSON bytes by S-57 name, QUAPOS among them: one
+ * SharedArrayBuffer per cell, so the index build's region threads read the
+ * same bytes without a copy.
+ */
+export type EncLayers = Record<string, Uint8Array>;
+
+const parse = (bytes: Uint8Array): GeoJsonFeatureCollection =>
+  JSON.parse(
+    Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("utf8")
+  ) as GeoJsonFeatureCollection;
+
+function shared(parts: Map<string, Uint8Array>): EncLayers {
+  let size = 0;
+  parts.forEach((b) => (size += b.byteLength));
+  const buffer = new SharedArrayBuffer(size);
+  const out: EncLayers = {};
+  let at = 0;
+  for (const [layer, b] of parts) {
+    const view = new Uint8Array(buffer, at, b.byteLength);
+    view.set(b);
+    out[layer] = view;
+    at += b.byteLength;
+  }
+  return out;
+}
+
+/** The layers the index reads from a `.000` cell and its updates, each read once. */
+export async function readEncLayers(file: string): Promise<EncLayers> {
   const g = await gdalJs();
-  const layers = await serial(async () => {
+  const read = await serial(async () => {
     // Update files beside the base cell are found and applied by the driver (UPDATES=APPLY).
-    const { datasets, errors } = await g.open(file).catch((err: unknown) => {
+    // gdal3.js mounts the cell's folder, and Emscripten's NODEFS cannot mount a symlink.
+    const { datasets, errors } = await g.open(fs.realpathSync(file)).catch((err: unknown) => {
       throw gdalError(file, err);
     });
     const ds = datasets[0];
@@ -159,36 +183,120 @@ async function readLayers(file: string): Promise<CellLayers> {
     try {
       // ogr2ogr fails on a layer the cell lacks; open() has listed the cell's layers.
       const present = new Set((ds.info?.layers ?? []).map((l) => l.name));
-      const read = new Map<string, GeoJsonFeature[]>();
+      const out = new Map<string, Buffer>();
       for (const [layer, options] of LAYERS) {
         if (present.has(layer)) {
-          const features = await readLayer(g, ds, layer, options).catch((err: unknown) => {
+          const bytes = await readLayer(g, ds, layer, options).catch((err: unknown) => {
             throw gdalError(`${file} layer ${layer}`, err);
           });
-          read.set(layer, features);
+          out.set(layer, bytes);
         }
       }
-      return read;
+      return out;
     } finally {
       await g.close(ds);
     }
   });
-  const position = positionLayer(layers);
-  return (layer) => {
-    if (layer === POSITION_LAYER) {
-      return position;
+  const primitives = new Map<string, GeoJsonFeature[]>();
+  const parts = new Map<string, Uint8Array>();
+  for (const [layer, bytes] of read) {
+    if (PRIMITIVES.has(layer)) {
+      primitives.set(layer, parse(bytes).features);
+    } else {
+      parts.set(layer, bytes);
     }
-    const features = layers.get(layer);
-    return features && { type: "FeatureCollection", features };
+  }
+  parts.set(POSITION_LAYER, Buffer.from(JSON.stringify(positionLayer(primitives))));
+  return shared(parts);
+}
+
+/**
+ * The edition number in the base cell's DSID record, read from the ISO 8211
+ * file itself. GDAL reports the last update's DSID_EDTN once updates are
+ * applied, and NOAA updates carry 0 there: US5FL65M, edition 38, read as
+ * edition 0 with its three updates.
+ */
+export function baseEdition(file: string): number | undefined {
+  const fd = fs.openSync(file, "r");
+  try {
+    const head = Buffer.alloc(65_536);
+    const size = fs.readSync(fd, head, 0, head.length, 0);
+    const num = (at: number, len: number): number => Number(head.toString("latin1", at, at + len));
+    // The data descriptive record comes first; the DSID is in the first data record after it.
+    const dr = num(0, 5);
+    if (!(dr > 0) || dr + 24 > size) {
+      return undefined;
+    }
+    const base = dr + num(dr + 12, 5);
+    const [lenSize, posSize, tagSize] = [num(dr + 20, 1), num(dr + 21, 1), num(dr + 23, 1)];
+    for (let e = dr + 24; head[e] !== 0x1e && e < base; e += tagSize + lenSize + posSize) {
+      if (head.toString("latin1", e, e + tagSize) === "DSID") {
+        // RCNM (1 byte), RCID (4), EXPP (1), INTU (1), then DSNM and EDTN, each ended by 0x1f.
+        const dsnm = base + num(e + tagSize + lenSize, posSize) + 7;
+        const edtn = head.indexOf(0x1f, dsnm) + 1;
+        const end = head.indexOf(0x1f, edtn);
+        const n = edtn > 0 && end > edtn ? Number(head.toString("latin1", edtn, end)) : NaN;
+        return Number.isInteger(n) && n > 0 ? n : undefined;
+      }
+    }
+    return undefined;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/** The cell `readEncLayers` read from `file`, parsed as `readCellDirectory` parses an export. */
+export function encCell(
+  file: string,
+  layers: EncLayers,
+  cellRef: number,
+  bandOverride?: number
+): ReadCell {
+  const name = path.basename(file, path.extname(file));
+  const byName: CellLayers = (layer) => {
+    const bytes = layers[layer];
+    return bytes && parse(bytes);
+  };
+  const cell = readCellLayers(byName, name, cellRef, bandOverride, file);
+  const edition = cell.info.update > 0 ? baseEdition(file) : undefined;
+  return {
+    ...cell,
+    // Named by its file, as discovery and the saved index's check name it, whatever DSID_DSNM says.
+    info: { ...cell.info, name, edition: edition ?? cell.info.edition, files: encStamp(file) }
   };
 }
 
-/** A cell read from its `.000` and updates, as `readCellDirectory` reads an export. */
+/** A cell read from its `.000` and updates. */
 export async function readEncCell(
   file: string,
   cellRef: number,
   bandOverride?: number
 ): Promise<ReadCell> {
-  const name = path.basename(file, path.extname(file));
-  return readCellLayers(await readLayers(file), name, cellRef, bandOverride, file);
+  return encCell(file, await readEncLayers(file), cellRef, bandOverride);
+}
+
+/** The base cell and its updates (`.001`, `.002`, …) beside it, in order. */
+export function encFiles(file: string): string[] {
+  const dir = path.dirname(file);
+  const base = path.basename(file, path.extname(file));
+  const updates = fs
+    .readdirSync(dir)
+    .filter(
+      (f) => path.basename(f, path.extname(f)) === base && /^\.(?!000)\d{3}$/.test(path.extname(f))
+    )
+    .sort();
+  return [file, ...updates.map((f) => path.join(dir, f))];
+}
+
+/**
+ * The names, sizes and modification times of a cell's files, hashed: a new
+ * edition, an update added or a file replaced changes it, without reading the cell.
+ */
+export function encStamp(file: string): string {
+  const hash = createHash("sha256");
+  for (const f of encFiles(file)) {
+    const st = fs.statSync(f);
+    hash.update(`${path.basename(f)} ${st.size} ${st.mtimeMs}\n`);
+  }
+  return hash.digest("hex").slice(0, 16);
 }

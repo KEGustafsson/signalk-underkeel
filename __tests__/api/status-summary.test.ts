@@ -3,8 +3,10 @@ import os from "os";
 import path from "path";
 import UKC = require("../../public/ukc-shared.js");
 import underkeel = require("../../src/index");
-import { FIXTURES, seedFixtureIndex } from "../helpers/fixture-index";
+import { CELLS, prepareFixtureIndex, seedFixtureIndex } from "../helpers/fixture-index";
 import { fakeApp, fakeClock, fakeRouter, T0 } from "../helpers/plugin-harness";
+
+beforeAll(prepareFixtureIndex);
 
 /** `GET /status?summary`: the status a frequent poll needs, without the per-cell lists. */
 
@@ -21,7 +23,7 @@ describe("status summary", () => {
     const { router, call } = fakeRouter();
     plugin.registerWithRouter?.(router as never);
     seedFixtureIndex(dataDir);
-    plugin.start({ cellsDir: FIXTURES, leafZoom: 18 }, () => undefined);
+    plugin.start({ cellsDir: CELLS, leafZoom: 18 }, () => undefined);
     type Status = {
       index: { cells?: unknown[] };
       waterLevel: { datums?: unknown[] };

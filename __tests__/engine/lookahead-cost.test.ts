@@ -168,9 +168,14 @@ describe("coarse steps beyond the warn window", () => {
       }),
       {
         numRuns: 40,
-        // From CI: a turning boat whose coarse hull, taken in lon/lat, left a step's footprint
-        // 2.5 µm outside it in Mercator.
-        examples: [[{ x: 0.53954, y: 0.72002, cog: 0, sog: 1.32432, rot: -0.029976 }]]
+        examples: [
+          // From CI: a turning boat whose coarse hull, taken in lon/lat, left a step's footprint
+          // 2.5 µm outside it in Mercator.
+          [{ x: 0.53954, y: 0.72002, cog: 0, sog: 1.32432, rot: -0.029976 }],
+          // From CI: a rock just past a plan step's buffer and within the coarse one's read its
+          // float32 survey depth there, 1 ulp shallower than its depth within, and a higher P.
+          [{ x: 0.79328, y: 0.4943, cog: 2.3147254671649597, sog: 0.3, rot: 0.020586 }]
+        ]
       }
     );
   });

@@ -2,7 +2,7 @@
 
 This guide follows the plugin from chart files to an alarm on the plotter, with the numbers
 it uses at each step. The [development plan](DEVELOPMENT-PLAN.md) holds the design and its
-rationale; the [README](../README.md) lists the REST endpoints and the chart export command.
+rationale; the [README](../README.md) lists the REST endpoints and how to prepare the charts.
 
 > Advisory navigation aid, non-commercial. Not ECDIS, and not a replacement for official charts
 > or a proper lookout: always carry and use an official nautical chart, paper or ENC.
@@ -55,7 +55,7 @@ the attribution and the not-for-navigation notice in its footer.
 
 ```mermaid
 flowchart LR
-  ENC[ENC cells<br/>exported to GeoJSON] --> IDX[(Chart index<br/>built once,<br/>saved to disk)]
+  ENC[S-57 ENC cells<br/>.000 and updates] --> IDX[(Chart index<br/>built once,<br/>saved to disk)]
   NAV[Signal K navigation<br/>position, COG, SOG,<br/>heading, roll, wave height] --> LA
   VES[Vessel<br/>draft, length, beam] --> Q
   WL[Water level<br/>none, manual,<br/>Signal K tide, FMI] --> Q
@@ -81,18 +81,19 @@ look-ahead, a corridor around each leg for a route check, or a map tile for the 
 
 ![Plugin configuration in the Signal K admin UI](images/how-it-works/config.png)
 
-The plugin reads unencrypted S-57 cells that GDAL has exported to GeoJSON, one directory per
-cell (the [README](../README.md#chart-data) has the export command), and points
-**Exported ENC cells directory** at their parent. The draft comes from **Vessel**, or else from
-Signal K `design.draft.maximum`; length and beam fall back to `design.length.overall` and
+The plugin reads unencrypted S-57 cells as delivered, each `.000` with its updates, with GDAL
+compiled to WebAssembly; **ENC cells directory** points at the folder that holds them, such as
+an exchange set's `ENC_ROOT` (the [README](../README.md#prepare-the-charts) has the details).
+The draft comes from **Vessel**, or else from Signal K `design.draft.maximum`; length and beam fall back to `design.length.overall` and
 `design.beam`. Without a draft the engine stays `unknown`. The water level comes from the
 source picked under **Water level** (section 8).
 
 The index is built at the first start, in a worker thread so the server keeps running, and
 saved under the plugin data directory; until it is ready the engine is `off` with the reason
 `building chart index`. Later starts load the saved index (a large one in the background,
-`off` with `loading chart index` meanwhile) unless a cell directory was added or removed or its
-`DSID` edition or update changed; then the index is rebuilt and the index reason in `/status` names the cells.
+`off` with `loading chart index` meanwhile) unless a cell was added or removed, or a cell's
+`.000` or update files changed name, size or modification time; then the index is rebuilt and
+the index reason in `/status` names the cells.
 **Rebuild index at start** rebuilds it on every start. An index saved by an older plugin version
 whose index format differs is rebuilt too, and so is one whose files cannot be read, as a power
 cut during a save can leave them; the reason then names the read error.
@@ -140,7 +141,7 @@ only fills gaps.
 
 ```mermaid
 flowchart TD
-  A[Read every cell's GeoJSON layers] --> B[Sort features into coverage, quality,<br/>depth, swept, hazards, land]
+  A[Read every cell's .000 and updates<br/>with GDAL] --> B[Sort features into coverage, quality,<br/>depth, swept, hazards, land]
   B --> C[Widen a point hazard or sounding in unassessed<br/>water to a disc of 2 × σP; elsewhere the query<br/>counts its chart position]
   C --> D[Start at zoom 10 tiles over all coverage]
   D --> E{Is the tile uniform?<br/>fully inside coverage, and no<br/>shallower depth, quality edge<br/>or swept edge crosses it}
@@ -159,8 +160,8 @@ flowchart TD
 - Each tile also keeps what it spreads by its chart position: its survey's σP, the σ of its
   land and shoreline objects' own positions, and the shallowest depth its survey places. Land
   and shoreline are placed by the cell's compilation scale (1 mm on the chart, so 6 m at
-  1:12 000), not by CATZOC, where the export carries `QUAPOS.geojson`; on an edge or node whose
-  QUAPOS says it is not surveyed they keep the survey's σP.
+  1:12 000), not by CATZOC; on an edge or node whose QUAPOS, read from GDAL's primitive
+  layers, says it is not surveyed they keep the survey's σP.
 - A leaf zoom of 20 makes the smallest tile about 19 m across at 60° N. The Nauvo box built
   158,784 tiles.
 - Each stored tile also carries flags: `NO_COVERAGE`, `UNASSESSED` (no survey quality, or
@@ -764,7 +765,7 @@ page says what is missing: no Signal K stream on the widget, or no shared routes
   gap leaves the leaf unassessed. The same holds for two cells of one usage band meeting along
   a shared edge: matched vertex for vertex, the leaf on the edge is covered; otherwise it reads
   as no coverage.
-- Only unencrypted S-57 cells exported with `scripts/enc-to-geojson.sh` are read.
+- Only unencrypted S-57 cells are read: S-63 encrypted cells must be decrypted first.
 - The look-ahead follows course and turn rate, not the route. In a winding fairway it sees the
   shore ahead before each bend and raises warn or alarm until the boat turns.
 - Freeboard shows the envelope and leg colours through the Plotter Extensions API. It cannot

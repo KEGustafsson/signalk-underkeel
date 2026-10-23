@@ -6,7 +6,6 @@
   "files": [
     "lib/",
     "public/",
-    "scripts/enc-to-geojson.sh",
     "CHANGELOG.md",
     "docs/images/how-it-works/combo-pic.jpg",
     "docs/images/how-it-works/freeboard-risk.jpg",
@@ -63,7 +62,6 @@
     "@typescript-eslint/parser": "^8.71.2",
     "eslint": "^10.13.0",
     "fast-check": "^4.10.2",
-    "gdal3.js": "^2.8.1",
     "globals": "^17.13.0",
     "husky": "^9.1.7",
     "jest": "^30.5.2",
@@ -132,5 +130,8 @@
     "*.{json,md,yml}": [
       "prettier --write"
     ]
+  },
+  "dependencies": {
+    "gdal3.js": "^2.8.1"
   }
 }

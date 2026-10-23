@@ -3,8 +3,16 @@ import os from "os";
 import path from "path";
 import underkeel = require("../src/index");
 import { LivechartService } from "../src/livechart-service";
-import { FIXTURES, M_PER_DEG_LON, ROCK, seedFixtureIndex } from "./helpers/fixture-index";
+import {
+  CELLS,
+  M_PER_DEG_LON,
+  prepareFixtureIndex,
+  ROCK,
+  seedFixtureIndex
+} from "./helpers/fixture-index";
 import { fakeApp, fakeClock, fakeRouter, lastValue, navDelta, T0 } from "./helpers/plugin-harness";
+
+beforeAll(prepareFixtureIndex);
 
 /** What the plugin answers and publishes once it is stopped or restarted. */
 
@@ -26,7 +34,7 @@ describe("after stop", () => {
       plugin.registerWithRouter?.(router as never);
       seedFixtureIndex(dataDir);
       plugin.start(
-        { cellsDir: FIXTURES, leafZoom: 18, livechart: { enabled: true } },
+        { cellsDir: CELLS, leafZoom: 18, livechart: { enabled: true } },
         () => undefined
       );
       plugin.stop();
@@ -46,7 +54,7 @@ describe("after stop", () => {
     seedFixtureIndex(dataDir);
     plugin.start(
       {
-        cellsDir: FIXTURES,
+        cellsDir: CELLS,
         leafZoom: 18,
         waterLevel: { source: "manual", height: -1.5, sigma: 0.05 }
       },
@@ -90,7 +98,7 @@ describe("after stop", () => {
     const plugin = underkeel(f.app, clock);
     seedFixtureIndex(dataDir);
     plugin.start(
-      { cellsDir: FIXTURES, leafZoom: 18, waterLevel: { source: "manual", height: 0.4 } },
+      { cellsDir: CELLS, leafZoom: 18, waterLevel: { source: "manual", height: 0.4 } },
       () => undefined
     );
     f.send(navDelta(ROCK[0] - 75 / M_PER_DEG_LON, ROCK[1], 3, T0));
@@ -172,7 +180,7 @@ describe("restart", () => {
     plugin.registerWithRouter?.(router as never);
     const run = (lon: number) => {
       seedFixtureIndex(dataDir);
-      plugin.start({ cellsDir: FIXTURES, leafZoom: 18 }, () => undefined);
+      plugin.start({ cellsDir: CELLS, leafZoom: 18 }, () => undefined);
       f.send(navDelta(lon, ROCK[1], 3, clock.now()));
       clock.advance(1000);
       return lastValue(f.deltas, "navigation.underKeel.envelopeRev") as number;

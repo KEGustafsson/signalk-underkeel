@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { writeFileDurable } from "../foundation/durable-file";
 import type { Rect } from "../foundation/geo";
-import { readCellInfo } from "../ingest/cell-reader";
+import { currentInfo, sourceName } from "../ingest/cell-source";
 import type { CellInfo } from "../ingest/cells";
 import type { DepthFeature } from "../ingest/features";
 import type { CellReach } from "./build-items";
@@ -67,9 +67,15 @@ const canonical = (info: object): string =>
       .sort(([a], [b]) => (a < b ? -1 : 1))
   );
 
-/** The provenance of the cell in `dir` when it is what `saved` records, else undefined. */
-export function unchangedInfo(dir: string, saved: CellInfo): CellInfo | undefined {
-  const now = readCellInfo(dir);
+/**
+ * The provenance of the cell at `source` when it is what `saved` records, else undefined:
+ * an S-57 cell's files unchanged since, or a directory's DSID and datum areas.
+ */
+export function unchangedInfo(source: string, saved: CellInfo): CellInfo | undefined {
+  const now = currentInfo(source);
+  if (now.files !== undefined) {
+    return now.name === saved.name && now.files === saved.files ? saved : undefined;
+  }
   return canonical(now) === canonical(saved) ? (now as CellInfo) : undefined;
 }
 
@@ -94,7 +100,7 @@ export function savedIndex(
     return undefined;
   }
   const { pyramid, catalogue } = saved;
-  const names = dirs.map((d) => readCellInfo(d).name);
+  const names = dirs.map(sourceName);
   if (
     pyramid.minZoom !== DEFAULT_BUILD.minZoom ||
     pyramid.leafZoom !== leafZoom ||
