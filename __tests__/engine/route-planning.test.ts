@@ -157,6 +157,32 @@ describe("route repair", () => {
     expect(repair.reason).toBe("no passable path in the search window");
   });
 
+  test("a shoal near a long leg's waypoint, outside its corridor, does not block the search", async () => {
+    // A 30 km leg searches 500 m cells. A rock 200 m north of the start lies inside the start
+    // cell's disc (its centre 250 m east and north, radius 30 m + 250 m), not in the corridor.
+    const long: LonLat[] = [
+      [22.0, 60.0],
+      [22.54, 60.0]
+    ];
+    const rocky: ChartIndex = {
+      ...index,
+      pyramid: buildPyramid(
+        [
+          ...basin([21.6, 59.8, 22.9, 60.2], 10),
+          area([22.27, 59.97, 22.272, 60.03], 1),
+          area([21.9998, 60.0017, 22.0002, 60.0019], 1)
+        ],
+        { minZoom: 10, leafZoom: 18 }
+      )
+    };
+    const checked = checkRoute(rocky, input(long), NOW).legs[0] as LegResult;
+    expect(checked.status).toBe("fail");
+    const repair = repairLeg(rocky, input(long), checked);
+    expect(repair.reason).toBeUndefined();
+    expect(repair.waypoints.length).toBeGreaterThan(0);
+    expect(repair.legs.every((l) => l.status === "ok")).toBe(true);
+  });
+
   test("the search keeps the chart's position uncertainty clear of the shoal", async () => {
     // CATZOC B: depth areas may lie 50 m from where they are drawn.
     const box = [22.0, 60.0, 22.06, 60.03] as const;

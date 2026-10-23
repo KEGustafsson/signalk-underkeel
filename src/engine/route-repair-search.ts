@@ -216,6 +216,14 @@ class ThetaStar {
   }
 }
 
+/** The cell `p` lies in, clamped to the grid. */
+export function cellOf(g: Grid, p: LonLat): number {
+  const [x, y] = g.frame.toXY(p);
+  const cx = Math.min(g.nx - 1, Math.max(0, Math.floor((x - g.x0) / g.cell)));
+  const cy = Math.min(g.ny - 1, Math.max(0, Math.floor((y - g.y0) / g.cell)));
+  return cy * g.nx + cx;
+}
+
 /** The path from `from` to `to` through the grid's open cells, or undefined when there is none. */
 export function* thetaStar(
   g: Grid,
@@ -223,14 +231,8 @@ export function* thetaStar(
   to: LonLat,
   costOf: (i: number) => number
 ): Steps<LonLat[] | undefined> {
-  const cellOf = (p: LonLat): number => {
-    const [x, y] = g.frame.toXY(p);
-    const cx = Math.min(g.nx - 1, Math.max(0, Math.floor((x - g.x0) / g.cell)));
-    const cy = Math.min(g.ny - 1, Math.max(0, Math.floor((y - g.y0) / g.cell)));
-    return cy * g.nx + cx;
-  };
-  const start = cellOf(from);
-  const goal = cellOf(to);
+  const start = cellOf(g, from);
+  const goal = cellOf(g, to);
   if (costOf(start) === Infinity || costOf(goal) === Infinity) {
     return undefined;
   }

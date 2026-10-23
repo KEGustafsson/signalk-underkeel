@@ -9,7 +9,7 @@ import { DEFAULT_BUILD } from "../spatial/pyramid-build";
 import type { LegResult, RouteCheckInput, Steps } from "./route-check";
 import { checkLeg, checkRoute, checkRouteYielding, drain, UNCHECKED } from "./route-check";
 import type { Grid } from "./route-repair-search";
-import { frameAt, thetaStar } from "./route-repair-search";
+import { cellOf, frameAt, thetaStar } from "./route-repair-search";
 
 /**
  * Route repair (plan §4.11): for a leg that fails, Theta* over a local cost
@@ -77,22 +77,32 @@ function* repairSteps(
   const risk = { threshold: thresholdDepth(terms, wl), sigmaExtra: sigmaExtra(terms, wl) };
   const corridor = input.xteLimit + input.planningBuffer;
   const grid = gridFor(leg.from, leg.to, corridor, opts);
+  const score = (at: LonLat, bufferMetres: number): number => {
+    const r = minDepthOver(index.pyramid, footprintGeom([at]), {
+      bufferMetres,
+      chartPosition: true,
+      risk
+    });
+    const unchecked = (r.flags & UNCHECKED) !== 0;
+    return unchecked || r.maxRisk >= input.probability
+      ? Infinity
+      : 1 + (opts.alpha * r.maxRisk) / input.probability;
+  };
+  // The path starts and ends on the leg's own ends, so their cells are scored there with the
+  // corridor alone: around the cell centre, grown by half a cell, a shoal hundreds of metres
+  // from a waypoint on a long leg's coarse grid would block the whole search. The final check
+  // still holds the path to the corridor.
+  for (const end of [leg.from, leg.to]) {
+    const i = cellOf(grid, end);
+    grid.cost[i] = Math.max(grid.known[i] ? (grid.cost[i] as number) : 0, score(end, corridor));
+    grid.known[i] = 1;
+  }
   const costOf = (i: number): number => {
     if (!grid.known[i]) {
       grid.known[i] = 1;
       const cx = grid.x0 + ((i % grid.nx) + 0.5) * grid.cell;
       const cy = grid.y0 + (Math.floor(i / grid.nx) + 0.5) * grid.cell;
-      const at = footprintGeom([grid.frame.toLonLat(cx, cy)]);
-      const r = minDepthOver(index.pyramid, at, {
-        bufferMetres: corridor + grid.cell / 2,
-        chartPosition: true,
-        risk
-      });
-      const unchecked = (r.flags & UNCHECKED) !== 0;
-      grid.cost[i] =
-        unchecked || r.maxRisk >= input.probability
-          ? Infinity
-          : 1 + (opts.alpha * r.maxRisk) / input.probability;
+      grid.cost[i] = score(grid.frame.toLonLat(cx, cy), corridor + grid.cell / 2);
     }
     return grid.cost[i] as number;
   };
