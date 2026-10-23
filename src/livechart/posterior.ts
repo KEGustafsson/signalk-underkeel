@@ -224,12 +224,14 @@ export function rebasePrior(
 
 /**
  * The prior of a cell whose chart cannot be read yet: none, so the soundings stand alone and
- * the cell is not judged until it is rebased onto its chart.
+ * the cell is not judged until it is rebased onto its chart. Its cell reference is -1, no
+ * cell: a reference kept from another index would name whatever cell that number has in the
+ * current catalogue, in query results and explanations.
  */
-export const noPrior = (cellRef: number): { depth: number; sigma: number; cellRef: number } => ({
+export const noPrior = (): { depth: number; sigma: number; cellRef: number } => ({
   depth: NaN,
   sigma: NO_PRIOR_SIGMA,
-  cellRef
+  cellRef: -1
 });
 
 /** Trigger (plan §4.13): at least this many samples over at least this many passes. */

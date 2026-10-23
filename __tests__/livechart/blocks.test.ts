@@ -29,10 +29,13 @@ const SHOAL: LonLat = [22.0505, 60.0505];
 /** A 2 m rock in the shoal cell's z15 tile but not in its z18 cell. */
 const ROCK: LonLat = [22.0535, 60.0505];
 
-const whole = buildPyramid([...basin([22.0, 60.0, 22.1, 60.1], 10), point(...ROCK, 2)], {
-  minZoom: 12,
-  leafZoom: 18
-});
+/** The fixture chart held whole in memory. */
+const chart = (): NodeStore =>
+  buildPyramid([...basin([22.0, 60.0, 22.1, 60.1], 10), point(...ROCK, 2)], {
+    minZoom: 12,
+    leafZoom: 18
+  });
+const whole = chart();
 const file = serializePyramid(whole, { residentZoom: 15, blockZoom: 13 });
 
 /** The index read block by block, nothing loaded, every block read off the event loop. */
@@ -59,14 +62,20 @@ function tmp(): string {
   return dir;
 }
 
-/** `n` soundings of `depth` at the shoal, in two passes 15 minutes apart. */
-function sound(svc: LivechartService, depth: number, n: number): void {
+/** `n` soundings of `depth` at `position`, in two passes 15 minutes apart from `start`. */
+function sound(
+  svc: LivechartService,
+  depth: number,
+  n: number,
+  position: LonLat = SHOAL,
+  start = T0
+): void {
   for (let k = 0; k < n; k++) {
-    const at = T0 + (k < n / 2 ? 0 : 15 * 60_000) + k * 1000;
+    const at = start + (k < n / 2 ? 0 : 15 * 60_000) + k * 1000;
     svc.onSounding({
       depth,
       at,
-      position: SHOAL,
+      position,
       positionAt: at,
       hdop: 0.9,
       methodQuality: "GNSS Fix",
@@ -165,5 +174,81 @@ describe("living chart on an index read block by block", () => {
     svc.stop();
     await svc.whenSettled();
     expect(svc.status()).toMatchObject({ unsettled: 1, discrepancies: 0 });
+  });
+});
+
+describe("notes and discrepancies of a cell waiting for its block", () => {
+  const CHARTED: unknown = expect.stringMatching(/^Suspected shoal [\d.]+ m \(charted 10 m\)$/);
+  const depthIn = (name?: string) => Number(/shoal ([\d.]+) m/.exec(name ?? "")?.[1]);
+
+  /** A service writing notes on its own clock, confirmed over the shoal on the whole chart. */
+  function confirmed(file = path.join(tmp(), "livechart.json")) {
+    const t = { now: T0 };
+    const notes: string[] = [];
+    const deps = {
+      setNote: (_id: string, body: Record<string, unknown>) => {
+        notes.push(String(body.name));
+        return Promise.resolve();
+      },
+      error: (m: string) => {
+        throw new Error(m);
+      },
+      now: () => t.now
+    };
+    const store = chart();
+    const svc = new LivechartService(store, { ...CONFIG, writeNotes: true }, file, deps);
+    sound(svc, 6, 6);
+    expect(notes).toEqual([CHARTED]);
+    // A shallower reading moves the note a step; it waits for its 5 minutes.
+    t.now = T0 + 60_000;
+    sound(svc, 4, 1, SHOAL, T0 + 16 * 60_000);
+    expect(notes).toHaveLength(1);
+    return { t, notes, svc, deps, file, store };
+  }
+
+  test("a stop before the cell's block loads writes no 'not charted' note", () => {
+    const h = confirmed();
+    const was = [...h.store.adjustments.values()][0]?.cellRef;
+    const store = cold();
+    h.svc.rebind(store);
+    // Waiting, not uncharted; its adjustment names no cell rather than the last index's.
+    expect(h.svc.discrepancies()[0]).toMatchObject({ charted: null, pending: true });
+    expect([...store.adjustments.values()][0]?.cellRef).toBe(-1);
+    expect(was).toBeGreaterThanOrEqual(0);
+    h.svc.stop();
+    expect(h.notes).toHaveLength(1);
+  });
+
+  test("a note waiting for the block is written with the chart's depth once it is read", async () => {
+    const h = confirmed();
+    h.svc.rebind(cold());
+    h.t.now += 5 * 60_000;
+    h.svc.flush();
+    expect(h.notes).toHaveLength(1);
+    await h.svc.whenSettled();
+    h.svc.flush();
+    expect(h.svc.discrepancies()[0]).toMatchObject({ charted: 10 });
+    expect(h.svc.discrepancies()[0]?.pending).toBeUndefined();
+    expect(h.notes).toEqual([CHARTED, CHARTED]);
+    expect(depthIn(h.notes[1])).toBeLessThan(depthIn(h.notes[0]));
+  });
+
+  test("a note a stop left waiting is written after the next start reads the chart", async () => {
+    const h = confirmed();
+    h.svc.rebind(cold());
+    h.svc.stop();
+    expect(h.notes).toHaveLength(1);
+    const notes: string[] = [];
+    const again = new LivechartService(cold(), { ...CONFIG, writeNotes: true }, h.file, {
+      ...h.deps,
+      setNote: (_id, body) => {
+        notes.push(String(body.name));
+        return Promise.resolve();
+      }
+    });
+    expect(again.discrepancies()[0]).toMatchObject({ pending: true });
+    await again.whenSettled();
+    expect(notes).toEqual([CHARTED]);
+    expect(depthIn(notes[0])).toBeLessThan(depthIn(h.notes[0]));
   });
 });

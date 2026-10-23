@@ -206,7 +206,7 @@ describe("living-chart retention", () => {
               continue;
             }
             const prior =
-              s.depth === null ? noPrior(-1) : { depth: s.depth, sigma: s.sigma, cellRef: 0 };
+              s.depth === null ? noPrior() : { depth: s.depth, sigma: s.sigma, cellRef: 0 };
             c = rebasePrior(old[1], prior);
             p.cells.set(old[0], c);
           }

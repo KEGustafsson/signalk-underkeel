@@ -27,7 +27,7 @@ export function restoreCells(cells: unknown[], store: NodeStore, posteriors: Pos
       // An uncharted cell's NaN prior is saved as null.
       const chartDepth = typeof c.chartDepth === "number" ? c.chartDepth : NaN;
       const key = tileKey(c.z, c.x, c.y);
-      posteriors.cells.set(key, rebasePrior(withPeak({ ...c, chartDepth }), noPrior(c.cellRef)));
+      posteriors.cells.set(key, rebasePrior(withPeak({ ...c, chartDepth }), noPrior()));
       posteriors.unsettled.add(key);
     }
   }

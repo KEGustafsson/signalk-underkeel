@@ -369,6 +369,8 @@ describe("cell posterior and discrepancy", () => {
       const fresh = store();
       const reloaded = new LivechartService(fresh, CONFIG, file, failOnError);
       const adjustment = () => [...fresh.adjustments][0] as [number, { cellRef: number }];
+      // Until the cell is settled it names no cell, never the other catalogue's 99.
+      expect(adjustment()[1].cellRef).toBe(-1);
       await reloaded.whenSettled();
       const [key, v] = adjustment();
       const n = 2 ** fresh.adjustZoom;

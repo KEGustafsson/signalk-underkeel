@@ -99,7 +99,11 @@ export class LivechartService {
     this.settler.soon();
   }
 
-  /** A cell the settler moved onto the current chart: a raised protection mark is saved, and the cell is judged. */
+  /**
+   * A cell the settler moved onto the current chart: a raised protection mark is saved, the
+   * cell is judged, and the note of a cell with an adjustment is brought up to date, as one
+   * that waited for the chart, or that a stop left unwritten, can be behind it.
+   */
   private settled(
     c: CellPosterior | undefined,
     changed: boolean,
@@ -111,11 +115,16 @@ export class LivechartService {
     if (!c) {
       return;
     }
+    const key = tileKey(c.z, c.x, c.y);
     if (raisedMark(before, c)) {
-      this.files.cellChanged(tileKey(c.z, c.x, c.y));
+      this.files.cellChanged(key);
     }
     if (isDiscrepancy(c)) {
       this.adjust(c);
+    }
+    const a = this.store.adjustments.get(key);
+    if (a && this.config.writeNotes) {
+      this.notes.changed(key, a, this.now());
     }
   }
 
@@ -165,7 +174,7 @@ export class LivechartService {
         unsettled.delete(key);
       } else if (affected(c)) {
         // Not judged until the settler finds the block loaded.
-        next = rebasePrior(c, noPrior(c.cellRef));
+        next = rebasePrior(c, noPrior());
         unsettled.add(key);
       }
       if (next) {
@@ -243,13 +252,21 @@ export class LivechartService {
     return (this.deps.now ?? Date.now)();
   }
 
-  private writeNote(key: number): void {
+  /**
+   * Writes cell `key`'s note; false, and the note waits, while the cell waits for its chart
+   * block, whose depth the note would give as not charted.
+   */
+  private writeNote(key: number): boolean {
+    if (this.posteriors.unsettled.has(key)) {
+      return false;
+    }
     const c = this.posteriors.cells.get(key);
     if (c) {
       this.deps
         .setNote(noteId(c), noteOf(c))
         .catch((err: Error) => this.deps.error(`note ${noteId(c)}: ${err.message}`));
     }
+    return true;
   }
 
   /** Runs flush() on `clock` every SAVE_CHECK_MS until stop(). */
@@ -287,7 +304,11 @@ export class LivechartService {
     const n = 2 ** this.store.adjustZoom;
     return [...this.store.adjustments.keys()].flatMap((key) => {
       const c = this.posteriors.cells.get(key);
-      return c ? [{ ...discrepancyOf(c), key: `${Math.floor(key / n)}/${key % n}` }] : [];
+      // Its chart is not read yet: `charted` null does not mean uncharted.
+      const pending = this.posteriors.unsettled.has(key) ? { pending: true as const } : {};
+      return c
+        ? [{ ...discrepancyOf(c), ...pending, key: `${Math.floor(key / n)}/${key % n}` }]
+        : [];
     });
   }
 
