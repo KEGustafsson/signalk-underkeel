@@ -12,9 +12,11 @@ All notable changes to signalk-underkeel are documented here.
   (QUAPOS 4) widens the drawing to four times its σ, not to the survey's. Over the 1939 CATZOC C
   water at Bakers Haulover Inlet every cell within about 300 m of the shore or a drying contour
   had read `danger` for a 0.9 m draft; now only those within reach of the zone's charted
-  obstructions do. An `M_CSCL` area compiled at a smaller scale widens the drawing where it
-  applies, and a sounding inside a shallower drawn area keeps its survey spread when its tile
-  splits. The saved index is rebuilt (pyramid version 9).
+  obstructions do. An `M_CSCL` area compiled at a smaller scale widens the drawing only on the
+  index leaves it reaches: a 1:80 000 area in a 1:12 000 cell spreads the contours and shoreline
+  inside it by 40 m, and a record not surveyed there by 160 m, while the rest of the cell keeps
+  6 m. A sounding inside a shallower drawn area keeps its survey spread when its tile splits.
+  The saved index is rebuilt (pyramid version 10).
 - The index is built around the vessel: **Index box around the vessel (km)** (`boxRadiusKm`,
   default 10) builds only the S-57 cells reaching a box around the vessel and rebuilds it as
   the vessel moves, as the Traficom WFS box does. Outside the box the plugin reports no
@@ -23,13 +25,17 @@ All notable changes to signalk-underkeel are documented here.
   Tiles are built 2 km past the box, flagged no coverage but keeping their depth, so a hazard
   just outside still counts for a footprint just inside; cells are read to 6 km past the box.
   A start loads the saved box index while its cells, box and leaf zoom match and otherwise
-  rebuilds it in its box, never from every cell. An empty or unmounted cells directory keeps
-  the index in use, and a torn saved WFS cell is downloaded again rather than failing the
-  start. `GET /status` reports the box under `chartBox`. `boxRadiusKm: 0` indexes every cell;
-  a radius under 2 km is raised to 2.
+  rebuilds it in its box, never from every cell. A missing cells directory, or one that holds no
+  cell while the saved index holds S-57 cells, as an unmounted drive leaves it, keeps the saved
+  index at start and the index in use at a refresh, instead of rebuilding from Traficom WFS
+  depths alone or dropping the index. A torn or missing saved WFS cell is left out of the start
+  and downloaded again at the first check, and the saved box index stays in use meanwhile.
+  `GET /status` reports the box under `chartBox`. `boxRadiusKm: 0` indexes every cell; a radius
+  under 2 km is raised to 2.
 - `indexDir` is owned by the plugin: a directory holding anything but an index is refused
-  rather than replaced, a trailing separator is accepted, and staging or backup copies left by
-  a failed save or a restart are removed.
+  rather than replaced, before any build starts and with the foreign entry named, and the box
+  service then downloads and builds nothing until it is set right. A trailing separator is
+  accepted, and staging or backup copies left by a failed save or a restart are removed.
 - S-57 ENC cells are read as delivered: **ENC cells directory** takes `.000` files with their
   `.001`, `.002` … updates, also inside an exchange set's `ENC_ROOT` folders, read in the index
   worker with gdal3.js (GDAL compiled to WebAssembly), now a runtime dependency. No export step
@@ -109,7 +115,8 @@ All notable changes to signalk-underkeel are documented here.
 - Explanations of a deciding tile beyond the footprint give its distance, its position σ and
   the chance it lies under the keel.
 - A look-ahead footprint scored beyond the warn window covers the hulls of the steps it skips,
-  so in a turn its P is never below scoring every step.
+  also where the 400-footprint budget places it off the step grid, so in a turn its P is never
+  below scoring every step.
 - The index splits tiles no finer than 1 mm at each cell's compilation scale: an overview
   cell's coastline stops at z14 instead of z20. The 25 NOAA cells around Miami build in 94 s
   instead of over 15 minutes; a stopped tile takes the shallowest depth it holds.
@@ -175,21 +182,35 @@ All notable changes to signalk-underkeel are documented here.
   cells the handover blocked the event loop for 123–153 ms on x86 at leaf zoom 18; the longest
   block is now 53–71 ms.
 - The next Traficom WFS box is fetched once the edge ahead is closer than SOG × 1.5 × the last
-  download-and-build time plus the look-ahead's reach, as well as at half the radius, and is
-  centred that far ahead along COG (at most 0.8 × the radius). With 10-minute rebuilds at
-  25 kn the vessel was 5.4 km past the old box when the new one was handed over; it is now
-  2.3 km inside it. The last refresh time is saved in `box.json`.
+  download-and-build time plus the look-ahead's reach and the band inside the edge where a
+  footprint can read no coverage (the 500 m position buffer cap plus 1 860 m of chart reach,
+  counted up to half the radius), as well as at half the radius, and is centred that far ahead
+  along COG (at most 0.8 × the radius). With 10-minute rebuilds at 25 kn the vessel was 5.4 km
+  past the old box when the new one was handed over; with the look-ahead's reach alone it was
+  2.3 km inside it, and the band starts the refresh up to 2.36 km earlier. Without the band, in
+  CATZOC C or D water the look-ahead read no chart coverage for the last 0.5–1.5 km before each
+  handover. The last refresh time is saved in `box.json`.
 - The Traficom WFS download, parse, clip and cell write run in the index build worker with the
   build, so the main thread only moves the staged index into place and loads it. With the
   10 km box (one 22 MB page) the server's event loop was blocked for 336–420 ms and 209–277 ms
   per refresh on x86; now the longest block is the 67–83 ms handover.
 - Living-chart saves: the accepted soundings are appended to `soundings.ndjson` every minute
-  (rewritten with the newest 20 000 when it reaches twice that), and `livechart.json` holds the
-  cells and adjustments, written every 10 minutes and within 10 s of an adjustment being added
-  or moving a 5 cm or 1 cm σ step. Saves run on a timer instead of inside the depth-delta
-  callback. Before, `livechart.json` with all 20 000 soundings was rewritten every minute:
-  192 MB/h of SD-card writes and a 20–46 ms save in the delta callback. A `livechart.json`
-  that still holds soundings loads, and they move to `soundings.ndjson` at the next save.
+  (rewritten with the newest 20 000 when it reaches twice that). The cells are saved every
+  10 minutes, and within 10 s of an adjustment being added or moving a 5 cm or 1 cm σ step:
+  those sounded since the last save are appended to `cells.ndjson`, one line each, and the file
+  is rewritten with the current cells once it would hold more than twice as many lines as the
+  larger of its cell count and 1 000, or after cells are dropped. `livechart.json` holds the
+  zoom and the adjustments and is rewritten only when they change. Saves run on a timer instead
+  of inside the depth-delta callback. Before, `livechart.json` with
+  all 20 000 soundings was rewritten every minute: 192 MB/h of SD-card writes and a 20–46 ms
+  save in the delta callback; and at anchor every cell ever sounded was rewritten every
+  10 minutes. A `livechart.json` that still holds soundings or cells loads, and they move to
+  `soundings.ndjson` and `cells.ndjson` at the next save.
+- The living chart keeps at most 10 000 cells it may drop: past that, those sounded longest ago
+  are dropped until 9 000 remain. A cell is never dropped while it has an adjustment, while it
+  waits for its chart block, or once it has read 1σ or more shallower than the chart, and a
+  dropped cell sounded again starts from the chart. `GET /status` counts the dropped cells as
+  `livechart.dropped`.
 - Living-chart notes are rewritten when the cell's adjusted depth drops a 5 cm step or its σ
   rises a 1 cm step, at most once per cell every 5 minutes (the latest values after that, and
   on stop), and show the depth floored to 5 cm and σ raised to the next cm. Before, every
@@ -204,10 +225,10 @@ All notable changes to signalk-underkeel are documented here.
   100-leg route over the Nauvo cells delayed the event loop by up to 264 ms on a laptop (about
   1 s on a Raspberry Pi 4) and now by at most 28 ms; abandoned requests ran to the end, holding
   the old chart index after a stop.
-- Route repair yields to the event loop every 256 cells its search expands and after each
-  simplification check, not only between legs. A search that exhausts its grid around an
-  enclosed goal blocked the server for 105–109 ms on a laptop (about 0.4 s on a Raspberry Pi 4);
-  its longest slice is now 3.4–5.2 ms.
+- Route repair yields to the event loop every 256 cells its search expands, after each
+  simplification check and between the corridor pieces of each check, not only between legs. A
+  search that exhausts its grid around an enclosed goal blocked the server for 105–109 ms on a
+  laptop (about 0.4 s on a Raspberry Pi 4); its longest slice is now 3.4–5.2 ms.
 - Route checks split a leg into pieces of max(1 km, 4 × corridor half-width) instead of 1 km,
   and check the great circle separately only where it strays more than max(10 m, r/4) from the
   rhumb line. A 12 km leg at xteLimit 2000 took 129 ms on a laptop and takes 39 ms; four such
@@ -247,9 +268,9 @@ All notable changes to signalk-underkeel are documented here.
   a 5 NM horizon (400 footprints) the envelope fell from 19.5 to 3.5 kB median and 21.4 to
   5.6 kB at most, back within the 15 kB budget; at 6 kn from 4.1 to 2.5 kB.
 - The escape heading is searched after the tick's deltas are published, so a tick blocks the
-  server in two shorter pieces; after a tick or search over 250 ms the next search is skipped
-  and the plugin status says so. With a 5 NM horizon the longest tick fell from 264 to 185 ms
-  (x86), the search following in up to 27 ms.
+  server in two shorter pieces; after a tick over 250 ms the next search is skipped, after a
+  search over 250 ms the next one waits 3 s, and the plugin status says so. With a 5 NM horizon
+  the longest tick fell from 264 to 185 ms (x86), the search following in up to 27 ms.
 - `notifications.navigation.underKeel` is sent at once when its state, the kind of reason or the
   named hazard changes, and while those hold its message with a new countdown at most every 30 s.
   The countdown in the message made it go out every 3 s: on the Nauvo route at 6 kn 365
@@ -276,6 +297,17 @@ All notable changes to signalk-underkeel are documented here.
   and are answered 304 when the browser holds them, still with `Cache-Control: no-cache`. A
   Freeboard reload fetched 56.2 kB of them and now 12.7 kB; a first load 57.5 kB and now
   36.3 kB, since the three pages share four scripts.
+- `npm test` runs its 1049 tests in about 51 s instead of about 4.5 minutes on a laptop, with
+  every property test, the replay and the safety-invariant suites at full depth, also in the
+  Signal K registry's sandboxed run. Jest's stock Node environment builds each test file's
+  context from a proxy, so every lookup of `Math`, `Number` and typed arrays in the chart and
+  engine code went through an interceptor: the replay test took about 70 s for code that runs
+  in about 4 s in plain Node, and now takes about 3 s. The tests run in
+  `__tests__/helpers/node-realm-environment.js`, the same environment on a plain vm context
+  (`vm.constants.DONT_CONTEXTIFY`, Node 22.8 or later; older Node runs the stock one), and
+  property tests assert once per run instead of once per element. A test may make at most
+  20 000 `expect()` calls, and CI fails `npm run verify` when the test run takes over 120 s
+  (`UNDERKEEL_TEST_BUDGET_S`). `jest-environment-node` is a direct dev dependency.
 
 ### Fixed
 
@@ -537,13 +569,24 @@ All notable changes to signalk-underkeel are documented here.
   at z18 and 4.3 GB at z20, and failed to allocate from z21. Its edge test now holds only the
   slots within chart reach of the tile, at most 1024 slots past each edge: the z18 tile takes
   6 ms, and tiles are drawn as before.
-- `POST /query` takes the water level at the queried point or polygon, not at the vessel. With
-  FMI, a query more than 30 km from the forecast point gets the fallback level, reported as
-  `waterLevelDegraded` and never `clear`; a cursor readout off Vaasa took the surge forecast for
-  Kemi, +0.62 m, as measured. The UKC tiles still apply the vessel's level.
+- UKC tiles and `POST /query` take the water level valid where they are, not the vessel's. FMI's
+  forecast holds within 30 km of the point it was fetched for: a tile with every corner within
+  that reach is drawn at the forecast, and any other tile at the lower of the forecast and the
+  chart-datum fallback, marked degraded and with nothing `clear`. A query takes the same test
+  over its polygon's box widened by its buffer, so an area the reach cuts between two vertices,
+  or reaches only through the buffer, counts too, and beyond the reach it reports
+  `waterLevelDegraded` and is never `clear`. A cursor readout off Vaasa took the surge forecast
+  for Kemi, +0.62 m, as measured, and wherever the index reached more than 30 km from the
+  forecast point the tiles there could read `clear` over water that may not be there. The tile
+  change list re-sends only the tiles that a new forecast point moves across the 30 km edge.
+  The look-ahead, notifications and `navigation.underKeel.waterLevel` keep the level at the
+  vessel.
 - `GET /tiles/ukc/changes` lists the served tiles within chart reach of an index block that was
-  read in or dropped. A tile drawn from a block's coarse stand-ins before the block loaded stayed
-  on the plotter until the threshold left its range or the page was reloaded.
+  read in or dropped after the tile was drawn. A tile drawn from a block's coarse stand-ins
+  before the block loaded stayed on the plotter until the threshold left its range or the page
+  was reloaded. A small block a tile's own drawing reads on the spot no longer lists that tile
+  and its neighbours at the next poll, and the tile cache keeps that tile's cells instead of
+  walking it again at the next request.
 - Position integrity no longer stays failed in a current. Starting underway in a stream, or
   crossing into one, of about 0.6 m/s or more froze the current estimate: σ_pos grew to
   kilometres within the hour, and the look-ahead was held at `warn` with no escape heading
@@ -555,13 +598,17 @@ All notable changes to signalk-underkeel are documented here.
   such a leg was checked at −0.10 m. The leg is still degraded, `unverified` at best, but at the
   lowest level found over its interval and ends.
 - With no water-level source (`none`, the default), a chart whose sounding datum is not a
-  low-water datum gets a degraded level, "no water-level source: chart datum assumed, which is
-  not low water (VERDAT n)", instead of chart datum taken as measured. This covers the Finnish
-  mean-water ENCs (VERDAT 3, 19 and 26), where the Baltic is often 0.3–0.8 m below chart datum
-  and a 1.8 m draft over a charted 2.6 m read `normal` and `ok`, as well as high-water and local
-  datums. On such charts the look-ahead is at best `alert`, route legs, queries and tiles are at
-  best `unverified`, and acknowledged passages and own soundings are not used until a source is
-  configured. Charts on low-water datums (LAT, MLLW and the like) are unchanged.
+  low-water datum gets a degraded level instead of chart datum taken as measured. This covers
+  the Finnish mean-water ENCs (VERDAT 3, 19 and 26), where the Baltic is often 0.3–0.8 m below
+  chart datum and a 1.8 m draft over a charted 2.6 m read `normal` and `ok`, as well as
+  high-water and local datums. On such charts the look-ahead is at best `alert`, route legs,
+  queries and tiles are at best `unverified`, and acknowledged passages and own soundings are
+  not used until a source is configured. The reason names the datums and the source to set, for
+  example "no water-level source, and chart datum is not low water (VERDAT 3, VERDAT 26); set
+  Water level source to fmi in Finnish waters, or to signalk-tide or manual"; `fmi` is named
+  only when one of those datums maps to an FMI series. Charts on low-water datums (LAT, MLLW and
+  the like) are unchanged. The setting is titled **Source** under **Water level**, and its
+  default stays `none`: no source is chosen automatically.
 - A state held by hysteresis no longer republishes the escape heading of the tick that raised
   it. That heading came from a position and course tens to hundreds of metres back and could
   point at the shoal. A held tick publishes its own heading, null when the search found none,
@@ -575,53 +622,86 @@ All notable changes to signalk-underkeel are documented here.
 - Escape headings are scored with the fan's spread, COG ± σ and rate of turn ± σ, as the state
   is. Holding course was scored on one track, so when that track passed a shoal the COG + σ
   track hit, the plotter offered "Dodge to" the course already steered during a `warn` or
-  `alarm`. When no heading does better than holding course, `escapeHeading` is null. The search
-  now scores more headings where holding course ended it at once: the look-ahead benchmark's p95
+  `alarm`. When no heading does better than holding a steady course, `escapeHeading` is null; a
+  boat turning faster than the fan's rate-of-turn σ gets its current heading instead, since
+  stopping the turn is then the way out. The search now scores more headings where holding
+  course ended it at once: the look-ahead benchmark's p95
   with the escape fan rose from about 46 ms to 74–105 ms under Jest, the median unchanged.
 - Look-ahead footprints are placed from now, not from the position fix. A fix up to 10 s old
   (`staleAfter`) is accepted, and every footprint, the time to shoal and the alarm and warn
   windows lagged by SOG × its age: with a fix 5 s old at 8 m/s a rock under the bow read as
-  ahead. Escape turns start from now as well.
-- An acknowledged passage or mooring zone no longer turns into `alert` the `warn` raised because
-  the position uncertainty outgrew the 500 m buffer: an acknowledgement covers an uncertain
-  chart, not an untrusted position. A `warn` or `alarm` from the chart is suppressed as before.
+  ahead. Escape turns start from now as well. The first footprint also covers the hull from the
+  fix to now: the age counts any skew between the GNSS clock and the server's, so the boat may
+  still be at the fix, and with a server clock 8 s ahead at 8 m/s a rock just ahead of the bow
+  was never scored.
+- An acknowledged passage or mooring zone no longer turns into `alert` a `warn` or `alarm` on a
+  tick whose position uncertainty outgrew the 500 m buffer, whether the chart or the capped
+  buffer raised it, also when hysteresis holds a state with the chart's reason: an
+  acknowledgement covers an uncertain chart, not an untrusted position.
 - Route repair no longer gives up on legs it can repair. On a 30 km leg the search cells are
   500 m, and a shoal a few hundred metres from a waypoint, outside its corridor, blocked the
   end's cell and gave "no passable path in the search window"; the start and goal cells are now
-  scored at the leg's own ends with the corridor alone. Simplification checks each chord at the
-  time the boat reaches it: on a falling tide a chord could pass at the leg's start time and
-  fail at its own, and the repair was refused with "the path found does not pass the corridor
-  check".
+  scored at the leg's own ends with the corridor alone. Lines out of the start cell and into the
+  goal cell are checked as corridors from the waypoints themselves, over 1.5 cells: a rock
+  150–400 m from a long leg's waypoint, inside its 500 m cell, made every repair fail with "the
+  path found does not pass the corridor check" although a small detour passed. Simplification
+  checks each chord at the time the boat reaches it: on a falling tide a chord could pass at the
+  leg's start time and fail at its own, and the repair was refused with the same reason. The
+  search grid takes the lowest water level until the boat could have sailed the grid's width
+  plus its height, not only over the straight leg's own times, so on a falling tide it no longer
+  plans over a bank that the final check, reading the detour's later pieces, finds too shallow.
+- Route repair has a work limit per leg and per request, counted rather than timed, so a request
+  gives the same answer on any machine. The unit is a chart tile a depth query examines, plus 32
+  per query and one per 5 line-of-sight samples. A leg may do 600 000 units: its search stops at
+  80 % of them and the leg gets no waypoints and the reason "the repair search reached the work
+  limit for one leg; add a waypoint near [lon, lat] (lon, lat) to split the leg, or use a
+  smaller xteLimit". The final check of the path counts too. Once a request's repairs have done
+  1 800 000 units, later legs are listed as not searched. Nothing bounded a repair but its grid:
+  a 47 km leg at ±2 km over 135 000 near-threshold soundings took 2.2–3.4 s on a laptop, over
+  the 1.5 s Raspberry Pi 4 budget, while holding the single request slot. Repair grid cells are
+  now at least half the corridor half-width, so a 10 km leg at ±2 km no longer reads the same
+  water many times (2.5 s on a laptop with 167 m cells), and simplification no longer re-checks
+  the failing leg itself.
 - Mooring zones suppress look-ahead warnings also when neither heading nor COG is fresh, as at a
   berth, where every tick was published as `warn` or `alarm` with sound. Acknowledged passages
   still need a heading.
 - A mooring-zone region whose ring is not closed is reported and not loaded. Its last vertex was
   dropped as if it repeated the first, which could enlarge the zone and demote warnings outside
   it to `alert`.
-- After a slow tick or search the escape search waits the full 3 s before running again. A
-  search always slower than 250 ms ran every 2 s, and the heading and the plugin status flipped
-  every second; the status now names the skip until the next search runs.
+- After a slow tick the next escape search is skipped and the heading cleared; after a slow
+  search the heading it found is kept and the next search waits the full 3 s. A search always
+  slower than 250 ms ran every 2 s, and later had its heading cleared a tick after finding it, so
+  the plotter showed the escape heading for 1 s in every 4; the plugin status now says the
+  searches are slow until a fast one runs.
 - `notifications.navigation.positionIntegrity` is sent at once when its state or kind of reason
   changes, and at most every 30 s while only its divergence or HDOP numbers drift. A lasting
   warning went out again, with sound, about once a second.
 - `POST /acks` answers 415 unless the `Content-Type` is `application/json` or another `+json`
-  type. Signal K parses any other body as `{}`, so a form, a `text/plain` body or a request
-  without the header stored a default acknowledgement with no expiry.
+  type, and reads a `+json` body such as `application/geo+json` itself. Signal K parses only
+  `application/json` and leaves `{}` for any other body, so a form, a `text/plain` body, a
+  request without the header or `{polygon, ttl: 600}` sent as geo+json stored a default
+  acknowledgement over the current footprints with no expiry.
 - `acks.json` keeps only unexpired acknowledgements: expired ones are dropped at the next add or
   delete. `POST /acks` answers 409 once 100 unexpired acknowledgements exist, and refuses a
   polygon of more than 64 vertices. Every `warn` and `alarm` tick tests the footprint against
   each acknowledgement, and a client posting in a loop could grow the file and that cost without
   end.
-- Server file paths are kept out of REST replies. `GET /status` no longer reports `index.dir`,
-  and `index.reason`, `engine.reason`, `wfs.lastError` and `chartBox.lastError` keep only the
-  last part of an absolute path (`…/name`). 5xx replies of the REST routes and UKC tiles show a
-  path as `<path>`, the text after `failed:` as `failed (see the server log)`, and drop the error
-  after "could not be read"; the 503 of `/query` and the route requests repeated the index
-  reason, such as a `scandir` error naming the charts mount. The plugin status and the server
-  log keep the full text.
-- An extension asset URL containing `%00` goes on to the next handler like any unknown path. It
-  reached Express's error handler, which answered 500 with a stack trace naming the install
-  path outside production.
+- Server file paths are kept out of what any client can read. `GET /status` no longer reports
+  `index.dir`, and its reasons (`index.reason`, `engine.reason`, `wfs.lastError`,
+  `chartBox.lastError`), the 5xx replies of the REST routes and UKC tiles, and every
+  notification message pass through one sanitizer: it shows a POSIX, Windows (`C:\`, `C:/`) or
+  UNC path as `<path>`, keeps URLs, numbers and an S-57 cell file's name (`<path>/US5MA22M.000`),
+  and turns the text after `failed:` into `failed (see the server log)`. With no index,
+  "UKC monitoring off: no cells in /srv/charts" went out on
+  `notifications.navigation.underKeel` as written, and the 503 of `/query` and the route
+  requests repeated the index reason, such as a `scandir` error naming the charts mount. Why a
+  saved index could not be read is still reported, with its paths hidden. The plugin status and
+  the server log keep the full text.
+- An extension page request that the file system refuses, such as a name over 255 characters
+  (`ENAMETOOLONG`), a URL containing `%00`, or a page file that cannot be read, goes on to the
+  next handler like any unknown path. It reached Express's error handler, which answered 500
+  with a stack trace naming the install path outside production, on a route that needs no
+  login.
 - Route-check legs from a result older than 3 minutes are drawn `unverified` on the chart, as
   the panel's "out of date" badge says. After a tablet slept through a falling tide its legs
   stayed green from the old water level, and while `route.list` failed they stayed green for
@@ -635,16 +715,31 @@ All notable changes to signalk-underkeel are documented here.
   the blocks' stand-ins, metres too shallow or uncharted, which hid or missed discrepancies: a
   cell charted 18.2 m was rebased onto 5.4 m, and 12 m soundings there raised nothing. A cell
   whose block is not loaded is settled in the background once the block loads and is judged
-  again; `GET /status` counts such cells as `livechart.unsettled`. Restoring the saved cells no
-  longer computes every prior during plugin start: they are settled in slices of 1 000.
+  again; `GET /status` counts such cells as `livechart.unsettled`. Restored cells compute no
+  chart prior during plugin start: saved adjustments apply at once, and every cell waits for the
+  settler, which judges it against the current chart in slices of 1 000 from the next turn of
+  the event loop. A long history blocked a Raspberry Pi 4 for seconds at start.
 - `GET /livechart/discrepancies` returns `charted: null`, and the note reads "(not charted)",
-  for a discrepancy cell the index in use gives no depth. The note read "charted NaN m".
+  for a discrepancy cell the index in use gives no depth. The note read "charted NaN m". A cell
+  whose chart block is not read yet is marked `pending: true` instead, and its note waits until
+  the chart is read: a note written by a stop or a save in that state read "(not charted)" and
+  stayed so. After a start each note is rewritten once its cell has been judged against the
+  current chart.
+- Until a living-chart cell is judged against the chart after a start or an index swap, its
+  adjustment names no ENC cell. It carried the old catalogue's cell number, so `/query` results
+  and explanation terms could name the wrong cell, edition and update.
+- A rewrite of `soundings.ndjson` with no soundings, as after a log of only malformed lines was
+  set aside, wrote a lone newline. At the next start it read back as a malformed line, and the
+  log was set aside again.
 - Soundings in a `livechart.json` from an older version stay in it until `soundings.ndjson`
   holds them. A failed log write followed by a state save lost them.
 - A cell's file stamp covers the updates GDAL applies and is taken just before GDAL reads the
-  cell. For a linked `.000` the updates beside the link's target were left out, so a saved index
-  stayed in use without an update installed there, and an update added during a build was
-  recorded as applied although it had not been read.
+  cell. For a linked `.000` the updates beside the link's target and named after it were left
+  out, so a saved index stayed in use without an update installed there, and an update added
+  during a build was recorded as applied although it had not been read.
 - The Traficom WFS cell is flushed to disk before it replaces the previous one, and the previous
   cell is kept when the swap fails. A power cut just after a refresh could leave an empty layer
   file, and a failed rename left no cell at all.
+- After a power cut between the two renames of an index save, the box index the start recovers
+  is no longer rebuilt at the berth right after it is handed over: the box service looked for
+  the saved box before the start had moved the index back.

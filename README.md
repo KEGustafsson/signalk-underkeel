@@ -100,11 +100,11 @@ Nothing is converted or written next to the cells. A cell without an `M_COVR` co
 is rejected.
 
 Land, shoreline and depth areas are placed by the cell's compilation scale (6 m at 1:12 000,
-or an `M_CSCL` area's smaller scale) rather than by the survey's CATZOC (500 m in zone C), so a
-jetty, a beach or a drying contour does not spread across navigable water; soundings and point
-dangers keep the survey's CATZOC. Where the cell marks an edge or node as not surveyed (QUAPOS)
-the drawing there is read as four times less accurate (24 m at 1:12 000), and where it states a
-POSACC, half of it.
+or inside an `M_CSCL` area that area's smaller scale) rather than by the survey's CATZOC (500 m
+in zone C), so a jetty, a beach or a drying contour does not spread across navigable water;
+soundings and point dangers keep the survey's CATZOC. Where the cell marks an edge or node as
+not surveyed (QUAPOS) the drawing there is read as four times less accurate (24 m at 1:12 000),
+and where it states a POSACC, half of it.
 
 The index covers a box around the vessel, **Index box around the vessel (km)** (default 10 km
 each way), and is rebuilt off the event loop as the vessel moves, so a large exchange set such
@@ -148,15 +148,19 @@ All settings are in the plugin's page in the admin UI. The defaults suit a small
 The chart gives depths below chart datum; the water level is how far the sea stands above it.
 
 - `none`: chart datum, with σ 0.3 m for the unknown tide. On a chart whose datum is not a
-  low-water datum, such as the Finnish mean-water ENCs, this is a degraded level: the state is at
-  best `alert`, route legs at best `unverified` and nothing `clear` until a source is configured.
+  low-water datum, such as the Finnish mean-water ENCs (VERDAT 3, 19 and 26), this is a degraded
+  level: the state is at best `alert`, route legs at best `unverified`, nothing `clear`, and
+  acknowledgements and own soundings are not used until a source is configured. The reason names
+  the source to set: `fmi` in Finnish waters, otherwise `signalk-tide` or `manual`.
 - `manual`: a fixed height above chart datum with its σ.
 - `signalk-tide`: `environment.tide.heightNow` for 5 minutes after each reading, then the
   lower of it and `heightLow` until 6 h past `timeLow`.
 - `fmi`: the Finnish Meteorological Institute sea-level forecast at the vessel, anchored to the
   nearest tide gauge. FMI reports above theoretical mean water and above N2000. S-57 vertical
   datum codes 3, 19 and 26 map to mean water by default; cells on N2000 need an entry under
-  _Chart datum mappings_. An unmapped datum widens σ to 0.5 m.
+  _Chart datum mappings_. An unmapped datum widens σ to 0.5 m. The forecast applies within 30 km
+  of the point it was fetched for, near the vessel; a UKC tile or query area reaching farther
+  takes the lower of the forecast and the fallback below, and shows no clear water.
 
 A source that stops updating falls back to chart datum, or to its last level when that was
 lower, with a wider σ. While the level is a fallback the state is at least `alert` with the
@@ -251,8 +255,9 @@ example, `Monitoring: unknown — position stale`.
 `GET /plugins/signalk-underkeel/v1/status` on the server (for example
 `http://localhost:3000/plugins/signalk-underkeel/v1/status`) reports the engine state, the
 chart index and its cell editions, the look-ahead summary, the water-level source and the
-datum mapping. Absolute paths in its reasons are cut to their last part (`…/name`); the plugin
-status line and the server log keep them whole.
+datum mapping. Absolute paths in its reasons, in 5xx replies and in notification messages show
+as `<path>` (an S-57 cell file keeps its name); the plugin status line and the server log keep
+them whole.
 
 | Reason shown                                                  | Cause and fix                                                          |
 | ------------------------------------------------------------- | ---------------------------------------------------------------------- |
@@ -366,7 +371,7 @@ deleting acknowledgements needs a readwrite user. Errors are `{ "errors": [strin
 | `POST /departure-window`                      | departure intervals within `horizon` in which every leg is `ok`                                                                                                                                                                         |
 | `POST /query`                                 | class, P(UKC < 0), deciding hazard and explanation for a Point or Polygon                                                                                                                                                               |
 | `GET /acks`, `POST /acks`, `DELETE /acks/:id` | acknowledged passages; `POST` needs `Content-Type: application/json` or another `+json` type (415 otherwise) and a polygon of at most 64 vertices, and answers 409 while the water level is a fallback or 100 acknowledgements are live |
-| `GET /livechart/discrepancies`                | living-chart cells shallower than charted                                                                                                                                                                                               |
+| `GET /livechart/discrepancies`                | living-chart cells shallower than charted; `pending: true` while a cell's chart is not read yet                                                                                                                                         |
 | `GET /livechart/csb.geojson`                  | own soundings in the IHO CSB format                                                                                                                                                                                                     |
 | `GET /tiles/ukc/{z}/{x}/{y}.pbf`              | Mapbox vector tiles from zoom 11, one `ukc` layer, `Cache-Control: no-cache`, gzipped on request                                                                                                                                        |
 | `GET /tiles/ukc/changes?epoch=&rev=`          | the tiles served since that cursor whose classes changed, or `all`; a new cursor                                                                                                                                                        |

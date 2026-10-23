@@ -241,11 +241,12 @@ signalk-underkeel/
 whole: the index is built in a box of `boxRadiusKm` (default 10 km, half-width) around the
 vessel, and rebuilt as the vessel moves by the same rules as the Traficom WFS box below (more
 than half the radius from the centre, or the edge along COG closer than SOG × 1.5 × the last
-build time plus the look-ahead's reach). A whole build of the 698-cell NOAA US East and Gulf
-set at z20 ran for over 15 minutes on 4 threads without finishing; the 10 km box around Bal
-Harbour reads 21 of the cells and builds in 22 s (x86). Cells are chosen by their extent,
-read from the SG2D/SG3D coordinates of the `.000` and its updates without GDAL
-(`ingest/enc-bounds.ts`, 3.3 s for the 698 cells, in the build worker); a cell whose extent
+build time plus the look-ahead's reach and the no-coverage band inside the edge). A whole build
+of the 698-cell NOAA US East and Gulf set at z20 ran for over 15 minutes on 4 threads without
+finishing; the 10 km box around Bal Harbour reads 21 of the cells and builds in 22 s (x86).
+Cells are chosen by their extent, read from the SG2D/SG3D coordinates of the `.000` and its
+updates without GDAL (`ingest/enc-bounds.ts`, 3.3 s for the 698 cells, in the build worker); a
+cell whose extent
 cannot be read is always taken. Tiles are built out to the box grown by `BOX_REACH`, the widest
 chart position reach rounded up to 2 km, and a tile crossing the edge of the box or of that
 area splits to the leaf zoom, so no coarse tile carries a value past what was read. Every tile
@@ -261,12 +262,21 @@ when they do not, also when the saved index cannot be read; it never falls back 
 every cell. With no saved box it stays `off` with "waiting for the vessel position to build
 the chart box" until the first position. The refresh worker scans `cellsDir` and stamps the
 cells off the event loop. A refresh is due, besides the WFS rules, whenever no index of the
-service's box is in use. A configured `cellsDir` holding no S-57 cell fails the refresh and
-keeps the index in use, and with no index in use the failure is the published reason. A saved
-WFS cell whose DSID no longer reads is left out of the start plan and downloaded again. With
-the WFS on, its box is the one the ENC cells are built in. `boxRadiusKm: 0` keeps the whole
-build (an index built in a box is then rebuilt whole); a radius between 0 and 2 km is raised
-to 2.
+service's box is in use; whether the saved index was built in the saved box is read at the
+first check, after the start plan has moved a crash-left index back or built one, so a
+recovered index is not rebuilt at the berth. A `cellsDir` that exists but holds no S-57 cell
+while the index in use or the catalogue saved in `indexDir` holds S-57 cells (`cellsMissing`) is
+read as an unmounted drive, whose mount point stays as an empty directory: a start loads the
+saved index with the reason "no S-57 cell found in <cellsDir>; using the saved index", as for
+a missing directory, and a refresh fails and keeps the index in use, also with no index in use
+or one of WFS depths alone; with no index in use the failure is the published reason. Taking
+the empty directory at face value would replace an index of charted hazards with WFS depths
+alone, or drop it. A saved WFS cell whose DSID no longer reads, or that is missing, is left out
+of the start plan and downloaded again at the first check; the box start plan leaves that
+cell's stamp out of its comparison, so the saved box index, which still holds the cell's
+depths, is loaded meanwhile. With the WFS on, its box is the one the ENC cells are built in.
+`boxRadiusKm: 0` keeps the whole build (an index built in a box is then rebuilt whole); a radius
+between 0 and 2 km is raised to 2.
 
 **Sources, in priority order:**
 
@@ -281,9 +291,17 @@ to 2.
    (default 10 km) around the vessel and a new one once the vessel is more than half the radius
    from its centre, or once the distance to the box edge along COG is under SOG × 1.5 × the
    last download-and-build time plus the look-ahead's reach (the last time is saved with the
-   box; 10 minutes until one is measured). Checks run every 10 s, at most once a minute and
-   5 minutes after a failed download. The new box is centred SOG × the last time ahead along
-   COG, at most 0.8 × the radius, so the vessel is near its centre when it is handed over; at
+   box; 10 minutes until one is measured) and the band inside the edge where a footprint reads
+   no coverage: the widest position buffer and chart reach (500 m + 1860 m), as the block
+   keeper keeps. A tile across the edge carries `NO_COVERAGE` and keeps its survey σ, so its
+   flag reaches 2σ (1 km in CATZOC D) past the footprint's buffer; without the band a vessel
+   in CATZOC C or D water read no coverage for the last 0.5–1.5 km before each handover. A box
+   too small to hold the band can at best be kept around the vessel, so the band counts only
+   up to half the radius (the look-ahead's reach counts in full); past that the half-radius
+   rule decides, and a drifting vessel does not rebuild a 2 km box every minute. Checks run
+   every 10 s, at most once a minute and 5 minutes after a failed download. The new box is
+   centred SOG × the last time ahead along COG, at most 0.8 × the radius, so the vessel is near
+   its centre when it is handed over; at
    25 kn with 10-minute rebuilds the half-radius rule alone handed a box over with the vessel
    5.4 km past the old box's edge. A box centred ahead covers less water astern, which route
    checks of legs behind the vessel see as uncovered (`unverified`, invariant 4). A worker
@@ -393,6 +411,8 @@ one NOAA overview cell of the Gulf of Mexico, 6 537 features, was cut along ever
 contour into z20 tiles: 145 005 tiles at z14 took 55 s, 709 861 at z16 256 s, and the 25 cells
 around Miami built for over 15 minutes; with it they build in 94 s (717 465 tiles), the overview
 cell in 48 s. A source with no stated scale (the Traficom WFS cell) splits to the leaf zoom.
+`M_CSCL` areas widen the drawing σ (§4.4) but never the split depth, which follows each cell's
+features and coverage at `DSPM_CSCL`.
 
 **Build cost.** Each area polygon keeps its bounding box and, for rings of 64 or more
 vertices, a uniform grid of its edges, so a tile test reads only the edges near the tile and
@@ -472,9 +492,15 @@ the inlet and the water off the beach read by their charted depths, and `danger`
 within a few hundred metres of the zone's charted obstructions (0 m and 1.8 m, ±500 m by the
 survey) and `unverified` within 500 m of its zone U. A deeper draft, a lower water level or a
 wider σ still never lowers P (invariant 2): the weight and P(UKC < 0) both rise with each.
-The compilation scale is the cell's `DSPM_CSCL`, or the `CSCALE` of an `M_CSCL` area a drawn
-feature's box meets where that scale is smaller; the σ is never narrowed. A split tile passes
-a partial depth feature to its children unless a feature containing the whole tile dominates
+The compilation scale is the cell's `DSPM_CSCL` for every feature. An `M_CSCL` area whose
+`CSCALE` is smaller, in a cell with positional quality, is kept as a feature of its own (role
+`scale`): a leaf it reaches spreads its drawing by at least that scale's σ (40 m for a
+1:80 000 area in a 1:12 000 cell), and a record not surveyed there by four times it (160 m).
+A leaf it does not reach keeps the cell's σ, even where a cell-wide depth area or land polygon
+runs through both; applied to every feature whose box met the area, a 1:80 000 area spread
+every contour and shoreline of a 1:12 000 cell by 40 m. An area at a larger scale than
+`DSPM_CSCL` would only narrow σ and is not kept. Pyramid version 10 holds these σ. A split tile
+passes a partial depth feature to its children unless a feature containing the whole tile dominates
 it in depth and placement (survey-placed against survey-placed, drawn against drawn with a σ
 at least as wide), so a sounding inside a shallower drawn area keeps its survey spread.
 
@@ -543,7 +569,11 @@ widest σ modelled is 500 m.
   file is refused and rebuilt at start rather than when a query first reaches the damage.
 - `indexDir` belongs to the plugin: a save replaces it whole, so it must be new, empty or an
   earlier index, and a directory holding anything else is refused with the entry named
-  rather than overwritten. A trailing separator is resolved away first.
+  rather than overwritten. A trailing separator is resolved away first. The start plan and the
+  box service ask the same check (`indexDirProblem`) before they build: a refused `indexDir`
+  fails the start with the reason before any build, and the box service reports it once and
+  downloads and builds nothing, asking again every 5 minutes, until it is set right; the build
+  would otherwise be refused only once done, minutes on a Pi 4.
 - A save writes and fsyncs the three files and their staging directory, renames the staging
   directory into place and fsyncs the parent. A failed save removes its staging and keeps the
   previous index; staging left under this process id by an earlier run (a container restart
@@ -578,11 +608,13 @@ These are treated as ~95 % bounds, so σ ≈ value / 2.
 
 **Topographic accuracy.** CATZOC rates the hydrographic survey, not the shoreline
 compilation. Land and shoreline objects are placed by the plotting accuracy of the cell's
-compilation scale (`DSPM_CSCL`, or a smaller `M_CSCL` area's `CSCALE`), 1 mm on the chart
-read as a ~95 % bound: σ = 6 m at
-1:12 000, 22.5 m at 1:45 000, capped at 500 m for overview cells. QUAPOS lives on the spatial
-records (edges and nodes), not on the objects: the reader takes those not surveyed (QUAPOS
-other than 1 surveyed, 10 precisely known, 11 calculated) or with a POSACC from GDAL's
+compilation scale (`DSPM_CSCL`), 1 mm on the chart read as a ~95 % bound: σ = 6 m at
+1:12 000, 22.5 m at 1:45 000, capped at 500 m for overview cells. Where the cell's `M_CSCL`
+declares a part compiled from a smaller-scale source (`CSCALE` larger than `DSPM_CSCL`), the
+reader keeps that polygon as an area of its own and leaves every feature at `DSPM_CSCL`; a leaf
+the area reaches spreads what the drawing places there by σ at `CSCALE` (§4.3). QUAPOS lives
+on the spatial records (edges and nodes), not on the objects: the reader takes those not surveyed
+(QUAPOS other than 1 surveyed, 10 precisely known, 11 calculated) or with a POSACC from GDAL's
 primitive layers, with the connected nodes each edge ends at, since GDAL's Edge geometry holds
 only the interior vertices, and rebuilds every edge whole. Land, shoreline and depth areas
 on such a record are read as drawn from a source four times smaller in scale, or by half the
@@ -678,17 +710,50 @@ and `h = 0` would then assume more water than was last observed.
   ends, makes the leg's level degraded, at the lowest level found over the interval and both
   ends, never the fallback's alone: the fallback is min(0, last level), which can sit well above
   a level the source forecast earlier in the interval or at the other end.
-- `POST /query` resolves the level over the queried ring the same way, at every vertex, so a
-  cursor readout far from the vessel gets the fallback and is never `clear`. The UKC tiles apply
-  the vessel's level everywhere (§10, question 9).
+- Decision (invariant 3): UKC tiles and `POST /query` take the level where they are, not the
+  vessel's.
+  - A provider whose answer depends on position states its reach (`reach()`): `levelAt` gives
+    the same value at every position within it and none beyond. FMI's reach is 30 km
+    (`FORECAST_REACH_METRES`) around the point its forecast was fetched for; manual, Signal K
+    tide and none have no reach, so their level holds everywhere.
+  - `WaterLevelService.regimes()` resolves two levels per request: the level inside the reach
+    and, for anything else, the lower of that level and the fallback beyond, with the
+    fallback's σ 0.3 m and degraded reason, which is what a route leg spanning both would get.
+    A tile wholly beyond the reach takes this rather than the fallback alone, which is never
+    wetter and needs no third level or distance test.
+  - A tile is inside when all four of its corners are within the reach: a spherical cap is
+    convex, and the farthest point of a lon/lat box from any point is a corner. Any other tile
+    is drawn at the beyond level and shows no `clear` cell. `POST /query` applies the same test
+    to its ring's lon/lat box plus its buffer, so a reach cutting an edge between two outside
+    vertices, or reached only by the buffer, counts too.
+  - A stale or unusable source, or FMI before its first forecast, gives one fallback
+    everywhere. Look-ahead, notifications and `navigation.underKeel.waterLevel` keep the level
+    at the vessel.
+  - Applying the vessel's FMI level to every tile drew water off Vaasa with Kemi's +0.62 m surge
+    and no degraded flag wherever the index reached more than 30 km from the forecast point
+    (`boxRadiusKm` 0 or a large box).
 - Decision (invariant 3): with no water-level source, chart datum (σ 0.3 m) applies as a
   measured level only where every cell's stated datum, and every datum-area code, is a low-water
   datum (VERDAT 1, 2, 4–15, 22, 23, 27), on which the tide seldom leaves less water than charted.
-  Where one is not (mean water 3, 19 and 26, high water, local), the level is degraded with those
-  VERDAT codes in the reason, since the Baltic is often 0.3–0.8 m below mean water; the
-  look-ahead is then at best `alert`, legs, queries and tiles never `ok` or `clear`, and neither
-  acknowledgements nor own soundings are taken. A cell that states no datum, in practice the
-  Traficom WFS cell whose water is never `normal` anyway, keeps chart datum.
+  Where one is not (mean water 3, 19 and 26, high water, local), the level is degraded, since the
+  Baltic is often 0.3–0.8 m below mean water; the look-ahead is then at best `alert`, legs,
+  queries and tiles never `ok` or `clear`, and neither acknowledgements nor own soundings are
+  taken. The reason names the datums that are not low water and the source to set: `fmi`
+  (Finnish waters) when one of those datums is mapped to an FMI series, otherwise
+  `signalk-tide` or `manual`; it never suggests adding a datum mapping. A cell that states no
+  datum, in practice the Traficom WFS cell whose water is never `normal` anyway, keeps chart
+  datum. The check runs over the whole catalogue, so one mean-water cell anywhere in an
+  otherwise low-water index degrades the level everywhere; per-cell levels are the follow-up
+  above.
+- Decision (no automatic water-level source): there is no `auto` source, and `none` stays the
+  default. A default `auto` would send the vessel position to FMI without the user opting in
+  (FMI open data is CC BY 4.0, and neither the README nor the About text attributes it yet),
+  would change configurations that store no source without a warning, and would decide on its
+  own to apply Signal K `environment.tide.*`, whose datum Signal K does not state, or a sea
+  level near inland waters. The degraded no-source reason names the source to configure
+  instead. An `auto` added with per-cell levels must be opt-in, use FMI only for FMI-mapped
+  datums within FMI's reach (30 km forecast, 60 km gauge), use chart datum for low-water cells,
+  never choose Signal K tide by itself, and degrade with the same named reason elsewhere.
 
 ### 4.6 Vessel model
 
@@ -774,8 +839,11 @@ at 600 s.
 The tracks start at the position fix, which may be up to `staleAfter` (10 s) old. The footprint
 t seconds from now is placed t + age along them, age being now minus the fix's time, so every
 footprint, the time to shoal and the window checks count from now, and the fan's spread and
-along-track growth since the fix are kept. Escape tracks run straight for that age before they
-turn, since no turn can start before now.
+along-track growth since the fix are kept. The footprint at t = 0 is the hull from the fix to
+now, sampled at the touching step: the age includes any skew between the source's clock and the
+server's, so the boat may still be at the fix, and a hull only where the age projects it left
+the water just ahead of the bow unread (46 m of it with the server clock 8 s ahead at 8 m/s).
+Escape tracks run straight for that age before they turn, since no turn can start before now.
 
 **Decision (step rule): coarser steps beyond the warn window.** Footprints are scored every Δt
 out to `warnWithin` (120 s), the widest window `classify` and the hysteresis raise a state in.
@@ -788,8 +856,12 @@ the budget may lie off the grid), so `timeToShoal` and the reason keep the Δt t
 footprint is the convex hull of the hulls of every step it stands for: in a turn the steps
 between two coarse ones bulge outside their hulls, and under graded chart position (§4.3) a tile
 that much farther weighs less, so a coarse tick read up to 0.12 points of P below the plan
-steps. The covering hull reads every tile at least as near, so P is never lower than with every
-step scored (`__tests__/engine/lookahead-cost.test.ts`). At 1 kn a
+steps. The hull takes in the footprints at every grid time j·Δt after the previous scheduled
+time, the grid the plan steps and `firstTime` use, also where the coarse footprint lies off it,
+so every plan step's footprint is in some coarse hull. The covering hull reads every tile at
+least as near, so P is never lower than with every step scored
+(`__tests__/engine/lookahead-cost.test.ts`, and off the grid in a turn with `warnWithin` 30 s,
+`__tests__/engine/coarse-grid.property.test.ts`). At 1 kn a
 tick scores 57 footprints instead of 361. The escape fan scores the same coarse times, so a
 heading's time to shoal beyond 120 s is known to k·Δt.
 
@@ -808,8 +880,11 @@ with a ROT ± σ_ROT spread held for `turnFor` on top of the turn. A heading sco
 alone is narrower than the fan that raised the state, so holding course could pass a shoal the
 COG + σ member hits and be offered as the way out. Publish the heading with the greatest TTS,
 breaking ties by the smallest heading change. TTS counts from the first step after t = 0, since
-the footprint under the vessel is common to all headings; when no heading has a greater TTS
-than holding course, or none is clear past the first step, publish null.
+the footprint under the vessel is common to all headings. Publish null when holding a steady
+course (|ROT| ≤ σ_ROT) does best, since there is nothing to dodge to, or when no heading is
+clear past the first step. A boat turning faster than σ_ROT whose straight candidate does best
+gets its current heading: the state fan follows the turn, and steadying on the current heading
+stops it.
 
 **Integrity monitor** (`model/integrity.ts`).
 
@@ -828,7 +903,10 @@ TimeZero 5.4's "Ghost Ship" now fills.
 in water without land. The buffer stops at `MAX_POSITION_BUFFER` (500 m). A tick whose
 k_p · σ_pos exceeds it is at least `warn`, with the reason "position uncertainty N m" and the
 integrity monitor's reasons, never `normal` or `alert`, since a shoal beyond 500 m may be under
-the boat; `alarm` from the capped footprints stays `alarm`. The escape fan is not searched.
+the boat; `alarm` from the capped footprints stays `alarm`. The escape fan is not searched. The
+result carries `capped`, which hysteresis carries from the raw tick, so acknowledgements and
+mooring zones (§4.12) never lower a capped tick, warn or alarm alike, whatever reason a held
+state keeps.
 
 **Suppression rules.** None of these is ever silent; each publishes the reason it is
 suppressing.
@@ -855,16 +933,18 @@ suppressing.
   point hazards.
 - The escape fan uses the maximum turn rate (default 3°/s) and stops at the first heading,
   smallest change first, that stays clear over the whole horizon; when that heading is holding
-  course, the escape heading is null. Each heading scores five tracks, up to 37 headings a
-  search. The monitor searches it at most every 3 s and holds the heading in between. The
-  search runs after the tick's deltas are published (`setImmediate`), so the event loop is
-  blocked in two shorter pieces, and its heading is published when it is found. After a tick or
-  a search longer than 250 ms the next search is skipped and the heading is null; the skip
-  restarts the 3 s wait, so a search that is always slow still waits 3 s after each skip, and
-  the plugin status names the skip until the next search runs. A state held by hysteresis
-  publishes the current tick's heading, null when it has none, never the one held from the tick
-  that raised it: that heading was found from an earlier position and course and may point at
-  the shoal.
+  course and |ROT| ≤ σ_ROT, the escape heading is null. Each heading scores five tracks, up to
+  37 headings a search. The monitor searches it at most every 3 s and holds the heading in
+  between. The search runs after the tick's deltas are published (`setImmediate`), so the event
+  loop is blocked in two shorter pieces, and its heading is published when it is found. After a
+  tick longer than 250 ms (`SLOW_TICK_MS`) the next search is skipped and the heading is null,
+  and the plugin status names the skip until a search runs. A search that slow keeps its
+  heading, no staler than one held between any two searches, and pushes the next search back
+  3 s (`ESCAPE_EVERY_MS`); the status says the searches are slow until a fast one runs. Either
+  restarts the 3 s wait, so a search that is always slow runs less often, not more. A state held
+  by hysteresis publishes the current tick's heading, null when it has none, never the one held
+  from the tick that raised it: that heading was found from an earlier position and course and
+  may point at the shoal.
 - Integrity: dead reckoning runs on each fix's own timestamp, so a GNSS feed slower than the
   1 Hz tick is not read as divergence. σ_DR = √(σ_anchor² + σ_GNSS² + (0.2 m/s · run)²);
   a consistent run re-anchors every 60 s; a diverged one is not re-anchored, and clears
@@ -890,8 +970,9 @@ suppressing.
   turns on coverage (no warn or alarm from risk) such a footprint is read again in full, and a
   coverage gap next to land is still reported. Route checks always read every tile.
 - Measured on the synthetic archipelago at leaf z20 (`npm run bench`, x86, plain Node):
-  median 1.2 ms and p95 4 ms per tick, escape fan included. Under Jest the same run is about
-  15× slower.
+  median 1.2 ms and p95 4 ms per tick, escape fan included. Under Jest's stock environment the
+  same run was about 15× slower; in the test environment of §7 (Test runtime) it measured median
+  1.5 ms and p95 6.3 ms with the escape fan on an i5-8350U laptop.
 
 **Stale data.** If position is older than 10 s, the state becomes `UNKNOWN` and the plugin
 raises a `notifications.navigation.underKeel` alert with the message "UKC monitoring
@@ -944,31 +1025,35 @@ pulled only on change.
 
 **REST, base `/plugins/signalk-underkeel/v1`:**
 
-| Method          | Path                         | Purpose                                                                             |
-| --------------- | ---------------------------- | ----------------------------------------------------------------------------------- |
-| GET             | `/status`                    | index coverage, cell editions, water-level health, engine state                     |
-| GET             | `/envelope?rev=`             | look-ahead FeatureCollection (fan, footprints coloured by P, hazards, escape arrow) |
-| POST            | `/route-check`               | per-leg result (§4.11)                                                              |
-| POST            | `/route-repair`              | suggested geometry for failing legs                                                 |
-| POST            | `/departure-window`          | safe departure intervals over a horizon                                             |
-| POST            | `/query`                     | point or polygon UKC with explanation (cursor readout, popovers)                    |
-| GET             | `/tiles/ukc/{z}/{x}/{y}.pbf` | vector tiles: cells classed by P at current water level and draft                   |
-| GET             | `/tiles/ukc/changes`         | the served tiles to fetch again since a cursor (§4.14)                              |
-| GET/PUT         | `/vessel`                    | vessel model                                                                        |
-| GET/POST/DELETE | `/acks`                      | acknowledged passages                                                               |
-| GET             | `/livechart/discrepancies`   | suspected shoals                                                                    |
-| GET             | `/livechart/csb.geojson`     | IHO CSB export                                                                      |
+| Method          | Path                         | Purpose                                                                                             |
+| --------------- | ---------------------------- | --------------------------------------------------------------------------------------------------- |
+| GET             | `/status`                    | index coverage, cell editions, water-level health, engine state                                     |
+| GET             | `/envelope?rev=`             | look-ahead FeatureCollection (fan, footprints coloured by P, hazards, escape arrow)                 |
+| POST            | `/route-check`               | per-leg result (§4.11)                                                                              |
+| POST            | `/route-repair`              | suggested geometry for failing legs                                                                 |
+| POST            | `/departure-window`          | safe departure intervals over a horizon                                                             |
+| POST            | `/query`                     | point or polygon UKC with explanation (cursor readout, popovers)                                    |
+| GET             | `/tiles/ukc/{z}/{x}/{y}.pbf` | vector tiles: cells classed by P at the water level valid at each tile (§4.5) and the current draft |
+| GET             | `/tiles/ukc/changes`         | the served tiles to fetch again since a cursor (§4.14)                                              |
+| GET/PUT         | `/vessel`                    | vessel model                                                                                        |
+| GET/POST/DELETE | `/acks`                      | acknowledged passages                                                                               |
+| GET             | `/livechart/discrepancies`   | suspected shoals                                                                                    |
+| GET             | `/livechart/csb.geojson`     | IHO CSB export                                                                                      |
 
 All writes go through Signal K's normal authentication: the security strategy and an
 admin or readwrite token.
 
-Reads are open to any readonly client, so replies keep the server's directories and raw errors
-off the wire. `GET /status` reports no index directory, and cuts each absolute path in
-`index.reason`, `engine.reason`, `wfs.lastError` and `chartBox.lastError` to `…/` and its last
-part. A 5xx reply's reasons go out with the text after `failed:` replaced by "(see the server
-log)", the error after "could not be read" dropped and any file path shown as `<path>`; a 4xx
-reply describes the request and goes out as it is. The plugin status and the server log keep
-the full reasons.
+Reads and notifications are open to any readonly client, so they keep the server's directories
+and raw errors off the wire. `GET /status` reports no index directory. Its reasons
+(`index.reason`, `engine.reason`, `wfs.lastError`, `chartBox.lastError`), a 5xx reply's reasons
+and every notification message go through one sanitizer, `publicReason`
+(`src/foundation/public-text.ts`): the text after `failed:` becomes "failed (see the server
+log)", where the plugin error already holds it, and each absolute POSIX, Windows (`C:\`, `C:/`)
+or UNC path becomes `<path>`, keeping an S-57 cell file's name (`<path>/US5MA22M.000`). URLs,
+relative paths, cell names and numbers are kept, and why a saved index could not be read stays
+in the index reason with its paths hidden, since that reason is the only place it is reported.
+A 4xx reply describes the request and goes out as it is. The plugin status and the server log
+keep the full reasons.
 
 ### 4.11 Route check, repair and departure window
 
@@ -1068,20 +1153,33 @@ plane the rectangle is drawn in drift apart over a piece (up to 0.15 % of r, mea
 a fast-check property holds every point exactly r from either line inside the corridor
 (invariant 4).
 
-**As built (M5).** The repair grid has at most 120 cells on its longer side, at least 10 m
-each, and reaches half the leg's length (at least 300 m) beyond it. A cell is blocked when the
-corridor around it has P at or above the accept threshold, or touches `NO_COVERAGE`,
+**As built (M5).** The repair grid has at most 120 cells on its longer side. Each cell is at
+least 10 m and at least half the corridor half-width r (xteLimit + planning buffer), and the grid
+reaches half the leg's length beyond the leg, and at least 300 m and 2r. A cell is blocked when
+the corridor around it has P at or above the accept threshold, or touches `NO_COVERAGE`,
 `UNASSESSED` or `NO_DEPTH`: a repair must not route through water it cannot check. Costs are
 evaluated lazily as Theta* expands. A cell is scored at its centre with the corridor plus half a
-cell, except the start and goal cells, which are scored at the leg's ends with the corridor
-alone since the path starts and ends there: on a 30 km leg the cells are 500 m, and a shoal a few
-hundred metres from a waypoint, outside its corridor, would otherwise block the whole search.
+cell, so cells much smaller than r read the same water many times: a 10 km leg at ±2 km took
+2.5 s on a laptop with 167 m cells. The start and goal cells are scored at the leg's ends with
+the corridor alone since the path starts and ends there: on a 30 km leg the cells are 500 m, and
+a shoal a few hundred metres from a waypoint, outside its corridor, would otherwise block the
+whole search. Opened on that score, they could hide a shoal elsewhere in the cell under the
+path's first or last line, so a line out of the start cell or into the goal cell is checked as
+a corridor from the end itself over its first 1.5 cells, past the end's cell from whatever
+corner of it the end lies in, and blocks when it fails; where the water within 1.5 cells + r of
+an end is clear, one query stands for all of that end's lines. The grid's water level is the
+lowest at the leg's two ends from the leg's start until the boat could have sailed the grid's
+width plus height: a detour is longer than the leg, and on a falling tide the final check reads
+its last pieces in less water than the leg's own window. The final check samples the level at
+the detour's waypoints, so where the grid's two samples miss a lower level the check refuses
+the path rather than passing it.
 Simplification replaces a span with its chord whenever the chord passes the corridor check at
 the time the boat reaches the chord's start along the path kept before it, at the leg's speed
 with the millisecond-truncated chained times of the final check, so no simplification makes a
-leg fail, also on a changing water level; a path that still fails is reported with a reason and
-no waypoints. Legs are repaired in route order, each checked at the arrival time the detours
-before it give, and the response's `route` is the whole route with
+leg fail, also on a changing water level; it never re-checks the leg's own chord, already
+checked as `fail` or `marginal` from that time. A path that still fails is reported with a
+reason and no waypoints. Legs are repaired in route order, each checked at the arrival time the
+detours before it give, and the response's `route` is the whole route with
 every suggested waypoint inserted, checked again. Both `/route-repair` and `/departure-window` take
 the `/route-check` body; the window adds `horizon` (default 48 h, at most 7 days) and `step`
 (default 15 min, at least 5 min, at most 1000 departures). Each leg takes the lowest level from
@@ -1094,7 +1192,36 @@ levels with the same σ and fallback reason: `ok` at a level holds at any higher
 at any lower one. A query may stop at a tile whose P bound is below 1e-4 (`RISK_STOP_BELOW`), so
 a direct check can overstate P by up to that much; from 1e-3 up the reused status is the one a
 direct check gives, and below it every level is checked directly. One request
-repairs at most 10 legs, and the rest are listed with a reason. A corridor query costs about
+repairs at most 10 legs, and the rest are listed with a reason.
+
+Decision (§6 budget, bounded repair): the 200 km² corridor admission bounds a route check but
+not a repair: a 47 km leg at ±2 km over 135 000 near-threshold soundings took 2.2–3.4 s on a
+laptop. Repair work is therefore counted, never timed (`src/engine/work.ts`), so a request gives
+the same answer on any machine.
+
+- The unit is a tile that `minDepthOver` examines (`visits`), plus 32 per query and one per 5
+  Theta\* line samples.
+- One leg may do 600 000 units (`maxWork`), sized for about 1.5 s on a Raspberry Pi 4. Its
+  search stops at 80 % of that and the leg is refused; simplification stops removing waypoints
+  at 90 % and keeps the rest. The final check of the path is counted too: a leg whose final
+  check cannot start a leg within the limit is refused.
+- A refused leg gets no waypoints and a reason naming its worst position as the place to add a
+  waypoint, and its own status stays in the re-checked route (invariant 4).
+- A request searches no further leg once its repairs have done 1 800 000 units
+  (`maxRequestWork`); later legs are listed as "not searched: this request has used its repair
+  work limit". Every searched leg runs with the full limit, so its outcome does not depend on the
+  other legs in the request.
+- A leg can go past its limit by one query, one chord check or one final-check leg; the corridor
+  admission bounds each of these.
+- `npm run bench` times an adversarial synthetic chart (135 000 soundings at 3.2–5.2 m over 25 m
+  water and a drying wall with a gap) on the built `lib/` in a plain node child process, outside
+  Jest's module sandbox. The 47 km leg is repaired at ±40 m in 382 138 units, and refused at
+  ±500 m after 480 003 units (1 016 537 without a limit) and at ±2 km after 481 104 (3 593 390
+  without a limit). The 10 km leg across the wall's end is repaired at ±500 m in 329 031 units
+  and at ±2 km in 238 025. On an i5-8350U laptop a unit took 0.34–0.66 µs over two runs, so a
+  leg's 600 000 units take at most 0.4 s there; the Pi 4 is assumed 3–5× slower (§10).
+
+A corridor query costs about
 its area, so a route check, repair or window is refused when the route's length times its
 corridor width (2 × (xteLimit + planning buffer)) exceeds 200 km², and a window when its
 departures times that area exceed 1600 km² or its departures times legs exceed 20 000, since a
@@ -1109,8 +1236,7 @@ answers 503 with the reason, never a partial result. On a laptop a
 corridor over 3000 shoals costs 1–3.5 ms per km². `POST /query` is refused when its bounding
 box widened by the buffer exceeds 25 km², or when its vertices times that area exceed 150 km²:
 every tile is tested against every vertex, and a 499-vertex ring over 25 km² took 0.47 s on a
-laptop over the Nauvo cells, against at most 16 ms within both limits. Measured under Jest on the synthetic archipelago: 52 ms per
-repaired leg.
+laptop over the Nauvo cells, against at most 16 ms within both limits.
 
 ### 4.12 Acknowledged passages
 
@@ -1153,15 +1279,16 @@ after it, so a power cut leaves the old list or the new one. A write keeps only 
 acknowledgements. Export as Signal K notes is a follow-up. Suppression applies to the published
 state after hysteresis, because it changes the state, not P. It never suppresses a negative mean
 UKC within `certainWithin`: an acknowledgement covers an uncertain chart, not a charted depth
-shallower than the keel. Nor does it suppress the `warn` raised because the position buffer is
-capped (§4.8): the capped footprints understate where the vessel can be, and an acknowledgement
-covers an uncertain chart, not an untrusted position. A warn or alarm the chart raises is
-suppressed by the rules above. Mooring zones are Signal K `regions` resources named in the
-configuration and suppress the same way, with the zone's name in the reason. A zone matches the
-footprint rings alone, so it applies without a fresh heading or COG, as at a berth;
-acknowledgements hold for a heading sector, so without a heading none matches. A region whose
-ring is not closed is reported and not loaded: reading its last point as the closing repeat
-would drop a vertex and could enlarge the zone.
+shallower than the keel. Nor does it suppress a warn or alarm on a tick whose position buffer is
+capped (`capped` on the result, §4.8), whether the chart or the cap raised it: the capped
+footprints understate where the vessel can be, so the rings an acknowledgement or zone is
+tested on do too, and an acknowledgement covers an uncertain chart, not an untrusted position.
+On other ticks a warn or alarm the chart raises is suppressed by the rules above. Mooring zones
+are Signal K `regions` resources named in the configuration and suppress the same way, with the
+zone's name in the reason. A zone matches the footprint rings alone, so it applies without a fresh
+heading or COG, as at a berth; acknowledgements hold for a heading sector, so without a heading none
+matches. A region whose ring is not closed is reported and not loaded: reading its last point as the
+closing repeat would drop a vertex and could enlarge the zone.
 
 ### 4.13 Living chart
 
@@ -1204,43 +1331,80 @@ rebased while unsettled has no prior and is not judged, and one first sounded wh
 keeps the stand-ins' prior, which is never deeper than the chart's. A background settler loads
 those blocks one at a time, rebases the cells onto their chart priors in slices of 1 000, gives
 their adjustments the current cell reference and judges them again; a block that cannot be read
-is tried again at the next save check, and a rebind or stop ends the run. A rebind prepared in
-slices waits for each cell's block. `GET /status` counts the unsettled cells
-(`livechart.unsettled`). A confirmed discrepancy sets a z18 adjustment that every query
-takes beside the chart, through `minDepthOver` and the UKC tiles, so look-ahead, route check,
-`/query` and the overlay all see it. Adjustments only ever lower a cell; later deeper
-readings leave it as it is. Notes are written with `resourcesApi.setResource("notes", …)`.
-A note is rewritten when the cell's adjusted depth drops to a lower 5 cm step or its σ rises
-to a higher 1 cm step, at most once per cell every 5 minutes: a change inside the 5 minutes is
+is tried again at the next save check, and a rebind or stop ends the run. Its first slice runs
+in the next turn of the event loop, never in the start, rebind or sounding that asked for it. A
+rebind prepared in slices waits for each cell's block. Until a cell is settled it has no prior
+and no cell reference (−1), so its adjustment names no ENC cell rather than the cell that number
+had in another catalogue; its suspected-shoal note waits, and once a cell with an adjustment is
+settled its note is brought up to date, which after a start rewrites each note once.
+`GET /status` counts the unsettled cells (`livechart.unsettled`). A confirmed discrepancy sets a
+z18 adjustment that every query takes beside the chart, through `minDepthOver` and the UKC tiles,
+so look-ahead, route check, `/query` and the overlay all see it. Adjustments only ever lower a
+cell; later deeper readings leave it as it is. Notes are written with
+`resourcesApi.setResource("notes", …)`. A note is rewritten when the cell's adjusted depth drops
+to a lower 5 cm step or its σ rises to a higher 1 cm step, at most once per cell every 5 minutes:
+a change inside the 5 minutes is
 written with the latest values once they are over, and on stop. The note shows the depth
 floored to 5 cm and σ raised to the next cm, so it never shows the cell deeper or surer than
-the posterior; the adjustment itself keeps the exact values. Posteriors and adjustments are kept
-in `livechart.json` beside the index and the last 20 000 accepted soundings in
-`soundings.ndjson` (no database dependency). Decision (user, PL1): the save schedule is no
-longer "at most once a minute" for one file holding everything, which rewrote 3.2 MB per save
-once the soundings filled, 192 MB/h of SD-card writes. Soundings are appended to
-`soundings.ndjson`, one per line, every minute; once the file would hold more than 40 000 lines
-it is rewritten with the newest 20 000. `livechart.json` (cells and adjustments) is written
-every 10 minutes, and within 10 s of an adjustment being added or moving a 5 cm depth or 1 cm σ
-step; everything is written on stop. The saves run on a 10 s timer, not in the depth-delta
-callback. A power cut can lose up to 10 minutes of posterior evidence that is not yet a
-discrepancy and up to 1 minute of soundings, and an adjustment's lowering within its 5 cm step,
-never an adjustment added or moved a step more than 10 s before. Each write is fsynced, file
-then directory. A `livechart.json` from a version that kept the soundings in it still loads; its
-soundings move to `soundings.ndjson` at the next save, and are written back into
-`livechart.json` with the state until a log save holds them, since that file is their only copy
-until then. A failed save is reported and retried at the next scheduled one, and a malformed
-file is skipped entry by entry rather than stopping the
-plugin; a file that did not load whole (bad JSON, another version, malformed entries, cells at
-another zoom, malformed `soundings.ndjson` lines) is first renamed to `<name>.bad-<ms>` and
-reported, so no save overwrites it, and if it cannot be renamed it is not saved over at all. A
-last `soundings.ndjson` line cut short by a power cut is skipped and reported, and the file is
-rewritten whole at the next save. `livechart.json` records its living-chart zoom; after a leaf-zoom
-change the adjustments are mapped onto the new zoom (a coarser cell takes the lowest `dMin` and largest
-σ of the cells in it, a finer cell copies its parent's) and the posteriors are dropped.
+the posterior; the adjustment itself keeps the exact values. Adjustments are kept in
+`livechart.json` beside the index, the cell posteriors in `cells.ndjson` and the last 20 000
+accepted soundings in `soundings.ndjson` (no database dependency). Decision (user, PL1): the
+save schedule is no longer "at most once a minute" for one file holding everything, which
+rewrote 3.2 MB per save once the soundings filled, 192 MB/h of SD-card writes. Soundings are
+appended to `soundings.ndjson`, one per line, every minute; once the file would hold more than
+40 000 lines it is rewritten with the newest 20 000. Cells and adjustments are saved every
+10 minutes, and within 10 s of an adjustment being added or moving a 5 cm depth or 1 cm σ step;
+everything is saved on stop.
+
+Decision (PL1 amendment, 2026-10-24): the cells are appended and bounded. With every cell
+rewritten at each save and none ever dropped, a boat at anchor rewrote every cell it had ever
+sounded every 10 minutes, and a start read a chart prior for each of them, which for a long
+history blocked a Raspberry Pi 4 for seconds. One cell per line is appended to `cells.ndjson`
+for each cell sounded since the last save, the last line for a cell holding it, and
+`livechart.json` (zoom and adjustments) is rewritten only when those change, so a boat at
+anchor writes about one line per 10 minutes. Once `cells.ndjson` would hold more than twice as
+many lines as the larger of its cell count and 1 000, or after cells are dropped, it is
+rewritten with the current cells. The posteriors are bounded: once more than 10 000 cells could
+be dropped, the ones last sounded longest ago are dropped until 9 000 such cells remain, at the
+10 s save check. A cell is never dropped while it has an adjustment, while it waits for its
+chart block, or once it has read 1σ or more shallower than a chart prior it was judged against
+(`PROTECT_Z`; a shoal waiting for its samples or its second pass), even after the index box has
+moved away from it. Dropping a posterior never makes a query deeper: the adjustment is kept on
+its own and only ever lowers the cell, and a dropped cell sounded again starts from the chart
+prior (invariant 5). The one cost is that a later, deeper chart edition is not compared with
+soundings that were dropped for agreeing with the chart. `GET /status` counts the dropped cells
+(`livechart.dropped`).
+
+The saves run on a 10 s timer, not in the depth-delta callback. A power cut can lose up to
+10 minutes of posterior evidence that is not yet a discrepancy and up to 1 minute of soundings,
+and an adjustment's lowering within its 5 cm step, never an adjustment added or moved a step
+more than 10 s before. Each write is fsynced, file then directory, and a rewrite goes through a
+temporary file and a rename. At start the adjustments apply at once; the cells are read without
+computing any chart prior and wait, like cells whose chart block is not loaded, for the
+settler, which moves them onto the current chart and judges them. `livechart.json` stays
+version 1, so an older version still loads its adjustments and starts its posteriors afresh. A
+`livechart.json` that holds cells (from a version that kept them there, or written while
+`cells.ndjson` could not be) still loads; for a cell in both files the copy with more samples
+is kept, and the cells stay in `livechart.json` until `cells.ndjson` has been rewritten whole.
+A `livechart.json` from a version that kept the soundings in it still loads; its soundings move
+to `soundings.ndjson` at the next save, and are written back into `livechart.json` with the
+state until a log save holds them, since that file is their only copy until then. A failed save
+is reported and retried at the next scheduled one, and a malformed file is skipped entry by
+entry rather than stopping the plugin; a file that did not load whole (bad JSON, another
+version, malformed entries, cells at another zoom, malformed `soundings.ndjson` or
+`cells.ndjson` lines) is first renamed to `<name>.bad-<ms>` and reported, so no save overwrites
+it, and if it cannot be renamed it is not saved over at all: a `cells.ndjson` that cannot be
+renamed has its cells saved in `livechart.json` instead, and if `livechart.json` cannot be
+renamed neither file is saved. A last `soundings.ndjson` or `cells.ndjson` line cut short by a
+power cut is skipped and reported, and the file is rewritten whole at the next save. An empty
+rewrite writes an empty file, not a lone newline that would read back as a malformed line.
+`livechart.json` and each `cells.ndjson` line record their living-chart zoom; after a leaf-zoom
+change the adjustments are mapped onto the new zoom (a coarser cell takes the lowest `dMin` and
+largest σ of the cells in it, a finer cell copies its parent's) and the posteriors are dropped.
 `GET /livechart/discrepancies` gives `charted: null`, and the note reads "(not charted)", for a
 cell the index in use gives no depth, as after a rebind onto an index that does not chart it;
-the adjustment stays. The CSB export
+the adjustment stays. A cell still waiting for its chart block is marked `pending: true`
+instead, its `charted` null because the chart is not read yet. The CSB export
 (`GET /livechart/csb.geojson`) is B-12 GeoJSON of depths below the transducer, with the
 transducer depth as the sounder's `draft`; it is never uploaded.
 
@@ -1330,14 +1494,22 @@ says so.
 **UKC tile refresh.** A tile's classes hold over a range of the threshold depth: each cell's
 class changes only where P crosses the alert or warn level, and P rises with the threshold
 (invariant 2). The tile route records, per tile served, the range over which every copy
-served is right (to 1 µm short of each crossing). `GET /tiles/ukc/changes?epoch=&rev=` lists
-the tiles whose range the current threshold has left, in which an own sounding changed a cell,
-or within the store's widest chart reach of a pyramid block loaded or dropped (a tile drawn
-while its block was out read the block's stand-ins, §4.3), since the client's cursor; any other
-tile input (σ, risk levels, a fallback water level, the index) changing, a restarted server or a
-cursor older than the 4096 tiles kept
-answers `all`. The runtime refreshes exactly those tiles. A tile left unlisted is byte for
-byte the tile the server draws now (`__tests__/ukc-tile-feed.test.ts`).
+served is right (to 1 µm short of each crossing). Each tile is drawn at one of two water levels,
+inside the level source's reach or beyond it (§4.5). `GET /tiles/ukc/changes?epoch=&rev=` lists,
+since the client's cursor:
+
+- the tiles whose range the threshold of their own level has left;
+- the tiles in which an own sounding changed a cell;
+- the tiles that a moved forecast point carried across the reach edge;
+- the tiles within the store's widest chart reach of a pyramid block loaded or dropped after
+  the tile was drawn (a tile drawn while its block was out read the block's stand-ins, §4.3). A
+  small block the tile's own drawing read on the spot loaded before the tile was served, so it
+  does not list that tile; a large block read off the event loop finishes later and does.
+
+Any other tile input changing answers `all`: σ, risk levels or the fallback flag of either
+level, the reach appearing or going, or the index. A restarted server, or a cursor older than
+the 4096 tiles kept, also answers `all`. The runtime refreshes exactly those tiles. A tile left
+unlisted is byte for byte the tile the server draws now (`__tests__/ukc-tile-feed.test.ts`).
 
 **UKC tile chart position.** A slot takes the class a query there would give it from the cells
 around it: each cell's P weighted by Φ(−g/σP) for its gap g to the slot (§4.3), and an
@@ -1365,12 +1537,17 @@ classes the tile's value kinds and draws. The cache holds for one `NodeStore`: a
 (a handover or a WFS rebuild) empties it. Every write to `NodeStore.adjustments` bumps its
 `revision` in the same call; an entry whose revision is behind compares the living-chart
 cells in its tile with those it was walked with and is walked again when they differ, so a
-cached tile never shows water deeper than an own sounding (invariant 5). Cached and uncached
+cached tile never shows water deeper than an own sounding (invariant 5). A block loaded or
+dropped since the last request drops every entry within the store's widest chart reach of it.
+A walk that itself reads small blocks on the spot keeps its own entry, which saw them loaded,
+and drops the other entries over those blocks, which saw their stand-ins. Cached and uncached
 tiles equal the walk they replaced byte for byte (`__tests__/engine/ukc-tile-cache.test.ts`).
 
 **Decision (BR3a, approved).** When the change list does not answer, the runtime refreshes
 every tile on a 1 cm fall of the water level but only on a 10 cm rise. A tile kept stale by a
-rise was drawn for lower water, so it shows equal or more danger than the truth.
+rise was drawn for lower water, so it shows equal or more danger than the truth. The rule reads
+`navigation.underKeel.waterLevel`, the level at the vessel, not the level beyond the source's
+reach (§4.5).
 
 ---
 
@@ -1494,15 +1671,16 @@ palette.
 
 ## 6. Performance budgets
 
-| Operation                       | Budget (Pi 4)      | Notes                                       |
-| ------------------------------- | ------------------ | ------------------------------------------- |
-| Look-ahead tick                 | < 20 ms            | 5 members × ~40 footprints; pyramid culling |
-| Envelope payload                | < 15 kB            | quantised coordinates, only on `rev` change |
-| Route check, 30 legs            | < 300 ms           | parallel legs in worker                     |
-| Interactive leg re-check        | < 80 ms p95        | only the edited legs; abort on new input    |
-| Repair, one leg                 | < 1.5 s            | bounded window                              |
-| Index build, full Finnish coast | < 15 min, one-time | worker thread; incremental on ENC updates   |
-| Index RAM                       | < 150 MB           | pyramid blocks read on demand, 32 MB cache  |
+| Operation                       | Budget (Pi 4)      | Notes                                                                                                                                                 |
+| ------------------------------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Look-ahead tick                 | < 20 ms            | 5 members × ~40 footprints; pyramid culling                                                                                                           |
+| Envelope payload                | < 15 kB            | quantised coordinates, only on `rev` change                                                                                                           |
+| Route check, 30 legs            | < 300 ms           | parallel legs in worker                                                                                                                               |
+| Interactive leg re-check        | < 80 ms p95        | only the edited legs; abort on new input                                                                                                              |
+| Repair, one leg                 | < 1.5 s            | bounded window; 600 000 work units per leg, 1 800 000 per request (§4.11); calibrate µs per unit on a Pi 4 with `npm run build`, then `npm run bench` |
+| Index build, full Finnish coast | < 15 min, one-time | worker thread; incremental on ENC updates                                                                                                             |
+| Index RAM                       | < 150 MB           | pyramid blocks read on demand, 32 MB cache                                                                                                            |
+| Living-chart start              | < 200 ms sync      | ≤ ~20 000 `cells.ndjson` lines; no chart prior; cells settled in slices (§4.13)                                                                       |
 
 ---
 
@@ -1515,6 +1693,31 @@ palette.
   a larger σ_pos never lowers P.
 - CTRV trajectory against analytical arcs.
 - Datum reduction tables.
+
+**Test runtime (decision).** `npm test` stays hermetic and under 120 s in band, because the
+Signal K plugin registry runs it with no network, `SIGNALK_REGISTRY_TEST=1` and a 240 s cap. No
+safety test is skipped or given fewer fast-check runs for speed: every property test, the replay
+and the invariant suites run at full depth in every run, the registry's included.
+
+- Jest runs each test file in a vm context. The stock `jest-environment-node` builds that
+  context from a Proxy, so every global lookup in the chart and engine hot paths (`Math`,
+  `Number`, typed arrays) passes through an interceptor: the replay test took about 70 s for
+  code that runs in about 4 s in plain Node, and the suite about 4.5 minutes. The tests run in
+  `__tests__/helpers/node-realm-environment.js`, the same environment built on a
+  `vm.constants.DONT_CONTEXTIFY` context (Node 22.8 or later; on an older Node it is the stock
+  environment). It throws if Jest stops building its context with one `vm.createContext` call,
+  and `__tests__/test-environment.test.ts` checks that it is active. `jest-environment-node` is
+  a direct dev dependency. On an i5-8350U laptop the suite's 1049 tests take about 51 s and the
+  replay test about 3 s.
+- A test may make at most 20 000 `expect()` calls (`__tests__/helpers/assertion-budget.ts`),
+  since each costs about 30 µs. Per-element checks inside property loops are collected and
+  asserted once, with the same predicate, so a violation still fails inside the property and
+  shrinks. The target is 5 000; six property tests still assert per element (up to 13 640
+  calls in `node-store.test.ts`, about 9 600 in `envelope-notify.test.ts` and
+  `geometry.test.ts`) and must be rewritten before the limit drops.
+- `__tests__/helpers/budget-reporter.js` prints the ten slowest files and the wall time. When
+  `UNDERKEEL_TEST_BUDGET_S` is set it fails the run past that many seconds; CI sets 120 on
+  `npm run verify`.
 
 **Synthetic ENC fixtures.** Generated cells covering these cases:
 
@@ -1610,16 +1813,13 @@ it is distributed. Needed from the start:
    host. **Current leaning: start as a Plotter Extensions service for speed, migrate to a
    server API at M6.**
 6. Heel-to-draft curves for common keel types: ship presets, or require user entry?
-7. What should bound the total work of repairing one leg? Route repair's cell queries are not
-   bounded by the 200 km² corridor budget (§4.11): a 47 km leg at `xteLimit` 2000 m took 3.4 s
-   on a laptop. A budget needs a metric, such as cells expanded or area queried, and a limit.
-8. What retention should the living chart's per-cell posteriors have: a cap, or eviction of
-   cells without an adjustment by `lastAt`? And should `livechart.json` move from a full
-   rewrite every 10 minutes to an append or delta format (§4.13)?
-9. Should each UKC tile be drawn at the water level where it lies? Route legs and `POST /query`
-   take the level at their own positions, while the tiles apply the vessel's level everywhere;
-   drawing each tile at its own level needs the change feed (§4.14) to key tiles per level
-   regime.
+7. Do the route repair work limits hold on a Raspberry Pi 4? `maxWork` 600 000 and
+   `maxRequestWork` 1 800 000 (§4.11) come from laptop rates (0.34–0.66 µs per unit in plain
+   Node on an i5-8350U) and an assumed 3–5× Pi 4 slowdown, so on a Pi 4 600 000 units may take
+   0.6–2.0 s. `docs/release-checklist.md` runs `npm run build` and then `npm run bench` on a
+   Pi 4 before a release that changes route repair, the pyramid or the corridor check, and
+   lowers both limits together, in the same ratio, if the worst µs per unit × `maxWork` exceeds
+   1.5 s.
 
 ---
 
