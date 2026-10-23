@@ -6,6 +6,12 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Added
 
+- The index is built around the vessel: **Index box around the vessel (km)** (`boxRadiusKm`,
+  default 10) builds only the S-57 cells reaching a box around the vessel and rebuilds it as
+  the vessel moves, as the Traficom WFS box does. Outside the box the plugin reports no
+  coverage. Cells are picked by their extent, read from the `.000` without GDAL. The 698-cell
+  NOAA set no longer builds whole at start (over 15 minutes); a 10 km box takes 22 s on x86.
+  `GET /status` reports the box under `chartBox`. `boxRadiusKm: 0` indexes every cell.
 - S-57 ENC cells are read as delivered: **ENC cells directory** takes `.000` files with their
   `.001`, `.002` … updates, also inside an exchange set's `ENC_ROOT` folders, read in the index
   worker with gdal3.js (GDAL compiled to WebAssembly), now a runtime dependency. No export step

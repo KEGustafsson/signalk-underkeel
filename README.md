@@ -104,6 +104,14 @@ the survey's CATZOC (500 m in zone C), so a jetty or a beach does not spread acr
 water. Where the cell marks an edge or node as not surveyed (QUAPOS) the survey's σ applies
 there, and where it states a POSACC, half of it.
 
+The index covers a box around the vessel, **Index box around the vessel (km)** (default 10 km
+each way), and is rebuilt off the event loop as the vessel moves, so a large exchange set such
+as NOAA's 698 East and Gulf coast cells is never indexed whole: only the cells reaching the box
+are read (21 of them around Miami, 22 s at leaf zoom 20 on x86). Outside the box the plugin
+reports no coverage, never clear water. Until the first position arrives the engine is `off`
+with the reason `waiting for the vessel position to build the chart box`. Set the box to 0 to
+index every cell.
+
 At the first start the plugin builds a chart index from the cells in a worker thread and saves
 it under the plugin data directory, `~/.signalk/plugin-config-data/signalk-underkeel/index`
 unless **Chart index directory** says otherwise. Until the index is ready the engine is `off`
@@ -123,7 +131,7 @@ All settings are in the plugin's page in the admin UI. The defaults suit a small
 
 | Group               | Main settings and defaults                                                                                                                                                                                                                              |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Chart index         | cells directory, index directory, rebuild at start, index leaf zoom (20)                                                                                                                                                                                |
+| Chart index         | cells directory, index directory, rebuild at start, index leaf zoom (20), box around the vessel (10 km)                                                                                                                                                 |
 | Vessel              | draft, length, beam (fallback: Signal K `design.*`); draft σ (0.05 m); extra margin under the keel (0 m); block coefficient for squat (0.4); double squat in narrow channels; heel effect (none, fin keel or a table); wave allowance factor (0.4 × Hs) |
 | Water level         | source (`none`, `manual`, `signalk-tide`, `fmi`); manual height and σ; FMI refresh (600 s); chart-datum mappings for FMI                                                                                                                                |
 | Look-ahead          | distance (555.6 m = 0.3 NM); minimum horizon (60 s); position buffer (10 m, 2σ); fan spread (COG 5°, rate of turn 0.1°/s); alert, warn and alarm probabilities (1 %, 5 %, 20 %); warn and alarm windows (120 s, 60 s)                                   |

@@ -34,7 +34,7 @@ describe("after stop", () => {
       plugin.registerWithRouter?.(router as never);
       seedFixtureIndex(dataDir);
       plugin.start(
-        { cellsDir: CELLS, leafZoom: 18, livechart: { enabled: true } },
+        { cellsDir: CELLS, boxRadiusKm: 0, leafZoom: 18, livechart: { enabled: true } },
         () => undefined
       );
       plugin.stop();
@@ -55,6 +55,7 @@ describe("after stop", () => {
     plugin.start(
       {
         cellsDir: CELLS,
+        boxRadiusKm: 0,
         leafZoom: 18,
         waterLevel: { source: "manual", height: -1.5, sigma: 0.05 }
       },
@@ -98,7 +99,12 @@ describe("after stop", () => {
     const plugin = underkeel(f.app, clock);
     seedFixtureIndex(dataDir);
     plugin.start(
-      { cellsDir: CELLS, leafZoom: 18, waterLevel: { source: "manual", height: 0.4 } },
+      {
+        cellsDir: CELLS,
+        boxRadiusKm: 0,
+        leafZoom: 18,
+        waterLevel: { source: "manual", height: 0.4 }
+      },
       () => undefined
     );
     f.send(navDelta(ROCK[0] - 75 / M_PER_DEG_LON, ROCK[1], 3, T0));
@@ -163,7 +169,7 @@ describe("restart", () => {
     app.setPluginError = (m: string) => reports.push(["error", m]);
     const clock = fakeClock(T0);
     const plugin = underkeel(f.app, clock);
-    plugin.start({ cellsDir: "/nonexistent/cells" }, () => undefined);
+    plugin.start({ cellsDir: "/nonexistent/cells", boxRadiusKm: 0 }, () => undefined);
     clock.advance(1000);
     clock.advance(1000);
     expect(reports.length).toBeGreaterThanOrEqual(1);
@@ -180,7 +186,7 @@ describe("restart", () => {
     plugin.registerWithRouter?.(router as never);
     const run = (lon: number) => {
       seedFixtureIndex(dataDir);
-      plugin.start({ cellsDir: CELLS, leafZoom: 18 }, () => undefined);
+      plugin.start({ cellsDir: CELLS, boxRadiusKm: 0, leafZoom: 18 }, () => undefined);
       f.send(navDelta(lon, ROCK[1], 3, clock.now()));
       clock.advance(1000);
       return lastValue(f.deltas, "navigation.underKeel.envelopeRev") as number;

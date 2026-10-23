@@ -234,6 +234,24 @@ signalk-underkeel/
 
 ### 4.2 Ingest
 
+**Index box around the vessel (decision, 2026-10-23).** S-57 cells are no longer indexed
+whole: the index is built in a box of `boxRadiusKm` (default 10 km, half-width) around the
+vessel, and rebuilt as the vessel moves by the same rules as the Traficom WFS box below (more
+than half the radius from the centre, or the edge along COG closer than SOG × 1.5 × the last
+build time plus the look-ahead's reach). A whole build of the 698-cell NOAA US East and Gulf
+set at z20 ran for over 15 minutes on 4 threads without finishing; the 10 km box around Bal
+Harbour reads 21 of the cells and builds in 22 s (x86). Cells are chosen by their extent,
+read from the SG2D/SG3D coordinates of the `.000` and its updates without GDAL
+(`ingest/enc-bounds.ts`, 3.3 s for the 698 cells, in the build worker), grown by 5 km; a
+cell whose extent cannot be read is always taken. Only the z10 roots meeting the box are
+built, and every tile outside it is `NO_COVERAGE` (pyramid build `within`), so the
+look-ahead there is never `normal` and route legs there are `unverified` (invariants 3 and
+4). The box and the cell stamps it was chosen from are saved beside the index
+(`box.json`); a start loads the saved index while the stamps match, rebuilds in the saved box
+when they do not, and with no saved box stays `off` with "waiting for the vessel position to
+build the chart box" until the first position. With the WFS on, its box is the one the ENC
+cells are built in. `boxRadiusKm: 0` keeps the whole build.
+
 **Sources, in priority order:**
 
 1. **S-57 ENC cells.** Either reuse the `.000` files the user already gave to
