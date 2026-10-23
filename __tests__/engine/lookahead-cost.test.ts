@@ -166,7 +166,12 @@ describe("coarse steps beyond the warn window", () => {
           fps.filter((f) => f.t <= opts.warnWithin).map((f) => [f.t, f.risk, f.flags]);
         expect(within(coarse.footprints)).toEqual(within(dense.footprints));
       }),
-      { numRuns: 40 }
+      {
+        numRuns: 40,
+        // From CI: a turning boat whose coarse hull, taken in lon/lat, left a step's footprint
+        // 2.5 µm outside it in Mercator.
+        examples: [[{ x: 0.53954, y: 0.72002, cog: 0, sog: 1.32432, rot: -0.029976 }]]
+      }
     );
   });
 

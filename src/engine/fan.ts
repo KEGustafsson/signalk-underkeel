@@ -1,4 +1,5 @@
 import type { LonLat } from "../foundation/geo";
+import { toMercator } from "../foundation/geo";
 import type { VesselTerms } from "../model/uncertainty";
 import type { VesselModel } from "../model/vessel";
 import type { ChartIndex } from "../spatial/chart-index";
@@ -82,6 +83,23 @@ function hullTimes(t: number, span: Span | undefined): number[] {
 }
 
 /**
+ * The convex hull of lon/lat points, taken in Mercator, where the chart walk
+ * measures: a hull taken in lon/lat bulges past the Mercator straight edges
+ * between its points, and left a step's footprint up to 2.5 µm outside a
+ * coarse hull at 60° N. Returns the input points themselves, so the walk
+ * converts them back to the same Mercator points.
+ */
+function mercatorHull(points: LonLat[]): LonLat[] {
+  const from = new Map<LonLat, LonLat>();
+  const merc = points.map((p) => {
+    const m = toMercator(p[0], p[1]);
+    from.set(m, p);
+    return m;
+  });
+  return convexHull(merc).map((m) => from.get(m) as LonLat);
+}
+
+/**
  * Scores the hull of `tracks` at `t`. With `certainStops` the chart walk
  * may end at the first charted land at P = 1; the result is then `partial`.
  * With `span` (a coarse step, plan §4.8) the hull also takes in the
@@ -115,7 +133,7 @@ export function footprint(
   const ring =
     hulls.length === 1
       ? (hulls[0] as { ring: LonLat[] }).ring
-      : convexHull(hulls.flatMap((h) => h.ring));
+      : mercatorHull(hulls.flatMap((h) => h.ring));
   const buffer = bufferAt(s, opts);
   const r = minDepthOver(index.pyramid, footprintGeom(ring), {
     bufferMetres: buffer,

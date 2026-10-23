@@ -298,6 +298,8 @@ describe("Traficom WFS ingest", () => {
     const streamed = (text: string, chunks: number, everyMs: number, close = true) => {
       const bytes = new TextEncoder().encode(text);
       let sent = 0;
+      // A download that fails or stops cancels every layer's stream, some with a piece due.
+      let cancelled = false;
       return new ReadableStream<Uint8Array>({
         pull: (c) =>
           new Promise<void>((resolve) => {
@@ -308,12 +310,17 @@ describe("Traficom WFS ingest", () => {
               return;
             }
             setTimeout(() => {
-              const step = Math.ceil(bytes.length / chunks);
-              c.enqueue(bytes.subarray(sent * step, (sent + 1) * step));
-              sent++;
+              if (!cancelled) {
+                const step = Math.ceil(bytes.length / chunks);
+                c.enqueue(bytes.subarray(sent * step, (sent + 1) * step));
+                sent++;
+              }
               resolve();
             }, everyMs);
-          })
+          }),
+        cancel: () => {
+          cancelled = true;
+        }
       });
     };
     const body = (stream: ReadableStream<Uint8Array>) => ({
