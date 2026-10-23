@@ -50,10 +50,24 @@ function assetPath(root: string, urlPath: string): string | undefined {
   return file.startsWith(root + path.sep) && TYPES[path.extname(file)] ? file : undefined;
 }
 
+/**
+ * `file`'s stats when it is a file. Undefined when it is missing or `fs`
+ * fails on it, as on a name too long or a directory it may not read: the
+ * request falls through to a 404 instead of a 500 that carries the stack.
+ */
+function fileStats(file: string): fs.Stats | undefined {
+  try {
+    const st = fs.statSync(file, { throwIfNoEntry: false });
+    return st?.isFile() ? st : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** The file under `root` that `urlPath` names, or undefined when it is outside or missing. */
 export function assetFile(root: string, urlPath: string): string | undefined {
   const file = assetPath(root, urlPath);
-  return file && fs.statSync(file, { throwIfNoEntry: false })?.isFile() ? file : undefined;
+  return file && fileStats(file) ? file : undefined;
 }
 
 interface Cached {
@@ -80,15 +94,20 @@ function holds(header: string | string[] | undefined, etag: string): boolean {
 export function assetMiddleware(root = PUBLIC_DIR): Middleware {
   const cache = new Map<string, Cached>();
   const read = (file: string): Cached | undefined => {
-    const st = fs.statSync(file, { throwIfNoEntry: false });
-    if (!st?.isFile()) {
+    const st = fileStats(file);
+    if (!st) {
       return undefined;
     }
     const hit = cache.get(file);
     if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) {
       return hit;
     }
-    const body = fs.readFileSync(file);
+    let body: Buffer;
+    try {
+      body = fs.readFileSync(file);
+    } catch {
+      return undefined;
+    }
     const etag = `"${createHash("sha1").update(body).digest("base64url")}"`;
     const entry = { mtimeMs: st.mtimeMs, size: st.size, body, etag };
     cache.set(file, entry);
