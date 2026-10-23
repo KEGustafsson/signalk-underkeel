@@ -22,7 +22,12 @@ import { PENDING_REASONS } from "./index-loader";
 import { WFS_NOTICE } from "./ingest/wfs";
 import type { WaterLevelStatus } from "./water-level-service";
 import { WaterLevelService } from "./water-level-service";
-import { ChangeNotifier, groundingNotification, integrityNotification } from "./notifications";
+import {
+  ChangeNotifier,
+  groundingNotification,
+  integrityKey,
+  integrityNotification
+} from "./notifications";
 import { asNumber, INPUT_PATHS, NavInputs, sampleTime, selfValue } from "./nav-inputs";
 import type { Deferral } from "./escape-search";
 import { EscapeSearch } from "./escape-search";
@@ -394,7 +399,11 @@ export class Monitor {
     );
     this.notify(r);
     if (this.integrityResult) {
-      this.notifier.send(PATHS.positionIntegrity, integrityNotification(this.integrityResult));
+      this.notifier.send(PATHS.positionIntegrity, integrityNotification(this.integrityResult), {
+        key: integrityKey(this.integrityResult),
+        refreshMs: NOTIFY_REFRESH_MS,
+        now: this.clock.now()
+      });
     }
     this.checkGrounding(r);
     this.escape.after(raw.state, this.clock.now() - t0, escapable);
