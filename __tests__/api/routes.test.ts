@@ -66,7 +66,7 @@ describe("server error reasons on the wire", () => {
         "chart index failed: ENOENT: no such file or directory, scandir '/media/usb/ENC'"
       )
     ).toBe("chart index failed (see the server log)");
-    expect(publicReason("no cells in /home/pi/charts; C:\\charts not found")).toBe(
+    expect(publicReason("no cells in /srv/charts; C:\\charts not found")).toBe(
       "no cells in <path>; <path> not found"
     );
     expect(
@@ -81,7 +81,7 @@ describe("server error reasons on the wire", () => {
   });
 
   test("a 503 from a POST route or a tile carries the reason without its paths", async () => {
-    const reason = "no cells in /home/pi/charts";
+    const reason = "no cells in /srv/charts";
     const unavailable = () => Promise.resolve({ status: 503, body: { errors: [reason] } });
     const api = {
       query: unavailable,

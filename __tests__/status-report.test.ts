@@ -10,7 +10,7 @@ describe("status report paths", () => {
         "chart index failed: ENOENT: no such file or directory, scandir '/media/usb/ENC'"
       )
     ).toBe("chart index failed: ENOENT: no such file or directory, scandir '…/ENC'");
-    expect(withoutPaths("no cells in /home/sailor/charts")).toBe("no cells in …/charts");
+    expect(withoutPaths("no cells in /srv/signalk/charts")).toBe("no cells in …/charts");
     for (const kept of [
       "fetch https://example.org/wfs/ows failed",
       "skipped X.000 in cells: not a cell directory",
@@ -27,9 +27,9 @@ describe("status report paths", () => {
     const body = JSON.stringify(
       statusReport({
         load: {
-          indexDir: "/home/sailor/.signalk/plugin-config-data/signalk-underkeel/index",
+          indexDir: "/srv/signalk/.signalk/plugin-config-data/signalk-underkeel/index",
           built: false,
-          reason: "no cells in /home/sailor/charts"
+          reason: "no cells in /srv/signalk/charts"
         },
         monitor: undefined,
         wfs,
