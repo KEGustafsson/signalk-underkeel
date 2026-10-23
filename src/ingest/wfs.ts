@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { syncDirectory } from "../foundation/durable-file";
 import type { LonLat } from "../foundation/geo";
 import { EARTH_RADIUS } from "../foundation/geo";
 import type { GeoJsonFeatureCollection } from "./s57-geojson";
@@ -218,16 +219,41 @@ export function toCellLayers(
   };
 }
 
-/** Writes the layers beside `dir` and swaps them in, so a failed write leaves the old cell. */
+/**
+ * Writes the layers beside `dir` and swaps them in, so a failed write leaves the old cell.
+ * The layers are flushed before the swap and the swap after it, so a power cut leaves the
+ * old cell, the new one or none, never an empty or torn layer that fails the next start.
+ */
 export function writeCell(dir: string, layers: Record<string, GeoJsonFeatureCollection>): void {
   const staging = `${dir}.partial`;
+  const previous = `${dir}.old`;
   fs.rmSync(staging, { recursive: true, force: true });
+  fs.rmSync(previous, { recursive: true, force: true });
   fs.mkdirSync(staging, { recursive: true });
   for (const [name, fc] of Object.entries(layers)) {
-    fs.writeFileSync(path.join(staging, `${name}.geojson`), JSON.stringify(fc));
+    const fd = fs.openSync(path.join(staging, `${name}.geojson`), "w");
+    try {
+      fs.writeFileSync(fd, JSON.stringify(fc));
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
   }
-  fs.rmSync(dir, { recursive: true, force: true });
-  fs.renameSync(staging, dir);
+  syncDirectory(staging);
+  const had = fs.existsSync(dir);
+  if (had) {
+    fs.renameSync(dir, previous);
+  }
+  try {
+    fs.renameSync(staging, dir);
+  } catch (err) {
+    if (had) {
+      fs.renameSync(previous, dir);
+    }
+    throw err;
+  }
+  syncDirectory(path.dirname(dir));
+  fs.rmSync(previous, { recursive: true, force: true });
 }
 
 export interface WfsDownload {
