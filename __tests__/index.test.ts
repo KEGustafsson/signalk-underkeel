@@ -76,7 +76,8 @@ describe("index build at start (plan §6: off the event loop)", () => {
       await settle();
       expect(lastValue(f.deltas, "navigation.underKeel.state")).toBe("off");
     }
-    expect(f.errors).toContain("building chart index");
+    expect(f.statuses).toContain("building chart index");
+    expect(f.errors).not.toContain("building chart index");
     expect(status(call)).toMatchObject({
       engine: { state: "off", reason: "building chart index" },
       index: { loaded: false }

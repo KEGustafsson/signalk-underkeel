@@ -5,6 +5,8 @@ import type { Clock } from "../src/monitor";
 import { Monitor } from "../src/monitor";
 import { KEEP_ALIVE_MS, ValuePublisher } from "../src/tick-publisher";
 import { NOTIFY_REFRESH_MS } from "../src/engine/notify";
+import { BUILDING_REASON, LOADING_REASON, WFS_WAITING_REASON } from "../src/index-loader";
+import type { ChartIndex } from "../src/spatial/chart-index";
 import { fixtureIndex, M_PER_DEG_LON, ROCK } from "./helpers/fixture-index";
 import { navDelta, T0, values } from "./helpers/plugin-harness";
 
@@ -21,6 +23,7 @@ interface Rig {
   monitor: Monitor;
   deltas: Partial<Delta>[];
   statuses: string[];
+  errors: string[];
   /** Advances the clock by a second and ticks. */
   tick(nav?: Delta): void;
   /** Deferred callbacks, run by `flush`. */
@@ -30,16 +33,18 @@ interface Rig {
   lookupMs: number;
 }
 
-function rig(defer: boolean): Rig {
+/** `index` null starts the monitor without one. */
+function rig(defer: boolean, index: ChartIndex | null = fixtureIndex(), reason?: string): Rig {
   let now = T0;
   const deltas: Partial<Delta>[] = [];
   const statuses: string[] = [];
+  const errors: string[] = [];
   const deferred: (() => void)[] = [];
   const r = { lookupMs: 0 } as Rig;
   const app = {
     handleMessage: (_id: string, d: Partial<Delta>) => deltas.push(d),
     setPluginStatus: (m: string) => statuses.push(m),
-    setPluginError: () => undefined,
+    setPluginError: (m: string) => errors.push(m),
     error: () => undefined,
     subscriptionmanager: { subscribe: () => undefined },
     getSelfPath: (p: string) => {
@@ -63,8 +68,8 @@ function rig(defer: boolean): Rig {
     app as never,
     "signalk-underkeel",
     config,
-    fixtureIndex(),
-    undefined,
+    index ?? undefined,
+    reason,
     clock
   );
   monitor.start();
@@ -72,6 +77,7 @@ function rig(defer: boolean): Rig {
     monitor,
     deltas,
     statuses,
+    errors,
     deferred,
     tick(nav?: Delta) {
       now += 1000;
@@ -265,5 +271,42 @@ describe("escape search after the tick", () => {
     r.deltas.length = 0;
     r.flush();
     expect(sent(r.deltas, "navigation.underKeel.escapeHeading")).toBe(0);
+  });
+});
+
+describe("index status", () => {
+  test.each([BUILDING_REASON, LOADING_REASON, WFS_WAITING_REASON])(
+    "%s is a status, not a server error, while the engine stays off",
+    (reason) => {
+      const r = rig(false, null, reason);
+      r.tick();
+      expect(r.monitor.last).toMatchObject({ state: "off", reason });
+      expect(r.statuses.at(-1)).toBe(reason);
+      expect(r.errors).toEqual([]);
+    }
+  );
+
+  test("a failed index load is a server error", () => {
+    const r = rig(false, null, "chart index failed: disk gone");
+    r.tick();
+    expect(r.monitor.last.state).toBe("off");
+    expect(r.errors).toEqual(["chart index failed: disk gone"]);
+    expect(r.statuses).toEqual([]);
+  });
+
+  test("notes about a loaded index go in the status beside the monitoring state", () => {
+    const r = rig(false, fixtureIndex(), "skipped X.000 in cells: not a cell directory");
+    r.tick(navDelta(22.003, 60.0125, 0, T0 + 1000));
+    expect(r.statuses.at(-1)).toMatch(/^Monitoring: .* · skipped X\.000/);
+    expect(r.errors).toEqual([]);
+  });
+
+  test("an index handed over after the build clears the building status", () => {
+    const r = rig(false, null, BUILDING_REASON);
+    r.tick();
+    r.monitor.setIndex(fixtureIndex());
+    r.tick(navDelta(22.003, 60.0125, 0, T0 + 2000));
+    expect(r.statuses.at(-1)).toMatch(/^Monitoring: /);
+    expect(r.errors).toEqual([]);
   });
 });

@@ -1,19 +1,25 @@
-import { normalCdf, probabilityBelowZero } from "../foundation/stats";
+import { probabilityBelowZero } from "../foundation/stats";
 import type { NodeStore, NodeValues } from "../spatial/node-store";
 import { FLAGS } from "../spatial/node-store";
 import type { Thresholds } from "./lookahead";
 import type { TileGeometry, UkcTileCache } from "./ukc-tile-geometry";
-import { DETAIL_ZOOMS, MASK_WORDS, SLOTS, tileGeometry } from "./ukc-tile-geometry";
+import { DETAIL_ZOOMS, SLOTS, tileGeometry, UNVERIFIED } from "./ukc-tile-geometry";
+import type { ThresholdRange } from "./ukc-reach";
+import { narrow, RANK, reachGrid, SLACK } from "./ukc-reach";
 
 export { DETAIL_ZOOMS };
+export type { ThresholdRange };
 
 /**
  * UKC overlay (plan §4.10): every pyramid cell in a web-map tile classed by
  * P(UKC < 0) for the current draft and water level. A cell coarser than the
  * drawing resolution is classed by its bound (shallowest depth, widest σ),
- * which never shows a cell safer than any part of it. A cell also takes the
- * class of every cell whose chart reach (2·σP of its assessed survey)
- * reaches it, as a route check or `POST /query` there would.
+ * which never shows a cell safer than any part of it. A slot also takes the
+ * class a route check or `POST /query` there would give it from the cells
+ * around it: each one's P weighted by the chance its chart position is off
+ * by their distance (`chart-position.ts`), and the flags of an unverified
+ * cell within its flag reach. A slot raised so above its own cell's class is
+ * marked `reach`, for drawing it apart from what the chart says there.
  */
 
 export type UkcClass = "clear" | "caution" | "danger" | "unverified" | "land";
@@ -25,6 +31,8 @@ export interface UkcRect {
   y0: number;
   x1: number;
   y1: number;
+  /** Raised above its own cell's class by a nearby cell's chart position or flags. */
+  reach?: true;
 }
 
 export interface UkcTileInput {
@@ -33,18 +41,6 @@ export interface UkcTileInput {
   thresholds: Thresholds;
   /** The water level is a fallback: nothing is drawn as clear. */
   degraded: boolean;
-}
-
-const UNVERIFIED = FLAGS.NO_COVERAGE | FLAGS.UNASSESSED | FLAGS.NO_DEPTH | FLAGS.NOT_FOR_NAVIGATION;
-
-/**
- * Thresholds, metres, at all of which a tile is drawn the same, both ends
- * included; the other inputs held. A tile drawn at a threshold inside the
- * range is byte for byte the tile drawn at any other inside it.
- */
-export interface ThresholdRange {
-  lo: number;
-  hi: number;
 }
 
 /**
@@ -120,94 +116,22 @@ function narrowAll(
   }
 }
 
-/** Metres kept clear of a threshold where P crosses a level: far beyond its rounding error. */
-const SLACK = 1e-6;
-
-const CROSSINGS = new Map<number, number>();
-
-/** The least x with normalCdf(x) ≥ p, searched on normalCdf itself rather than an inverse. */
-function crossing(p: number): number {
-  let x = CROSSINGS.get(p);
-  if (x === undefined) {
-    let lo = -40;
-    let hi = 40;
-    for (let mid = (lo + hi) / 2; mid !== lo && mid !== hi; mid = (lo + hi) / 2) {
-      if (normalCdf(mid) >= p) {
-        hi = mid;
-      } else {
-        lo = mid;
-      }
-    }
-    x = hi;
-    CROSSINGS.set(p, x);
-  }
-  return x;
-}
-
-/**
- * Narrows `range` to the side of level `p` that threshold `t` is on. The
- * crossing is dMin + x·σ; with σ 0, P steps from 0 to 1 at dMin. A side
- * reaches at least to `t`, since P is monotonic in the threshold.
- */
-function narrow(
-  range: ThresholdRange,
-  dMin: number,
-  sigma: number,
-  t: number,
-  risk: number,
-  p: number
-): void {
-  const at = dMin + (sigma > 0 ? crossing(p) * sigma : 0);
-  if (risk >= p) {
-    range.lo = Math.max(range.lo, Math.min(t, at + SLACK));
-  } else {
-    range.hi = Math.min(range.hi, Math.max(t, at - SLACK));
-  }
-}
-
-/** Severity of a class reaching a cell, as the look-ahead and query order them. */
-const RANK = { clear: 0, caution: 1, unverified: 2, danger: 3 } as const;
 const BY_RANK = ["clear", "caution", "unverified", "danger"] as const;
 
 type WaterClass = keyof typeof RANK;
-
-/**
- * The worst rank reaching each slot of the reach grid, from the rank of each
- * kind. Land reaching a slot reads as danger, since a footprint there would
- * count it.
- */
-function reachGrid(g: TileGeometry, ranks: Uint8Array): Uint8Array | undefined {
-  let grid: Uint8Array | undefined;
-  for (let m = 0; m < g.reachKind.length; m++) {
-    const rank = ranks[g.reachKind[m] as number] as number;
-    if (rank === 0) {
-      continue;
-    }
-    grid ??= new Uint8Array(SLOTS * SLOTS);
-    for (let w = 0; w < MASK_WORDS; w++) {
-      let bits = (g.reachMask[m * MASK_WORDS + w] as number) | 0;
-      while (bits !== 0) {
-        const low = bits & -bits;
-        const k = w * 32 + 31 - Math.clz32(low);
-        if ((grid[k] as number) < rank) {
-          grid[k] = rank;
-        }
-        bits ^= low;
-      }
-    }
-  }
-  return grid;
-}
 
 /** Classes in the order the drawn rectangles are sorted by: their names' order. */
 const BY_NAME: UkcClass[] = ["caution", "clear", "danger", "land", "unverified"];
 const NAME_ORDER = new Map(BY_NAME.map((c, i) => [c, i]));
 const RANK_NAME = BY_RANK.map((c) => NAME_ORDER.get(c) as number);
 
-/** Rectangles as columns, reused across tiles: `cls` is the index in BY_NAME. */
+/**
+ * Rectangles as columns, reused across tiles: `code` is twice the index in
+ * BY_NAME, plus 1 for a rectangle raised by reach.
+ */
 class RectColumns {
   n = 0;
-  cls = new Uint8Array(0);
+  code = new Uint8Array(0);
   x0 = new Float64Array(0);
   y0 = new Float64Array(0);
   x1 = new Float64Array(0);
@@ -218,9 +142,9 @@ class RectColumns {
   /** Empties the columns, with room for `cap` rectangles. */
   reset(cap: number): void {
     this.n = 0;
-    if (this.cls.length < cap) {
+    if (this.code.length < cap) {
       Object.assign(this, {
-        cls: new Uint8Array(cap),
+        code: new Uint8Array(cap),
         x0: new Float64Array(cap),
         y0: new Float64Array(cap),
         x1: new Float64Array(cap),
@@ -231,9 +155,9 @@ class RectColumns {
     }
   }
 
-  push(cls: number, x0: number, y0: number, size: number): void {
+  push(cls: number, reach: boolean, x0: number, y0: number, size: number): void {
     const i = this.n++;
-    this.cls[i] = cls;
+    this.code[i] = 2 * cls + (reach ? 1 : 0);
     this.x0[i] = x0;
     this.y0[i] = y0;
     this.x1[i] = x0 + size;
@@ -264,7 +188,7 @@ function cellRects(
   const size = extent / scale;
   const name = NAME_ORDER.get(cls) as number;
   if (!grid || cls === "land") {
-    out.push(name, cx * size, cy * size, size);
+    out.push(name, false, cx * size, cy * size, size);
     return;
   }
   const own = RANK[cls as WaterClass];
@@ -278,31 +202,33 @@ function cellRects(
     }
   }
   if (!worse) {
-    out.push(name, cx * size, cy * size, size);
+    out.push(name, false, cx * size, cy * size, size);
     return;
   }
   const step = extent / SLOTS;
   for (let j = sj; j < sj + n; j++) {
     for (let i = si; i < si + n; i++) {
-      const rank = Math.max(own, grid[j * SLOTS + i] as number);
-      out.push(RANK_NAME[rank] as number, i * step, j * step, step);
+      const reached = grid[j * SLOTS + i] as number;
+      const raised = reached > own;
+      out.push(RANK_NAME[raised ? reached : own] as number, raised, i * step, j * step, step);
     }
   }
 }
 
 /**
- * The rectangles sorted by class name, y0, y1 and x0, runs along a row
- * merged. With `units` every coordinate is a whole number of reach slots of
- * `step`, and the order is that of one number per rectangle.
+ * The rectangles sorted by class name and reach, y0, y1 and x0, runs along
+ * a row merged. With `units` every coordinate is a whole number of reach
+ * slots of `step`, and the order is that of one number per rectangle.
  */
 function mergedRects(r: RectColumns, step: number, units: boolean): UkcRect[] {
-  const { cls, x0, y0, x1, y1 } = r;
+  const { code, x0, y0, x1, y1 } = r;
   let order: ArrayLike<number>;
   if (units && r.n <= INDEX_SPAN) {
     const keys = r.key.subarray(0, r.n);
     for (let i = 0; i < r.n; i++) {
       const u =
-        (((cls[i] as number) * 65 + (y0[i] as number) / step) * 65 + (y1[i] as number) / step) * 65;
+        (((code[i] as number) * 65 + (y0[i] as number) / step) * 65 + (y1[i] as number) / step) *
+        65;
       keys[i] = (u + (x0[i] as number) / step) * INDEX_SPAN + i;
     }
     keys.sort();
@@ -312,7 +238,7 @@ function mergedRects(r: RectColumns, step: number, units: boolean): UkcRect[] {
     index.forEach((_, i) => (index[i] = i));
     order = index.sort(
       (a, b) =>
-        (cls[a] as number) - (cls[b] as number) ||
+        (code[a] as number) - (code[b] as number) ||
         (y0[a] as number) - (y0[b] as number) ||
         (y1[a] as number) - (y1[b] as number) ||
         (x0[a] as number) - (x0[b] as number)
@@ -320,21 +246,24 @@ function mergedRects(r: RectColumns, step: number, units: boolean): UkcRect[] {
   }
   const merged: UkcRect[] = [];
   let last: UkcRect | undefined;
-  let lastCls = -1;
+  let lastCode = -1;
   for (let k = 0; k < order.length; k++) {
     const i = order[k] as number;
-    const c = cls[i] as number;
-    if (last && lastCls === c && last.y0 === y0[i] && last.y1 === y1[i] && last.x1 === x0[i]) {
+    const c = code[i] as number;
+    if (last && lastCode === c && last.y0 === y0[i] && last.y1 === y1[i] && last.x1 === x0[i]) {
       last.x1 = x1[i] as number;
     } else {
       last = {
-        class: BY_NAME[c] as UkcClass,
+        class: BY_NAME[c >> 1] as UkcClass,
         x0: x0[i] as number,
         y0: y0[i] as number,
         x1: x1[i] as number,
         y1: y1[i] as number
       };
-      lastCls = c;
+      if (c & 1) {
+        last.reach = true;
+      }
+      lastCode = c;
       merged.push(last);
     }
   }
@@ -388,18 +317,23 @@ function drawTile(
   range: ThresholdRange | undefined
 ): UkcRect[] {
   const kinds = g.dMin.length;
+  const drawn = new Uint8Array(kinds);
+  for (const k of g.cellKind) {
+    drawn[k] = 1;
+  }
   const classes: (UkcClass | undefined)[] = [];
-  const ranks = new Uint8Array(kinds);
   const v: NodeValues = { dMin: 0, sigmaD: 0, sigmaP: 0, flags: 0, cellRef: -1 };
   for (let k = 0; k < kinds; k++) {
+    if (drawn[k] === 0) {
+      classes.push(undefined);
+      continue;
+    }
     v.dMin = g.dMin[k] as number;
     v.sigmaD = g.sigmaD[k] as number;
     v.flags = g.flags[k] as number;
-    const cls = classed(v, input, g.bound[k] === 1, range);
-    classes.push(cls);
-    ranks[k] = cls === undefined ? 0 : cls === "land" ? RANK.danger : RANK[cls];
+    classes.push(classed(v, input, g.bound[k] === 1, range));
   }
-  const grid = reachGrid(g, ranks);
+  const grid = reachGrid(g, input, range);
   // Slot rectangles partition the tile, so a cell split into them adds at most SLOTS² in all.
   scratch.reset(g.cellKind.length + SLOTS * SLOTS);
   for (let c = 0; c < g.cellKind.length; c++) {

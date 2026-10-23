@@ -18,6 +18,7 @@ import type { WaterLevel } from "./model/uncertainty";
 import type { VesselModel } from "./model/vessel";
 import { resolveVessel } from "./model/vessel";
 import type { ChartIndex } from "./spatial/chart-index";
+import { PENDING_REASONS } from "./index-loader";
 import { WFS_NOTICE } from "./ingest/wfs";
 import type { WaterLevelStatus } from "./water-level-service";
 import { WaterLevelService } from "./water-level-service";
@@ -398,13 +399,20 @@ export class Monitor {
   }
 
   private report(r: LookaheadResult): void {
-    if (this.indexReason !== undefined) {
-      // A status would replace the error the server shows for a failed index load.
-      this.status.error(this.indexReason);
+    if (!this.index) {
+      // The engine is off either way; a pending reason is a status, any other an error.
+      const reason = this.indexReason ?? "no chart index loaded";
+      if (PENDING_REASONS.has(reason)) {
+        this.status.status(reason);
+      } else {
+        this.status.error(reason);
+      }
       return;
     }
     const notes = [
       r.state === "normal" ? "Monitoring: normal" : `Monitoring: ${r.state} — ${r.reason}`,
+      // With an index, the reason only says why it was rebuilt or what was skipped.
+      this.indexReason,
       this.escape.skipped,
       // The WFS licence allows non-navigational use only; say so while it is on.
       this.config.wfs && r.reason !== WFS_NOTICE ? WFS_NOTICE : undefined

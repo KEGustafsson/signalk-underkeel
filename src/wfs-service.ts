@@ -1,5 +1,5 @@
 import fs from "fs";
-import os from "os";
+import { usableMemory } from "./foundation/memory";
 import path from "path";
 import { Worker } from "worker_threads";
 import type { LonLat } from "./foundation/geo";
@@ -40,7 +40,7 @@ let exits: Promise<unknown> = Promise.resolve();
  * plus a 10 km WFS box at leaf zoom 20 builds in under 96 MB; without a limit an oversized
  * build grows until the kernel ends the whole Signal K server on a 1 GB Pi 3 or Cerbo GX.
  */
-export function workerHeapLimitMb(totalBytes = os.totalmem()): number {
+export function workerHeapLimitMb(totalBytes = usableMemory()): number {
   return Math.min(2048, Math.max(256, Math.floor(totalBytes / 4 / 2 ** 20)));
 }
 

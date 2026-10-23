@@ -52,6 +52,27 @@ for layer in DSID DEPARE DRGARE SWPARE SOUNDG UWTROC WRECKS OBSTRN LNDARE COALNE
   fi
 done
 
+# The spatial records whose position is not surveyed: QUAPOS other than
+# 1 (surveyed), 10 (precisely known) or 11 (calculated), or a stated POSACC.
+# QUAPOS lives on edges and nodes, not on the objects, so it is read from
+# GDAL's primitive layers. GDAL's Edge geometry holds the interior vertices
+# only, so the connected nodes each edge starts and ends at come along
+# (PRIM cnode) and the plugin rebuilds the whole edge. Plain SQLite SQL,
+# no SpatiaLite needed. The file is written even when empty: it tells the
+# plugin that the cell's shoreline is placed by its compilation scale.
+where="(QUAPOS IS NOT NULL AND QUAPOS NOT IN (1, 10, 11)) OR POSACC IS NOT NULL"
+OGR_S57_OPTIONS="RETURN_PRIMITIVES=ON,UPDATES=APPLY" ogr2ogr -f GeoJSON -t_srs EPSG:4326 \
+  -dialect SQLite \
+  -sql "SELECT 'edge' AS PRIM, RCID, QUAPOS, POSACC, NAME_RCID_0 AS NODE0,
+               NAME_RCID_1 AS NODE1, GEOMETRY FROM Edge WHERE $where
+        UNION ALL SELECT 'cnode', RCID, QUAPOS, POSACC, NULL, NULL, GEOMETRY
+          FROM ConnectedNode WHERE ($where)
+            OR RCID IN (SELECT NAME_RCID_0 FROM Edge WHERE $where)
+            OR RCID IN (SELECT NAME_RCID_1 FROM Edge WHERE $where)
+        UNION ALL SELECT 'inode', RCID, QUAPOS, POSACC, NULL, NULL, GEOMETRY
+          FROM IsolatedNode WHERE $where" \
+  "$out/QUAPOS.geojson" "$src"
+
 # Without coverage the cell reader refuses the directory; say so here instead.
 if [ ! -f "$out/M_COVR.geojson" ]; then
   echo "$src has no M_COVR coverage layer; $out is not a usable cell" >&2

@@ -2,7 +2,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { readCellDirectory } from "../../src/ingest/cell-reader";
-import { cellReach, DEFAULT_BUILD } from "../../src/spatial/build-items";
+import { cellReach, DEFAULT_BUILD, prepareItems } from "../../src/spatial/build-items";
 import type { BuildJob } from "../../src/spatial/build-worker";
 import { buildByRegion, regionPool, runRegion } from "../../src/spatial/build-worker";
 import { buildChartIndex } from "../../src/spatial/chart-index";
@@ -11,6 +11,7 @@ import {
   cellsReaching,
   cellsRootRange,
   joinRegions,
+  regionReach,
   rootRegions
 } from "../../src/spatial/pyramid-regions";
 import { serializePyramid } from "../../src/spatial/store";
@@ -57,6 +58,26 @@ describe("pyramid built region by region", () => {
     // Two rows of one column hold cells, so the join interleaves them.
     const filled = regions.filter((_, i) => (counts[i] as number) > 0);
     expect(filled.some((r, i) => filled.some((q, j) => j !== i && q.minX === r.minX))).toBe(true);
+  });
+
+  test("each root indexes exactly the features of its cells that reach it", () => {
+    const opts = { ...DEFAULT_BUILD, leafZoom: 16 };
+    const cells = dirs.map((d, i) => readCellDirectory(d, i).features);
+    const reaches = cells.map((f) => cellReach(f, opts));
+    const range = cellsRootRange(reaches, opts.minZoom);
+    let dropped = 0;
+    for (const region of range ? rootRegions(range) : []) {
+      const features = cellsReaching(region, opts.minZoom, reaches).flatMap((i) => cells[i] ?? []);
+      const keep = regionReach(region, opts.minZoom);
+      const all = prepareItems(features, opts);
+      const kept = prepareItems(features, opts, keep);
+      // Skipping a point's zone test by its cell's widest radius drops nothing that reaches.
+      const reaching = all.filter((it) => keep(it.bbox, it.radius));
+      const key = (it: (typeof all)[number]) => [it.f.cellRef, it.f.role, it.bbox, it.radius];
+      expect(kept.map(key)).toEqual(reaching.map(key));
+      dropped += all.length - kept.length;
+    }
+    expect(dropped).toBeGreaterThan(0);
   });
 });
 

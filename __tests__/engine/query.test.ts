@@ -177,7 +177,7 @@ describe("query request validation", () => {
 });
 
 describe("chart position uncertainty", () => {
-  test("a drying area 40 m away under CATZOC B (±50 m) is in reach of a point query", () => {
+  test("a drying area 40 m away under CATZOC B (±50 m) counts by its weight in a point query", () => {
     const box = [22.0, 60.0, 22.06, 60.03] as const;
     const north = 40 / 111195;
     const charted = {
@@ -200,7 +200,11 @@ describe("chart position uncertainty", () => {
       waterLevel: CHART_DATUM,
       thresholds: DEFAULT_LOOKAHEAD.thresholds
     });
-    expect(r.charted).toBe(-1);
+    // The point itself is 15 m water; the area 40 m off lies under it with Φ(−40/25) ≈ 5.5 %.
+    expect(r.charted).toBe(15);
+    expect(r.risk).toBeGreaterThanOrEqual(0.05);
     expect(r.class).toBe("danger");
+    expect(r.explanation?.chartPosition).toMatchObject({ source: "survey", sigmaP: 25 });
+    expect(r.sentence).toMatch(/away, placed ±50 m by its survey/);
   });
 });

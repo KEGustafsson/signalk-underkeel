@@ -141,7 +141,7 @@ only fills gaps.
 ```mermaid
 flowchart TD
   A[Read every cell's GeoJSON layers] --> B[Sort features into coverage, quality,<br/>depth, swept, hazards, land]
-  B --> C[Widen each point hazard and sounding<br/>to a disc of 2 × σP of its survey zone]
+  B --> C[Widen a point hazard or sounding in unassessed<br/>water to a disc of 2 × σP; elsewhere the query<br/>counts its chart position]
   C --> D[Start at zoom 10 tiles over all coverage]
   D --> E{Is the tile uniform?<br/>fully inside coverage, and no<br/>shallower depth, quality edge<br/>or swept edge crosses it}
   E -- yes --> F[Store the tile once:<br/>shallowest depth, widest σ, flags]
@@ -152,9 +152,15 @@ flowchart TD
 
 - A tile stores the shallowest depth of anything that touches it, so a query never gets a depth
   deeper than the chart shows anywhere in its shape.
-- A point hazard or sounding is burned into a disc of radius 2 × σP, where σP is the position
-  uncertainty of the survey zone it sits in. At CATZOC B (±50 m, σP 25 m) that is a disc 50 m in
-  radius; at CATZOC C (±500 m, σP 250 m) it is 500 m.
+- A point hazard or sounding in assessed water stays in the tile it falls in; the query spreads
+  it by its survey's position uncertainty like a depth area (section 5). One in unassessed
+  water, which spreads nothing, is burned into a disc of radius 2 × σP of the unassessed survey,
+  1 km.
+- Each tile also keeps what it spreads by its chart position: its survey's σP, the σ of its
+  land and shoreline objects' own positions, and the shallowest depth its survey places. Land
+  and shoreline are placed by the cell's compilation scale (1 mm on the chart, so 6 m at
+  1:12 000), not by CATZOC, where the export carries `QUAPOS.geojson`; on an edge or node whose
+  QUAPOS says it is not surveyed they keep the survey's σP.
 - A leaf zoom of 20 makes the smallest tile about 19 m across at 60° N. The Nauvo box built
   158,784 tiles.
 - Each stored tile also carries flags: `NO_COVERAGE`, `UNASSESSED` (no survey quality, or
@@ -273,10 +279,12 @@ At each step the plugin places the hull rectangle (length × beam) on each of th
 and joins them into one footprint, the convex hull of the five. The index is asked about that
 footprint, so the water between the tracks is checked too. The footprint gets a buffer for
 position error, at least 10 m or 2σ of the position uncertainty, and grows fore and aft with
-the speed uncertainty. The chart's own position error is added per index tile: a tile counts
-2 × σP of its survey zone further out, 50 m at CATZOC B and 500 m at C, so a drying area drawn
-60 m off the hull in B water is in reach. Unassessed and Traficom WFS water adds nothing, since
-it never reads as `normal` anyway. The position σ comes from the GNSS (HDOP × 3 m, 5 m without HDOP) and
+the speed uncertainty. The chart's own position error is not added to that buffer. A tile
+beyond it counts with its P(UKC < 0) times Φ(−g/σP), the chance the chart is off by its
+distance g in its direction: a drying area 50 m beyond the buffer counts with 2 % in CATZOC B
+water (σP 25 m) and 42 % in C (σP 250 m), and the depth reported under the boat is the depth
+charted there. Its flags (no coverage, unassessed) count within 2 × σP. Unassessed and Traficom
+WFS water spreads no depth, since it never reads as `normal` anyway. The position σ comes from the GNSS (HDOP × 3 m, 5 m without HDOP) and
 is raised by the integrity check in section 7.
 
 Steps are at most 3 s apart; for a fast boat the step shrinks so neighbouring footprints still
@@ -535,13 +543,17 @@ one layer `ukc`, every index cell classed for the current draft and water level 
 | `clear`      | green  | everything else; never drawn while the water level is a fallback |
 | `land`       | none   | left to the chart                                                |
 
-A cell is also drawn at least as bad as any cell whose chart position error reaches it: 2 × σP
-of that cell's assessed survey, 50 m at CATZOC B and 500 m at C, the reach a route check and
-`POST /query` count. Water 60 m from a drying area in B water is therefore `danger`, not
-`clear`; unassessed and Traficom WFS water adds no reach and is `unverified` anyway.
+A cell is also drawn at least as bad as a route check or `POST /query` there would read it from
+the cells around it: each one's P times Φ(−g/σP) for its distance g, and an unverified cell's
+flags within 2 × σP. Water 30 m from a drying area in CATZOC B water (Φ(−30/25) ≈ 12 %) is
+therefore `danger`, and so is water up to about 400 m from a 0 m area in C water; unassessed
+and Traficom WFS water spreads no depth and is `unverified` anyway. A part of a cell raised
+only so carries `reach`.
 
-The style draws `clear` at 25 % opacity and the other classes at 55 %, so over the chart's blue
-water `danger` looks purple-red and `caution` looks grey-tan.
+The style draws `clear` and every `reach` part at 25 % opacity and the other classes at 55 %,
+so the solid colours are the chart's own depth areas and the faint margin around them is its
+position uncertainty. Over the chart's blue water `danger` looks purple-red and `caution`
+looks grey-tan.
 
 A tile's classes stay the same while the threshold depth moves within a range: each cell
 changes class only where its P crosses the alert or warn level. The plugin records that range
@@ -584,7 +596,7 @@ each leg at the time the boat would be on it. The request fields are listed in t
 ```mermaid
 flowchart TD
   R[route] --> L[for each leg]
-  L --> C[corridor = leg ± cross-track limit 30 m<br/>+ position buffer 10 m<br/>+ 2 × σP of each chart tile's survey]
+  L --> C[corridor = leg ± cross-track limit 30 m<br/>+ position buffer 10 m;<br/>tiles beyond count by P × Φ(−g/σP)]
   C --> W[lowest water level between<br/>arrival at the leg's start and end]
   W --> Q["highest P(UKC &lt; 0) in the corridor<br/>with squat at the leg's speed"]
   Q --> F{"corridor touches land, or<br/>P ≥ 5 × accepted P<br/>(at most 50 %, at least accepted P)?"}

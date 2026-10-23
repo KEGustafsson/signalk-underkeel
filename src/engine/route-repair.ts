@@ -84,7 +84,7 @@ function* repairSteps(
       const at = footprintGeom([grid.frame.toLonLat(cx, cy)]);
       const r = minDepthOver(index.pyramid, at, {
         bufferMetres: corridor + grid.cell / 2,
-        chartReachK: DEFAULT_BUILD.k,
+        chartPosition: true,
         risk
       });
       const unchecked = (r.flags & UNCHECKED) !== 0;

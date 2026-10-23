@@ -252,7 +252,7 @@ function* corridorSteps(
   const cells = new Set<number>();
   for (const ring of legCorridors(a, b, r)) {
     const result = minDepthOver(index.pyramid, footprintGeom(ring), {
-      chartReachK: DEFAULT_BUILD.k,
+      chartPosition: true,
       clearAbove: s.threshold + CLEARANCE_RESOLUTION,
       risk: { threshold: s.threshold, sigmaExtra: s.sigmaExtra }
     });

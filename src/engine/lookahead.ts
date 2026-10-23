@@ -10,7 +10,6 @@ import { gnssSigma } from "../model/position";
 import type { DynamicsOptions, VesselModel } from "../model/vessel";
 import { vesselTerms } from "../model/vessel";
 import type { ChartIndex } from "../spatial/chart-index";
-import { chartReach } from "../spatial/chart-position";
 import { flagNames } from "../spatial/node-store";
 import type { RiskTile } from "../spatial/pyramid";
 import { footprintGeom, mercatorBuffer, minDepthOver } from "../spatial/pyramid";
@@ -19,7 +18,7 @@ import type { Explanation } from "./explain";
 import { explain, sentence } from "./explain";
 import { escapeHeading } from "./escape";
 import type { Motion, Scoring } from "./fan";
-import { bufferCapped, footprint } from "./fan";
+import { bufferCapped, footprint, spanOf } from "./fan";
 import { scheduleFor, scoreSchedule } from "./schedule";
 import { fanMembers } from "./trajectory";
 import { classify, degrade, uncertainPosition } from "./verdict";
@@ -254,8 +253,7 @@ function worstOf(
   fps: FootprintResult[],
   index: ChartIndex,
   s: Scoring,
-  wl: WaterLevel,
-  kp: number
+  wl: WaterLevel
 ): WorstPoint | undefined {
   const worst = riskiest(fps);
   if (!worst) {
@@ -267,15 +265,19 @@ function worstOf(
     cellRef: -1,
     flags: worst.flags
   };
-  // A hazard reaches k·σP from its position and then fills its whole leaf
-  // tile, which counts k_p·σP beyond the buffer, so the naming search looks
+  // A hazard in unassessed water reaches k·σP from its position and then
+  // fills its whole leaf tile; a tile beyond the buffer counted by its chart
+  // position holds its hazard within its own extent. The naming search looks
   // that far out. Only a hazard whose depth is the tile's depth is named:
   // it is the one that set it.
   const geom = footprintGeom(worst.ring);
   const leafDiagonal =
     tileSize(index.pyramid.leafZoom) * Math.cos((worst.center[1] * Math.PI) / 180) * Math.SQRT2;
+  const chart = worst.riskTile?.chart;
   const reach =
-    worst.buffer + DEFAULT_BUILD.k * worst.sigmaP + chartReach(kp, worst.sigmaP) + leafDiagonal;
+    worst.buffer +
+    DEFAULT_BUILD.k * worst.sigmaP +
+    (chart ? chart.distance + chart.extent : leafDiagonal);
   const hit = index.hazards
     .near(geom, mercatorBuffer(geomBounds(geom), reach))
     .find((h) => h.feature.depth === tile.dMin);
@@ -439,7 +441,7 @@ export function escapeFor(
   }
   const u = setupOf(nav, inputs, index, now, opts);
   return u.m.moving && !u.capped
-    ? escapeHeading(u.times, u.origin, u.m, u.vessel, u.chart, u.s, opts)
+    ? escapeHeading(u.times, u.step, u.origin, u.m, u.vessel, u.chart, u.s, opts)
     : null;
 }
 
@@ -464,8 +466,8 @@ export function evaluateLookahead(
     { cog: opts.sigmaCog, rot: opts.sigmaRot },
     opts.turnFor
   );
-  const scored = scoreSchedule(times, u.step, (t, stop) =>
-    footprint(t, u.origin, tracks, m, u.vessel, u.chart, s, opts, stop)
+  const scored = scoreSchedule(times, u.step, (t, stop, from) =>
+    footprint(t, u.origin, tracks, m, u.vessel, u.chart, s, opts, stop, spanOf(from, u.step))
   );
   const fps = scored.footprints;
   const assessed = degrade(classify(fps, opts, scored), m, wl, fps);
@@ -476,7 +478,7 @@ export function evaluateLookahead(
   const searched = inputs.escape === true && escapable;
   const escape =
     searched && verdict.state !== "normal" && verdict.state !== "unknown"
-      ? escapeHeading(times, u.origin, m, u.vessel, u.chart, s, opts)
+      ? escapeHeading(times, u.step, u.origin, m, u.vessel, u.chart, s, opts)
       : null;
   const shallowest = shallowestOf(fps);
   return {
@@ -491,7 +493,7 @@ export function evaluateLookahead(
     escapable,
     horizon: times[times.length - 1] as number,
     footprints: fps,
-    worst: worstOf(fps, u.chart, s, wl, opts.kp),
+    worst: worstOf(fps, u.chart, s, wl),
     waterLevel: wl
   };
 }

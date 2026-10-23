@@ -168,7 +168,7 @@ export function splitBlocks(cols: NodeColumns, layout: BlockLayout): BlockSplit 
 }
 
 /** Bytes per node of a block body: the columns of `columnsOn`. */
-export const BYTES_PER_NODE = 8 + 8 + 4 * 4 + 2 + 1 + 1;
+export const BYTES_PER_NODE = 8 + 8 + 4 * 6 + 2 + 1 + 1;
 
 /** Bytes per resident node: a block node's columns and its stand-in's. */
 const BYTES_PER_RESIDENT = BYTES_PER_NODE + 8 + 4;
@@ -220,6 +220,8 @@ export function columnsOn(body: Uint8Array, count: number): NodeColumns {
     sigmaD: v.f32(),
     sigmaP: v.f32(),
     surveySigmaP: v.f32(),
+    topoSigmaP: v.f32(),
+    bathyDMin: v.f32(),
     cellRef: v.i32(),
     flags: v.u16(),
     z: v.u8(),
@@ -237,8 +239,19 @@ export function headOn(
   const table = new Float64Array(b.buffer, b.byteOffset, 3 * blocks);
   const v = viewer(b.buffer, b.byteOffset + table.byteLength, resident);
   const [dMin, key, covered] = [v.f64(), v.f64(), v.f64()];
-  const [sigmaD, sigmaP, surveySigmaP, sigmaDMin] = [v.f32(), v.f32(), v.f32(), v.f32()];
-  const cols = { dMin, key, sigmaD, sigmaP, surveySigmaP, cellRef: v.i32(), flags: v.u16() };
+  const [sigmaD, sigmaP, surveySigmaP] = [v.f32(), v.f32(), v.f32()];
+  const [topoSigmaP, bathyDMin, sigmaDMin] = [v.f32(), v.f32(), v.f32()];
+  const cols = {
+    dMin,
+    key,
+    sigmaD,
+    sigmaP,
+    surveySigmaP,
+    topoSigmaP,
+    bathyDMin,
+    cellRef: v.i32(),
+    flags: v.u16()
+  };
   return {
     table,
     cols: { ...cols, z: v.u8(), split: v.u8() },
@@ -307,6 +320,8 @@ const COLUMNS: (keyof NodeColumns)[] = [
   "sigmaD",
   "sigmaP",
   "surveySigmaP",
+  "topoSigmaP",
+  "bathyDMin",
   "cellRef",
   "flags",
   "z",

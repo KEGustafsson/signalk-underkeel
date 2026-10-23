@@ -76,13 +76,14 @@ function deliver(d: Delta, match: RegExp, cb: (d: Delta) => void): void {
 export function fakeApp(dataDir: string, self: Record<string, unknown> = {}) {
   const deltas: Partial<Delta>[] = [];
   const errors: string[] = [];
+  const statuses: string[] = [];
   const providers: unknown[] = [];
   const subscriptions: { match: RegExp; cb: (d: Delta) => void }[] = [];
   let unsubscribed = 0;
   const subscribed: string[] = [];
   const app = {
     handleMessage: (_id: string, msg: Partial<Delta>) => deltas.push(msg),
-    setPluginStatus: () => undefined,
+    setPluginStatus: (msg: string) => statuses.push(msg),
     setPluginError: (msg: string) => errors.push(msg),
     error: (msg: string) => errors.push(msg),
     getDataDirPath: () => dataDir,
@@ -110,6 +111,7 @@ export function fakeApp(dataDir: string, self: Record<string, unknown> = {}) {
     app,
     deltas,
     errors,
+    statuses,
     providers,
     send: (d: Delta) => subscriptions.forEach((s) => deliver(d, s.match, s.cb)),
     subscribed,

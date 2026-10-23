@@ -14,8 +14,8 @@ import { areasCoverRect, geomContainsRect, geomRectDistance } from "../foundatio
 import type { ChartFeature, QualityFeature } from "../ingest/features";
 import type { BuildOptions, Item } from "./build-items";
 import { DEFAULT_BUILD, prepareItems } from "./build-items";
-import type { NodeColumns, NodeValues } from "./node-store";
-import { combine, EMPTY, FLAGS, NO_DATA, NodeStore } from "./node-store";
+import type { ChartPosition, NodeColumns, NodeValues } from "./node-store";
+import { combine, EMPTY, FLAGS, joinPosition, NO_DATA, NodeStore } from "./node-store";
 import {
   FULL,
   MISS,
@@ -24,6 +24,7 @@ import {
   polygonsRectRelation
 } from "./polygon-index";
 import { REACH_SLACK } from "./pyramid";
+import { chartPosition, NO_POSITION } from "./build-position";
 import { sigmaFor, SWEPT_SIGMA_D } from "./quality";
 import { bodyColumns } from "./store";
 
@@ -115,6 +116,22 @@ interface Analysis {
   /** Catalogue index of the covering cell when it is advisory (Traficom WFS). */
   advisoryCell: number | undefined;
   needsSplit: boolean;
+  /** The deepest zoom a feature here is drawn finely enough for (`splitZoom`). */
+  finest: number;
+}
+
+/** Ground metres around the equator: a tile of zoom z is this / 2^z across, or less. */
+const EQUATOR = 40_075_016.686;
+
+/**
+ * The zoom past which splitting tiles for feature `f` resolves nothing its
+ * chart draws: its tiles are then no wider than 1 mm at its compilation
+ * scale, its plotting accuracy (plan §4.3). A feature with no stated scale
+ * (Traficom WFS, synthetic data) splits to the leaf zoom. A tile that stops
+ * here takes the shallowest depth of all it holds, so it is never deeper.
+ */
+export function splitZoom(f: ChartFeature): number {
+  return f.scale === undefined ? Infinity : Math.ceil(Math.log2(EQUATOR / (f.scale * 0.001)));
 }
 
 function minFullDepth(hits: Hit[]): number {
@@ -186,7 +203,16 @@ function analyse(all: Hit[], rect: Rect, tileGround: number): Analysis {
     bandFull === undefined || coverageEdge || depthEdge || areaEdge || qualityEdge(hits);
   const advisoryCell = coverage.find((h) => h.item.f.band === bandFull && h.item.f.advisory)?.item.f
     .cellRef;
-  return { hits, bandFull, shallowest, coverageEdge, advisoryCell, needsSplit };
+  let finest = -Infinity;
+  for (const h of hits) {
+    finest = Math.max(finest, splitZoom(h.item.f));
+  }
+  for (const h of coverage) {
+    if (h.item.f.band >= floor) {
+      finest = Math.max(finest, splitZoom(h.item.f));
+    }
+  }
+  return { hits, bandFull, shallowest, coverageEdge, advisoryCell, needsSplit, finest };
 }
 
 /**
@@ -326,25 +352,10 @@ function uniformValues(a: Analysis, rect: Rect, opts: BuildOptions): NodeValues 
   };
 }
 
-/**
- * Chart position σP of a leaf: the widest of the assessed, non-advisory
- * quality zones reaching it, however much of it they cover.
- */
-function surveySigma(hits: Hit[], opts: BuildOptions): number {
-  let sigmaP = 0;
-  for (const h of hits) {
-    const f = h.item.f;
-    if (f.role === "quality" && f.catzoc !== 6 && !f.advisory) {
-      sigmaP = Math.max(sigmaP, sigmaFor(f.catzoc, 0, f, opts.quality).sigmaP);
-    }
-  }
-  return sigmaP;
-}
-
 interface Evaluated {
   v: NodeValues;
-  /** Widest leaf `surveySigma` under the node. */
-  survey: number;
+  /** The node's chart position: widest σ and shallowest survey depth under it. */
+  position: ChartPosition;
 }
 
 function evaluate(
@@ -356,22 +367,23 @@ function evaluate(
   items: Item[]
 ): Evaluated {
   const rect = tileRect(z, x, y);
-  const all = classify(items, rect);
+  const outside = opts.within !== undefined && !rectsOverlap(rect, opts.within);
+  const all = outside ? [] : classify(items, rect);
   if (!all.some((h) => h.item.f.role === "coverage")) {
-    store.add(z, x, y, NO_DATA, false, 0);
-    return { v: NO_DATA, survey: 0 };
+    store.add(z, x, y, NO_DATA, false, NO_POSITION);
+    return { v: NO_DATA, position: NO_POSITION };
   }
   const tileGround = (rect.maxX - rect.minX) / groundToMercator(1, maxAbsLat(rect));
   const a = analyse(all, rect, tileGround);
-  if (!a.needsSplit || z === opts.leafZoom) {
+  if (!a.needsSplit || z >= Math.min(opts.leafZoom, a.finest)) {
     const v = uniformValues(a, rect, opts);
-    const survey = surveySigma(a.hits, opts);
-    store.add(z, x, y, v, false, survey);
-    return { v, survey };
+    const position = chartPosition(a.hits, v, opts);
+    store.add(z, x, y, v, false, position);
+    return { v, position };
   }
   const passed = forChildren(all, a);
   let v = EMPTY;
-  let survey = 0;
+  let position = NO_POSITION;
   for (const [dx, dy] of [
     [0, 0],
     [1, 0],
@@ -380,10 +392,10 @@ function evaluate(
   ] as const) {
     const child = evaluate(store, opts, z + 1, 2 * x + dx, 2 * y + dy, passed);
     v = combine(v, child.v);
-    survey = Math.max(survey, child.survey);
+    position = joinPosition(position, child.position);
   }
-  store.add(z, x, y, v, true, survey);
-  return { v, survey };
+  store.add(z, x, y, v, true, position);
+  return { v, position };
 }
 
 export type { BuildOptions } from "./build-items";
@@ -449,6 +461,8 @@ export function rootColumns(store: NodeStore, x: number, y: number): NodeColumns
     cols.sigmaD[at] = store.sigmaD[i] as number;
     cols.sigmaP[at] = store.sigmaP[i] as number;
     cols.surveySigmaP[at] = store.surveySigmaP[i] as number;
+    cols.topoSigmaP[at] = store.topoSigmaP[i] as number;
+    cols.bathyDMin[at] = store.bathyDMin[i] as number;
     cols.flags[at] = store.flags[i] as number;
     cols.cellRef[at] = store.cellRef[i] as number;
     cols.split[at] = store.split[i] as number;

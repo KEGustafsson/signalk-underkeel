@@ -4,9 +4,8 @@ import type { CellInfo } from "../ingest/cells";
 import type { Ukc, VesselTerms, WaterLevel } from "../model/uncertainty";
 import { ukcAt } from "../model/uncertainty";
 import type { ChartIndex } from "../spatial/chart-index";
-import { chartReach } from "../spatial/chart-position";
 import { flagNames } from "../spatial/node-store";
-import type { RiskTile } from "../spatial/pyramid";
+import type { ChartReach, RiskTile } from "../spatial/pyramid";
 import { footprintGeom, mercatorBuffer } from "../spatial/pyramid";
 import { DEFAULT_BUILD } from "../spatial/pyramid-build";
 
@@ -30,10 +29,21 @@ export interface Explanation {
   squat: number;
   wave: number;
   margin: number;
+  /**
+   * Set when the deciding tile lies beyond the footprint and its buffer:
+   * how far, how well the chart places it, and the chance it lies under
+   * the keel. `charted`, `mean` and `sigma` are then the tile's own.
+   */
+  chartPosition?: {
+    distance: number;
+    sigmaP: number;
+    weight: number;
+    source: ChartReach["source"];
+  };
   /** Mean UKC, metres; null on land. */
   mean: number | null;
   sigma: number;
-  /** P(UKC < 0). */
+  /** P(UKC < 0), times `chartPosition.weight` when set. */
   risk: number;
 }
 
@@ -41,7 +51,7 @@ const r2 = (v: number): number => Math.round(v * 100) / 100;
 const finite = (v: number): number | null => (Number.isFinite(v) ? r2(v) : null);
 
 export function explain(
-  tile: { dMin: number; sigmaD: number },
+  tile: { dMin: number; sigmaD: number; chart?: ChartReach },
   extras: {
     flags: string[];
     cell?: Explanation["cell"];
@@ -51,6 +61,7 @@ export function explain(
   wl: WaterLevel
 ): Explanation {
   const u: Ukc = ukcAt(tile.dMin, tile.sigmaD, v, wl);
+  const c = tile.chart;
   return {
     charted: finite(tile.dMin),
     sigmaCharted: r2(tile.sigmaD),
@@ -65,9 +76,17 @@ export function explain(
     squat: r2(v.squat.value),
     wave: r2(v.wave.value),
     margin: r2(v.margin),
+    ...(c && {
+      chartPosition: {
+        distance: Math.round(c.distance),
+        sigmaP: r2(c.sigmaP),
+        weight: Math.round(c.weight * 10000) / 10000,
+        source: c.source
+      }
+    }),
     mean: finite(u.mean),
     sigma: r2(u.sigma),
-    risk: Math.round(u.risk * 10000) / 10000
+    risk: Math.round(u.risk * (c?.weight ?? 1) * 10000) / 10000
   };
 }
 
@@ -98,10 +117,22 @@ function hazardIn(
 }
 
 /**
+ * Ground metres from a footprint within which the hazard that set
+ * `tile` lies: the buffer, the tile's distance past it and its extent when
+ * it counted by its chart position, and a point's burn radius (k·σP, at most
+ * the tile's widest σP).
+ */
+export function namingReach(
+  tile: Pick<RiskTile, "sigmaP" | "chart">,
+  bufferMetres: number
+): number {
+  const beyond = tile.chart ? tile.chart.distance + tile.chart.extent : 0;
+  return bufferMetres + beyond + DEFAULT_BUILD.k * tile.sigmaP;
+}
+
+/**
  * The explanation of the deciding tile under `ring`, queried with
- * `bufferMetres` and the default chart reach, with its cell and hazard. The
- * hazard lies within its burn radius of that tile, and the tile counted
- * within its chart reach, each k·σP, so the naming search adds both.
+ * `bufferMetres` and chart position, with its cell and hazard.
  */
 export function explainTile(
   index: ChartIndex,
@@ -111,8 +142,7 @@ export function explainTile(
   wl: WaterLevel,
   bufferMetres = 0
 ): { hazard?: NamedHazard; explanation: Explanation } {
-  const reach = bufferMetres + 2 * chartReach(DEFAULT_BUILD.k, tile.sigmaP);
-  const hazard = hazardIn(index, ring, tile.dMin, reach);
+  const hazard = hazardIn(index, ring, tile.dMin, namingReach(tile, bufferMetres));
   const cell = index.catalogue.cells[tile.cellRef];
   const explanation = explain(
     tile,
@@ -130,6 +160,9 @@ export function explainTile(
   );
   return { hazard, explanation };
 }
+
+const pct = (p: number): string =>
+  p >= 0.995 ? "> 99" : p < 0.005 && p > 0 ? "< 1" : (p * 100).toFixed(0);
 
 const m = (v: number): string => `${v.toFixed(2).replace(/\.?0+$/, "") || "0"} m`;
 const signed = (v: number): string => (v < 0 ? `− ${m(-v)}` : `+ ${m(v)}`);
@@ -154,8 +187,11 @@ export function sentence(e: Explanation): string {
   if (e.margin > 0) {
     terms.push(`− margin ${m(e.margin)}`);
   }
+  const p = e.chartPosition;
+  if (p) {
+    const what = p.source === "topography" ? "shoreline" : "survey";
+    terms[0] = `${terms[0]} ${m(p.distance)} away, placed ±${m(2 * p.sigmaP)} by its ${what} (${pct(p.weight)} % under the keel)`;
+  }
   const mean = e.mean === null ? "−∞ m" : m(e.mean).replace(/^-/, "−");
-  const pct =
-    e.risk >= 0.995 ? "> 99" : e.risk < 0.005 && e.risk > 0 ? "< 1" : (e.risk * 100).toFixed(0);
-  return `${terms.join(" ")} → μ = ${mean}, σ = ${m(e.sigma)}, P = ${pct} %`;
+  return `${terms.join(" ")} → μ = ${mean}, σ = ${m(e.sigma)}, P = ${pct(e.risk)} %`;
 }

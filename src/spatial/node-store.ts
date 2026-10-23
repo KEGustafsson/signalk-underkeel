@@ -1,70 +1,10 @@
+import { float32AtMost } from "../foundation/float32";
 import { tileKey } from "../foundation/geo";
+import type { ChartPosition, NodeValues } from "./node-values";
+import { FLAGS, NO_DATA, surveyOnly } from "./node-values";
 
-/** Bit flags carried by every pyramid node (plan §4.3). Parents OR their children's. */
-export const FLAGS = {
-  SWEPT: 1,
-  NO_COVERAGE: 2,
-  UNASSESSED: 4,
-  DREDGED: 8,
-  LIVECHART_ADJUSTED: 16,
-  /** No charted depth at all in (part of) the tile; dMin is -Infinity there. */
-  NO_DEPTH: 32,
-  /** Set from a source licensed for non-navigational use only (the Traficom WFS). */
-  NOT_FOR_NAVIGATION: 64
-} as const;
-
-const FLAG_NAMES: [number, string][] = [
-  [FLAGS.SWEPT, "SWEPT"],
-  [FLAGS.NO_COVERAGE, "NO_COVERAGE"],
-  [FLAGS.UNASSESSED, "UNASSESSED"],
-  [FLAGS.DREDGED, "DREDGED"],
-  [FLAGS.LIVECHART_ADJUSTED, "LIVECHART_ADJUSTED"],
-  [FLAGS.NOT_FOR_NAVIGATION, "NOT_FOR_NAVIGATION"]
-];
-
-/** Names of the flags a client should see (NO_DEPTH is internal). */
-export function flagNames(flags: number): string[] {
-  return FLAG_NAMES.filter(([bit]) => (flags & bit) !== 0).map(([, name]) => name);
-}
-
-export interface NodeValues {
-  /** Conservative depth below chart datum (m); -Infinity for land or no data. */
-  dMin: number;
-  sigmaD: number;
-  sigmaP: number;
-  flags: number;
-  /** Cell catalogue index of the feature that set dMin; -1 when none. */
-  cellRef: number;
-}
-
-export const NO_DATA: NodeValues = {
-  dMin: -Infinity,
-  sigmaD: 0,
-  sigmaP: 0,
-  flags: FLAGS.NO_COVERAGE | FLAGS.NO_DEPTH,
-  cellRef: -1
-};
-
-/** Folds `b` into `a`: the shallowest depth, the widest σ, the union of flags. */
-export function combine(a: NodeValues, b: NodeValues): NodeValues {
-  const deeper = b.dMin < a.dMin ? b : a;
-  return {
-    dMin: deeper.dMin,
-    cellRef: deeper.cellRef,
-    sigmaD: Math.max(a.sigmaD, b.sigmaD),
-    sigmaP: Math.max(a.sigmaP, b.sigmaP),
-    flags: a.flags | b.flags
-  };
-}
-
-/** Identity element for `combine`. */
-export const EMPTY: NodeValues = {
-  dMin: Infinity,
-  sigmaD: 0,
-  sigmaP: 0,
-  flags: 0,
-  cellRef: -1
-};
+export type { ChartPosition, NodeValues } from "./node-values";
+export { combine, EMPTY, FLAGS, flagNames, joinPosition, NO_DATA, surveyOnly } from "./node-values";
 
 /**
  * The living-chart cells of a store. Every write bumps `revision` in the same
@@ -186,6 +126,8 @@ export interface BlockSource {
   values(i: number): NodeValues;
   isSplit(i: number): boolean;
   surveySigma(i: number): number;
+  topoSigma(i: number): number;
+  bathyDMin(i: number): number;
   /** For split node i at (cutZoom, x, y): undefined once its block is loaded, else its stand-in. */
   standIn(i: number, x: number, y: number): StandIn | undefined;
   entries(z: number): Generator<[number, number, number]>;
@@ -199,6 +141,8 @@ export interface NodeColumns {
   sigmaD: Float32Array;
   sigmaP: Float32Array;
   surveySigmaP: Float32Array;
+  topoSigmaP: Float32Array;
+  bathyDMin: Float32Array;
   flags: Uint16Array;
   cellRef: Int32Array;
   split: Uint8Array;
@@ -234,6 +178,10 @@ export class NodeStore {
    * but not the assessed part of a leaf that is only partly assessed.
    */
   surveySigmaP = new Float32Array(1024);
+  /** Widest σ of the land and shoreline objects' own positions (`ChartPosition`). */
+  topoSigmaP = new Float32Array(1024);
+  /** Shallowest depth the survey places (`ChartPosition`), rounded shallower. */
+  bathyDMin = new Float32Array(1024);
   flags = new Uint16Array(1024);
   cellRef = new Int32Array(1024);
   split = new Uint8Array(1024);
@@ -276,6 +224,8 @@ export class NodeStore {
       sigmaD: cols.sigmaD,
       sigmaP: cols.sigmaP,
       surveySigmaP: cols.surveySigmaP,
+      topoSigmaP: cols.topoSigmaP,
+      bathyDMin: cols.bathyDMin,
       flags: cols.flags,
       cellRef: cols.cellRef,
       split: cols.split
@@ -335,6 +285,8 @@ export class NodeStore {
     this.sigmaD = g(this.sigmaD, (n) => new Float32Array(n));
     this.sigmaP = g(this.sigmaP, (n) => new Float32Array(n));
     this.surveySigmaP = g(this.surveySigmaP, (n) => new Float32Array(n));
+    this.topoSigmaP = g(this.topoSigmaP, (n) => new Float32Array(n));
+    this.bathyDMin = g(this.bathyDMin, (n) => new Float32Array(n));
     this.flags = g(this.flags, (n) => new Uint16Array(n));
     this.cellRef = g(this.cellRef, (n) => new Int32Array(n));
     this.split = g(this.split, (n) => new Uint8Array(n));
@@ -355,15 +307,19 @@ export class NodeStore {
     return level;
   }
 
-  /** Stores tile (z, x, y); `split` marks a node whose children are stored too. */
+  /**
+   * Stores tile (z, x, y); `split` marks a node whose children are stored
+   * too. A bare number is the survey σP alone (`surveyOnly`).
+   */
   add(
     z: number,
     x: number,
     y: number,
     v: NodeValues,
     split: boolean,
-    surveySigmaP: number
+    position: number | ChartPosition
   ): number {
+    const p = typeof position === "number" ? surveyOnly(v, position) : position;
     const level = this.levels[this.levelIndex(z)] as Level;
     if (this.source) {
       throw new Error("a store read block by block takes no nodes");
@@ -376,7 +332,9 @@ export class NodeStore {
     this.dMin[i] = v.dMin;
     this.sigmaD[i] = v.sigmaD;
     this.sigmaP[i] = v.sigmaP;
-    this.surveySigmaP[i] = surveySigmaP;
+    this.surveySigmaP[i] = p.surveySigmaP;
+    this.topoSigmaP[i] = p.topoSigmaP;
+    this.bathyDMin[i] = float32AtMost(p.bathyDMin);
     this.flags[i] = v.flags;
     this.cellRef[i] = v.cellRef;
     this.split[i] = split ? 1 : 0;
@@ -438,6 +396,22 @@ export class NodeStore {
       return this.surveySigmaP[i] as number;
     }
     return this.source ? this.source.surveySigma(i) : 0;
+  }
+
+  /** Node i's `topoSigmaP`; 0 for an index never handed out. */
+  topoSigma(i: number): number {
+    if (i >= 0 && i < this.own) {
+      return this.topoSigmaP[i] as number;
+    }
+    return this.source ? this.source.topoSigma(i) : 0;
+  }
+
+  /** Node i's survey-placed shallowest depth (`ChartPosition.bathyDMin`); Infinity when unknown. */
+  bathyDMinOf(i: number): number {
+    if (i >= 0 && i < this.own) {
+      return this.bathyDMin[i] as number;
+    }
+    return this.source ? this.source.bathyDMin(i) : Infinity;
   }
 
   /**

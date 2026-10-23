@@ -33,9 +33,12 @@ const names = (r: ReturnType<typeof loadOrBuildIndex>): string[] =>
 const load = (extra: Record<string, unknown> = {}) =>
   loadOrBuildIndex(parseConfig({ cellsDir, leafZoom: 16, ...extra }), dataDir);
 
+// A junction on Windows, which needs no symlink privilege; the type is ignored elsewhere.
+const linkDir = (target: string, link: string) => fs.symlinkSync(target, link, "junction");
+
 describe("cell directories", () => {
   test("a symlink to a cell directory is indexed like the directory itself", () => {
-    fs.symlinkSync(path.join(FIXTURES, "FI4SYNTH"), path.join(cellsDir, "FI4SYNTH"), "dir");
+    linkDir(path.join(FIXTURES, "FI4SYNTH"), path.join(cellsDir, "FI4SYNTH"));
     copyCell("FI5SYNTH");
     expect(cellDirectories(cellsDir).map((d) => path.basename(d))).toEqual([
       "FI4SYNTH",
@@ -49,7 +52,7 @@ describe("cell directories", () => {
   test("entries that look like cells but are not directories are reported", () => {
     copyCell("FI5SYNTH");
     fs.writeFileSync(path.join(cellsDir, "FI4ABCDE.000"), "");
-    fs.symlinkSync(path.join(tmp, "gone"), path.join(cellsDir, "FI4GONE"));
+    linkDir(path.join(tmp, "gone"), path.join(cellsDir, "FI4GONE"));
     fs.writeFileSync(path.join(cellsDir, "README.txt"), "");
     fs.writeFileSync(path.join(cellsDir, ".DS_Store"), "");
     const r = load();

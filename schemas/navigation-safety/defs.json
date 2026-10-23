@@ -96,6 +96,17 @@
         "squat": { "type": "number" },
         "wave": { "type": "number" },
         "margin": { "type": "number" },
+        "chartPosition": {
+          "description": "Set when the deciding tile lies beyond the footprint and its buffer: its distance, the 1-sigma of the position that placed it, and the chance it lies under the keel, Phi(-distance/sigmaP). charted, mean and sigma are then the tile's own, and risk is its P(UKC < 0) times weight.",
+          "type": "object",
+          "required": ["distance", "sigmaP", "weight", "source"],
+          "properties": {
+            "distance": { "type": "number", "minimum": 0 },
+            "sigmaP": { "type": "number", "minimum": 0 },
+            "weight": { "$ref": "#/$defs/probability" },
+            "source": { "enum": ["survey", "topography"] }
+          }
+        },
         "mean": { "$ref": "#/$defs/metresOrNull" },
         "sigma": { "type": "number", "minimum": 0 },
         "risk": { "$ref": "#/$defs/probability" }

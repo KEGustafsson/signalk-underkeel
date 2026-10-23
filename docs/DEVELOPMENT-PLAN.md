@@ -247,7 +247,11 @@ signalk-underkeel/
    back from disk (the read-back held the event loop 52–61 ms at z20 with two Nauvo cells and
    258–292 ms with 32; the handover now 21–23 and 68–97 ms, on x86). The rebuild
    builds only the z10 roots that the WFS cell reaches in the saved index or now, and copies
-   the others from the saved index (§4.3). Each page is
+   the others from the saved index (§4.3). Each layer's count comes from a `resultType=hits`
+   request; its pages are sorted by `IDENTIFIER` and read up to 4 at a time across the three
+   layers, since the server sends one response at about 1 MB/s (a 25 km box at Nauvo: 30 s
+   instead of 82 s). A count over 50 000 is refused before any page, and pages holding more or
+   fewer features than the count, or one feature twice, fail the download. Each page is
    read as a stream: more than 64 MB, or 30 s without a byte, fails the download, which then
    waits 5 minutes as after any failure, and the previous index stays. The living chart is
    moved onto the new index in slices of 1 000 cells, each its own turn of the event loop, and
@@ -273,19 +277,20 @@ signalk-underkeel/
 
 **S-57 object classes used:**
 
-| Class                        | Attributes                             | Role                                                                            |
-| ---------------------------- | -------------------------------------- | ------------------------------------------------------------------------------- |
-| `DEPARE`                     | `DRVAL1`, `DRVAL2`                     | depth areas; rasterise with **`DRVAL1`** (shallow bound), which is conservative |
-| `DRGARE`                     | `DRVAL1`                               | dredged areas                                                                   |
-| `SWPARE`                     | `DRVAL1`                               | swept depth; **guaranteed minimum**, σ_depth ≈ 0.1 m                            |
-| `SOUNDG`                     | 3D multipoint                          | spot depths; burn in with position-uncertainty disc                             |
-| `UWTROC`, `WRECKS`, `OBSTRN` | `VALSOU`, `WATLEV`, `EXPSOU`, `QUASOU` | point hazards → R-tree, buffered                                                |
-| `LNDARE`, `COALNE`, `SLCONS` | —                                      | depth −∞ (hard obstacles)                                                       |
-| `PONTON`, `FLODOC`, `HULKES` | —                                      | depth −∞ (hard obstacles)                                                       |
-| `UNSARE`                     | —                                      | no depth: `NO_COVERAGE`, so legs are _unverified_ and look-ahead never _normal_ |
-| `M_QUAL`                     | `CATZOC`, `POSACC`, `SOUACC`           | survey quality zones                                                            |
-| `M_COVR`                     | `CATCOV`                               | coverage; no coverage means _unverified_, not _safe_                            |
-| DSID / `M_SDAT`, `M_VDAT`    | sounding / vertical datum              | water-level reduction (§4.5)                                                    |
+| Class                          | Attributes                             | Role                                                                            |
+| ------------------------------ | -------------------------------------- | ------------------------------------------------------------------------------- |
+| `DEPARE`                       | `DRVAL1`, `DRVAL2`                     | depth areas; rasterise with **`DRVAL1`** (shallow bound), which is conservative |
+| `DRGARE`                       | `DRVAL1`                               | dredged areas                                                                   |
+| `SWPARE`                       | `DRVAL1`                               | swept depth; **guaranteed minimum**, σ_depth ≈ 0.1 m                            |
+| `SOUNDG`                       | 3D multipoint                          | spot depths; graded by the survey's σP (burned only in unassessed water)        |
+| `UWTROC`, `WRECKS`, `OBSTRN`   | `VALSOU`, `WATLEV`, `EXPSOU`, `QUASOU` | point hazards → R-tree, buffered                                                |
+| `LNDARE`, `COALNE`, `SLCONS`   | —                                      | depth −∞ (hard obstacles)                                                       |
+| `PONTON`, `FLODOC`, `HULKES`   | —                                      | depth −∞ (hard obstacles)                                                       |
+| `UNSARE`                       | —                                      | no depth: `NO_COVERAGE`, so legs are _unverified_ and look-ahead never _normal_ |
+| `M_QUAL`                       | `CATZOC`, `POSACC`, `SOUACC`           | survey quality zones                                                            |
+| `M_COVR`                       | `CATCOV`                               | coverage; no coverage means _unverified_, not _safe_                            |
+| DSID / `M_SDAT`, `M_VDAT`      | sounding / vertical datum              | water-level reduction (§4.5); `DSPM_CSCL` compilation scale (§4.4)              |
+| Edge, nodes (`QUAPOS.geojson`) | `QUAPOS`, `POSACC`                     | spatial records not surveyed: their shoreline keeps the survey's σP (§4.3)      |
 
 **Coverage mosaic.** For every location, use the cell from the **largest-scale usage band**
 that covers it. Where bands overlap, the larger scale wins, and the smaller scale is used only
@@ -307,7 +312,9 @@ interface Cell {
   dMin: number; // conservative charted depth (m below chart datum), -Inf = land
   sigmaD: number; // 1σ depth uncertainty from CATZOC/SOUACC (m)
   sigmaP: number; // 1σ horizontal uncertainty of the source (m) from CATZOC/POSACC
-  surveySigmaP: number; // widest σP of the assessed quality zones reaching it (chart reach)
+  surveySigmaP: number; // widest σP of the assessed quality zones reaching it (chart position)
+  topoSigmaP: number; // widest σ of its land and shoreline objects' own positions (§4.4), 0 if none
+  bathyDMin: number; // shallowest depth its survey places: dMin without those objects
   flags: number; // SWEPT | NO_COVERAGE | UNASSESSED | DREDGED | LIVECHART_ADJUSTED; proposed: CSB_ADJUSTED (§4.2 item 4)
   cellRef: number; // index into cells.json (edition provenance)
 }
@@ -320,12 +327,24 @@ lower bound from one lookup.
 - `sigmaD` and `sigmaP` are the maximum of its children's.
 - `flags` is the bitwise OR of its children's.
 
-**Burning hazards.** Each point hazard and sounding is rasterised into every cell within
-`k·σP_source` of it (k = 2), so the pyramid alone is conservative. The R-tree keeps the exact
-geometry for explanations and for refinement near the threshold. A burn disc more than 8 tiles
-wide does not by itself subdivide a tile: the tile takes the disc's depth over its whole area,
-which is pessimistic by at most one tile width and keeps CATZOC C soundings (σP 250 m) from
-splitting every tile down to the leaf zoom.
+**Burning hazards.** A point hazard or sounding in assessed water falls in the leaves it
+touches; the query spreads it by its survey's σP like an area (graded chart position,
+below). One in unassessed water, where no σP is spread, is rasterised into every cell within
+`k·σP` of it (k = 2, σP the unassessed 500 m). The R-tree keeps the exact geometry for
+explanations and for refinement near the threshold. A burn disc more than 8 tiles wide does
+not by itself subdivide a tile: the tile takes the disc's depth over its whole area, which is
+pessimistic by at most one tile width.
+
+**Split depth by compilation scale.** Nothing a cell draws is placed finer than 1 mm at its
+compilation scale (`DSPM_CSCL`), so a tile stops splitting once it is that narrow at the
+equator (and narrower nearer the poles) for every feature and coverage it holds: z14 for a
+1:3 500 000 overview, z16 for 1:1 200 000, z19 for 1:80 000, the leaf zoom from about 1:45 000.
+A tile that stops takes the shallowest depth of all it holds, as a leaf does, so it is never
+deeper than a full-resolution build (`__tests__/spatial/scale-split.test.ts`). Without it the
+one NOAA overview cell of the Gulf of Mexico, 6 537 features, was cut along every coastline and
+contour into z20 tiles: 145 005 tiles at z14 took 55 s, 709 861 at z16 256 s, and the 25 cells
+around Miami built for over 15 minutes; with it they build in 94 s (717 465 tiles), the overview
+cell in 48 s. A source with no stated scale (the Traficom WFS cell) splits to the leaf zoom.
 
 **Build cost.** Each area polygon keeps its bounding box and, for rings of 64 or more
 vertices, a uniform grid of its edges, so a tile test reads only the edges near the tile and
@@ -352,21 +371,50 @@ whatever the thread count, and only one neighbourhood's features are held per th
 
 Expected cost is about 50 to 300 cell visits per look-ahead footprint.
 
-**Chart position in the query.** Depth areas and lines are not burned, so the look-ahead
-(k = k_p), a route check, a repair cost cell, `POST /query` and the UKC tiles (k = 2) count
-each tile within the query buffer plus `k·σP` of that tile's own survey, at most 1000 m
-(`spatial/chart-position.ts`). A drying area drawn 60 m off a footprint in CATZOC B water
-(σP 25 m) is therefore in reach, while an A1 rock beside it is not widened by C water
-elsewhere in the query. A leaf's reach comes from `surveySigmaP`, the widest σP of the
-assessed, non-advisory quality zones reaching it, so a leaf only partly assessed (at a coverage
-edge or between a B and a U zone) keeps the reach of its assessed part; `sigmaP` would also hold
-the unassessed guess. A split tile stores the widest of its leaves and prunes its subtree by
-it, so the walk descends wherever any leaf may reach and nowhere else. Unassessed water and
-Traficom WFS water add no reach: their flags already make a leg `unverified`, a query
-never `clear` and the look-ahead never `normal`, and the unassessed σP of 500 m would make
-nearly every leg over WFS water `fail` on land within 1 km that the data does not put there. A
-point hazard is counted twice this way, burned and reached, which errs on the shallow side: a
-CATZOC C sounding counts up to 1 km from its position.
+**Chart position in the query.** A charted object may lie off its drawn position by the
+accuracy of its source. Depth areas and lines are not widened when the pyramid is built, and
+neither are points in assessed water, so the look-ahead, a route check, a repair cost cell,
+`POST /query` and the UKC tiles carry it (`spatial/chart-position.ts`).
+
+**Decision (graded chart position, invariants 1 and 2).** The chart's offset is read as a shift
+of the chart against the vessel, N(0, σ²) per axis. A tile charted g metres beyond the
+footprint and its buffer lies under the footprint only if the shift towards it exceeds g,
+which has probability Φ(−g/σ). Its P(UKC < 0) counts with that weight, out to 3.72σ (beyond it
+Φ is below `RISK_STOP_BELOW`). A tile within the buffer counts in full, as before, and only
+those tiles set `dMin`, `coveredDMin` and the worst tile: the depth reported under a
+footprint is the depth charted there. Flags and cell references still count within 2σ of a
+tile's survey, as the hard reach did, so a gap or an unassessed survey within reach still
+keeps a footprint from reading as safe (invariant 4).
+
+Before this, every tile within `k·σP` (k = 2) counted in full and a point was also burned
+within `k·σP`, so a CATZOC C shoal counted at full weight up to 1 km away. Over NOAA cells
+of Florida, where much water is zone C (surveyed 1930–1939), that drew the ocean red for a
+kilometre off every beach, set `coveredDMin` to land and so failed every route leg within
+500 m of the shore, and reported "land" under a vessel in a navigable inlet: water the ENC
+shows at 3.3–5.4 m. A shoal at the edge of the old reach and one just past it now differ by
+their weights (2.3 % and slightly less) rather than by 100 % and 0. The weight rises with σ and
+falls with g, and a wider buffer brings tiles closer, so a deeper draft, a lower water level,
+a larger position uncertainty or a worse survey never lowers P (invariant 2). Invariant 1 is
+restated accordingly (below and in AGENTS.md).
+
+**Topography is placed by its own accuracy.** CATZOC rates the hydrographic survey. Land and
+shoreline objects (`LNDARE`, `COALNE`, `SLCONS`, `PONTON`, `FLODOC`, `HULKES`) come
+from the shoreline compilation, so where the export states the cell's positional quality
+they spread by their own σ (§4.4), kept per node in `topoSigmaP`, and the depth the survey
+spreads (`bathyDMin`) leaves them out. A leaf on a spatial record that is not surveyed
+(QUAPOS other than 1, 10 or 11) takes its survey's σP for them (the unassessed one where it
+has none), and half a stated POSACC. An export without that file keeps them on the survey's
+σP, as before.
+
+A leaf's survey σP comes from `surveySigmaP`, the widest σP of the assessed, non-advisory
+quality zones reaching it, so a leaf only partly assessed keeps the reach of its assessed part.
+A split tile stores the widest σ and shallowest `bathyDMin` of its leaves, which bound the
+weighted P of any leaf under it; the walk skips a subtree whose bound cannot raise the
+footprint's P and whose flags, if they count, need no locating. Unassessed water and Traficom
+WFS water spread no depth: their flags already make a leg `unverified`, a query never
+`clear` and the look-ahead never `normal`, and the unassessed σP of 500 m would make nearly
+every leg over WFS water `fail` on land within 1 km that the data does not put there. The
+widest σ modelled is 500 m.
 
 **Storage.**
 
@@ -427,9 +475,12 @@ CATZOC C sounding counts up to 1 km from its position.
   the read error in the index reason; without cells the read error is the reason.
 - The same data is also exported as UKC tiles (§4.10).
 
-**Invariant, tested by property-based tests:** for any polygon,
-`pyramid.minDepthOver(poly) ≤ min(source feature depths intersecting poly ⊕ σP buffer)`.
-The pyramid may be pessimistic but must never be optimistic.
+**Invariant, tested by property-based tests:** for any polygon and buffer,
+`pyramid.minDepthOver(poly).dMin ≤ min(source feature depths intersecting poly ⊕ buffer)`,
+the buffer being the query's (the vessel's position uncertainty) widened by a point's burn
+radius in unassessed water; and with chart position on, its P is at least
+`P(f) · Φ(−g/σP)` for any feature f of the survey g metres beyond that buffer. The pyramid
+may be pessimistic but must never be optimistic.
 
 ### 4.4 Survey quality → uncertainty
 
@@ -446,6 +497,17 @@ Appendix A text during implementation):
 | U / none | unassessed   | configurable, default 2× C |
 
 These are treated as ~95 % bounds, so σ ≈ value / 2.
+
+**Topographic accuracy.** CATZOC rates the hydrographic survey, not the shoreline
+compilation. Land and shoreline objects are placed by the plotting accuracy of the cell's
+compilation scale (`DSPM_CSCL`), 1 mm on the chart read as a ~95 % bound: σ = 6 m at
+1:12 000, 22.5 m at 1:45 000, capped at 500 m for overview cells. QUAPOS lives on the spatial
+records (edges and nodes), not on the objects: `scripts/enc-to-geojson.sh` exports those not
+surveyed (QUAPOS other than 1 surveyed, 10 precisely known, 11 calculated) or with a POSACC
+as `QUAPOS.geojson`, with the connected nodes each edge ends at, since GDAL's Edge geometry
+holds only the interior vertices; the reader rebuilds every edge whole. Shoreline on such a
+record keeps its survey's σP, or half the stated POSACC (§4.3). An absent QUAPOS means
+surveyed (S-52 draws such lines solid).
 
 Two overrides apply on top of the table:
 
@@ -567,8 +629,8 @@ P   = Φ(−UKC / σ)                                            // P(UKC < 0)
   - the GNSS horizontal error, from `navigation.gnss.horizontalDilution` and fix type;
   - the integrity monitor's inflation (§4.8);
   - prediction spread that grows with look-ahead time.
-- The chart's `σP` is added to the buffer per tile, `k_p·σP` of that tile's survey (§4.3),
-  which is never narrower than taking it root-sum-square.
+- The chart's own position uncertainty is not added to the buffer: a tile beyond it counts
+  with its P weighted by Φ(−g/σP), the chance the chart is off by its distance g (§4.3).
 - `k_p` is 2 by default, and acts as the "how far off do I believe my position" knob.
 - **Explanation object:** every result carries all terms, their sources, the worst cell's
   `cellRef` and its exact R-tree hazard (with LNAM), so the UI can render the breakdown
@@ -615,7 +677,12 @@ Beyond it only every k-th Δt step is scored, with k the largest whole number fo
 still leaves consecutive footprints touching, (L + 2 · positionBuffer) / SOG; footprint length
 and buffer only grow with t, so the union of the coarse footprints still covers the swept hull.
 Where a coarse footprint is the first to reach the warn or alert level or a coverage gap, the
-Δt steps it skipped are scored, so `timeToShoal` and the reason keep the Δt time. At 1 kn a
+Δt steps it skipped are scored, so `timeToShoal` and the reason keep the Δt time. A coarse
+footprint is the convex hull of the hulls of every step it stands for: in a turn the steps
+between two coarse ones bulge outside their hulls, and under graded chart position (§4.3) a tile
+that much farther weighs less, so a coarse tick read up to 0.12 points of P below the plan
+steps. The covering hull reads every tile at least as near, so P is never lower than with every
+step scored (`__tests__/engine/lookahead-cost.test.ts`). At 1 kn a
 tick scores 57 footprints instead of 361. The escape fan scores the same coarse times, so a
 heading's time to shoal beyond 120 s is known to k·Δt.
 
@@ -672,8 +739,9 @@ suppressing.
 - σ_pos combines GNSS (HDOP × 3 m, 5 m without HDOP) and, from the integrity monitor, its
   inflation. The buffer is max(10 m, k_p · σ_pos). Speed error (σ_SOG 0.1 m/s) lengthens each
   footprint by k_p · σ_SOG · t fore and aft instead of widening it, since it moves the boat
-  along its track. The chart's σP widens the buffer per tile by k_p·σP of the tile's own
-  assessed survey (§4.3), on top of the burn around point hazards.
+  along its track. A tile beyond the buffer counts with its P weighted by Φ(−g/σP) of its
+  chart position, and its flags within 2σP of its survey (§4.3), on top of the burn around
+  point hazards.
 - The escape fan uses the maximum turn rate (default 3°/s) and stops at the first heading,
   smallest change first, that stays clear over the whole horizon. The monitor searches it at
   most every 3 s and holds the heading in between. The search runs after the tick's deltas are
@@ -1098,8 +1166,20 @@ level, the index) changing, a restarted server or a cursor older than the 4096 t
 answers `all`. The runtime refreshes exactly those tiles. A tile left unlisted is byte for
 byte the tile the server draws now (`__tests__/ukc-tile-feed.test.ts`).
 
-**UKC tile geometry cache.** The cells of a tile and the reach-grid slots each reaching cell
-covers do not depend on the water level, draft or σ, so the tile route keeps them per tile in
+**UKC tile chart position.** A slot takes the class a query there would give it from the cells
+around it: each cell's P weighted by Φ(−g/σP) for its gap g to the slot (§4.3), and an
+unverified cell's flags within 2σ of its survey. Each cell beyond a slot's own is a source;
+when a tile is drawn, a source of risk P raises to danger the slots where P·Φ(−g/σP) reaches
+the warn level, and to caution where it reaches the alert level. Along a row the gap is the
+larger of a rising and a falling term, so each such set is one run, found from its ends. A
+slot raised above its own cell's class carries `reach`, and the style draws it fainter: the
+solid classes are the chart's own, the faint ones its position uncertainty. The threshold
+range of a drawn tile (below) also keeps each source's P between the levels that would move
+a run end: at least level / Φ(−g_in/σ) for the widest gap raised, below level / Φ(−g_out/σ)
+for the narrowest left.
+
+**UKC tile geometry cache.** The cells of a tile, its sources and the flag-reach slots of each
+unverified cell do not depend on the water level, draft or σ, so the tile route keeps them per tile in
 typed arrays (`UkcTileCache`, least recently used first out beyond 8 MiB) and a request only
 classes the tile's value kinds and draws. The cache holds for one `NodeStore`: another store
 (a handover or a WFS rebuild) empties it. Every write to `NodeStore.adjustments` bumps its

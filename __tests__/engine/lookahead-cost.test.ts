@@ -153,16 +153,25 @@ describe("coarse steps beyond the warn window", () => {
         const beyond = (fps: FootprintResult[]) => fps.filter((f) => f.t >= opts.warnWithin - 1e-6);
         const flags = (fps: FootprintResult[]) => fps.reduce((u, f) => u | f.flags, 0);
         expect(flags(beyond(dense.footprints)) & ~flags(beyond(coarse.footprints))).toBe(0);
-        // Coarse footprints are plan-step footprints, so the extremes agree.
-        expect(coarse.risk).toBe(dense.risk);
-        expect(coarse.clearance).toBe(dense.clearance);
+        // A coarse footprint covers the plan steps it skips, so under graded chart
+        // position (plan §4.3) it reads every tile at least as near: never a lower P or a
+        // deeper clearance, and the time to shoal is scored on the plan steps.
+        expect(coarse.risk as number).toBeGreaterThanOrEqual(dense.risk as number);
+        if (coarse.clearance !== null && dense.clearance !== null) {
+          expect(coarse.clearance).toBeLessThanOrEqual(dense.clearance);
+        }
         expect(coarse.timeToShoal).toBe(dense.timeToShoal);
         expect(coarse.footprints.length).toBeLessThanOrEqual(dense.footprints.length);
         const within = (fps: FootprintResult[]) =>
           fps.filter((f) => f.t <= opts.warnWithin).map((f) => [f.t, f.risk, f.flags]);
         expect(within(coarse.footprints)).toEqual(within(dense.footprints));
       }),
-      { numRuns: 40 }
+      {
+        numRuns: 40,
+        // From CI: a turning boat whose coarse hull, taken in lon/lat, left a step's footprint
+        // 2.5 µm outside it in Mercator.
+        examples: [[{ x: 0.53954, y: 0.72002, cog: 0, sog: 1.32432, rot: -0.029976 }]]
+      }
     );
   });
 

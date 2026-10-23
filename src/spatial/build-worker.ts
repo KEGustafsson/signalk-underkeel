@@ -1,6 +1,7 @@
 import os from "os";
 import { parentPort, Worker, workerData } from "worker_threads";
 import type { CellCatalogue, CellInfo } from "../ingest/cells";
+import { usableMemory } from "../foundation/memory";
 import { readCellDirectory } from "../ingest/cell-reader";
 import type { ChartFeature, DepthFeature } from "../ingest/features";
 import type { CellReach } from "./build-items";
@@ -19,6 +20,7 @@ import {
   cellsReaching,
   cellsRootRange,
   joinParts,
+  regionReach,
   rootRegions
 } from "./pyramid-regions";
 import { storeOnBody } from "./store";
@@ -68,16 +70,21 @@ export type RegionRunner = (job: RegionJob) => Promise<NodeColumns>;
  * threads on 16 Nauvo cell pairs peaked at 974 MB against 481 MB for one.
  */
 export const defaultThreads = (): number =>
-  Math.max(1, Math.min(4, os.availableParallelism() - 1, Math.floor(os.totalmem() / 2 ** 30)));
+  Math.max(1, Math.min(4, os.availableParallelism() - 1, Math.floor(usableMemory() / 2 ** 30)));
 
 function readFeatures(job: RegionJob): ChartFeature[] {
   return job.cells.flatMap(({ dir, ref }) => readCellDirectory(dir, ref).features);
 }
 
-/** Reads one region's cells and builds its roots, holding the features only while preparing. */
+/**
+ * Reads one region's cells and builds its roots, holding the features only
+ * while preparing. A cell can reach many regions; only its features that
+ * reach this one are indexed.
+ */
 export function runRegion(job: RegionJob): NodeColumns {
   const opts = { ...DEFAULT_BUILD, leafZoom: job.leafZoom };
-  return buildRegion(prepareItems(readFeatures(job), opts), opts, job.region);
+  const keep = regionReach(job.region, opts.minZoom);
+  return buildRegion(prepareItems(readFeatures(job), opts, keep), opts, job.region);
 }
 
 interface Survey {

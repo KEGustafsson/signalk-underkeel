@@ -109,18 +109,27 @@ export function ukcTileReply(z: number, x: number, y: number, deps: QueryService
     deps.tileCache
   );
   deps.tileChanges?.serve(z, x, y, range);
+  // One feature per class, and per class raised by a nearby cell's chart position or flags.
   const byClass = new Map<string, [number, number][][]>();
   for (const r of rects) {
-    const rings = byClass.get(r.class) ?? [];
+    const key = r.reach ? `${r.class}|reach` : r.class;
+    const rings = byClass.get(key) ?? [];
     rings.push([
       [r.x0, r.y0],
       [r.x1, r.y0],
       [r.x1, r.y1],
       [r.x0, r.y1]
     ]);
-    byClass.set(r.class, rings);
+    byClass.set(key, rings);
   }
-  const features = [...byClass].map(([cls, rings]) => ({ rings, properties: { class: cls } }));
+  const features = [...byClass].map(([key, rings]) => {
+    const [cls, reach] = key.split("|");
+    const properties: Record<string, string> = { class: cls as string };
+    if (reach) {
+      properties.reach = "1";
+    }
+    return { rings, properties };
+  });
   return { status: 200, contentType: MVT_TYPE, body: encodeMvt("ukc", features) };
 }
 

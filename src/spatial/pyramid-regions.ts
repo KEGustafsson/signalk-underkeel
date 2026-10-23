@@ -63,13 +63,23 @@ export function cellsReaching(
   minZoom: number,
   reaches: readonly CellReach[]
 ): number[] {
+  const reachesRegion = regionReach(region, minZoom);
+  return reaches.flatMap((r, i) => (reachesRegion(r.box, r.radius) ? [i] : []));
+}
+
+/**
+ * Whether a box burned `radius` ground metres around it can reach a root of
+ * `region`: the test `classify` applies at each root, grown by REACH_MARGIN.
+ */
+export function regionReach(
+  region: RootRange,
+  minZoom: number
+): (box: Rect, radius: number) => boolean {
   const nw = tileRect(minZoom, region.minX, region.minY);
   const se = tileRect(minZoom, region.maxX, region.maxY);
   const rect: Rect = { minX: nw.minX, minY: se.minY, maxX: se.maxX, maxY: nw.maxY };
   const scale = groundToMercator(1, maxAbsLat(rect));
-  return reaches.flatMap((r, i) =>
-    rectsOverlap(expandRect(rect, r.radius * scale + REACH_MARGIN), r.box) ? [i] : []
-  );
+  return (box, radius) => rectsOverlap(expandRect(rect, radius * scale + REACH_MARGIN), box);
 }
 
 /**

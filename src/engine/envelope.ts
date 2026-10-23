@@ -368,15 +368,48 @@ function near(
   return a.type === b.type && inside(ca, cb) && inside(cb, ca);
 }
 
-/** Same features with the same properties, each drawn within `metres` of the published one. */
+/** Probabilities, read as the whole percent the explanation prints. */
+const PERCENT_KEYS = new Set(["maxRisk", "risk"]);
+
+/**
+ * The same reading: equal but for probabilities that round to the same
+ * whole percent and a chart position (plan §4.3) whose distance moved at
+ * most `metres`, which a graded chart position varies by as the vessel
+ * jitters at rest; its weight follows from that distance.
+ */
+function sameReading(a: unknown, b: unknown, metres: number, key = ""): boolean {
+  if (typeof a === "number" && typeof b === "number") {
+    if (PERCENT_KEYS.has(key)) {
+      return Math.round(a * 100) === Math.round(b * 100);
+    }
+    if (key === "weight") {
+      return true;
+    }
+    return key === "distance" ? Math.abs(a - b) <= metres : a === b;
+  }
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) {
+    return a === b;
+  }
+  const ka = Object.keys(a);
+  const kb = Object.keys(b);
+  return (
+    ka.length === kb.length &&
+    ka.every(
+      (k) =>
+        Object.prototype.hasOwnProperty.call(b, k) &&
+        sameReading((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k], metres, k)
+    )
+  );
+}
+
+/** Same features with the same reading, each drawn within `metres` of the published one. */
 function jitterOf(published: Envelope, next: Envelope, metres: number): boolean {
   return (
     published.features.length === next.features.length &&
     next.features.every((f, i) => {
       const p = published.features[i] as EnvelopeFeature;
       return (
-        JSON.stringify(p.properties) === JSON.stringify(f.properties) &&
-        near(p.geometry, f.geometry, metres)
+        sameReading(p.properties, f.properties, metres) && near(p.geometry, f.geometry, metres)
       );
     })
   );
