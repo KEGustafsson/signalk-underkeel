@@ -240,9 +240,11 @@ async function publish() {
       console.warn("under-keel route state", err);
     }
   }
+  // An old result's legs turn unverified, as its panel badge says out of date.
+  const now = Date.now();
   const legs = {
     type: "FeatureCollection",
-    features: [...results].flatMap(([id, r]) => UKC.legFeatures(id, r.legs))
+    features: [...results].flatMap(([id, r]) => UKC.overlayLegs(id, r, now, UKC.ROUTE_MAX_AGE_MS))
   };
   const json = JSON.stringify(legs);
   if (json !== publishedLegs) {
@@ -412,7 +414,9 @@ if (has("routes")) {
     console.warn("under-keel route events", err);
   }
   void checkAll();
+  // A hidden page checks nothing, so its results age, and their legs turn unverified.
   setInterval(() => {
+    publishSoon();
     if (!document.hidden) {
       void checkAll();
     }
@@ -441,8 +445,8 @@ if (!streaming) {
 
 /**
  * A hidden page fetches nothing. Back on screen, the envelope shown is
- * withdrawn until a current one arrives, and tiles and routes are asked for
- * at once.
+ * withdrawn until a current one arrives, route legs too old to trust turn
+ * unverified, and tiles and routes are asked for at once.
  */
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
@@ -454,6 +458,7 @@ document.addEventListener("visibilitychange", () => {
   }
   void pollTiles();
   if (has("routes")) {
+    void publish();
     void checkAll();
   }
 });

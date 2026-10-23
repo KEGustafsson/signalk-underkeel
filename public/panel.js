@@ -65,9 +65,6 @@ async function refreshStatus() {
   }
 }
 
-/** The runtime re-checks each minute: three missed re-checks make a result out of date. */
-const ROUTE_MAX_AGE_MS = 180000;
-
 function renderRoutes(entries) {
   const el = document.getElementById("routes");
   if (!client.hasCapability("routes")) {
@@ -82,7 +79,7 @@ function renderRoutes(entries) {
     ...entries.map(([, r]) => {
       const box = document.createElement("div");
       const title = document.createElement("div");
-      const status = UKC.routeBadge(r, Date.now(), ROUTE_MAX_AGE_MS);
+      const status = UKC.routeBadge(r, Date.now(), UKC.ROUTE_MAX_AGE_MS);
       title.append(`${r.name || "Unsaved route"}: `);
       const badge = document.createElement("b");
       badge.className = status.cls;

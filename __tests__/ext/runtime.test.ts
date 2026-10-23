@@ -2,6 +2,7 @@ import { execFileSync } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
+import UKC = require("../../public/ukc-shared.js");
 
 /**
  * The background runtime (public/runtime.js) run in a child Node process: an
@@ -173,4 +174,34 @@ describe("extension runtime", () => {
       expect(r.signalk).toContain("navigation.underKeel.envelopeRev");
     }
   );
+
+  test("route legs older than the panel's limit turn unverified on the chart", () => {
+    const r = run("aging");
+    expect(r.fresh).toEqual(["ok"]);
+    expect(r.woken).toEqual(["unverified"]);
+  });
+});
+
+describe("route legs on the chart", () => {
+  const legs = [{ index: 0, from: [22, 60], to: [22.01, 60], status: "ok", risk: 0, minUkc: 2 }];
+  const now = Date.parse("2026-10-23T12:00:00Z");
+  const at = (ageMs: number) => new Date(now - ageMs).toISOString();
+  const statuses = (r: Record<string, unknown>) =>
+    UKC.overlayLegs("R", r, now, UKC.ROUTE_MAX_AGE_MS).map(
+      (f: { properties: { status: string } }) => f.properties.status
+    );
+
+  test("an ok leg stays ok while the panel shows its result as current", () => {
+    expect(statuses({ legs, receivedAt: at(UKC.ROUTE_MAX_AGE_MS) })).toEqual(["ok"]);
+    expect(
+      UKC.routeBadge({ legs, receivedAt: at(UKC.ROUTE_MAX_AGE_MS) }, now, UKC.ROUTE_MAX_AGE_MS).text
+    ).toBe("ok");
+  });
+
+  test("an older result, or one with no receipt time, is unverified, as on the panel", () => {
+    for (const r of [{ legs, receivedAt: at(UKC.ROUTE_MAX_AGE_MS + 1) }, { legs }]) {
+      expect(statuses(r)).toEqual(["unverified"]);
+      expect(UKC.routeBadge(r, now, UKC.ROUTE_MAX_AGE_MS).text).toBe("out of date");
+    }
+  });
 });
