@@ -87,7 +87,8 @@ const emit = (name, params) =>
 const statuses = () => (out.setData.at(-1) || []).map((f) => f.properties.status);
 
 try {
-  await import(process.cwd() + "/runtime.js");
+  // A URL beside this driver: Windows paths are not import specifiers.
+  await import(new URL("./runtime.js", import.meta.url).href);
   out.started = true;
 } catch (err) {
   out.started = false;

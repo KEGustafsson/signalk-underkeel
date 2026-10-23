@@ -61,22 +61,26 @@ describe("S-57 cells read with gdal3.js", () => {
     expect(encStamp(base)).not.toBe(before);
   });
 
-  test("a linked .000 is stamped with the updates beside its target, where GDAL reads them", () => {
-    const real = path.join(tmp, "ENC_ROOT", "FI5RAW01");
-    const cells = path.join(tmp, "cells");
-    fs.mkdirSync(real, { recursive: true });
-    fs.mkdirSync(cells);
-    fs.copyFileSync(CELL, path.join(real, "FI5RAW01.000"));
-    const link = path.join(cells, "FI5RAW01.000");
-    fs.symlinkSync(path.join(real, "FI5RAW01.000"), link);
-    // An update beside the link is not read, so it is not stamped.
-    fs.writeFileSync(path.join(cells, "FI5RAW01.001"), "update");
-    const before = encStamp(link);
-    expect(encFiles(link)).toEqual([link]);
-    fs.writeFileSync(path.join(real, "FI5RAW01.001"), "update");
-    expect(encFiles(link)).toEqual([link, path.join(real, "FI5RAW01.001")]);
-    expect(encStamp(link)).not.toBe(before);
-  });
+  // Windows makes a file symlink only from an elevated process or in developer mode.
+  (process.platform === "win32" ? test.skip : test)(
+    "a linked .000 is stamped with the updates beside its target, where GDAL reads them",
+    () => {
+      const real = path.join(tmp, "ENC_ROOT", "FI5RAW01");
+      const cells = path.join(tmp, "cells");
+      fs.mkdirSync(real, { recursive: true });
+      fs.mkdirSync(cells);
+      fs.copyFileSync(CELL, path.join(real, "FI5RAW01.000"));
+      const link = path.join(cells, "FI5RAW01.000");
+      fs.symlinkSync(path.join(real, "FI5RAW01.000"), link);
+      // An update beside the link is not read, so it is not stamped.
+      fs.writeFileSync(path.join(cells, "FI5RAW01.001"), "update");
+      const before = encStamp(link);
+      expect(encFiles(link)).toEqual([link]);
+      fs.writeFileSync(path.join(real, "FI5RAW01.001"), "update");
+      expect(encFiles(link)).toEqual([link, path.join(real, "FI5RAW01.001")]);
+      expect(encStamp(link)).not.toBe(before);
+    }
+  );
 
   test("the stamp recorded is the one taken before the read, not after", async () => {
     const base = path.join(tmp, "FI5RAW01.000");

@@ -42,13 +42,15 @@ describe("the WFS cell is written so a power cut cannot tear it", () => {
       rename(from, to);
     });
     writeCell(dir, layers("2"));
+    // Windows cannot open a directory to flush it; NTFS journals the renames instead.
+    const dirSync = process.platform === "win32" ? [] : ["fsync"];
     expect(events).toEqual([
       "fsync",
       "fsync",
-      "fsync",
+      ...dirSync,
       "rename FI1WFS01 -> FI1WFS01.old",
       "rename FI1WFS01.partial -> FI1WFS01",
-      "fsync"
+      ...dirSync
     ]);
     expect(edition(dir)).toBe("2");
     expect(fs.readdirSync(tmp)).toEqual(["FI1WFS01"]);
