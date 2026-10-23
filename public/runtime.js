@@ -233,8 +233,12 @@ async function publish() {
   const routeCheck = Object.fromEntries([...results].map(([id, r]) => [id, UKC.compactResult(r)]));
   const state = JSON.stringify(routeCheck);
   if (state !== publishedState) {
-    await client.state.set({ routeCheck }, "extension");
-    publishedState = state;
+    try {
+      await client.state.set({ routeCheck }, "extension");
+      publishedState = state;
+    } catch (err) {
+      console.warn("under-keel route state", err);
+    }
   }
   const legs = {
     type: "FeatureCollection",
@@ -380,28 +384,33 @@ function onRestart() {
 // The host persists extension state across sessions: results from an earlier one are not current.
 await publish();
 
+// A host call that fails here must not stop the look-ahead below from starting.
 if (has("routes")) {
-  await client.subscribe(["route.**"], (name, params) => {
-    if (name === "route.hidden") {
-      clearTimeout(timers.get(params.routeId));
-      nextSeq(params.routeId);
-      results.delete(params.routeId);
-      publishSoon();
-    } else if (params && params.routeId) {
-      // The old legs describe the old geometry: drop them until the check comes back.
-      nextSeq(params.routeId);
-      const prev = results.get(params.routeId);
-      results.set(params.routeId, {
-        name: prev && prev.name,
-        rev: prev && prev.rev,
-        legs: [],
-        error: "checking the edited route"
-      });
-      publishSoon();
-      schedule(params.routeId);
-    }
-  });
-  await client.subscribe(["ukc.checkRoutes"], () => void checkAll());
+  try {
+    await client.subscribe(["route.**"], (name, params) => {
+      if (name === "route.hidden") {
+        clearTimeout(timers.get(params.routeId));
+        nextSeq(params.routeId);
+        results.delete(params.routeId);
+        publishSoon();
+      } else if (params && params.routeId) {
+        // The old legs describe the old geometry: drop them until the check comes back.
+        nextSeq(params.routeId);
+        const prev = results.get(params.routeId);
+        results.set(params.routeId, {
+          name: prev && prev.name,
+          rev: prev && prev.rev,
+          legs: [],
+          error: "checking the edited route"
+        });
+        publishSoon();
+        schedule(params.routeId);
+      }
+    });
+    await client.subscribe(["ukc.checkRoutes"], () => void checkAll());
+  } catch (err) {
+    console.warn("under-keel route events", err);
+  }
   void checkAll();
   setInterval(() => {
     if (!document.hidden) {
@@ -410,14 +419,22 @@ if (has("routes")) {
   }, RECHECK_MS);
 }
 
+/** Without the Signal K stream, or when subscribing to it fails, the envelope is polled. */
+let streaming = false;
 if (has("signalk.stream")) {
-  await client.signalk.subscribe(Object.keys(onPath), (ev) => {
-    const left = fresh(ev.path, ev.timestamp, Date.now());
-    if (left > 0) {
-      onPath[ev.path](ev.value, left);
-    }
-  });
-} else {
+  try {
+    await client.signalk.subscribe(Object.keys(onPath), (ev) => {
+      const left = fresh(ev.path, ev.timestamp, Date.now());
+      if (left > 0) {
+        onPath[ev.path](ev.value, left);
+      }
+    });
+    streaming = true;
+  } catch (err) {
+    console.warn("under-keel Signal K stream", err);
+  }
+}
+if (!streaming) {
   setInterval(() => void refreshEnvelope(), POLL_MS);
   void refreshEnvelope();
 }
@@ -432,7 +449,7 @@ document.addEventListener("visibilitychange", () => {
     return;
   }
   clearEnvelope();
-  if (!has("signalk.stream") || (!isDown(engineState) && Date.now() < revFreshUntil)) {
+  if (!streaming || (!isDown(engineState) && Date.now() < revFreshUntil)) {
     void refreshEnvelope();
   }
   void pollTiles();
