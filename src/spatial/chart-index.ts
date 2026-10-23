@@ -103,6 +103,27 @@ function foreignFile(dir: string): string | undefined {
 }
 
 /**
+ * A commit replaces `dir` whole, so one holding anything but an index, such
+ * as the charts or the plugin's data set as indexDir by mistake, is refused
+ * rather than deleted.
+ */
+function assertIndexDir(dir: string): void {
+  if (!fs.existsSync(dir)) {
+    return;
+  }
+  if (!fs.statSync(dir).isDirectory()) {
+    throw new Error(`indexDir ${dir} is not a directory`);
+  }
+  const foreign = foreignFile(dir);
+  if (foreign !== undefined) {
+    throw new Error(
+      `indexDir ${dir} holds ${foreign}, which is not part of a chart index; ` +
+        "a save replaces the whole directory, so set indexDir to an empty or new directory"
+    );
+  }
+}
+
+/**
  * Writes the three index files into a new staging directory beside `dir`
  * and returns its path; `commitChartIndex` swaps it in. A failed write
  * removes the staging.
@@ -110,6 +131,7 @@ function foreignFile(dir: string): string | undefined {
 export function stageChartIndex(dir: string, index: ChartIndex): string {
   // A trailing separator would put the staging inside `dir`, where no commit can move it.
   dir = path.resolve(dir);
+  assertIndexDir(dir);
   // A worker thread shares the process id, so the id alone would let a WFS
   // rebuild and a save on the main thread remove each other's directories.
   const suffix = `${process.pid}-${threadId}-${randomBytes(4).toString("hex")}`;
@@ -135,7 +157,7 @@ export function stageChartIndex(dir: string, index: ChartIndex): string {
  * Moves a staged index into `dir` only after all its files are written, so
  * a crash or a full disk never leaves a catalogue from one build beside a
  * pyramid from another. A failed commit removes the staging and leaves the
- * previous index in `dir`.
+ * previous index in `dir`; one that is not an index is refused, not replaced.
  */
 export function commitChartIndex(dir: string, staging: string): void {
   dir = path.resolve(dir);
@@ -143,6 +165,7 @@ export function commitChartIndex(dir: string, staging: string): void {
   const previous = `${dir}.old-${suffix}`;
   let hadIndex: boolean;
   try {
+    assertIndexDir(dir);
     hadIndex = fs.existsSync(dir);
     if (hadIndex) {
       fs.renameSync(dir, previous);

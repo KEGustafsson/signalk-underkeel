@@ -47,6 +47,49 @@ describe("an indexDir with a trailing separator", () => {
   });
 });
 
+describe("an indexDir holding more than an index", () => {
+  test("is refused, not replaced, and nothing is left beside it", () => {
+    const charts = path.join(dir, "charts");
+    fs.mkdirSync(path.join(charts, "ENC_ROOT"), { recursive: true });
+    fs.writeFileSync(path.join(charts, "ENC_ROOT", "US5FL1.000"), "cell");
+    fs.writeFileSync(path.join(charts, "cells.json"), "{}");
+    expect(() => saveChartIndex(charts, empty())).toThrow(
+      /charts holds ENC_ROOT, which is not part of a chart index/
+    );
+    expect(names(dir)).toEqual(["charts"]);
+    expect(names(charts)).toEqual(["ENC_ROOT", "cells.json"]);
+    expect(fs.readFileSync(path.join(charts, "ENC_ROOT", "US5FL1.000"), "utf8")).toBe("cell");
+  });
+
+  test("a commit refuses one that gained a foreign file after the staging", () => {
+    const data = path.join(dir, "data");
+    const staging = stageChartIndex(data, empty());
+    fs.mkdirSync(data);
+    fs.writeFileSync(path.join(data, "acks.json"), "[]");
+    expect(() => commitChartIndex(data, staging)).toThrow(/holds acks\.json/);
+    expect(names(dir)).toEqual(["data"]);
+    expect(names(data)).toEqual(["acks.json"]);
+  });
+
+  test("a file in place of the directory is refused", () => {
+    fs.writeFileSync(path.join(dir, "index"), "notes");
+    expect(() => saveChartIndex(path.join(dir, "index"), empty())).toThrow(/is not a directory/);
+    expect(fs.readFileSync(path.join(dir, "index"), "utf8")).toBe("notes");
+    expect(names(dir)).toEqual(["index"]);
+  });
+
+  test("an empty directory or one with only index files is replaced", () => {
+    const target = path.join(dir, "index");
+    fs.mkdirSync(target);
+    saveChartIndex(target, empty());
+    fs.writeFileSync(path.join(target, "reach.json"), "{}");
+    fs.writeFileSync(path.join(target, "box.json"), "{}");
+    saveChartIndex(target, synth());
+    expect(names(target)).toEqual(["cells.json", "hazards.json", "pyramid.bin"]);
+    expect(names(dir)).toEqual(["index"]);
+  });
+});
+
 describe("a failed save", () => {
   const enospc = () =>
     Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });
