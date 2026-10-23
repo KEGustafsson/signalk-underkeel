@@ -19,6 +19,13 @@ function okReply() {
   });
 }
 
+/** Downloads started: each asks the server first how many depth areas the box holds. */
+const downloads = (fetched: string[]): number =>
+  fetched.filter((u) => {
+    const q = new URL(u).searchParams;
+    return q.get("typeNames") === "rajoitettu:DepthArea_A" && q.get("resultType") === "hits";
+  }).length;
+
 function harness(fetch: WfsFetch = okReply) {
   const t = {
     now: 1_800_000_000_000,
@@ -89,7 +96,8 @@ describe("WFS box around the vessel", () => {
     const h = harness();
     h.t.pos = [22.08, 60.07];
     await h.service.check();
-    expect(h.fetched).toHaveLength(3);
+    // A count, then one page, per layer.
+    expect(h.fetched).toHaveLength(6);
     expect(h.built).toEqual([["/charts/FI5ENC01", path.join(TMP, "FI1WFS01")]]);
     expect(h.indexes).toHaveLength(1);
     expect(h.service.status().box?.centre).toEqual([22.08, 60.07]);
@@ -139,10 +147,10 @@ describe("WFS box around the vessel", () => {
     expect(h.service.status().lastError).toBe("rajoitettu:DepthArea_A: HTTP 503");
     h.t.now += 120_000;
     await h.service.check();
-    expect(h.fetched).toHaveLength(1);
+    expect(downloads(h.fetched)).toBe(1);
     h.t.now += 200_000;
     await h.service.check();
-    expect(h.fetched).toHaveLength(2);
+    expect(downloads(h.fetched)).toBe(2);
   });
 
   test("the old and new boxes come with an index only when this run built both", async () => {

@@ -202,6 +202,80 @@ describe("Traficom WFS ingest", () => {
     expect(fs.readFileSync(path.join(dir, "marker"), "utf8")).toBe("old");
   });
 
+  describe("with a count from a hits request, pages are read side by side", () => {
+    const BOX: [number, number, number, number] = [21.95, 59.95, 22.05, 60.05];
+    const numbered = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({ ...sounding, id: `Sounding_P.${i}` }));
+    /** A server holding `soundings` that answers hits, and pages by startIndex and count. */
+    const server = (soundings: unknown[], o: { matched?: number; ignoreStart?: boolean } = {}) => {
+      const log = { urls: [] as string[], inFlight: 0, maxInFlight: 0 };
+      const fetch: WfsFetch = async (url) => {
+        log.urls.push(url);
+        log.inFlight++;
+        log.maxInFlight = Math.max(log.maxInFlight, log.inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 2));
+        log.inFlight--;
+        const q = new URL(url).searchParams;
+        const all = url.includes("Sounding_P") ? soundings : [];
+        if (q.get("resultType") === "hits") {
+          const text = `<wfs:FeatureCollection numberMatched="${url.includes("Sounding_P") ? (o.matched ?? all.length) : 0}" numberReturned="0"/>`;
+          return { ok: true, status: 200, text: () => Promise.resolve(text) };
+        }
+        const start = o.ignoreStart ? 0 : Number(q.get("startIndex"));
+        return reply(all.slice(start, start + Number(q.get("count"))));
+      };
+      return { fetch, log };
+    };
+    const download = (fetch: WfsFetch, dir: string) =>
+      downloadWfsCell({
+        fetch,
+        url: "https://wfs.test/wfs",
+        bbox: BOX,
+        dir: path.join(TMP, dir),
+        now: new Date()
+      });
+
+    test("every feature is read once, in order, with at most `concurrency` requests at once", async () => {
+      const n = 2 * WFS_LIMITS.pageSize + 7;
+      const { fetch, log } = server(numbered(n));
+      await expect(download(fetch, "counted")).resolves.toMatchObject({ soundings: n });
+      expect(log.maxInFlight).toBeLessThanOrEqual(WFS_LIMITS.concurrency);
+      const pages = log.urls
+        .map((u) => new URL(u).searchParams)
+        .filter((q) => q.get("typeNames") === "rajoitettu:Sounding_P" && q.has("startIndex"));
+      expect(pages.every((q) => q.get("sortBy") === "IDENTIFIER")).toBe(true);
+      expect(pages.every((q) => Number(q.get("count")) <= WFS_LIMITS.pageSize)).toBe(true);
+      const written = JSON.parse(
+        fs.readFileSync(path.join(TMP, "counted", "SOUNDG.geojson"), "utf8")
+      ) as { features: unknown[] };
+      expect(written.features).toHaveLength(n);
+    });
+
+    test("a count above maxFeatures is refused before any page is fetched", async () => {
+      const { fetch, log } = server([], { matched: WFS_LIMITS.maxFeatures + 1 });
+      await expect(download(fetch, "too-many")).rejects.toThrow(
+        `more than ${WFS_LIMITS.maxFeatures} features`
+      );
+      expect(log.urls.every((u) => new URL(u).searchParams.get("resultType") === "hits")).toBe(
+        true
+      );
+    });
+
+    test("fewer features than counted fail the download", async () => {
+      const { fetch } = server(numbered(10), { matched: 12 });
+      await expect(download(fetch, "short")).rejects.toThrow(
+        "rajoitettu:Sounding_P: 10 features read, 12 matched"
+      );
+    });
+
+    test("a server that ignores startIndex fails on the repeated features", async () => {
+      const { fetch } = server(numbered(40), { ignoreStart: true });
+      await expect(download(fetch, "repeated")).rejects.toThrow(
+        "rajoitettu:Sounding_P: the same feature on more than one page"
+      );
+    });
+  });
+
   describe("page bodies are streamed with a byte cap and an idle timeout", () => {
     const BOX: [number, number, number, number] = [21.95, 59.95, 22.05, 60.05];
     const download = (fetch: WfsFetch, dir: string, signal?: AbortSignal) =>
@@ -252,13 +326,14 @@ describe("Traficom WFS ingest", () => {
       // 1 MB chunks of one shared buffer, never closed: only the cap ends it.
       const mb = new Uint8Array(2 ** 20).fill(32);
       let cancelled = false;
-      const huge = new ReadableStream<Uint8Array>({
-        pull: (c) => c.enqueue(mb),
-        cancel: () => {
-          cancelled = true;
-        }
-      });
-      await expect(download(() => Promise.resolve(body(huge)), "capped-page")).rejects.toThrow(
+      const huge = () =>
+        new ReadableStream<Uint8Array>({
+          pull: (c) => c.enqueue(mb),
+          cancel: () => {
+            cancelled = true;
+          }
+        });
+      await expect(download(() => Promise.resolve(body(huge())), "capped-page")).rejects.toThrow(
         `rajoitettu:DepthArea_A: page larger than ${WFS_LIMITS.maxPageBytes / 2 ** 20} MB; use a smaller box`
       );
       expect(cancelled).toBe(true);

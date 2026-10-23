@@ -247,7 +247,11 @@ signalk-underkeel/
    back from disk (the read-back held the event loop 52–61 ms at z20 with two Nauvo cells and
    258–292 ms with 32; the handover now 21–23 and 68–97 ms, on x86). The rebuild
    builds only the z10 roots that the WFS cell reaches in the saved index or now, and copies
-   the others from the saved index (§4.3). Each page is
+   the others from the saved index (§4.3). Each layer's count comes from a `resultType=hits`
+   request; its pages are sorted by `IDENTIFIER` and read up to 4 at a time across the three
+   layers, since the server sends one response at about 1 MB/s (a 25 km box at Nauvo: 30 s
+   instead of 82 s). A count over 50 000 is refused before any page, and pages holding more or
+   fewer features than the count, or one feature twice, fail the download. Each page is
    read as a stream: more than 64 MB, or 30 s without a byte, fails the download, which then
    waits 5 minutes as after any failure, and the previous index stays. The living chart is
    moved onto the new index in slices of 1 000 cells, each its own turn of the event loop, and

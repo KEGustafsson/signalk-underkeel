@@ -85,6 +85,19 @@ All notable changes to signalk-underkeel are documented here.
   the Nauvo pair (32 cells) and the real 10 km box moved 5 km, the refresh built 4 of 12 roots:
   30.8 → 11.8 s of worker time at leaf zoom 20 and 5.6 → 2.7 s at 18 on x86. Where both boxes
   reach every ENC root, as with the Nauvo pair alone, every root is still built.
+- The Traficom WFS download asks each layer's count first (`resultType=hits`), then reads its
+  pages sorted by `IDENTIFIER`, up to 4 requests at once across the three layers. A box whose
+  count is over 50 000 features is refused before any page is fetched, and a layer whose pages
+  hold more or fewer features than the count, or the same feature twice, fails the download.
+  Against the live server the same features came in 5.6 s instead of 8.6 s for a 10 km box off
+  Helsinki, 13.1 s instead of 19.3 s for 10 km at Nauvo and 30.4 s instead of 81.7 s for 25 km
+  at Nauvo.
+- The gdal3.js ENC reader (not yet wired into the plugin) converts only the layers the index
+  reads, one `ogr2ogr` to in-memory GeoJSON each, with the unsurveyed-edge filter run in GDAL,
+  instead of one `ogrinfo -json -features` of every layer: 2.0–2.9× faster on 12 NOAA cells
+  with the same features (US5FL61M 4.2 → 1.6 s, 510 → 270 MB RSS). It finds its WebAssembly
+  files from the package location rather than the working directory, and a cell GDAL cannot
+  open rejects with an `Error`.
 - The index built in a worker, at start or for a WFS box, is posted to the main thread with its
   pyramid columns moved, not copied, instead of being read back from disk: the longest
   event-loop block at the handover fell from 52–61 to 21–23 ms for the Nauvo pair and a 10 km

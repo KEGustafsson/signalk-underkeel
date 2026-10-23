@@ -3,6 +3,11 @@ import path from "path";
 import type { LonLat } from "../foundation/geo";
 import { EARTH_RADIUS } from "../foundation/geo";
 import type { GeoJsonFeatureCollection } from "./s57-geojson";
+import type { Bbox, WfsFeature, WfsFetch } from "./wfs-fetch";
+import { fetchLayer, limiter, num, WFS_LIMITS } from "./wfs-fetch";
+
+export type { Bbox, ByteStream, WfsFetch } from "./wfs-fetch";
+export { WFS_LIMITS } from "./wfs-fetch";
 
 /**
  * Optional depth source: the Traficom INSPIRE WFS (`DepthArea_A`,
@@ -20,44 +25,6 @@ export const WFS_CELL_NAME = "FI1WFS01";
 export const DEFAULT_WFS_URL = "https://julkinen.traficom.fi/inspirepalvelu/rajoitettu/wfs";
 export const WFS_NOTICE =
   "depths from the Traficom WFS: not for navigational purposes; no rocks, wrecks or survey quality";
-
-export const WFS_LIMITS = {
-  /** Half-width of the box around the vessel, km. */
-  minRadiusKm: 2,
-  maxRadiusKm: 25,
-  /** Box size in degrees, which a 25 km radius stays inside up to 70° latitude. */
-  maxLatSpan: 0.5,
-  maxLonSpan: 1.5,
-  pageSize: 5000,
-  /** A box that returns more features than this is refused. */
-  maxFeatures: 50_000,
-  /** A layer that takes more pages than this is refused, so a server that ignores startIndex stops. */
-  maxPages: 100,
-  /** A page body larger than this fails the download: the 10 km box is one 22 MB page. */
-  maxPageBytes: 64 * 2 ** 20,
-  /**
-   * A response or body that sends nothing for this long fails the download, so a stalled
-   * server ends it while a slow link that keeps sending is read to the end.
-   */
-  idleTimeoutMs: 30_000
-} as const;
-
-/** What a page body is read through; a fetch Response's `body`. */
-export interface ByteStream {
-  getReader(): {
-    read(): Promise<{ done: boolean; value?: Uint8Array }>;
-    cancel(): Promise<void>;
-  };
-}
-
-/** A response without `body` is read with text() and checked against the cap afterwards. */
-export type WfsFetch = (
-  url: string,
-  init?: { signal?: AbortSignal }
-) => Promise<{ ok: boolean; status: number; body?: ByteStream | null; text(): Promise<string> }>;
-
-/** [west, south, east, north], degrees. */
-export type Bbox = [number, number, number, number];
 
 /** The box reaching `radiusKm` north, south, east and west of `[lon, lat]`. */
 export function boxAround([lon, lat]: LonLat, radiusKm: number): Bbox {
@@ -93,173 +60,6 @@ export function bboxProblem(b: Bbox): string | undefined {
     return `WFS box must be at most ${WFS_LIMITS.maxLatSpan}° north–south and ${WFS_LIMITS.maxLonSpan}° east–west`;
   }
   return undefined;
-}
-
-interface WfsFeature {
-  type: "Feature";
-  geometry: { type: string; coordinates: unknown } | null;
-  properties: Record<string, unknown> | null;
-}
-
-function pageUrl(base: string, typeName: string, b: Bbox, start: number): string {
-  const [w, s, e, n] = b;
-  const q = new URLSearchParams({
-    service: "WFS",
-    version: "2.0.0",
-    request: "GetFeature",
-    typeNames: typeName,
-    // WFS 2.0 with an EPSG URN reads the box as latitude, longitude.
-    bbox: `${s},${w},${n},${e},urn:ogc:def:crs:EPSG::4326`,
-    srsName: "EPSG:4326",
-    outputFormat: "application/json",
-    count: String(WFS_LIMITS.pageSize),
-    startIndex: String(start)
-  });
-  return `${base}?${q.toString()}`;
-}
-
-/** Every feature of one layer in the box, page by page. */
-async function fetchLayer(
-  fetch: WfsFetch,
-  base: string,
-  typeName: string,
-  b: Bbox,
-  signal?: AbortSignal
-): Promise<WfsFeature[]> {
-  const out: WfsFeature[] = [];
-  // A server may return fewer features per page than asked, so a short page is not the end:
-  // read to numberMatched when the server reports it, else to an empty page.
-  for (let pages = 1; ; pages++) {
-    const page = (await fetchPage(
-      fetch,
-      pageUrl(base, typeName, b, out.length),
-      typeName,
-      signal
-    )) as {
-      type?: unknown;
-      features?: unknown;
-      numberMatched?: unknown;
-    };
-    if (page.type !== "FeatureCollection" || !Array.isArray(page.features)) {
-      throw new Error(`${typeName}: not a GeoJSON FeatureCollection`);
-    }
-    if (out.length + page.features.length > WFS_LIMITS.maxFeatures) {
-      throw new Error(
-        `${typeName}: more than ${WFS_LIMITS.maxFeatures} features; use a smaller box`
-      );
-    }
-    // A spread of a page of more than ~100 000 features would overflow the call stack.
-    for (const f of page.features as WfsFeature[]) {
-      out.push(f);
-    }
-    const matched = num(page.numberMatched);
-    if (page.features.length === 0 || (matched !== undefined && out.length >= matched)) {
-      return out;
-    }
-    if (pages >= WFS_LIMITS.maxPages) {
-      throw new Error(`${typeName}: more than ${WFS_LIMITS.maxPages} pages`);
-    }
-  }
-}
-
-async function fetchPage(
-  fetch: WfsFetch,
-  url: string,
-  typeName: string,
-  signal?: AbortSignal
-): Promise<unknown> {
-  const idle = new AbortController();
-  let stalled: Error | undefined;
-  let timer: NodeJS.Timeout | undefined;
-  const alive = (): void => {
-    clearTimeout(timer);
-    timer = setTimeout(() => {
-      stalled = new Error(`${typeName}: no data for ${WFS_LIMITS.idleTimeoutMs / 1000} s`);
-      idle.abort(stalled);
-    }, WFS_LIMITS.idleTimeoutMs);
-  };
-  const ended = signal ? AbortSignal.any([signal, idle.signal]) : idle.signal;
-  alive();
-  try {
-    const res = await unlessAborted(fetch(url, { signal: ended }), ended);
-    if (!res.ok) {
-      throw new Error(`${typeName}: HTTP ${res.status}`);
-    }
-    const text = res.body
-      ? await readBody(res.body, typeName, ended, alive)
-      : await unlessAborted(res.text(), ended);
-    if (Buffer.byteLength(text) > WFS_LIMITS.maxPageBytes) {
-      throw tooLarge(typeName);
-    }
-    return JSON.parse(text);
-  } catch (err) {
-    if (stalled && !signal?.aborted) {
-      throw stalled;
-    }
-    throw err;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-const tooLarge = (typeName: string): Error =>
-  new Error(
-    `${typeName}: page larger than ${WFS_LIMITS.maxPageBytes / 2 ** 20} MB; use a smaller box`
-  );
-
-/** The body as text, read chunk by chunk; `alive` is called for every chunk. */
-async function readBody(
-  body: ByteStream,
-  typeName: string,
-  signal: AbortSignal,
-  alive: () => void
-): Promise<string> {
-  const reader = body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  try {
-    for (;;) {
-      const { done, value } = await unlessAborted(reader.read(), signal);
-      if (done || !value) {
-        return Buffer.concat(chunks).toString("utf8");
-      }
-      size += value.byteLength;
-      if (size > WFS_LIMITS.maxPageBytes) {
-        throw tooLarge(typeName);
-      }
-      chunks.push(value);
-      alive();
-    }
-  } finally {
-    reader.cancel().catch(() => undefined);
-  }
-}
-
-/** `p`, or a rejection with the signal's reason once it aborts: a fake or hung read may ignore it. */
-function unlessAborted<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const abort = (): void => reject(signal.reason as Error);
-    if (signal.aborted) {
-      abort();
-      return;
-    }
-    signal.addEventListener("abort", abort, { once: true });
-    p.then(
-      (v) => {
-        signal.removeEventListener("abort", abort);
-        resolve(v);
-      },
-      (err: unknown) => {
-        signal.removeEventListener("abort", abort);
-        reject(err as Error);
-      }
-    );
-  });
-}
-
-function num(v: unknown): number | undefined {
-  const n = typeof v === "string" && v.trim() !== "" ? Number(v) : v;
-  return typeof n === "number" && Number.isFinite(n) ? n : undefined;
 }
 
 function collection(features: unknown[]): GeoJsonFeatureCollection {
@@ -450,12 +250,23 @@ export async function downloadWfsCell(
   if (problem) {
     throw new Error(problem);
   }
-  const get = (typeName: string) => fetchLayer(d.fetch, d.url, typeName, d.bbox, d.signal);
-  const l: WfsLayers = {
-    depthAreas: await get("rajoitettu:DepthArea_A"),
-    dredgedAreas: await get("rajoitettu:DredgedArea_A"),
-    soundings: await get("rajoitettu:Sounding_P")
-  };
+  // The layers download side by side; the first failure stops the others.
+  const failed = new AbortController();
+  const signal = d.signal ? AbortSignal.any([d.signal, failed.signal]) : failed.signal;
+  const limit = limiter(WFS_LIMITS.concurrency);
+  const get = (typeName: string): Promise<WfsFeature[]> =>
+    fetchLayer({ fetch: d.fetch, base: d.url, typeName, bbox: d.bbox, limit, signal }).catch(
+      (err: unknown) => {
+        failed.abort(err);
+        throw err;
+      }
+    );
+  const [depthAreas, dredgedAreas, soundings] = await Promise.all([
+    get("rajoitettu:DepthArea_A"),
+    get("rajoitettu:DredgedArea_A"),
+    get("rajoitettu:Sounding_P")
+  ]);
+  const l: WfsLayers = { depthAreas, dredgedAreas, soundings };
   writeCell(d.dir, toCellLayers(l, d.bbox, d.now, d.catzoc));
   return {
     depthAreas: l.depthAreas.length,
