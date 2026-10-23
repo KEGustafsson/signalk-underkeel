@@ -222,7 +222,9 @@ describe("plugin with the Traficom WFS source", () => {
       const status = call("/v1/status").body as { index: { cells: { name: string }[] } };
       return status.index.cells.map((c) => c.name);
     };
-    const on = { vessel: { draft: 2 }, cellsDir: CELLS, wfs: { enabled: true, radiusKm: 3 } };
+    // Leaf zoom 16: the test builds three indexes and checks only which cells they hold.
+    const base = { vessel: { draft: 2 }, cellsDir: CELLS, leafZoom: 16 };
+    const on = { ...base, wfs: { enabled: true, radiusKm: 3 } };
     const first = fakeApp(dataDir);
     const a = underkeel(first.app, clock, fetch, build);
     a.start(on, () => undefined);
@@ -234,7 +236,7 @@ describe("plugin with the Traficom WFS source", () => {
     a.stop();
     // Off: the saved index is rebuilt from the ENC cells alone; the box stays on disk.
     const off = underkeel(fakeApp(dataDir).app, clock, fetch, build);
-    off.start({ vessel: { draft: 2 }, cellsDir: CELLS }, () => undefined);
+    off.start(base, () => undefined);
     await settle();
     off.stop();
     const again = fakeApp(dataDir);
