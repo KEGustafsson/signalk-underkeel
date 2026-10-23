@@ -316,4 +316,13 @@ describe("living-chart save schedule", () => {
     h.svc.save();
     expect(logLines()).toHaveLength(1);
   });
+
+  test("a log rewritten with no soundings reads back whole at the next start", () => {
+    fs.writeFileSync(log, "not json\n");
+    const h = service();
+    expect(h.errors).toHaveLength(1);
+    h.svc.save();
+    expect(fs.readFileSync(log, "utf8")).toBe("");
+    expect(service().errors).toEqual([]);
+  });
 });
