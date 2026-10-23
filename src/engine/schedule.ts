@@ -17,9 +17,9 @@ export function stepFor(sog: number, vessel: VesselModel, opts: LookaheadOptions
 }
 
 /**
- * Footprints per tick at most. Footprints a step apart still touch up to
- * reach / SOG, so a long horizon at low speed takes longer steps rather
- * than more footprints; only when that is not enough is the horizon cut.
+ * Footprints per tick at most. Coarse footprints still touch up to
+ * reach / SOG apart, so a long horizon at low speed spaces them wider
+ * rather than scoring more; only when that is not enough is the horizon cut.
  */
 export const MAX_FOOTPRINTS = 400;
 
@@ -34,23 +34,35 @@ export interface Schedule {
  * beyond it every k-th step, the most that still leaves consecutive
  * footprints touching, so a slow boat's long horizon costs tens of
  * footprints instead of hundreds. Footprint length and buffer only grow
- * with t, so the coarse footprints still cover the swept hull. Times stay
- * on the step grid, so the steps a coarse footprint skips can be scored
- * where it decides a time.
+ * with t, so the coarse footprints still cover the swept hull. When the
+ * horizon would need more than MAX_FOOTPRINTS, only the coarse spacing
+ * grows, toward the touching limit and off the step grid: the windows keep
+ * the step, so the alarm and warn checks and the time to shoal keep its
+ * resolution. The step grows only when the warn window alone would need
+ * more. The grid steps a coarse footprint skips can be scored where it
+ * decides a time.
  */
 export function scheduleFor(m: Motion, vessel: VesselModel, opts: LookaheadOptions): Schedule {
   const gapFree = m.sog > 0 ? (vessel.length + 2 * opts.positionBuffer) / m.sog : opts.step;
+  const near = Math.min(m.horizon, opts.warnWithin);
   const step = Math.min(
     gapFree,
-    Math.max(stepFor(m.sog, vessel, opts), m.horizon / (MAX_FOOTPRINTS - 1))
+    Math.max(stepFor(m.sog, vessel, opts), near / (MAX_FOOTPRINTS - 1))
   );
-  const horizon = Math.min(m.horizon, step * (MAX_FOOTPRINTS - 1));
-  const n = Math.ceil(horizon / step - 1e-9);
-  const dense = Math.ceil(Math.min(horizon, opts.warnWithin) / step - 1e-9);
+  const dense = Math.min(MAX_FOOTPRINTS - 1, Math.ceil(near / step - 1e-9));
+  // Steps between coarse footprints from the first at or past the window: k, or more
+  // and off the grid where the footprints left would not reach the horizon.
+  const left = MAX_FOOTPRINTS - 1 - dense;
   const k = Math.max(1, Math.floor(gapFree / step + 1e-9));
+  const per =
+    left > 0 ? Math.min(gapFree / step, Math.max(k, (m.horizon / step - dense) / left)) : 0;
+  const horizon = Math.min(m.horizon, (dense + per * left) * step);
   const times: number[] = [];
-  for (let i = 0; i < n; i += i < dense ? 1 : k) {
+  for (let i = 0; i < dense; i++) {
     times.push(i * step);
+  }
+  for (let j = 0; (dense + j * per) * step < horizon - 1e-9; j++) {
+    times.push((dense + j * per) * step);
   }
   times.push(horizon);
   return { times, step };
@@ -89,7 +101,9 @@ export function scoreSchedule(
     firstTime(i: number, holds: (f: FootprintResult) => boolean): number {
       const f = footprints[i] as FootprintResult;
       const before = footprints[i - 1];
-      for (let j = before ? Math.round(before.t / step) + 1 : 0; j * step < f.t - 1e-9; j++) {
+      // A coarse footprint may lie off the step grid; the grid steps before it are scored.
+      const first = before ? Math.floor(before.t / step + 1e-9) + 1 : 0;
+      for (let j = first; j * step < f.t - 1e-9; j++) {
         if (holds(score(j * step, false))) {
           return j * step;
         }
