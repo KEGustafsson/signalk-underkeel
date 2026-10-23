@@ -77,6 +77,47 @@ describe("position integrity", () => {
     expect(out.every((r) => r.ok)).toBe(true);
   });
 
+  test("a current met at once is flagged, then learned, and the check passes again", () => {
+    // Underway in a 1.5 m/s cross stream from the first fix: the offset
+    // outruns k · σ_DR before the current is learned.
+    const m = new IntegrityMonitor();
+    const out = run(m, passage(1800, 3, [0, 1.5]));
+    expect(out.some((r) => !r.ok)).toBe(true);
+    expect(out.slice(600).every((r) => r.ok)).toBe(true);
+    expect(Math.max(...out.map((r) => r.sigmaPos))).toBeLessThan(250);
+    const [e, n] = m.currentEstimate();
+    expect(e).toBeCloseTo(0, 1);
+    expect(n).toBeCloseTo(1.5, 1);
+  });
+
+  test("a stream entered mid-passage clears once it is learned", () => {
+    // 600 s in still water, then a 1 m/s stream setting south.
+    let position = START;
+    const steps = Array.from({ length: 1801 }, (_, t) => {
+      const gn = t > 600 ? -1 : 0;
+      const sog = Math.hypot(3, gn);
+      const cog = Math.atan2(3, gn);
+      if (t > 0) {
+        position = project(position, cog, sog);
+      }
+      const inputs: IntegrityInputs = {
+        position,
+        heading: EAST,
+        stw: 3,
+        cog,
+        sog,
+        rot: 0,
+        hdop: 1
+      };
+      return { t: T0 + t * 1000, inputs };
+    });
+    const out = run(new IntegrityMonitor(), steps);
+    expect(out.slice(0, 601).every((r) => r.ok)).toBe(true);
+    expect(out.slice(601, 700).some((r) => !r.ok)).toBe(true);
+    expect(out.slice(1200).every((r) => r.ok)).toBe(true);
+    expect(Math.max(...out.map((r) => r.sigmaPos))).toBeLessThan(150);
+  });
+
   test("a poor fix or a high HDOP inflates σ_pos and is reported", () => {
     const dr = run(
       new IntegrityMonitor(),
