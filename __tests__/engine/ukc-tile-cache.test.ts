@@ -311,7 +311,7 @@ describe("UKC tiles served from the cache", () => {
       indexReason: undefined,
       config: parseConfig({}),
       vessel: () => ({ draft: 4.6, length: 12, beam: 4 }),
-      waterLevel: () => ({ h: 0, sigma: 0.1, source: "manual" }),
+      levelRegimes: () => ({ inside: { h: 0, sigma: 0.1, source: "manual" } }),
       waveHeight: () => undefined,
       tileChanges: new UkcTileChanges(),
       ...(tileCache ? { tileCache } : {})

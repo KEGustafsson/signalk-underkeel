@@ -1,9 +1,12 @@
+import fc from "fast-check";
 import type { LonLat } from "../../src/foundation/geo";
+import { haversine } from "../../src/foundation/geo";
 import { datumUses } from "../../src/ingest/datum";
 import type { FetchLike } from "../../src/model/fmi";
 import {
   FMI_SIGMA,
   FmiProvider,
+  FORECAST_REACH_METRES,
   interpolate,
   nearestStation,
   parseSimpleFeatures
@@ -226,4 +229,46 @@ describe("FMI provider", () => {
     expect(fetch.urls).toEqual([]);
     expect(p.health().ok).toBe(false);
   });
+});
+
+describe("FMI reach", () => {
+  test("reach() is unset before the first forecast and 30 km around its fetch point after", async () => {
+    const p = new FmiProvider(fakeFetch(BOTH));
+    expect(p.reach()).toBeUndefined();
+    await p.update(HELSINKI, NOW);
+    expect(p.reach()).toEqual({ centre: HELSINKI, metres: FORECAST_REACH_METRES });
+    expect(FORECAST_REACH_METRES).toBe(30000);
+  });
+
+  const forecastOnly = (q: string) => (q.includes("forecast") ? BOTH(q) : { status: 503 });
+
+  test.each([
+    ["with a fresh gauge reading", BOTH],
+    ["with the forecast alone", forecastOnly]
+  ])(
+    "levelAt is defined exactly within the reach and the same in all of it, %s",
+    async (_, answer) => {
+      const p = new FmiProvider(fakeFetch(answer));
+      await p.update(HELSINKI, NOW);
+      const at = fc.tuple(
+        fc.double({ min: -1, max: 1, noNaN: true }),
+        fc.double({ min: -0.5, max: 0.5, noNaN: true })
+      );
+      const when = fc.integer({ min: NOW - 30 * 60000, max: NOW + 24 * HOUR });
+      const series = fc.constantFrom("mw" as const, "n2000" as const);
+      fc.assert(
+        fc.property(at, at, when, series, (a, b, t, s) => {
+          const pa: LonLat = [HELSINKI[0] + a[0], HELSINKI[1] + a[1]];
+          const pb: LonLat = [HELSINKI[0] + b[0], HELSINKI[1] + b[1]];
+          const la = p.levelAt(pa, t, s);
+          const lb = p.levelAt(pb, t, s);
+          expect(la !== undefined).toBe(haversine(pa, HELSINKI) <= FORECAST_REACH_METRES);
+          if (la && lb) {
+            expect(la).toEqual(lb);
+          }
+        }),
+        { numRuns: 500 }
+      );
+    }
+  );
 });

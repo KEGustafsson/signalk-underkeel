@@ -14,6 +14,7 @@ import { PATHS, publishable } from "./foundation/state";
 import type { FetchLike } from "./model/fmi";
 import type { IntegrityResult } from "./model/integrity";
 import { IntegrityMonitor } from "./model/integrity";
+import type { AreaLevels } from "./model/level-regimes";
 import type { WaterLevel } from "./model/uncertainty";
 import type { VesselModel } from "./model/vessel";
 import { resolveVessel } from "./model/vessel";
@@ -299,6 +300,11 @@ export class Monitor {
   /** The lowest water level over [start, end] (epoch ms) at the positions `at`, for route checks. */
   waterLevelOver(start: number, end: number, at: readonly LonLat[]): WaterLevel {
     return this.levels.over(start, end, at, this.clock.now());
+  }
+
+  /** The water level over areas now, for UKC tiles and `POST /query`. */
+  levelRegimes(): AreaLevels {
+    return this.levels.regimes(this.clock.now());
   }
 
   waterLevelStatus(): WaterLevelStatus {

@@ -23,6 +23,15 @@ export interface ProviderHealth {
   message?: string;
 }
 
+/**
+ * Where a provider's levelAt answers: the same value at every position within
+ * `metres` of `centre`, undefined beyond.
+ */
+export interface LevelReach {
+  readonly centre: LonLat;
+  readonly metres: number;
+}
+
 export interface WaterLevelProvider {
   readonly id: string;
   /**
@@ -37,6 +46,12 @@ export interface WaterLevelProvider {
    * an interval minimum is sampled there as well as on a fixed step.
    */
   knots?(start: number, end: number): number[];
+  /**
+   * Present only for a provider whose answer depends on position: levelAt
+   * must be the same at every position within the reach and undefined
+   * beyond it. Absent means levelAt ignores position.
+   */
+  reach?(): LevelReach | undefined;
 }
 
 /** With no usable water level the engine works at chart datum with this σ. */

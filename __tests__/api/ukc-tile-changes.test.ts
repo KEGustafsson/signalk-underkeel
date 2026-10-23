@@ -123,3 +123,82 @@ describe("UKC tile change list", () => {
     ]);
   });
 });
+
+/** Tiles drawn at the level beyond a source's reach (plan §4.5). */
+describe("UKC tile change list with a level source's reach", () => {
+  const store = fakeStore();
+  /** Tiles x < 3 lie inside the reach `reach`; with "moved", tiles x < 2 do. */
+  const inputs = (threshold: number, beyondThreshold: number, reach = "a", key = "k|b") => ({
+    store,
+    key,
+    threshold,
+    beyond: {
+      threshold: beyondThreshold,
+      reach,
+      within: (_z: number, x: number) => x < (reach === "moved" ? 2 : 3)
+    }
+  });
+  const served = (list: UkcTileChanges) => {
+    for (const x of [1, 2, 3, 4]) {
+      list.serve(14, x, 1, { lo: 1.5, hi: 2.5 }, x < 3);
+    }
+  };
+
+  test("each tile is listed when the threshold of its own level leaves its range", () => {
+    const list = new UkcTileChanges();
+    list.observe(inputs(2, 2));
+    served(list);
+    const start = list.since(undefined);
+    list.observe(inputs(2, 3));
+    const beyond = list.since(start);
+    expect(beyond.tiles).toEqual([
+      [14, 3, 1],
+      [14, 4, 1]
+    ]);
+    list.observe(inputs(3, 3));
+    expect(list.since(beyond).tiles).toEqual([
+      [14, 1, 1],
+      [14, 2, 1]
+    ]);
+  });
+
+  test("a moved reach lists exactly the tiles it carries across its edge", () => {
+    const list = new UkcTileChanges();
+    list.observe(inputs(2, 2));
+    served(list);
+    const start = list.since(undefined);
+    list.observe(inputs(2, 2, "moved"));
+    expect(list.since(start)).toMatchObject({ all: false, tiles: [[14, 2, 1]] });
+  });
+
+  test("the reach string identifies the geometry: unchanged, no tile is reclassified", () => {
+    const list = new UkcTileChanges();
+    list.observe(inputs(2, 2));
+    served(list);
+    const start = list.since(undefined);
+    list.observe({ ...inputs(2, 2), beyond: { ...inputs(2, 2).beyond, within: () => false } });
+    expect(list.since(start)).toMatchObject({ all: false, tiles: [] });
+  });
+
+  test("the beyond level appearing changes the key and refreshes every tile", () => {
+    const list = new UkcTileChanges();
+    list.observe({ store, key: "0.3|false|-|0.01|0.05", threshold: 2 });
+    list.serve(14, 1, 1, { lo: 1, hi: 3 });
+    const start = list.since(undefined);
+    list.observe(inputs(2, 2, "a", "0.3|false|0.4|true|0.01|0.05"));
+    expect(list.since(start)).toMatchObject({ all: true });
+  });
+
+  test("a tile served at the other level than the copy held is listed", () => {
+    const list = new UkcTileChanges();
+    list.observe(inputs(2, 2));
+    list.serve(14, 2, 1, { lo: 1.5, hi: 2.5 }, true);
+    const start = list.since(undefined);
+    list.serve(14, 2, 1, { lo: 1.5, hi: 2.5 }, false);
+    const after = list.since(start);
+    expect(after.tiles).toEqual([[14, 2, 1]]);
+    // The new copy alone is held now: the threshold inside the reach no longer lists it.
+    list.observe(inputs(9, 2));
+    expect(list.since(after).tiles).toEqual([]);
+  });
+});

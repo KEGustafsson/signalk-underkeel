@@ -1,10 +1,11 @@
 import type { PluginConfig } from "./config";
 import type { LonLat } from "./foundation/geo";
-import { haversine } from "./foundation/geo";
+import { haversine, project } from "./foundation/geo";
 import type { DatumUse } from "./ingest/datum";
 import { datumUses } from "./ingest/datum";
 import type { FetchLike } from "./model/fmi";
 import { FmiProvider } from "./model/fmi";
+import type { AreaLevels } from "./model/level-regimes";
 import type { WaterLevel } from "./model/uncertainty";
 import type { ProviderHealth, WaterLevelProvider } from "./model/water-level";
 import {
@@ -134,6 +135,24 @@ export class WaterLevelService {
       out = lowerLevel(out, lowestWaterLevel(this.provider, this.datums, p, start, end, now));
     }
     return out ?? lowestWaterLevel(this.provider, this.datums, undefined, start, end, now);
+  }
+
+  /**
+   * The levels over areas now (UKC tiles, `POST /query`). Within the
+   * source's reach every position gets the same level; beyond it every
+   * position gets the same fallback, so two resolutions describe the whole map.
+   */
+  regimes(now: number): AreaLevels {
+    const reach = this.provider?.reach?.();
+    const inside = this.now(reach?.centre, now);
+    if (!reach || inside.degraded !== undefined) {
+      // A degraded level inside is the provider's fallback, the same h and σ at every
+      // position: FMI adds `degraded` only through it.
+      return { inside };
+    }
+    // Any point past the reach gives the same fallback; this one goes the way route legs do.
+    const out = this.now(project(reach.centre, 0, 2 * reach.metres), now);
+    return { inside, beyond: { level: lowerLevel(inside, out), reach } };
   }
 
   status(position: LonLat | undefined, now: number): WaterLevelStatus {
