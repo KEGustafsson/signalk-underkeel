@@ -230,6 +230,9 @@ describe("position uncertainty beyond the buffer cap", () => {
     // Nor may the monitor publish one it found before the cap.
     expect(r.escapable).toBe(false);
     expect(evaluateLookahead(open, inputs(200), index, NOW).escapable).toBe(true);
+    // No acknowledgement or zone may lower it, whatever reason hysteresis holds.
+    expect(r.capped).toBe(true);
+    expect(evaluateLookahead(open, inputs(200), index, NOW).capped).toBe(false);
   });
 
   test("a reason the state already had stays beside the position one", () => {
