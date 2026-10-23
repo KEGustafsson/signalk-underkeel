@@ -15,6 +15,8 @@ export interface Track {
   rot: number;
   /** The turn lasts this many seconds, then the track runs straight; Infinity by default. */
   turnFor?: number;
+  /** A rate added to `rot` for its first `for` seconds: the fan's ROT spread over an escape turn. */
+  spread?: { rot: number; for: number };
 }
 
 export interface TrackPoint {
@@ -36,12 +38,21 @@ function arc(course: number, sog: number, rot: number, t: number): [number, numb
 }
 
 export function trackAt(origin: LonLat, track: Track, t: number): TrackPoint {
+  // The rate is constant between the ends of the turn and of the spread.
   const turning = Math.min(t, track.turnFor ?? Infinity);
-  const [e1, n1] = arc(track.course, track.sog, track.rot, turning);
-  const course = track.course + track.rot * turning;
-  const [e2, n2] = arc(course, track.sog, 0, t - turning);
-  const e = e1 + e2;
-  const n = n1 + n2;
+  const spreading = Math.min(t, track.spread?.for ?? 0);
+  let e = 0;
+  let n = 0;
+  let course = track.course;
+  let at = 0;
+  for (const end of [Math.min(turning, spreading), Math.max(turning, spreading), t]) {
+    const rate = (at < turning ? track.rot : 0) + (at < spreading ? (track.spread?.rot ?? 0) : 0);
+    const [de, dn] = arc(course, track.sog, rate, end - at);
+    e += de;
+    n += dn;
+    course += rate * (end - at);
+    at = end;
+  }
   const dist = Math.hypot(e, n);
   return { position: dist === 0 ? origin : project(origin, Math.atan2(e, n), dist), course };
 }
@@ -80,4 +91,28 @@ export function fanMembers(
 export function escapeTrack(cog: number, sog: number, change: number, maxRate: number): Track {
   const rot = change === 0 ? 0 : Math.sign(change) * maxRate;
   return { course: cog, sog, rot, turnFor: rot === 0 ? 0 : Math.abs(change) / maxRate };
+}
+
+/**
+ * An escape heading's fan: its escape track, then the same with the fan's
+ * spread laid over it, ROT ± σ for `turnFor` seconds and COG ± σ. A heading
+ * scored on its track alone is narrower than the fan that raised the state,
+ * and holding course could pass clear of a shoal a COG ± σ member hits.
+ */
+export function escapeMembers(
+  cog: number,
+  sog: number,
+  change: number,
+  maxRate: number,
+  sigma: FanSigma,
+  turnFor: number
+): Track[] {
+  const track = escapeTrack(cog, sog, change, maxRate);
+  return [
+    track,
+    { ...track, spread: { rot: sigma.rot, for: turnFor } },
+    { ...track, spread: { rot: -sigma.rot, for: turnFor } },
+    { ...track, course: cog + sigma.cog },
+    { ...track, course: cog - sigma.cog }
+  ];
 }
