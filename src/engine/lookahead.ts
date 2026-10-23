@@ -229,7 +229,9 @@ function motionOf(nav: NavState, now: number, opts: LookaheadOptions): Motion {
   const rot = stale(nav.rot, now, opts) ? 0 : (nav.rot as Sample<number>).value;
   const moving = known && sog >= opts.lowSpeed;
   const horizon = moving ? Math.max(opts.minHorizon, opts.distance / sog) : 0;
-  return { known, moving, cog, sog, rot, heading, horizon };
+  // The vessel has moved on since its position fix, which may be up to staleAfter old.
+  const age = Math.max(0, (now - (nav.position?.at ?? now)) / 1000);
+  return { known, moving, cog, sog, rot, heading, horizon, age };
 }
 
 function riskiest(fps: FootprintResult[]): FootprintResult | undefined {

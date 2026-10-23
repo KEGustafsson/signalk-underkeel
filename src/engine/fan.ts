@@ -24,6 +24,11 @@ export interface Motion {
   rot: number;
   heading: number;
   horizon: number;
+  /**
+   * Seconds from the position fix to now. Tracks start at the fix, so the
+   * footprint `t` seconds from now lies `t + age` along them.
+   */
+  age: number;
 }
 
 export interface Scoring {
@@ -121,11 +126,11 @@ export function footprint(
 ): FootprintResult {
   // The hull keeps its drift angle to the track as the track turns.
   const hullAt = (at: number, track: Track) => {
-    const p = trackAt(origin, track, at);
+    const p = trackAt(origin, track, at + m.age);
     const heading = m.heading + (p.course - m.cog);
     return {
       center: p.position,
-      ring: footprintRing(p.position, heading, lengthAt(at, vessel, opts), vessel.beam)
+      ring: footprintRing(p.position, heading, lengthAt(at + m.age, vessel, opts), vessel.beam)
     };
   };
   const hulls = hullTimes(t, span).flatMap((at) => tracks.map((track) => hullAt(at, track)));
