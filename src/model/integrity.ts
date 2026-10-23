@@ -151,13 +151,19 @@ export class IntegrityMonitor {
     dr.run += dt;
     const divergence = haversine(dr.position, nav.position);
     const sigmaDr = Math.hypot(dr.sigma0, gnss, this.opts.sigmaVelocity * dr.run);
+    // The current is learned while diverged too. A current the estimate has
+    // not caught up with (underway in a stream at start, or crossing into
+    // one) moves the fix away faster than k · σ_DR grows; frozen, the check
+    // would never pass again. Learned, the offset stops growing and σ_DR
+    // covers it. A diverged run is still not re-anchored, so a jump stays
+    // flagged until σ_DR covers it.
+    this.learnCurrent(nav, dt);
     if (divergence > this.opts.k * sigmaDr) {
       return {
         divergence,
         reason: `GNSS and dead reckoning differ by ${divergence.toFixed(0)} m`
       };
     }
-    this.learnCurrent(nav, dt);
     if (now - dr.anchoredAt >= this.opts.window * 1000) {
       this.anchor(nav.position, now, gnss);
     }
