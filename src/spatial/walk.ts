@@ -20,6 +20,11 @@ export interface Walk {
   vertex?: XY;
   /** Mercator reach of a tile without chart position, and of any tile at most. */
   buffer: number;
+  /**
+   * The buffer converted at the poleward edge of the widest reach, `perMetre` × the ground
+   * buffer: never less than `buffer`. Reaches and ground metres past the buffer start here.
+   */
+  reachBase: number;
   maxReach: number;
   /** Mercator metres per ground metre of chart reach, at the poleward edge of the reach. */
   perMetre: number;

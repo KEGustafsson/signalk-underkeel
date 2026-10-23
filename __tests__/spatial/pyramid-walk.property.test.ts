@@ -155,6 +155,25 @@ describe("tile walk equality (property)", () => {
     );
   });
 
+  test("with chart position the buffer reaches no tile the plain walk leaves out", () => {
+    // From CI: converted at the poleward edge of the chart-position reach, the buffer took
+    // an uncovered tile 335.2 Mercator metres away that the plain walk's buffer leaves out.
+    const c: Chart = {
+      areas: [],
+      lands: [],
+      rocks: [],
+      zones: [[[22, 60, 22.00009, 60.000045], 3]],
+      gap: false,
+      adjust: []
+    };
+    const f = { x: 0.5731, y: 0.0907, heading: 5.282902206276596, length: 147.52, beam: 16.4875 };
+    expectWalk(storeOf(c), footprintGeom(ring(f)), {
+      bufferMetres: 166.47,
+      chartPosition: true,
+      chartOnly: false
+    });
+  });
+
   test("polygons of many vertices return what the ea8277a walk returns", () => {
     fc.assert(
       fc.property(

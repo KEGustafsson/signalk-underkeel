@@ -163,7 +163,7 @@ function reachOf(w: Walk, i: number): number {
   }
   const survey = w.store.surveySigma(i);
   const ground = Math.max(chartReach(Math.max(survey, w.store.topoSigma(i))), flagReach(survey));
-  return w.buffer + w.perMetre * ground;
+  return w.reachBase + w.perMetre * ground;
 }
 
 /**
@@ -309,8 +309,8 @@ function visitBeyond(w: Walk, i: number, ground: number, z: number, x: number, y
  * A tile not known to lie within the buffer: false when it lies beyond it
  * and has been counted there (or out of reach), true when it lies within.
  * Beyond the buffer the distance is ground metres past it at the reach's
- * poleward edge: never more than the true distance, so the weight is never
- * less (invariant 2).
+ * poleward edge, at least 0: never more than the true distance, so the
+ * weight is never less (invariant 2).
  */
 function takeOutside(w: Walk, i: number, rect: Rect, z: number, x: number, y: number): boolean {
   const gap = rectGap(w.bounds, rect);
@@ -324,7 +324,7 @@ function takeOutside(w: Walk, i: number, rect: Rect, z: number, x: number, y: nu
   }
   if (d <= reach) {
     w.visits++;
-    visitBeyond(w, i, (d - w.buffer) / w.perMetre, z, x, y);
+    visitBeyond(w, i, Math.max(0, (d - w.reachBase) / w.perMetre), z, x, y);
   }
   return false;
 }
@@ -340,10 +340,10 @@ function negligible(w: Walk, i: number, gap: number): boolean {
   if (!w.graded || i < 0) {
     return false;
   }
-  if (gap <= w.buffer) {
+  if (gap <= w.reachBase) {
     return false;
   }
-  const ground = (gap - w.buffer) / w.perMetre;
+  const ground = (gap - w.reachBase) / w.perMetre;
   if (ground <= flagReach(w.store.surveySigma(i))) {
     return false;
   }
@@ -458,7 +458,9 @@ function walkFor(store: NodeStore, geom: Geom, opts: QueryOptions): Walk {
     geom,
     bounds,
     hold: bounds,
-    buffer: graded ? perMetre * bufferMetres : maxReach,
+    // The plain walk's buffer, so the tiles within it are the same with chart position or not.
+    buffer: graded ? mercatorBuffer(bounds, bufferMetres) * REACH_SLACK : maxReach,
+    reachBase: graded ? perMetre * bufferMetres : maxReach,
     maxReach,
     perMetre,
     graded,
