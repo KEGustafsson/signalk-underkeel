@@ -2,7 +2,7 @@
 
 This guide follows the plugin from chart files to an alarm on the plotter, with the numbers
 it uses at each step. The [development plan](DEVELOPMENT-PLAN.md) holds the design and its
-rationale; the [README](../README.md) lists the REST endpoints and the chart export command.
+rationale; the [README](../README.md) lists the REST endpoints and how to prepare the charts.
 
 > Advisory navigation aid, non-commercial. Not ECDIS, and not a replacement for official charts
 > or a proper lookout: always carry and use an official nautical chart, paper or ENC.
@@ -55,7 +55,7 @@ the attribution and the not-for-navigation notice in its footer.
 
 ```mermaid
 flowchart LR
-  ENC[ENC cells<br/>exported to GeoJSON] --> IDX[(Chart index<br/>built once,<br/>saved to disk)]
+  ENC[S-57 ENC cells<br/>.000 and updates] --> IDX[(Chart index<br/>built once,<br/>saved to disk)]
   NAV[Signal K navigation<br/>position, COG, SOG,<br/>heading, roll, wave height] --> LA
   VES[Vessel<br/>draft, length, beam] --> Q
   WL[Water level<br/>none, manual,<br/>Signal K tide, FMI] --> Q
@@ -141,7 +141,7 @@ only fills gaps.
 
 ```mermaid
 flowchart TD
-  A[Read every cell's GeoJSON layers] --> B[Sort features into coverage, quality,<br/>depth, swept, hazards, land]
+  A[Read every cell's .000 and updates<br/>with GDAL] --> B[Sort features into coverage, quality,<br/>depth, swept, hazards, land]
   B --> C[Widen a point hazard or sounding in unassessed<br/>water to a disc of 2 × σP; elsewhere the query<br/>counts its chart position]
   C --> D[Start at zoom 10 tiles over all coverage]
   D --> E{Is the tile uniform?<br/>fully inside coverage, and no<br/>shallower depth, quality edge<br/>or swept edge crosses it}

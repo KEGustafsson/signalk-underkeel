@@ -60,9 +60,8 @@ and never steers the boat. The full list is under [Guarantees](#guarantees).
 ## Requirements
 
 - A Signal K server on Node.js 22 or newer.
-- Unencrypted S-57 ENC cells for your area, and [GDAL](https://gdal.org/) (`ogr2ogr`,
-  `ogrinfo`) to export them, for example from the `gdal-bin` package on Debian and Raspberry
-  Pi OS. Encrypted S-63 cells are not supported.
+- Unencrypted S-57 ENC cells for your area. The plugin reads them with its own WebAssembly
+  build of GDAL; nothing needs installing. Encrypted S-63 cells are not supported.
 - The vessel's draft, set in the plugin or in Signal K `design.draft.maximum`.
 - GNSS position, course and speed over ground. Heading, rate of turn, attitude (roll), speed
   through water, significant wave height and depth are used when present.
@@ -247,7 +246,7 @@ datum mapping.
 | `position stale`                                              | no recent `navigation.position`; check the GNSS source                 |
 | `course or speed stale: only the current position is checked` | no recent COG or SOG                                                   |
 | `no chart index loaded`                                       | set the cells directory; an index error is shown as the plugin's error |
-| `no chart coverage`                                           | the boat or its footprints are outside every exported cell             |
+| `no chart coverage`                                           | the boat or its footprints are outside every ENC cell                  |
 
 # For developers
 
@@ -296,8 +295,9 @@ and ESLint (`no-restricted-imports`) enforces it:
 | `lib/`                       | compiled output of `npm run build`; never edited, not in git                      |
 | `public/`                    | Freeboard pages: background runtime, status widget, details panel, shared helpers |
 | `schemas/navigation-safety/` | JSON Schemas of the provider-neutral navigation-safety contract (Apache-2.0)      |
-| `scripts/`                   | ENC export, synthetic fixture generator, bus vendoring, release and audit checks  |
+| `scripts/`                   | synthetic fixture generator, bus vendoring, release and audit checks              |
 | `fixtures/enc/`              | small synthetic cells used by the tests                                           |
+| `fixtures/s57/`              | the same synthetic cells as S-57 `.000` files, and the script that writes them    |
 | `__tests__/`                 | Jest tests, property tests, contract tests and benchmarks                         |
 | `docs/`                      | user guide, development plan, release checklist, RFC drafts                       |
 
