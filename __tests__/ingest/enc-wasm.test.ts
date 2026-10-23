@@ -2,14 +2,22 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { readCell, scanCellSources } from "../../src/ingest/cell-source";
-import { baseEdition, encFiles, encStamp, readEncCell } from "../../src/ingest/enc-wasm";
+import {
+  baseEdition,
+  encCell,
+  encFiles,
+  encStamp,
+  readEncCell,
+  readEncLayers
+} from "../../src/ingest/enc-wasm";
 
 /** The synthetic cell fixtures/s57/generate.js writes with GDAL's S-57 writer. */
 const CELL = path.resolve(__dirname, "..", "..", "fixtures", "s57", "FI5RAW01.000");
 
 let tmp: string;
 beforeEach(() => {
-  tmp = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-s57-"));
+  // Resolved, as encFiles resolves a cell's folder: the system's temp folder can be a link.
+  tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-s57-")));
 });
 afterEach(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
@@ -51,6 +59,34 @@ describe("S-57 cells read with gdal3.js", () => {
     fs.writeFileSync(path.join(tmp, "FI5RAW01.001"), "update");
     expect(encFiles(base)).toEqual([base, path.join(tmp, "FI5RAW01.001")]);
     expect(encStamp(base)).not.toBe(before);
+  });
+
+  test("a linked .000 is stamped with the updates beside its target, where GDAL reads them", () => {
+    const real = path.join(tmp, "ENC_ROOT", "FI5RAW01");
+    const cells = path.join(tmp, "cells");
+    fs.mkdirSync(real, { recursive: true });
+    fs.mkdirSync(cells);
+    fs.copyFileSync(CELL, path.join(real, "FI5RAW01.000"));
+    const link = path.join(cells, "FI5RAW01.000");
+    fs.symlinkSync(path.join(real, "FI5RAW01.000"), link);
+    // An update beside the link is not read, so it is not stamped.
+    fs.writeFileSync(path.join(cells, "FI5RAW01.001"), "update");
+    const before = encStamp(link);
+    expect(encFiles(link)).toEqual([link]);
+    fs.writeFileSync(path.join(real, "FI5RAW01.001"), "update");
+    expect(encFiles(link)).toEqual([link, path.join(real, "FI5RAW01.001")]);
+    expect(encStamp(link)).not.toBe(before);
+  });
+
+  test("the stamp recorded is the one taken before the read, not after", async () => {
+    const base = path.join(tmp, "FI5RAW01.000");
+    fs.copyFileSync(CELL, base);
+    const before = encStamp(base);
+    const layers = await readEncLayers(base);
+    // An update installed while the build works on the read layers is not in them.
+    fs.writeFileSync(path.join(tmp, "FI5RAW01.001"), "update");
+    expect(encStamp(base)).not.toBe(before);
+    expect(encCell(base, layers, 0).info.files).toBe(before);
   });
 
   test("cells are found in an exchange set's folders and read from the original files", async () => {
