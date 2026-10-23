@@ -192,12 +192,10 @@ test("a position-integrity warning whose numbers drift is refreshed at most ever
   const r = rig(false);
   const still = (at: number, hdop: number): Delta => {
     const d = navDelta(22.003, 60.0125, 0, at);
-    return {
-      updates: d.updates.map((u) => ({
-        ...u,
-        values: [...u.values, { path: "navigation.gnss.horizontalDilution", value: hdop }]
-      }))
-    } as Delta;
+    for (const u of d.updates) {
+      u.values.push({ path: "navigation.gnss.horizontalDilution" as never, value: hdop });
+    }
+    return d;
   };
   const ticks = 20;
   for (let i = 0; i < ticks; i++) {
@@ -345,14 +343,12 @@ describe("mooring zones", () => {
   /** At rest 30 m short of the rock, with no heading and a null COG. */
   const berth = (at: number): Delta => {
     const d = navDelta(ROCK[0] - 30 / M_PER_DEG_LON, ROCK[1], 0, at);
-    return {
-      updates: d.updates.map((u) => ({
-        ...u,
-        values: u.values
-          .filter((v) => v.path !== "navigation.headingTrue")
-          .map((v) => (v.path === "navigation.courseOverGroundTrue" ? { ...v, value: null } : v))
-      }))
-    } as Delta;
+    for (const u of d.updates) {
+      u.values = u.values
+        .filter((v) => v.path !== "navigation.headingTrue")
+        .map((v) => (v.path === "navigation.courseOverGroundTrue" ? { ...v, value: null } : v));
+    }
+    return d;
   };
   const zone = {
     name: "berth",
