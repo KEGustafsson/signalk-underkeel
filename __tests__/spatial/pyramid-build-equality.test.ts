@@ -249,6 +249,15 @@ describe("pruning drops only what no child needs", () => {
       lon0 + (u - 0.5) * 0.006,
       lat0 + (v - 0.5) * 0.003
     ];
+    // A part of the cell compiled at 1:24 000 (σ 12 m), between the areas' two σ.
+    const part: ChartFeature = {
+      role: "scale",
+      objectClass: "M_CSCL",
+      geom: boxGeom([...at(0.2, 0.2), ...at(0.6, 0.6)]),
+      cellRef: 0,
+      band: 5,
+      scale: 24000
+    };
     fc.assert(
       fc.property(
         fc.array(
@@ -270,6 +279,7 @@ describe("pruning drops only what no child needs", () => {
             coverage(box),
             quality(box, 4),
             drawn(boxGeom(box), 25, 6),
+            part,
             ...areas.map(([u, v, r, d, s]) => {
               const [lon, lat] = at(u, v);
               const h = 0.0003 + r * 0.002;

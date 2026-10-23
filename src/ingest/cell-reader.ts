@@ -1,13 +1,10 @@
 import fs from "fs";
 import path from "path";
-import type { Rect } from "../foundation/geo";
-import { rectsOverlap } from "../foundation/geo";
-import { geomBounds } from "../foundation/geometry";
 import type { CellInfo } from "./cells";
 import { compilationSigma, usageBandFromName } from "./cells";
 import type { ChartFeature } from "./features";
 import type { GeoJsonFeatureCollection } from "./s57-geojson";
-import { parseLayer, POSITION_LAYER, S57_LAYERS, SCALE_LAYER, toParts } from "./s57-geojson";
+import { parseLayer, POSITION_LAYER, S57_LAYERS } from "./s57-geojson";
 import { WFS_SOURCE } from "./wfs";
 
 /**
@@ -153,59 +150,5 @@ export function readCellLayers(
   if (!features.some((f) => f.role === "coverage")) {
     throw new Error(`cell ${info.name}: no M_COVR coverage in ${where}`);
   }
-  const areas = scaleAreas(layers(SCALE_LAYER));
-  return { info, features: areas.length > 0 ? features.map((f) => coarser(f, areas)) : features };
-}
-
-interface ScaleArea {
-  bbox: Rect;
-  /** CSCALE: the compilation scale denominator there. */
-  scale: number;
-}
-
-/** The cell's M_CSCL areas that state a scale. */
-function scaleAreas(collection: GeoJsonFeatureCollection | undefined): ScaleArea[] {
-  const out: ScaleArea[] = [];
-  collection?.features.forEach((f, i) => {
-    const scale = positive(numeric(f.properties?.CSCALE));
-    if (scale === undefined) {
-      return;
-    }
-    let parts: ReturnType<typeof toParts>;
-    try {
-      parts = toParts(f.geometry);
-    } catch (err) {
-      throw new Error(`${SCALE_LAYER} feature ${i}: ${(err as Error).message}`, { cause: err });
-    }
-    for (const p of parts) {
-      if (p.geom.type === "polygon") {
-        out.push({ bbox: geomBounds(p.geom), scale });
-      }
-    }
-  });
-  return out;
-}
-
-/**
- * A feature the cell's drawing places (land, shoreline, depth areas) or a
- * record not surveyed, at the smallest scale of the M_CSCL areas it may
- * meet, by box, when smaller than the cell's: compiled from that source, it
- * is placed no better (plan §4.3). Its σ is never narrowed.
- */
-function coarser(f: ChartFeature, areas: readonly ScaleArea[]): ChartFeature {
-  const drawn = f.role === "depth" && f.topoSigma !== undefined;
-  if (f.scale === undefined || !(drawn || f.role === "position")) {
-    return f;
-  }
-  const bbox = geomBounds(f.geom);
-  let scale = f.scale;
-  for (const a of areas) {
-    if (a.scale > scale && rectsOverlap(a.bbox, bbox)) {
-      scale = a.scale;
-    }
-  }
-  if (scale === f.scale) {
-    return f;
-  }
-  return f.role === "depth" ? { ...f, scale, topoSigma: compilationSigma(scale) } : { ...f, scale };
+  return { info, features };
 }

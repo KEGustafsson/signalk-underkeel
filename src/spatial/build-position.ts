@@ -52,9 +52,11 @@ function surveySigma(hits: Reaching[], opts: BuildOptions): number {
 /**
  * What a leaf spreads by its chart position (plan §4.3). Land, shoreline and
  * depth areas with a σ of their own (`DepthFeature.topoSigma`) are left out
- * of the depth the survey places and spread by that σ instead, widened where
- * a record under them is not surveyed (`NOT_SURVEYED_SCALE`; the survey's σ,
- * or the unassessed one, for a cell with no compilation scale) and to half a
+ * of the depth the survey places and spread by that σ instead. It is
+ * widened to the σ of an M_CSCL area reaching the leaf (`ScaleFeature`),
+ * where a record under them is not surveyed (`NOT_SURVEYED_SCALE` at the
+ * smaller of its cell's scale and those areas'; the survey's σ, or the
+ * unassessed one, for a cell with no compilation scale), and to half a
  * stated POSACC. Soundings and point dangers are placed by the survey.
  */
 export function chartPosition(hits: Reaching[], v: NodeValues, opts: BuildOptions): ChartPosition {
@@ -65,18 +67,25 @@ export function chartPosition(hits: Reaching[], v: NodeValues, opts: BuildOption
   let topo = 0;
   let topoD = Infinity;
   let bathy = Infinity;
+  // The smallest scale (largest denominator) of the M_CSCL areas reaching the leaf.
+  let areaScale = 0;
   for (const h of hits) {
     const f = h.item.f;
     const d = depthOf(f);
     if (f.role === "depth" && f.topoSigma !== undefined) {
       topo = Math.max(topo, f.topoSigma);
       topoD = Math.min(topoD, f.depth);
+    } else if (f.role === "scale") {
+      areaScale = Math.max(areaScale, f.scale);
     } else if (d !== undefined) {
       bathy = Math.min(bathy, d);
     }
   }
   if (topo === 0) {
     return { surveySigmaP, topoSigmaP: 0, bathyDMin: v.dMin, topoDMin: Infinity };
+  }
+  if (areaScale > 0) {
+    topo = Math.max(topo, compilationSigma(areaScale));
   }
   const unsurveyed =
     surveySigmaP > 0 ? surveySigmaP : sigmaFor(undefined, 0, {}, opts.quality).sigmaP;
@@ -88,7 +97,9 @@ export function chartPosition(hits: Reaching[], v: NodeValues, opts: BuildOption
       }
       if (f.lowAccuracy) {
         const drawn =
-          f.scale === undefined ? unsurveyed : NOT_SURVEYED_SCALE * compilationSigma(f.scale);
+          f.scale === undefined
+            ? unsurveyed
+            : NOT_SURVEYED_SCALE * compilationSigma(Math.max(f.scale, areaScale));
         topo = Math.max(topo, drawn);
       }
     }

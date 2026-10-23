@@ -1,7 +1,7 @@
 import fc from "fast-check";
 import { fromMercator, tileAt, tileRect, toMercator } from "../../src/foundation/geo";
 import { normalCdf } from "../../src/foundation/stats";
-import type { Catzoc, ChartFeature, DepthFeature } from "../../src/ingest/features";
+import type { Catzoc, ChartFeature, DepthFeature, ScaleFeature } from "../../src/ingest/features";
 import { chartWeight, MAX_CHART_SIGMA } from "../../src/spatial/chart-position";
 import { FLAGS } from "../../src/spatial/node-store";
 import type { QueryOptions } from "../../src/spatial/pyramid";
@@ -10,7 +10,7 @@ import { buildPyramid } from "../../src/spatial/pyramid-build";
 import { sigmaFor } from "../../src/spatial/quality";
 import { deserializePyramid, serializePyramid } from "../../src/spatial/store";
 import type { Box } from "../helpers/synthetic";
-import { area, boxRing, coverage, land, point, quality } from "../helpers/synthetic";
+import { area, boxGeom, boxRing, coverage, land, point, quality } from "../helpers/synthetic";
 
 /**
  * Graded chart position (plan §4.3): a tile beyond the footprint and its
@@ -294,6 +294,80 @@ describe("depth areas placed by the chart's drawing (decision 2026-10-23)", () =
     const r = query([...chart(drawn(drying)), edge]);
     expect(r.riskTile?.chart).toMatchObject({ source: "topography", sigmaP: 24 });
     expect(r.riskTile?.dMin).toBe(-0.5);
+  });
+});
+
+describe("M_CSCL areas compiled at a smaller scale", () => {
+  // As above: a drying strip 50 m north of AT in CATZOC C water, a cell-wide 6 m depth area,
+  // both drawn at the cell's 1:12 000.
+  const drawn = (f: DepthFeature): DepthFeature => ({ ...f, topoSigma: 6, scale: 12000 });
+  const chart = (...more: ChartFeature[]): ChartFeature[] => [
+    coverage(BOX),
+    quality(BOX, 4),
+    drawn(area(BOX, 6)),
+    drawn(area([22.0, north(50), 22.08, north(100)], -0.5)),
+    ...more
+  ];
+  const scaleArea = (box: Box, scale: number): ScaleFeature => ({
+    role: "scale",
+    objectClass: "M_CSCL",
+    geom: boxGeom(box),
+    cellRef: 0,
+    band: 5,
+    scale
+  });
+  /** Around AT and the strip north of it. */
+  const AROUND: Box = [22.02, 60.01, 22.04, 60.02];
+
+  test("a 1:80 000 area 1 km off leaves the cell's 6 m where it does not reach", () => {
+    // Its west edge is some 1.1 km east of AT; the strip and the 6 m area run through it.
+    const r = query(chart(scaleArea([22.05, 60.0, 22.08, 60.04], 80000)));
+    expect(r.maxRisk).toBeCloseTo(query(chart()).maxRisk, 12);
+    // Φ(−(50 − 10 − 19) / 6) ≈ 2·10⁻⁴, as in a cell with no M_CSCL area.
+    expect(r.maxRisk).toBeLessThan(1e-3);
+  });
+
+  test("where it reaches, what the drawing places spreads by its σ (40 m)", () => {
+    const r = query(chart(scaleArea(AROUND, 80000)));
+    expect(r.riskTile?.chart).toMatchObject({ source: "topography", sigmaP: 40 });
+    expect(r.riskTile?.dMin).toBe(-0.5);
+    expect(r.maxRisk).toBeGreaterThan(0.1);
+  });
+
+  test("a record not surveyed there widens to four times the area's σ (160 m)", () => {
+    const edge: ChartFeature = {
+      role: "position",
+      objectClass: "QUAPOS",
+      geom: {
+        type: "line",
+        coords: [toMercator(22.0, north(50)), toMercator(22.08, north(50))]
+      },
+      cellRef: 0,
+      band: 5,
+      scale: 12000,
+      lowAccuracy: true
+    };
+    const r = query(chart(scaleArea(AROUND, 80000), edge));
+    expect(r.riskTile?.chart).toMatchObject({ source: "topography", sigmaP: 160 });
+  });
+
+  test("a sounding there stays on its survey's σ", () => {
+    const sounding = point(AT[0], north(50), -0.5);
+    const r = query([
+      coverage(BOX),
+      quality(BOX, 3),
+      drawn(area(BOX, 6)),
+      sounding,
+      scaleArea(AROUND, 80000)
+    ]);
+    expect(r.riskTile?.chart).toMatchObject({ source: "survey", sigmaP: 25 });
+  });
+
+  test("a smaller area scale never lowers P (invariant 2)", () => {
+    const risks = [12000, 24000, 80000].map(
+      (scale) => query(chart(scaleArea(AROUND, scale))).maxRisk
+    );
+    risks.slice(1).forEach((r, i) => expect(r).toBeGreaterThanOrEqual(risks[i] as number));
   });
 });
 
