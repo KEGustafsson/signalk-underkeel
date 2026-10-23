@@ -257,6 +257,31 @@ describe("probabilistic look-ahead on the synthetic chart", () => {
     expect(aged.escapeHeading).toBe(now.escapeHeading);
   });
 
+  test("a rock just ahead of an aged fix still alarms: the server clock may run ahead", () => {
+    const rock: ChartIndex = {
+      catalogue: { version: 1, cells: [] },
+      // Leaves about 10 m across, so the rock's tile lies near where the rock is.
+      pyramid: buildPyramid(
+        [...basin([22.01, 60.005, 22.03, 60.015], 10), point(22.02, 60.01, 1)],
+        { minZoom: 12, leafZoom: 21 }
+      ),
+      hazards: new HazardIndex([])
+    };
+    // The fix reads 8 s old at 8 m/s, yet with the server's clock 8 s ahead of the GNSS clock
+    // the boat is still at it, its bow 9 m short of the rock: a footprint only 64 m on, its
+    // buffer included, began some 30 m past the rock.
+    for (const age of [6, 8]) {
+      const r = evaluateLookahead(
+        nav(22.02 - 15 / M_PER_DEG_LON, 60.01, EAST, 8, age),
+        ctx(DEEP_KEEL),
+        rock,
+        NOW
+      );
+      expect(r.state).toBe("alarm");
+      expect(r.reason).toBe("shoal under the vessel");
+    }
+  });
+
   test("the horizon follows max(minHorizon, distance / SOG)", () => {
     const slow = evaluateLookahead(nav(22.003, FAIRWAY_LAT, EAST, 2), ctx(DEEP_KEEL), index, NOW);
     expect(slow.horizon).toBeCloseTo(DEFAULT_LOOKAHEAD.distance / 2, 6);

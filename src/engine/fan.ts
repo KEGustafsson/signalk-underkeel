@@ -7,6 +7,7 @@ import { FLAGS } from "../spatial/node-store";
 import { footprintGeom, minDepthOver } from "../spatial/pyramid";
 import { convexHull, footprintRing } from "./footprint";
 import type { FootprintResult, LookaheadOptions } from "./lookahead";
+import { stepFor } from "./schedule";
 import type { Track } from "./trajectory";
 import { trackAt } from "./trajectory";
 
@@ -26,7 +27,8 @@ export interface Motion {
   horizon: number;
   /**
    * Seconds from the position fix to now. Tracks start at the fix, so the
-   * footprint `t` seconds from now lies `t + age` along them.
+   * footprint `t` seconds from now lies `t + age` along them; the one at
+   * t = 0 also covers the fix itself.
    */
   age: number;
 }
@@ -88,6 +90,26 @@ function hullTimes(t: number, span: Span | undefined): number[] {
 }
 
 /**
+ * The times the footprint at `t` takes in. The one at t = 0 reaches back to
+ * the position fix, `age` seconds ago, through steps that keep consecutive
+ * hulls touching: `age` counts any skew between the source's clock and the
+ * server's, so the boat may still be at the fix, and a hull only where it
+ * would be now left the water ahead of its bow unread.
+ */
+function timesOf(
+  t: number,
+  span: Span | undefined,
+  m: Motion,
+  vessel: VesselModel,
+  opts: LookaheadOptions
+): number[] {
+  if (span !== undefined || t > 0 || m.age <= 0) {
+    return hullTimes(t, span);
+  }
+  return [-m.age, ...hullTimes(t, { from: -m.age, step: stepFor(m.sog, vessel, opts) })];
+}
+
+/**
  * The convex hull of lon/lat points, taken in Mercator, where the chart walk
  * measures: a hull taken in lon/lat bulges past the Mercator straight edges
  * between its points, and left a step's footprint up to 2.5 µm outside a
@@ -110,7 +132,8 @@ function mercatorHull(points: LonLat[]): LonLat[] {
  * With `span` (a coarse step, plan §4.8) the hull also takes in the
  * footprints of the steps it skipped, so every tile is as near it as to any
  * of theirs: under graded chart position (plan §4.3) a farther tile weighs
- * less, and a hull short of a turn's bulge would read a lower P.
+ * less, and a hull short of a turn's bulge would read a lower P. The
+ * footprint at t = 0 also takes in the track back to the position fix.
  */
 export function footprint(
   t: number,
@@ -133,7 +156,9 @@ export function footprint(
       ring: footprintRing(p.position, heading, lengthAt(at + m.age, vessel, opts), vessel.beam)
     };
   };
-  const hulls = hullTimes(t, span).flatMap((at) => tracks.map((track) => hullAt(at, track)));
+  const hulls = timesOf(t, span, m, vessel, opts).flatMap((at) =>
+    tracks.map((track) => hullAt(at, track))
+  );
   const center = (hulls[hulls.length - tracks.length] as { center: LonLat }).center;
   const ring =
     hulls.length === 1
