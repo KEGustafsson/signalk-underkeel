@@ -30,7 +30,7 @@ export const SCHEMA = {
       type: "number",
       title: "Index box around the vessel (km)",
       description:
-        "Half-width of the area the index is built in around the vessel; it is rebuilt as the vessel moves. Outside it the plugin reports no coverage. 0 indexes every cell (slow for large chart sets). With the Traficom WFS on, its radius is used.",
+        "Half-width of the area the index is built in around the vessel; it is rebuilt as the vessel moves. Outside it the plugin reports no coverage. 0 indexes every cell (slow for large chart sets); a radius under 2 km is raised to 2. With the Traficom WFS on, its radius is used.",
       default: 10,
       minimum: 0,
       maximum: 50
