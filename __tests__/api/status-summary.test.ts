@@ -23,7 +23,7 @@ describe("status summary", () => {
     const { router, call } = fakeRouter();
     plugin.registerWithRouter?.(router as never);
     seedFixtureIndex(dataDir);
-    plugin.start({ cellsDir: CELLS, leafZoom: 18 }, () => undefined);
+    plugin.start({ cellsDir: CELLS, boxRadiusKm: 0, leafZoom: 18 }, () => undefined);
     type Status = {
       index: { cells?: unknown[] };
       waterLevel: { datums?: unknown[] };

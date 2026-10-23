@@ -39,7 +39,7 @@ function alarmPassage(dataDir: string, options: Record<string, unknown>) {
   const { router } = fakeRouter();
   plugin.registerWithRouter?.(router as never);
   seedFixtureIndex(dataDir);
-  plugin.start({ cellsDir: CELLS, leafZoom: 18, ...options }, () => undefined);
+  plugin.start({ cellsDir: CELLS, boxRadiusKm: 0, leafZoom: 18, ...options }, () => undefined);
   const states: unknown[] = [];
   // 75 m west of the rock at 3 m/s, for 20 s: the bow stays short of it.
   for (let t = 0; t <= 20; t++) {

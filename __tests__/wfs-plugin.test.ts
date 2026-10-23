@@ -223,7 +223,7 @@ describe("plugin with the Traficom WFS source", () => {
       return status.index.cells.map((c) => c.name);
     };
     // Leaf zoom 16: the test builds three indexes and checks only which cells they hold.
-    const base = { vessel: { draft: 2 }, cellsDir: CELLS, leafZoom: 16 };
+    const base = { vessel: { draft: 2 }, cellsDir: CELLS, boxRadiusKm: 0, leafZoom: 16 };
     const on = { ...base, wfs: { enabled: true, radiusKm: 3 } };
     const first = fakeApp(dataDir);
     const a = underkeel(first.app, clock, fetch, build);

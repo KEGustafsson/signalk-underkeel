@@ -28,6 +28,11 @@ export interface PluginConfig {
   rebuildIndex: boolean;
   /** Leaf zoom of the pyramid; z20 ≈ 19 m tiles at 60°N. */
   leafZoom: number;
+  /**
+   * Half-width of the box around the vessel the index is built in, km; rebuilt as the
+   * vessel moves. 0 builds every cell. With the Traficom WFS on, its radius is used.
+   */
+  boxRadiusKm: number;
   vessel: Partial<VesselModel>;
   dynamics: DynamicsOptions;
   waterLevel: WaterLevelConfig;
@@ -231,6 +236,7 @@ export function parseConfig(raw: unknown): PluginConfig {
     cellsDir: str(r.cellsDir),
     rebuildIndex: r.rebuildIndex === true,
     leafZoom: Math.round(num(r.leafZoom, 20, 14, 22)),
+    boxRadiusKm: r.boxRadiusKm === 0 ? 0 : num(r.boxRadiusKm, 10, WFS_LIMITS.minRadiusKm, 50),
     vessel: {
       draft: optionalPositive(v.draft),
       length: optionalPositive(v.length),

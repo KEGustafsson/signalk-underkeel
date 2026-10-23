@@ -8,6 +8,7 @@ import type { WfsConfig } from "./config";
 import type { Bbox, WfsFetch } from "./ingest/wfs";
 import { boxAround, downloadWfsCell, edgeAhead, WFS_CELL_NAME, WFS_NOTICE } from "./ingest/wfs";
 import type { WfsCounts, WfsJob, WfsReply } from "./wfs-worker";
+import { NO_FEATURES } from "./wfs-worker";
 import type { Clock } from "./monitor";
 import type { BuildJob, BuildReply, IndexParts } from "./spatial/build-worker";
 import { adoptIndex } from "./spatial/build-worker";
@@ -169,19 +170,16 @@ export const workerRefresher: WfsRefresher = async (job, signal) => {
   const heapMb = workerHeapLimitMb();
   const data: WfsJob = { ...job, build: { ...job.build, heapMb } };
   const m = await runWorker<WfsReply>(script, data, signal, job.build.indexDir, heapMb);
-  const features = m.features ?? { depthAreas: 0, dredgedAreas: 0, soundings: 0 };
+  const features = m.features ?? NO_FEATURES;
   return { index: await commit(job.build.indexDir, m, signal), features };
 };
 
 /** The download on this thread with `fetch`, then `build`: for an injected fetch or builder. */
 export function inThreadRefresher(fetch: WfsFetch, build: IndexBuilder): WfsRefresher {
   return async (job, signal) => {
-    const features = await downloadWfsCell({
-      ...job.download,
-      now: new Date(job.download.now),
-      fetch,
-      signal
-    });
+    const features = job.download
+      ? await downloadWfsCell({ ...job.download, now: new Date(job.download.now), fetch, signal })
+      : NO_FEATURES;
     await readsSettled(job.build.indexDir);
     return { index: await build(job.build, signal), features };
   };
@@ -192,7 +190,8 @@ export interface WfsBox {
   bbox: Bbox;
   centre: LonLat;
   radiusKm: number;
-  catzoc: number;
+  /** Absent for a box of ENC cells alone. */
+  catzoc?: number;
   fetchedAt: string;
   features: { depthAreas: number; dredgedAreas: number; soundings: number };
   /** How long its download and index build took; the next box is planned on it. */
@@ -206,14 +205,24 @@ export interface WfsStatus {
   lastError?: string;
 }
 
+/** A box of ENC cells around the vessel, with no WFS download. */
+export interface EncBoxConfig {
+  radiusKm: number;
+}
+
 export interface WfsServiceDeps {
-  config: WfsConfig;
-  /** `<data dir>/wfs`: holds the cell directory and box.json. */
+  config: WfsConfig | EncBoxConfig;
+  /** `<data dir>/wfs`, or the ENC box's directory: holds box.json and any WFS cell. */
   dir: string;
   indexDir: string;
   leafZoom: number;
   /** ENC cell directories, built before the WFS cell so they keep their catalogue order. */
   encDirs: () => string[];
+  /**
+   * The sources' stamps, recorded with an index built in the box; given, the ENC cells
+   * are built in the box too (plan §4.2), not whole.
+   */
+  boxSources?: (dirs: string[]) => string[];
   refresh: WfsRefresher;
   clock: Pick<Clock, "now" | "setInterval" | "clearInterval">;
   position: () => LonLat | undefined;
@@ -255,6 +264,16 @@ export class WfsService {
     this.box = this.readBox();
   }
 
+  /** Whether this box downloads Traficom WFS depths, not only builds ENC cells around the vessel. */
+  get downloads(): boolean {
+    return "url" in this.deps.config;
+  }
+
+  /** The box in use, if any. */
+  get current(): WfsBox | undefined {
+    return this.box;
+  }
+
   get cellDir(): string {
     return path.join(this.deps.dir, WFS_CELL_NAME);
   }
@@ -291,7 +310,7 @@ export class WfsService {
     return (
       b === undefined ||
       b.radiusKm !== this.deps.config.radiusKm ||
-      b.catzoc !== this.deps.config.catzoc ||
+      b.catzoc !== this.catzoc() ||
       haversine(pos, b.centre) > (b.radiusKm * 1000) / 2 ||
       this.edgeSoon(pos, b)
     );
@@ -310,6 +329,11 @@ export class WfsService {
     const reach = Math.max(this.deps.lookahead.distance, m.sog * this.deps.lookahead.minHorizon);
     const travel = (m.sog * REFRESH_MARGIN * this.refreshMs()) / 1000;
     return edgeAhead(pos, m.cog, b.bbox) < travel + reach;
+  }
+
+  private catzoc(): number | undefined {
+    const c = this.deps.config;
+    return "url" in c ? c.catzoc : undefined;
   }
 
   private refreshMs(): number {
@@ -339,21 +363,29 @@ export class WfsService {
     const radiusKm = this.deps.config.radiusKm;
     const centre = this.centreAhead(pos, radiusKm);
     const bbox = boxAround(centre, radiusKm);
+    const config = this.deps.config;
+    const dirs = [...this.deps.encDirs(), ...("url" in config ? [this.cellDir] : [])];
+    const boxSources = this.deps.boxSources;
     try {
       const { index, features } = await this.deps.refresh(
         {
-          download: {
-            url: this.deps.config.url,
-            bbox,
-            dir: this.cellDir,
-            now: new Date(now).toISOString(),
-            catzoc: this.deps.config.catzoc
-          },
+          download:
+            "url" in config
+              ? {
+                  url: config.url,
+                  bbox,
+                  dir: this.cellDir,
+                  now: new Date(now).toISOString(),
+                  catzoc: config.catzoc
+                }
+              : undefined,
           build: {
-            dirs: [...this.deps.encDirs(), this.cellDir],
+            dirs,
             leafZoom: this.deps.leafZoom,
             indexDir: this.deps.indexDir,
-            changed: [this.cellDir]
+            ...(boxSources
+              ? { box: { bbox, sources: boxSources(dirs) } }
+              : { changed: [this.cellDir] })
           }
         },
         controller.signal
@@ -362,7 +394,7 @@ export class WfsService {
         bbox,
         centre,
         radiusKm,
-        catzoc: this.deps.config.catzoc,
+        catzoc: this.catzoc(),
         fetchedAt: new Date(now).toISOString(),
         features,
         durationMs: this.deps.clock.now() - now
@@ -378,7 +410,9 @@ export class WfsService {
         return;
       }
       this.lastError = (err as Error).message;
-      this.deps.error(`Traficom WFS depths: ${this.lastError}`);
+      this.deps.error(
+        `${this.downloads ? "Traficom WFS depths" : "chart box around the vessel"}: ${this.lastError}`
+      );
     } finally {
       this.busy = false;
     }

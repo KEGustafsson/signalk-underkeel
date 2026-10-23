@@ -37,7 +37,7 @@ const names = (r: Awaited<ReturnType<typeof loadOrBuildIndex>>): string[] =>
   r.index?.catalogue.cells.map((c) => c.name) ?? [];
 
 const load = (extra: Record<string, unknown> = {}) =>
-  loadOrBuildIndex(parseConfig({ cellsDir, leafZoom: 16, ...extra }), dataDir);
+  loadOrBuildIndex(parseConfig({ cellsDir, boxRadiusKm: 0, leafZoom: 16, ...extra }), dataDir);
 
 // A junction on Windows, which needs no symlink privilege; the type is ignored elsewhere.
 const linkDir = (target: string, link: string) => fs.symlinkSync(target, link, "junction");
@@ -230,7 +230,7 @@ describe("a saved index too large to load on the event loop", () => {
   test("is planned as a read, and the read off the loop loads the same index", async () => {
     copyCell("FI4SYNTH");
     await load();
-    const p = planIndex(parseConfig({ cellsDir, leafZoom: 16 }), dataDir, [], 0);
+    const p = planIndex(parseConfig({ cellsDir, boxRadiusKm: 0, leafZoom: 16 }), dataDir, [], 0);
     expect(p).toMatchObject({ read: path.join(dataDir, "index"), notes: [] });
     if (!("read" in p)) {
       return;
@@ -252,7 +252,7 @@ describe("a saved index too large to load on the event loop", () => {
     await load();
     const file = path.join(dataDir, "index", "pyramid.bin");
     fs.truncateSync(file, Math.floor(fs.statSync(file).size / 2));
-    const p = planIndex(parseConfig({ cellsDir, leafZoom: 16 }), dataDir, [], 0);
+    const p = planIndex(parseConfig({ cellsDir, boxRadiusKm: 0, leafZoom: 16 }), dataDir, [], 0);
     if (!("read" in p)) {
       throw new Error("expected a read plan");
     }

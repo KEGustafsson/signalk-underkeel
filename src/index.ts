@@ -20,7 +20,7 @@ import { keepBlocksNearVessel } from "./block-keeper";
 import { startLivechart } from "./livechart-service";
 import type { IndexBuilder } from "./wfs-service";
 import { workerBuilder } from "./wfs-service";
-import { startWfs } from "./wfs-wiring";
+import { startBox } from "./wfs-wiring";
 import fs from "fs";
 import path from "path";
 
@@ -88,7 +88,7 @@ export = function underkeel(
 
     start(options: unknown): void {
       const config = parseConfig(options);
-      const wfs = config.wfs && startWfs({ app, clock, state, config, fetch, build }, config.wfs);
+      const wfs = startBox({ app, clock, state, config, fetch, build });
       const plan = planIndex(config, app.getDataDirPath(), wfs?.savedCell() ? [wfs.cellDir] : []);
       const load = "load" in plan ? plan.load : pendingLoad(plan);
       const monitor = new Monitor(app, PLUGIN_ID, config, load.index, load.reason, clock, fetch);

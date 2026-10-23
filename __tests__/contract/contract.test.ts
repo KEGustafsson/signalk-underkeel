@@ -202,7 +202,7 @@ describe("signalk-underkeel satisfies the contract", () => {
     const { router, call, post } = fakeRouter();
     plugin.registerWithRouter?.(router as never);
     seedFixtureIndex(dataDir);
-    plugin.start({ cellsDir: CELLS, leafZoom: 18 }, () => undefined);
+    plugin.start({ cellsDir: CELLS, boxRadiusKm: 0, leafZoom: 18 }, () => undefined);
     f.send(navDelta(ROCK[0] - 75 / M_PER_DEG_LON, ROCK[1], 3, T0));
     clock.advance(1000);
 
@@ -246,7 +246,7 @@ describe("signalk-underkeel satisfies the contract", () => {
     };
     const off = notification({ indexDir: path.join(dataDir, "no-index") });
     seedFixtureIndex(dataDir);
-    const unknown = notification({ cellsDir: CELLS, leafZoom: 18 });
+    const unknown = notification({ cellsDir: CELLS, boxRadiusKm: 0, leafZoom: 18 });
     expect(off.running).toMatchObject({ data: { engineState: "off" } });
     expect(unknown.running).toMatchObject({ data: { engineState: "unknown" } });
     for (const n of [off.running, unknown.running, off.stopped, unknown.stopped]) {

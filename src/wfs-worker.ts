@@ -13,11 +13,14 @@ import { runBuild, transfers } from "./spatial/build-worker";
  */
 
 export interface WfsJob {
-  download: Omit<WfsDownload, "fetch" | "signal" | "now"> & { now: string };
+  /** Absent for a box of ENC cells alone: the index is rebuilt around the vessel only. */
+  download?: Omit<WfsDownload, "fetch" | "signal" | "now"> & { now: string };
   build: BuildJob;
 }
 
 export type WfsCounts = Awaited<ReturnType<typeof downloadWfsCell>>;
+
+export const NO_FEATURES: WfsCounts = { depthAreas: 0, dredgedAreas: 0, soundings: 0 };
 
 export interface WfsReply extends BuildReply {
   features?: WfsCounts;
@@ -28,12 +31,9 @@ export async function runWfsJob(
   fetch: WfsFetch,
   signal?: AbortSignal
 ): Promise<{ staging: string; index: IndexParts; features: WfsCounts }> {
-  const features = await downloadWfsCell({
-    ...job.download,
-    now: new Date(job.download.now),
-    fetch,
-    signal
-  });
+  const features = job.download
+    ? await downloadWfsCell({ ...job.download, now: new Date(job.download.now), fetch, signal })
+    : NO_FEATURES;
   return { ...(await runBuild(job.build)), features };
 }
 

@@ -154,7 +154,7 @@ describe("REST cancellation", () => {
       const { router, open } = fakeRouter();
       plugin.registerWithRouter?.(router as never);
       seedFixtureIndex(dataDir);
-      plugin.start({ cellsDir: CELLS, leafZoom: 18 }, () => undefined);
+      plugin.start({ cellsDir: CELLS, boxRadiusKm: 0, leafZoom: 18 }, () => undefined);
       const started = new Promise<void>((resolve) => {
         const checkLeg = routeCheckModule.checkLeg;
         jest.spyOn(routeCheckModule, "checkLeg").mockImplementation((...args) => {

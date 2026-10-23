@@ -6,6 +6,7 @@ import { parseCatalogue } from "./ingest/cells";
 import type { CellScan } from "./ingest/cell-source";
 import { currentInfo, readCell, scanCellSources } from "./ingest/cell-source";
 import { WFS_SOURCE } from "./ingest/wfs";
+import { readBox } from "./spatial/build-box";
 import type { BuildJob } from "./spatial/build-worker";
 import type { ChartIndex } from "./spatial/chart-index";
 import {
@@ -37,12 +38,14 @@ export interface IndexLoad {
 export const BUILDING_REASON = "building chart index";
 export const LOADING_REASON = "loading chart index";
 export const WFS_WAITING_REASON = "waiting for the first Traficom WFS download";
+export const BOX_WAITING_REASON = "waiting for the vessel position to build the chart box";
 
 /** Reasons that mean the index is on its way, not that loading it failed. */
 export const PENDING_REASONS: ReadonlySet<string> = new Set([
   BUILDING_REASON,
   LOADING_REASON,
-  WFS_WAITING_REASON
+  WFS_WAITING_REASON,
+  BOX_WAITING_REASON
 ]);
 
 /**
@@ -212,6 +215,18 @@ function plan(
   if (error) {
     return unreadable(error);
   }
+  if (boxed(cfg, sources)) {
+    return boxPlan(
+      cfg,
+      indexDir,
+      saved !== undefined && !mismatch,
+      [...scan.sources, ...extraDirs],
+      {
+        fromSaved: (why) => fromSaved(why, unreadable),
+        notes: skippedNote(cfg.cellsDir, scan)
+      }
+    );
+  }
   if (sources && (cfg.rebuildIndex || mismatch || !saved || change)) {
     return rebuild(notes);
   }
@@ -219,6 +234,50 @@ function plan(
     return { load: { indexDir, built: false, reason: missingReason(cfg, indexDir, false) } };
   }
   return fromSaved(notes, unreadable);
+}
+
+/** Whether the index is built around the vessel rather than from every cell. */
+const boxed = (cfg: PluginConfig, sources: boolean): boolean => sources && cfg.boxRadiusKm > 0;
+
+/** Each source's stamp, sorted: what a box build records of the cells it chose from. */
+export function sourceKeys(dirs: readonly string[]): string[] {
+  return dirs.map((d) => cellKey(currentInfo(d))).sort();
+}
+
+/**
+ * The plan when the index is built around the vessel: the saved index while
+ * it was built in a box from the same cells, else a build in that box; with
+ * no saved box nothing until the box service has a position (invariant 3).
+ */
+function boxPlan(
+  cfg: PluginConfig,
+  indexDir: string,
+  usable: boolean,
+  dirs: string[],
+  p: { fromSaved: (notes: string[]) => IndexPlan; notes: string[] }
+): IndexPlan {
+  const box = readBox(indexDir);
+  if (!box) {
+    return { load: withNotes({ indexDir, built: false, reason: BOX_WAITING_REASON }, p.notes) };
+  }
+  const keys = sourceKeys(dirs);
+  const sameCells = keys.join("\n") === box.sources.join("\n");
+  const sameZoom = box.leafZoom === cfg.leafZoom;
+  if (usable && !cfg.rebuildIndex && sameCells && sameZoom) {
+    return p.fromSaved(p.notes);
+  }
+  const why = cfg.rebuildIndex
+    ? []
+    : sameCells
+      ? [
+          `rebuilt the index: leaf zoom ${cfg.leafZoom} differs from the saved ${box.leafZoom ?? "?"}`
+        ]
+      : [`rebuilt the index: cells in ${cfg.cellsDir ?? "cellsDir"} changed since it was saved`];
+  return {
+    build: { dirs, leafZoom: cfg.leafZoom, indexDir, box: { bbox: box.bbox, sources: keys } },
+    indexDir,
+    notes: [...why, ...p.notes]
+  };
 }
 
 function savedPlan(
