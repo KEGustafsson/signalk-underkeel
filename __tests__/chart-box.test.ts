@@ -215,5 +215,5 @@ describe("plugin with the box around the vessel", () => {
     expect(lastValue(h.deltas, "navigation.underKeel.state")).not.toBe("off");
     expect(h.errors).toEqual([]);
     plugin.stop();
-  });
+  }, 60_000);
 });

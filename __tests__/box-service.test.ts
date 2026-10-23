@@ -54,6 +54,7 @@ function startPlugin(cellsDir: string) {
 }
 
 describe("chart box service", () => {
+  // Builds an index with gdal3.js in-process: seconds on a slow CI runner.
   test("a saved box at the vessel with no index in use is built, not waited on", async () => {
     // As after an upgrade from a whole build, or with indexDir deleted or changed.
     const saved: WfsBox = {
@@ -76,7 +77,7 @@ describe("chart box service", () => {
     clock.advance(1000);
     expect(lastValue(h.deltas, "navigation.underKeel.state")).not.toBe("off");
     plugin.stop();
-  });
+  }, 60_000);
 
   test("with no index in use a failed build is the reason, published as an error", async () => {
     const empty = path.join(dir, "cells");
