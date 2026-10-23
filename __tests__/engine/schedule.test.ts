@@ -58,7 +58,17 @@ describe("scoreSchedule", () => {
     scored.length = 0;
     expect(refine.firstTime(3, (f) => f.risk >= 1)).toBe(9);
     expect(scored).toEqual([9]);
-    expect(refine.firstTime(2, (f) => f.risk >= 1)).toBe(7.6);
-    expect(scored).toEqual([9, 6]);
+    // Neither the skipped step at 6 nor the plan step at 7.6 holds: no time.
+    expect(refine.firstTime(2, (f) => f.risk >= 1)).toBeUndefined();
+    expect(scored).toEqual([9, 6, 7.6]);
+  });
+
+  test("a coarse footprint whose hull alone holds gives no time", () => {
+    // The hull from 3 to 9 reads a rock that neither the step at 6 nor the one at 9 reaches.
+    const refine = scoreSchedule([0, 3, 9], 3, (t, _stop, from) => {
+      return { t, risk: from !== undefined && t === 9 ? 1 : 0 } as FootprintResult;
+    });
+    expect(refine.footprints[2]?.risk).toBe(1);
+    expect(refine.firstTime(2, (f) => f.risk >= 1)).toBeUndefined();
   });
 });

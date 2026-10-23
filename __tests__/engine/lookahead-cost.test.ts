@@ -177,7 +177,10 @@ describe("coarse steps beyond the warn window", () => {
           [{ x: 0.53954, y: 0.72002, cog: 0, sog: 1.32432, rot: -0.029976 }],
           // From CI: a rock just past a plan step's buffer and within the coarse one's read its
           // float32 survey depth there, 1 ulp shallower than its depth within, and a higher P.
-          [{ x: 0.79328, y: 0.4943, cog: 2.3147254671649597, sog: 0.3, rot: 0.020586 }]
+          [{ x: 0.79328, y: 0.4943, cog: 2.3147254671649597, sog: 0.3, rot: 0.020586 }],
+          // From CI: a turning boat whose coarse hull reached a rock inside its arc at 225 s that
+          // no plan step reaches before 708 s.
+          [{ x: 0.68126, y: 0.2, cog: 6.268733980973073, sog: 0.3, rot: 0.016596 }]
         ]
       }
     );

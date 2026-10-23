@@ -98,7 +98,7 @@ export function scoreSchedule(
       footprints[i] = full;
       return full;
     },
-    firstTime(i: number, holds: (f: FootprintResult) => boolean): number {
+    firstTime(i: number, holds: (f: FootprintResult) => boolean): number | undefined {
       const f = footprints[i] as FootprintResult;
       const before = footprints[i - 1];
       // A coarse footprint may lie off the step grid; the grid steps before it are scored.
@@ -108,7 +108,9 @@ export function scoreSchedule(
           return j * step;
         }
       }
-      return f.t;
+      // A turning boat's hull also covers ground inside the arc that no step reaches: only a
+      // plan step sets the time, as when every step is scored.
+      return before === undefined || holds(score(f.t, false)) ? f.t : undefined;
     }
   };
 }
