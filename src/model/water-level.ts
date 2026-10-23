@@ -211,16 +211,22 @@ const LOW_WATER_DATUMS = new Set([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
 /**
  * Chart datum, as the level with no source. Where a cell states a datum that
  * is not low water (mean water in the Baltic, high water, local) the water
- * is often well below it, so the level is degraded with those datums named
- * rather than applied as if measured. A cell that states none, in practice
- * the advisory Traficom WFS cell, is taken at chart datum as before.
+ * is often well below it, so the level is degraded rather than applied as if
+ * measured. The reason names those datums and the source to set: fmi when
+ * one of them is mapped to an FMI series, else signalk-tide or manual. It
+ * never suggests adding a datum mapping, and holds no colon, since
+ * describe() adds one before its explanation. A cell that states none, in
+ * practice the advisory Traficom WFS cell, is taken at chart datum as before.
  */
 function noSource(uses: readonly DatumUse[]): WaterLevel {
   const other = new Set<number>();
+  let fmi = false;
   for (const use of uses) {
     for (const verdat of [use.verdat, ...(use.datumAreas ?? [])]) {
       if (verdat !== undefined && !LOW_WATER_DATUMS.has(verdat)) {
         other.add(verdat);
+        // A known use has no datum areas: this is its own datum, mapped to an FMI series.
+        fmi ||= use.known;
       }
     }
   }
@@ -228,15 +234,19 @@ function noSource(uses: readonly DatumUse[]): WaterLevel {
     return CHART_DATUM;
   }
   const datums = [...other].map((v) => `VERDAT ${v}`).join(", ");
+  const fix = fmi
+    ? "fmi in Finnish waters, or to signalk-tide or manual"
+    : "signalk-tide or manual";
   return {
     ...CHART_DATUM,
-    degraded: `no water-level source: chart datum assumed, which is not low water (${datums})`
+    degraded: `no water-level source, and chart datum is not low water (${datums}); set Water level source to ${fix}`
   };
 }
 
 /**
  * The level to apply at time `t`. No provider means chart datum, degraded
- * where a cell states a datum that is not low water; a provider that is unhealthy,
+ * where a cell states a datum that is not low water, with a reason naming
+ * those datums and the source to set; a provider that is unhealthy,
  * stale for more than 30 minutes or without a value for `t` falls back to
  * chart datum, or its last level when lower, with σ 0.3 m and a `degraded`
  * reason, never silently.

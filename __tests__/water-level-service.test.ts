@@ -93,6 +93,7 @@ describe("water-level service", () => {
     expect(none.waterLevel.source).toBe("none");
     const mean = new WaterLevelService(none, index, noFetch);
     expect(mean.now(HELSINKI, NOW).degraded).toMatch(/VERDAT 26/);
+    expect(mean.status(HELSINKI, NOW).applied.degraded).toMatch(/set Water level source to fmi/);
     expect(mean.over(NOW, NOW + HOUR, [HELSINKI], NOW).degraded).toMatch(/VERDAT 26/);
     const low = {
       catalogue: { cells: [{ name: "B", edition: 1, update: 0, band: 5, soundingDatum: 23 }] }
