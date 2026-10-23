@@ -1,5 +1,5 @@
 import path from "path";
-import { cellDirectories } from "../../src/index-loader";
+import { cellSources } from "../../src/index-loader";
 import { readCellDirectory } from "../../src/ingest/cell-reader";
 import type { ChartIndex } from "../../src/spatial/chart-index";
 import { buildChartIndex, loadChartIndex, saveChartIndex } from "../../src/spatial/chart-index";
@@ -49,7 +49,7 @@ let seeded: ChartIndex | undefined;
  */
 export function seedFixtureIndex(dataDir: string): void {
   seeded ??= buildChartIndex(
-    cellDirectories(FIXTURES).map((d, i) => readCellDirectory(d, i)),
+    cellSources(FIXTURES).map((d, i) => readCellDirectory(d, i)),
     { leafZoom: 18 }
   );
   saveChartIndex(path.join(dataDir, "index"), seeded);

@@ -897,28 +897,28 @@ describe("plugin lifecycle", () => {
 });
 
 describe("index loader", () => {
-  test("reports a missing cells directory as a reason", () => {
-    const r = loadOrBuildIndex(parseConfig({ cellsDir: "/nonexistent/cells" }), os.tmpdir());
+  test("reports a missing cells directory as a reason", async () => {
+    const r = await loadOrBuildIndex(parseConfig({ cellsDir: "/nonexistent/cells" }), os.tmpdir());
     expect(r.index).toBeUndefined();
     expect(r.reason).toMatch(/chart index failed/);
   });
 
-  test("an empty cells directory is reported", () => {
+  test("an empty cells directory is reported", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-empty-"));
     try {
       const cfg = parseConfig({ cellsDir: dir, indexDir: path.join(dir, "ix") });
-      expect(loadOrBuildIndex(cfg, dir).reason).toMatch(/no cells/);
+      expect((await loadOrBuildIndex(cfg, dir)).reason).toMatch(/no cells/);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  test("loads a saved index without rebuilding", () => {
+  test("loads a saved index without rebuilding", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-load-"));
     try {
       const cfg = parseConfig({ cellsDir: FIXTURES, leafZoom: 16 });
-      expect(loadOrBuildIndex(cfg, dir).built).toBe(true);
-      const again = loadOrBuildIndex(cfg, dir);
+      expect((await loadOrBuildIndex(cfg, dir)).built).toBe(true);
+      const again = await loadOrBuildIndex(cfg, dir);
       expect(again.built).toBe(false);
       expect(again.index?.catalogue.cells).toHaveLength(2);
     } finally {
@@ -926,21 +926,21 @@ describe("index loader", () => {
     }
   });
 
-  test("rebuilds a saved index of an older pyramid version", () => {
+  test("rebuilds a saved index of an older pyramid version", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-old-"));
     try {
       const cfg = parseConfig({ cellsDir: FIXTURES, leafZoom: 16 });
-      expect(loadOrBuildIndex(cfg, dir).built).toBe(true);
+      expect((await loadOrBuildIndex(cfg, dir)).built).toBe(true);
       const file = path.join(dir, "index", "pyramid.bin");
       const buf = fs.readFileSync(file);
       const nl = buf.indexOf(0x0a);
       const header = JSON.parse(buf.subarray(0, nl).toString("utf8")) as { version: number };
       const old = Buffer.from(JSON.stringify({ ...header, version: PYRAMID_VERSION - 1 }), "utf8");
       fs.writeFileSync(file, Buffer.concat([old, buf.subarray(nl)]));
-      const again = loadOrBuildIndex(cfg, dir);
+      const again = await loadOrBuildIndex(cfg, dir);
       expect(again.built).toBe(true);
       expect(again.index?.catalogue.cells).toHaveLength(2);
-      expect(loadOrBuildIndex(cfg, dir).built).toBe(false);
+      expect((await loadOrBuildIndex(cfg, dir)).built).toBe(false);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

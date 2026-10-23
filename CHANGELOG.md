@@ -6,6 +6,13 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Added
 
+- S-57 ENC cells are read as delivered: **ENC cells directory** takes `.000` files with their
+  `.001`, `.002` … updates, also inside an exchange set's `ENC_ROOT` folders, read in the index
+  worker with gdal3.js (GDAL compiled to WebAssembly), now a runtime dependency. No export step
+  and no intermediate files; the export script and its GeoJSON directories still work. A saved
+  index is kept while each cell's files keep their names, sizes and modification times. The
+  edition comes from the base cell's DSID, since GDAL reports 0 once NOAA updates are applied.
+  The 12 NOAA cells around Miami build in 19 s at leaf zoom 18 on x86.
 - App Store screenshots: `package.json` lists six of the docs images under
   `signalk.screenshots`, and the package ships them and the README illustration.
 - `GET /status?summary` leaves out `index.cells` and `waterLevel.datums`, which grow with the
@@ -92,7 +99,7 @@ All notable changes to signalk-underkeel are documented here.
   Against the live server the same features came in 5.6 s instead of 8.6 s for a 10 km box off
   Helsinki, 13.1 s instead of 19.3 s for 10 km at Nauvo and 30.4 s instead of 81.7 s for 25 km
   at Nauvo.
-- The gdal3.js ENC reader (not yet wired into the plugin) converts only the layers the index
+- The gdal3.js ENC reader converts only the layers the index
   reads, one `ogr2ogr` to in-memory GeoJSON each, with the unsurveyed-edge filter run in GDAL,
   instead of one `ogrinfo -json -features` of every layer: 2.0–2.9× faster on 12 NOAA cells
   with the same features (US5FL61M 4.2 → 1.6 s, 510 → 270 MB RSS). It finds its WebAssembly

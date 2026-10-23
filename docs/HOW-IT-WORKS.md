@@ -81,10 +81,10 @@ look-ahead, a corridor around each leg for a route check, or a map tile for the 
 
 ![Plugin configuration in the Signal K admin UI](images/how-it-works/config.png)
 
-The plugin reads unencrypted S-57 cells that GDAL has exported to GeoJSON, one directory per
-cell (the [README](../README.md#chart-data) has the export command), and points
-**Exported ENC cells directory** at their parent. The draft comes from **Vessel**, or else from
-Signal K `design.draft.maximum`; length and beam fall back to `design.length.overall` and
+The plugin reads unencrypted S-57 cells as delivered, each `.000` with its updates, with GDAL
+compiled to WebAssembly; **ENC cells directory** points at the folder that holds them, such as
+an exchange set's `ENC_ROOT` (the [README](../README.md#prepare-the-charts) has the details).
+The draft comes from **Vessel**, or else from Signal K `design.draft.maximum`; length and beam fall back to `design.length.overall` and
 `design.beam`. Without a draft the engine stays `unknown`. The water level comes from the
 source picked under **Water level** (section 8).
 
@@ -764,7 +764,7 @@ page says what is missing: no Signal K stream on the widget, or no shared routes
   gap leaves the leaf unassessed. The same holds for two cells of one usage band meeting along
   a shared edge: matched vertex for vertex, the leaf on the edge is covered; otherwise it reads
   as no coverage.
-- Only unencrypted S-57 cells exported with `scripts/enc-to-geojson.sh` are read.
+- Only unencrypted S-57 cells are read: S-63 encrypted cells must be decrypted first.
 - The look-ahead follows course and turn rate, not the route. In a winding fairway it sees the
   shore ahead before each bend and raises warn or alarm until the boat turns.
 - Freeboard shows the envelope and leg colours through the Plotter Extensions API. It cannot

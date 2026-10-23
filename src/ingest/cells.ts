@@ -23,6 +23,11 @@ export interface CellInfo {
   datumAreas?: number[];
   /** Set for cells built from a non-ENC source, e.g. "traficom-wfs". */
   source?: string;
+  /**
+   * Hash of the names, sizes and modification times of an S-57 cell's `.000` and update
+   * files, for a cell read from them: a saved index whose entry matches needs no new read.
+   */
+  files?: string;
   /** Compilation scale denominator (DSPM_CSCL), e.g. 12000. */
   compilationScale?: number;
   /**
@@ -91,6 +96,7 @@ function parseCell(raw: unknown, index: number): CellInfo {
     soundingDatum: finiteOrUndefined(r.soundingDatum),
     datumAreas: codes(r.datumAreas),
     source: typeof r.source === "string" ? r.source : undefined,
+    files: typeof r.files === "string" ? r.files : undefined,
     compilationScale: finiteOrUndefined(r.compilationScale),
     positionQuality: r.positionQuality === true ? true : undefined
   };

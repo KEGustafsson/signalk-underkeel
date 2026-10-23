@@ -43,3 +43,6 @@ data/
 public/vendor/
 /enc/
 /enc_depth/
+
+# Synthetic S-57 test cell (fixtures/s57/generate.js)
+!fixtures/s57/*.000

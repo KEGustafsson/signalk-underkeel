@@ -125,7 +125,7 @@ Planning features follow from the same model.
 │  Traficom ENC / open depth data ────────────────────┤                 │
 │                                                       ▼               │
 │  ┌──────────────── signalk-underkeel ──────────────────────────────┐  │
-│  │ Ingest (GDAL in signalk-container) → FlatGeobuf per cell         │  │
+│  │ Ingest (gdal3.js, in the index worker) → cells read in place     │  │
 │  │ Index builder (worker) → min-depth pyramid + hazard R-tree      │  │
 │  │ Water level (FMI / tide provider / manual) ──┐                   │  │
 │  │ Vessel model (draft, heel, squat) ───────────┤                   │  │
@@ -161,7 +161,7 @@ signalk-underkeel/
 │   ├── index.ts                  # plugin lifecycle, schema, router registration
 │   ├── config.ts                 # JSON schema + defaults
 │   ├── ingest/
-│   │   ├── enc-reader.ts         # .000 → FlatGeobuf via GDAL (container job)
+│   │   ├── enc-wasm.ts           # .000 + updates read in place with gdal3.js
 │   │   ├── open-data-reader.ts   # Traficom/SYKE open vector depth (GeoPackage/WFS)
 │   │   ├── coverage.ts           # best-scale mosaic: usage band selection, overlaps
 │   │   └── datum.ts              # vertical datum per cell (M_VDAT / M_SDAT, VERDAT)
@@ -216,8 +216,19 @@ signalk-underkeel/
   than growing the heap until the kernel ends the server. A server started with
   `--max-old-space-size` overrides the cap, because V8 flags apply to every isolate in the
   process.
-- GDAL/OGR, run in a container through `signalk-container`, for reading S-57. This keeps the
-  same container approach as `signalk-charts-provider-simple`.
+- GDAL/OGR compiled to WebAssembly (gdal3.js, GDAL 3.8.4, about 40 MB installed), for reading
+  S-57. Decision: the plugin reads the cells as delivered, each `.000` with its updates,
+  anywhere under the cells directory (an exchange set's `ENC_ROOT` included), and writes
+  nothing beside them and no intermediate files; only the built index is saved. GDAL runs only
+  in the index build's worker thread: it reads each cell once per build, its layers as GeoJSON
+  held in one SharedArrayBuffer that the region threads read without a copy, and its 512 MB
+  WebAssembly memory goes when the worker exits. Whether a saved index still matches is told on
+  the main thread without GDAL, by a hash of each cell's files' names, sizes and modification
+  times (`CellInfo.files`). GDAL reports the last update's `DSID_EDTN` once updates are
+  applied (0 in NOAA updates), so the edition is read from the base cell's DSID record. The container approach
+  it replaces needed `signalk-container` and an export step per cell. The 12
+  NOAA cells around Miami (6.8 MB) build in 19 s at leaf zoom 18 on x86; reading US5FL61M
+  (1.5 MB) takes 1.6 s of that.
 - Must run on a Raspberry Pi 4 as well as on the Jetson Orin. Budget: index RAM under 150 MB,
   look-ahead CPU under 5 % of one core.
 
@@ -296,8 +307,8 @@ signalk-underkeel/
 that covers it. Where bands overlap, the larger scale wins, and the smaller scale is used only
 to fill gaps.
 
-**Output:** normalised FlatGeobuf per cell, plus `cells.json` recording edition, update
-number, issue date and datum. The chart edition is stamped onto every route-check result, so
+**Output:** the index (§4.3), plus `cells.json` recording edition, update number, issue date,
+datum and the cell's files' hash. The chart edition is stamped onto every route-check result, so
 the user can see what data a result was based on.
 
 ### 4.3 Index: min-depth pyramid and hazard tree
@@ -502,10 +513,11 @@ These are treated as ~95 % bounds, so σ ≈ value / 2.
 compilation. Land and shoreline objects are placed by the plotting accuracy of the cell's
 compilation scale (`DSPM_CSCL`), 1 mm on the chart read as a ~95 % bound: σ = 6 m at
 1:12 000, 22.5 m at 1:45 000, capped at 500 m for overview cells. QUAPOS lives on the spatial
-records (edges and nodes), not on the objects: `scripts/enc-to-geojson.sh` exports those not
-surveyed (QUAPOS other than 1 surveyed, 10 precisely known, 11 calculated) or with a POSACC
-as `QUAPOS.geojson`, with the connected nodes each edge ends at, since GDAL's Edge geometry
-holds only the interior vertices; the reader rebuilds every edge whole. Shoreline on such a
+records (edges and nodes), not on the objects: the reader takes those not surveyed (QUAPOS
+other than 1 surveyed, 10 precisely known, 11 calculated) or with a POSACC from GDAL's
+primitive layers, with the connected nodes each edge ends at, since GDAL's Edge geometry holds
+only the interior vertices, and rebuilds every edge whole (`scripts/enc-to-geojson.sh` writes
+the same as `QUAPOS.geojson` for an exported directory). Shoreline on such a
 record keeps its survey's σP, or half the stated POSACC (§4.3). An absent QUAPOS means
 surveyed (S-52 draws such lines solid).
 
@@ -1439,7 +1451,7 @@ it is distributed. Needed from the start:
 
 - [ ] `signalk-underkeel`: scaffold the plugin and JSON-schema config. `/status` returns the
       engine state `off`.
-- [ ] GDAL container job: `.000` → FlatGeobuf, with `cells.json` provenance.
+- [x] S-57 ingest: `.000` and updates read in place with gdal3.js, with `cells.json` provenance.
 - [ ] `pyramid.ts`: build and query, with the fast-check conservativeness property test.
 - [ ] `lookahead.ts`: a straight cone with a deterministic margin; publish the
       `navigation.underKeel.*` deltas and the notification.

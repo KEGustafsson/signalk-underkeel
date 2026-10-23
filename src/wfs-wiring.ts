@@ -3,7 +3,7 @@ import path from "path";
 import type { ServerAPI } from "@signalk/server-api";
 import type { PluginState } from "./api-wiring";
 import type { PluginConfig, WfsConfig } from "./config";
-import { cellDirectories } from "./index-loader";
+import { cellSources } from "./index-loader";
 import type { Rect } from "./foundation/geo";
 import { toMercator } from "./foundation/geo";
 import type { Bbox } from "./ingest/wfs";
@@ -92,7 +92,7 @@ export function startWfs(w: WfsWiring, wfs: WfsConfig): WfsService {
     dir,
     indexDir: w.config.indexDir ?? path.join(w.app.getDataDirPath(), "index"),
     leafZoom: w.config.leafZoom,
-    encDirs: () => cellDirectories(w.config.cellsDir),
+    encDirs: () => cellSources(w.config.cellsDir),
     // The worker fetches with its own global fetch; an injected builder, as in the tests,
     // gets the download on this thread with the injected fetch.
     refresh: w.build === workerBuilder ? workerRefresher : inThreadRefresher(w.fetch, w.build),

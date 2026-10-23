@@ -6,15 +6,17 @@ export const SCHEMA = {
   description:
     "Advisory navigation aid. Not for navigation; does not replace official charts or a proper lookout.",
   properties: {
-    indexDir: {
-      type: "string",
-      title: "Chart index directory",
-      description: "Built index. Default: <plugin data dir>/index"
-    },
     cellsDir: {
       type: "string",
-      title: "Exported ENC cells directory",
-      description: "One sub-directory per cell from scripts/enc-to-geojson.sh"
+      title: "ENC cells directory",
+      description:
+        "S-57 ENC cells as delivered: .000 files with their .001, .002 … updates, also in sub-folders such as ENC_ROOT. Read directly with GDAL (WebAssembly); nothing is converted."
+    },
+    indexDir: {
+      type: "string",
+      title: "Chart index directory (optional)",
+      description:
+        "Where the depth index built from the cells is kept between restarts. Default: <plugin data dir>/index"
     },
     rebuildIndex: { type: "boolean", title: "Rebuild index at start", default: false },
     leafZoom: {

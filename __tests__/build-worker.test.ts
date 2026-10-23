@@ -148,6 +148,29 @@ describe("workerBuilder (compiled lib/)", () => {
     expect(fs.readdirSync(dataDir)).toEqual([]);
   });
 
+  test("S-57 cells read once by the build reach every region thread", async () => {
+    const lib = (await import(LIB_WORKER)) as {
+      runBuild: (j: BuildJob) => Promise<{ staging: string }>;
+    };
+    const s57 = path.resolve(__dirname, "..", "fixtures", "s57", "FI5RAW01.000");
+    const dirs = [s57, path.join(FIXTURES, "FI5SYNTH")];
+    const staged = (threads: number) =>
+      lib.runBuild({ dirs, leafZoom: 16, indexDir: path.join(dir, `s57-${threads}`), threads });
+    const [one, three] = (await Promise.all([staged(1), staged(3)])).map((r) => r.staging) as [
+      string,
+      string
+    ];
+    for (const file of ["pyramid.bin", "hazards.json", "cells.json", "reach.json"]) {
+      expect(
+        fs.readFileSync(path.join(three, file)).equals(fs.readFileSync(path.join(one, file)))
+      ).toBe(true);
+    }
+    const cells = JSON.parse(fs.readFileSync(path.join(one, "cells.json"), "utf8")) as {
+      cells: { name: string }[];
+    };
+    expect(cells.cells.map((c) => c.name)).toEqual(["FI5RAW01", "FI5SYNTH"]);
+  });
+
   test("columns built on several threads join into the single-thread index, byte for byte", async () => {
     const lib = (await import(LIB_WORKER)) as {
       runBuild: (j: BuildJob) => Promise<{ staging: string }>;
