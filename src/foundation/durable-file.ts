@@ -47,7 +47,7 @@ export function appendFileDurable(file: string, data: string): void {
  * Errors are ignored: the file is already in place, and Windows cannot open a directory to
  * sync it.
  */
-function syncDirectory(dir: string): void {
+export function syncDirectory(dir: string): void {
   let fd: number | undefined;
   try {
     fd = fs.openSync(dir, "r");
