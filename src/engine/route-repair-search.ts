@@ -1,6 +1,7 @@
 import type { LonLat } from "../foundation/geo";
 import { EARTH_RADIUS, wrapLon } from "../foundation/geo";
 import type { Steps } from "./route-check";
+import { LINE_SAMPLES_PER_UNIT } from "./work";
 
 /** The grid and the Theta* search route repair runs on it (plan §4.11). */
 
@@ -98,11 +99,29 @@ class Heap {
   }
 }
 
-/** Mean cost along a straight segment, sampled every half cell; Infinity if it crosses a block. */
-function lineCost(g: Grid, i: number, j: number, costOf: (i: number) => number): number {
+/** The search's share of a repair's work budget (work.ts). */
+export interface SearchWork {
+  add(units: number): void;
+  /** True once the search may do no more work. */
+  stopped(): boolean;
+}
+
+/**
+ * Mean cost along a straight segment, sampled every half cell; Infinity if
+ * it crosses a block. Its samples count as work in full before sampling,
+ * so the count does not depend on which cell blocks first.
+ */
+function lineCost(
+  g: Grid,
+  i: number,
+  j: number,
+  costOf: (i: number) => number,
+  work?: SearchWork
+): number {
   const [ax, ay] = [i % g.nx, Math.floor(i / g.nx)];
   const [bx, by] = [j % g.nx, Math.floor(j / g.nx)];
   const steps = Math.max(1, Math.ceil(2 * Math.hypot(bx - ax, by - ay)));
+  work?.add((steps + 1) / LINE_SAMPLES_PER_UNIT);
   let sum = 0;
   for (let k = 0; k <= steps; k++) {
     const x = Math.round(ax + ((bx - ax) * k) / steps);
@@ -133,7 +152,8 @@ class ThetaStar {
   constructor(
     private readonly grid: Grid,
     private readonly costOf: (i: number) => number,
-    private readonly goal: number
+    private readonly goal: number,
+    private readonly work?: SearchWork
   ) {
     const n = grid.nx * grid.ny;
     this.g = new Float64Array(n).fill(Infinity);
@@ -168,8 +188,8 @@ class ThetaStar {
 
   private relax(s: number, t: number): void {
     const p = this.parent[s] as number;
-    const viaParent = (this.g[p] as number) + lineCost(this.grid, p, t, this.costOf);
-    const direct = (this.g[s] as number) + lineCost(this.grid, s, t, this.costOf);
+    const viaParent = (this.g[p] as number) + lineCost(this.grid, p, t, this.costOf, this.work);
+    const direct = (this.g[s] as number) + lineCost(this.grid, s, t, this.costOf, this.work);
     const [best, via] = viaParent <= direct ? [viaParent, p] : [direct, s];
     if (best < (this.g[t] as number)) {
       this.g[t] = best;
@@ -179,8 +199,8 @@ class ThetaStar {
   }
 
   /**
-   * Cells from start to goal, or undefined when the goal cannot be reached;
-   * it yields every EXPANSIONS_PER_STEP expanded cells.
+   * Cells from start to goal, or undefined when the goal cannot be reached
+   * or the work runs out; it yields every EXPANSIONS_PER_STEP expanded cells.
    */
   *search(start: number): Steps<number[] | undefined> {
     this.g[start] = 0;
@@ -189,6 +209,9 @@ class ThetaStar {
     let expanded = 0;
     while (this.open.size > 0) {
       const s = this.open.pop();
+      if (this.work?.stopped()) {
+        return undefined;
+      }
       if (s === this.goal) {
         break;
       }
@@ -224,19 +247,23 @@ export function cellOf(g: Grid, p: LonLat): number {
   return cy * g.nx + cx;
 }
 
-/** The path from `from` to `to` through the grid's open cells, or undefined when there is none. */
+/**
+ * The path from `from` to `to` through the grid's open cells, or undefined
+ * when there is none or `work` stops the search first.
+ */
 export function* thetaStar(
   g: Grid,
   from: LonLat,
   to: LonLat,
-  costOf: (i: number) => number
+  costOf: (i: number) => number,
+  work?: SearchWork
 ): Steps<LonLat[] | undefined> {
   const start = cellOf(g, from);
   const goal = cellOf(g, to);
   if (costOf(start) === Infinity || costOf(goal) === Infinity) {
     return undefined;
   }
-  const cells = yield* new ThetaStar(g, costOf, goal).search(start);
+  const cells = yield* new ThetaStar(g, costOf, goal, work).search(start);
   if (!cells) {
     return undefined;
   }

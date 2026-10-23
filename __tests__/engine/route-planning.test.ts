@@ -1,10 +1,13 @@
 import fc from "fast-check";
 import { departureWindow } from "../../src/engine/departure-window";
 import type { LegResult, RouteCheckInput } from "../../src/engine/route-check";
-import { checkLeg, checkRoute } from "../../src/engine/route-check";
+import { checkLeg, checkRoute, legCorridors } from "../../src/engine/route-check";
+import type { LegRepair } from "../../src/engine/route-repair";
 import { DEFAULT_REPAIR, repairLeg, repairRoute, simplify } from "../../src/engine/route-repair";
+import { QUERY_WORK } from "../../src/engine/work";
 import type { LonLat } from "../../src/foundation/geo";
-import { haversine } from "../../src/foundation/geo";
+import { haversine, toMercator } from "../../src/foundation/geo";
+import type { Geom } from "../../src/foundation/geometry";
 import { DEFAULT_DYNAMICS } from "../../src/model/vessel";
 import type { WaterLevel } from "../../src/model/uncertainty";
 import type { ChartIndex } from "../../src/spatial/chart-index";
@@ -280,6 +283,200 @@ describe("route repair", () => {
     for (const c of calls) {
       expect(c.departure).toBe(eta.get(c.from));
     }
+  });
+});
+
+interface Query {
+  geom: Geom;
+  bufferMetres?: number;
+  visits: number;
+}
+
+/**
+ * Records every minDepthOver call until `restore`; `extraVisits` adds to a
+ * polygon query's reported visits, to make checks cost more work.
+ */
+function spyQueries(extraVisits = 0): { calls: Query[]; restore: () => void } {
+  const calls: Query[] = [];
+  const real = pyramid.minDepthOver;
+  const spy = jest.spyOn(pyramid, "minDepthOver").mockImplementation((p, geom, opts) => {
+    const r = real(p, geom, opts);
+    const visits = r.visits + (geom.type === "polygon" ? extraVisits : 0);
+    calls.push({ geom, bufferMetres: opts?.bufferMetres, visits });
+    return { ...r, visits };
+  });
+  return { calls, restore: () => spy.mockRestore() };
+}
+
+const SEARCH_LIMIT =
+  /^the repair search reached the work limit for one leg; add a waypoint near \[-?\d+\.\d{5}, -?\d+\.\d{5}\] \(lon, lat\) to split the leg, or use a smaller xteLimit$/;
+const CHECK_LIMIT =
+  /^the path found could not be checked within the work limit for one leg; add a waypoint near \[/;
+const REQUEST_LIMIT =
+  "not searched: this request has used its repair work limit; repair this leg in another request";
+
+/** A repair either passes whole or is refused for its work limit, with no waypoints. */
+function expectPassedOrLimited(repair: LegRepair | undefined): void {
+  if (repair?.reason === undefined) {
+    expect(repair?.waypoints.length).toBeGreaterThan(0);
+    expect(repair?.legs.every((l) => l.status === "ok")).toBe(true);
+  } else {
+    expect(repair).toMatchObject({ waypoints: [], legs: [] });
+    expect(SEARCH_LIMIT.test(repair.reason) || CHECK_LIMIT.test(repair.reason)).toBe(true);
+  }
+}
+
+describe("repair work limits", () => {
+  const shoal = shoalIndex();
+  // The shoal fills most of the grid's width, so the search expands many cells.
+  const wall = shoalIndexWith(area([22.02, 60.004, 22.04, 60.026], 1));
+  const wallLeg = input([
+    [22.005, 60.015],
+    [22.055, 60.015]
+  ]);
+  const wallChecked = checkRoute(wall, wallLeg, NOW).legs[0] as LegResult;
+
+  test("a search that needs more than its share of the work is refused with the leg's worst position", async () => {
+    const opts = { ...DEFAULT_REPAIR, maxWork: 20_000 };
+    const spy = spyQueries();
+    const repair = repairLeg(wall, wallLeg, wallChecked, opts);
+    spy.restore();
+    expect(repair.reason).toMatch(SEARCH_LIMIT);
+    expect(repair).toMatchObject({ waypoints: [], legs: [] });
+    // No cell is scored once the search has done its share.
+    const scored = spy.calls.filter((q) => q.geom.type === "point").map((q) => q.visits);
+    const before = scored.slice(0, -1).reduce((sum, v) => sum + v + QUERY_WORK, 0);
+    expect(before).toBeLessThan(0.8 * 20_000);
+    // The leg keeps its own status: unrepaired is never safe (invariants 3 and 4).
+    const { repairs, route } = await repairRoute(wall, wallLeg, opts);
+    expect(repairs).toEqual([repair]);
+    expect(route.legs[0]?.status).toBe("fail");
+  });
+
+  test("a final check that cannot finish within the limit is refused, not returned", () => {
+    // Each corridor query reports 50 000 more tiles, so the search fits in budgets where the
+    // checks after it do not.
+    const spy = spyQueries(50_000);
+    const reasons: (string | undefined)[] = [];
+    for (const maxWork of [150_000, 300_000, 450_000, 600_000, 1_200_000, Infinity]) {
+      const repair = repairLeg(wall, wallLeg, wallChecked, {
+        ...DEFAULT_REPAIR,
+        maxWork,
+        searchShare: 1,
+        simplifyShare: 1
+      });
+      expectPassedOrLimited(repair);
+      reasons.push(repair.reason);
+    }
+    spy.restore();
+    expect(reasons.some((r) => r !== undefined && CHECK_LIMIT.test(r))).toBe(true);
+    expect(reasons.at(-1)).toBeUndefined();
+  });
+
+  test("the request's work limit leaves later legs unsearched, with a reason", async () => {
+    const zigzag = [LEG[0], LEG[1], LEG[0], LEG[1]] as LonLat[];
+    const { repairs, route } = await repairRoute(shoal, input(zigzag), {
+      ...DEFAULT_REPAIR,
+      maxRequestWork: 1
+    });
+    expect(repairs.map((r) => r.index)).toEqual([0, 1, 2]);
+    expect(repairs[0]?.reason).toBeUndefined();
+    expect(repairs[0]?.waypoints.length).toBeGreaterThan(0);
+    for (const r of repairs.slice(1)) {
+      expect(r).toEqual({ index: r.index, waypoints: [], legs: [], reason: REQUEST_LIMIT });
+    }
+    // The unsearched legs stay as they were checked, never ok (invariant 4).
+    const unrepaired = route.legs.slice(-2);
+    expect(unrepaired.map((l) => [l.from, l.to])).toEqual([
+      [LEG[1], LEG[0]],
+      [LEG[0], LEG[1]]
+    ]);
+    for (const l of unrepaired) {
+      expect(["fail", "marginal"]).toContain(l.status);
+    }
+  });
+
+  test("a leg's repair is the same alone and inside a request, and the default limits change nothing here", async () => {
+    const unlimited = { ...DEFAULT_REPAIR, maxWork: Infinity, maxRequestWork: Infinity };
+    const box = [22.0, 60.0, 22.06, 60.03] as const;
+    const catzocB: ChartIndex = {
+      ...shoal,
+      pyramid: buildPyramid(
+        [coverage(box), quality(box, 3), area(box, 10), area([22.027, 60.012, 22.033, 60.018], 1)],
+        { minZoom: 12, leafZoom: 18 }
+      )
+    };
+    const zigzag = [LEG[0], LEG[1], LEG[0]] as LonLat[];
+    for (const [chart, route] of [
+      [shoal, input(zigzag)],
+      [wall, wallLeg],
+      [catzocB, input(LEG)]
+    ] as const) {
+      const limited = await repairRoute(chart, route, DEFAULT_REPAIR);
+      expect(limited.repairs.length).toBeGreaterThan(0);
+      expect(limited.repairs.every((r) => r.reason === undefined)).toBe(true);
+      expect(await repairRoute(chart, route, unlimited)).toEqual(limited);
+      const first = checkRoute(chart, route, NOW).legs[0] as LegResult;
+      expect(repairLeg(chart, route, first)).toEqual(limited.repairs[0]);
+    }
+  });
+
+  test("repair results do not depend on timing", async () => {
+    let seed = 7;
+    const jitter = () => {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      return new Promise<void>((resolve) => setTimeout(resolve, seed % 4));
+    };
+    const immediate = () => new Promise<void>((resolve) => setImmediate(resolve));
+    for (const opts of [DEFAULT_REPAIR, { ...DEFAULT_REPAIR, maxWork: 20_000 }]) {
+      const a = await repairRoute(wall, wallLeg, opts, immediate);
+      const b = await repairRoute(wall, wallLeg, opts, jitter);
+      expect(b).toEqual(a);
+    }
+  });
+
+  test("a wide corridor's cells are at least half its width", () => {
+    // Corridor half-width 400 m: cells of 200 m or more, each scored 400 m plus half a cell out.
+    const wide = input(LEG, { xteLimit: 390, planningBuffer: 10 });
+    const leg = checkRoute(shoal, wide, NOW).legs[0] as LegResult;
+    expect(leg.status).toBe("fail");
+    const spy = spyQueries();
+    repairLeg(shoal, wide, leg);
+    spy.restore();
+    const ends = LEG.map(([lon, lat]) => toMercator(lon, lat));
+    const cells = spy.calls.filter(
+      (q) =>
+        q.geom.type === "point" &&
+        !ends.some(([x, y]) => q.geom.type === "point" && q.geom.p[0] === x && q.geom.p[1] === y)
+    );
+    expect(cells.length).toBeGreaterThan(0);
+    for (const q of cells) {
+      expect(q.bufferMetres).toBeGreaterThanOrEqual(400 + 100);
+    }
+  });
+
+  test("simplification never re-checks the leg's own chord", () => {
+    const spy = spyQueries();
+    repairLeg(wall, wallLeg, wallChecked);
+    spy.restore();
+    const [from, to] = wallLeg.coordinates as [LonLat, LonLat];
+    const own = legCorridors(from, to, 30).map((ring) => footprintGeom(ring));
+    const rings = spy.calls.flatMap((q) => (q.geom.type === "polygon" ? [q.geom] : []));
+    expect(rings.length).toBeGreaterThan(0);
+    for (const ring of own) {
+      expect(rings).not.toContainEqual(ring);
+    }
+  });
+
+  test("whatever the limit, a repair passes or gives a reason", () => {
+    fc.assert(
+      fc.property(fc.integer({ min: 0, max: 400_000 }), (maxWork) => {
+        expectPassedOrLimited(
+          repairLeg(wall, wallLeg, wallChecked, { ...DEFAULT_REPAIR, maxWork })
+        );
+      }),
+      { numRuns: 15 }
+    );
   });
 });
 
