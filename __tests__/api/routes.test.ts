@@ -21,6 +21,44 @@ describe("route errors", () => {
   });
 });
 
+describe("acknowledgement content type", () => {
+  // express.json() leaves `{}` for any other type: the request would become a default ack.
+  const setup = () => {
+    const bodies: unknown[] = [];
+    const api = {
+      addAck: (body: unknown) => {
+        bodies.push(body);
+        return { status: 201, body: { id: "a" } };
+      }
+    } as unknown as ApiProvider;
+    const { router, post } = fakeRouter();
+    registerRoutes(router as never, api);
+    return { bodies, post };
+  };
+
+  test.each([
+    [{}],
+    [{ "content-type": "text/plain" }],
+    [{ "content-type": "multipart/form-data" }]
+  ])("POST /acks with headers %p is refused 415 and adds nothing", async (headers) => {
+    const { bodies, post } = setup();
+    expect(await post("/v1/acks", {}, headers)).toEqual({
+      code: 415,
+      body: { errors: ["Content-Type must be application/json"] }
+    });
+    expect(bodies).toEqual([]);
+  });
+
+  test.each([["application/json"], ["Application/JSON; charset=utf-8"], ["application/geo+json"]])(
+    "POST /acks with Content-Type %s is taken",
+    async (type) => {
+      const { bodies, post } = setup();
+      expect((await post("/v1/acks", { ttl: 600 }, { "content-type": type })).code).toBe(201);
+      expect(bodies).toEqual([{ ttl: 600 }]);
+    }
+  );
+});
+
 describe("UKC tile headers", () => {
   test("UKC tiles change with the water level and vessel, so caches revalidate them", () => {
     const api = {
