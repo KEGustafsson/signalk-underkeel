@@ -311,6 +311,17 @@ describe("WFS box around the vessel", () => {
     await again.service.check();
     expect(again.fetched).toHaveLength(0);
   });
+
+  test("a saved cell torn by a power cut is left out of the start and downloaded again", async () => {
+    const first = harness();
+    first.t.pos = [22.08, 60.07];
+    await first.service.check();
+    fs.writeFileSync(path.join(TMP, "FI1WFS01", "DSID.geojson"), "");
+    const again = harness();
+    expect(again.service.savedCell()).toBeUndefined();
+    expect(again.service.status().lastError).toMatch(/saved cell unreadable/);
+    expect(again.errors).toEqual([expect.stringMatching(/saved cell unreadable/)]);
+  });
 });
 
 describe("box service and the index in use", () => {

@@ -5,6 +5,7 @@ import { Worker } from "worker_threads";
 import type { LonLat } from "./foundation/geo";
 import { haversine, project } from "./foundation/geo";
 import type { WfsConfig } from "./config";
+import { readCellInfo } from "./ingest/cell-reader";
 import type { Bbox, WfsFetch } from "./ingest/wfs";
 import {
   boxAround,
@@ -298,9 +299,23 @@ export class WfsService {
     return path.join(this.deps.dir, WFS_CELL_NAME);
   }
 
-  /** The saved cell, when one was downloaded and indexed before. */
+  /**
+   * The saved cell, when one was downloaded and indexed before and its DSID still reads. A
+   * cell torn by a power cut would otherwise fail the start's whole plan, ENC cells included;
+   * it is left out and downloaded again.
+   */
   savedCell(): string | undefined {
-    return this.box && fs.existsSync(this.cellDir) ? this.cellDir : undefined;
+    if (!this.box || !fs.existsSync(this.cellDir)) {
+      return undefined;
+    }
+    try {
+      readCellInfo(this.cellDir);
+      return this.cellDir;
+    } catch (err) {
+      this.lastError = `saved cell unreadable, downloading it again: ${(err as Error).message}`;
+      this.deps.error(`${this.label}: ${this.lastError}`);
+      return undefined;
+    }
   }
 
   start(): void {
