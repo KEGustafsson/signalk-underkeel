@@ -107,6 +107,22 @@ describe("mooring zones from Signal K regions", () => {
     ).toThrow(/no valid Polygon/);
   });
 
+  test("a ring that is not closed is rejected, not cut short by a vertex", () => {
+    // A square notched in to its centre: dropping the last point would fill the notch.
+    const notched = [
+      [22, 60],
+      [22.02, 60],
+      [22.02, 60.02],
+      [22, 60.02],
+      [22.01, 60.01]
+    ];
+    expect(() =>
+      zonesFromRegion("r5", {
+        feature: { geometry: { type: "Polygon", coordinates: [notched] } }
+      })
+    ).toThrow(/no valid Polygon/);
+  });
+
   test("a region that cannot be read is reported, not skipped", async () => {
     const { zones, errors } = await loadZones(["ok", "bad", "missing"], (id) =>
       id === "ok"
