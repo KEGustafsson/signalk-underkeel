@@ -477,7 +477,8 @@ All notable changes to signalk-underkeel are documented here.
   its smallest, and takes the largest change over the rolls seen; route checks, which have no
   roll, use the largest change too.
 - Look-ahead cost is bounded: the distance is capped at 5 NM and the minimum horizon at 600 s,
-  and a tick scores at most 400 footprints, lengthening the step while footprints still touch.
+  and a tick scores at most 400 footprints, spacing those beyond the warn window wider while
+  footprints still touch.
   A 10 NM distance at 0.3 m/s took about 20 000 footprints and 10 s per 1 Hz tick.
 - Squat uses the higher of SOG and STW, and is applied when COG is stale; before, it used SOG
   only and was 0 whenever course or speed was stale.
@@ -531,3 +532,119 @@ All notable changes to signalk-underkeel are documented here.
   and without a stream the tiles never followed the tide. Freeboard now fetches only the tiles
   whose classes changed: 2 tile fetches a minute instead of 108 with the tide rising 2 mm/s.
   When that list does not answer, every tile is fetched again on a 1 cm fall or a 10 cm rise.
+- A UKC tile beside a coarse index leaf, such as an unsplit z10 leaf next to a shoal, no longer
+  allocates a grid the size of that leaf. The tile route took about 300 MB and 150 ms per tile
+  at z18 and 4.3 GB at z20, and failed to allocate from z21. Its edge test now holds only the
+  slots within chart reach of the tile, at most 1024 slots past each edge: the z18 tile takes
+  6 ms, and tiles are drawn as before.
+- `POST /query` takes the water level at the queried point or polygon, not at the vessel. With
+  FMI, a query more than 30 km from the forecast point gets the fallback level, reported as
+  `waterLevelDegraded` and never `clear`; a cursor readout off Vaasa took the surge forecast for
+  Kemi, +0.62 m, as measured. The UKC tiles still apply the vessel's level.
+- `GET /tiles/ukc/changes` lists the served tiles within chart reach of an index block that was
+  read in or dropped. A tile drawn from a block's coarse stand-ins before the block loaded stayed
+  on the plotter until the threshold left its range or the page was reloaded.
+- Position integrity no longer stays failed in a current. Starting underway in a stream, or
+  crossing into one, of about 0.6 m/s or more froze the current estimate: σ_pos grew to
+  kilometres within the hour, and the look-ahead was held at `warn` with no escape heading
+  although GNSS was right. The current is learned during a divergence too, and the warning
+  clears once it is learned, in about 2 minutes for 1 m/s. A position jump stays flagged as
+  before.
+- A route leg whose ETA interval runs past the forecast, or whose far end lies beyond the
+  forecast's 30 km reach, no longer drops a lower forecast level. With FMI fetched at −0.10 m and forecasting −0.60 m,
+  such a leg was checked at −0.10 m. The leg is still degraded, `unverified` at best, but at the
+  lowest level found over its interval and ends.
+- With no water-level source (`none`, the default), a chart whose sounding datum is not a
+  low-water datum gets a degraded level, "no water-level source: chart datum assumed, which is
+  not low water (VERDAT n)", instead of chart datum taken as measured. This covers the Finnish
+  mean-water ENCs (VERDAT 3, 19 and 26), where the Baltic is often 0.3–0.8 m below chart datum
+  and a 1.8 m draft over a charted 2.6 m read `normal` and `ok`, as well as high-water and local
+  datums. On such charts the look-ahead is at best `alert`, route legs, queries and tiles are at
+  best `unverified`, and acknowledged passages and own soundings are not used until a source is
+  configured. Charts on low-water datums (LAT, MLLW and the like) are unchanged.
+- A state held by hysteresis no longer republishes the escape heading of the tick that raised
+  it. That heading came from a position and course tens to hundreds of metres back and could
+  point at the shoal. A held tick publishes its own heading, null when the search found none,
+  was skipped or the tick itself reads `normal`.
+- With a long look-ahead distance at low speed, the alarm and warn windows are scored at the
+  plan step again. With a 5 NM look-ahead at 0.3 m/s the footprints fell at 0 s and 77 s, so a
+  rock about 30 s ahead was reported as a warn 77 s ahead and never as an alarm, and at 1–2 kn
+  the time to shoal came 23–46 s late; the default 0.3 NM stretched the step to up to 5.4 s
+  between 0.5 and 0.9 kn. Only the spacing of the footprints beyond the warn window grows to fit
+  the 400-footprint budget.
+- Escape headings are scored with the fan's spread, COG ± σ and rate of turn ± σ, as the state
+  is. Holding course was scored on one track, so when that track passed a shoal the COG + σ
+  track hit, the plotter offered "Dodge to" the course already steered during a `warn` or
+  `alarm`. When no heading does better than holding course, `escapeHeading` is null. The search
+  now scores more headings where holding course ended it at once: the look-ahead benchmark's p95
+  with the escape fan rose from about 46 ms to 74–105 ms under Jest, the median unchanged.
+- Look-ahead footprints are placed from now, not from the position fix. A fix up to 10 s old
+  (`staleAfter`) is accepted, and every footprint, the time to shoal and the alarm and warn
+  windows lagged by SOG × its age: with a fix 5 s old at 8 m/s a rock under the bow read as
+  ahead. Escape turns start from now as well.
+- An acknowledged passage or mooring zone no longer turns into `alert` the `warn` raised because
+  the position uncertainty outgrew the 500 m buffer: an acknowledgement covers an uncertain
+  chart, not an untrusted position. A `warn` or `alarm` from the chart is suppressed as before.
+- Route repair no longer gives up on legs it can repair. On a 30 km leg the search cells are
+  500 m, and a shoal a few hundred metres from a waypoint, outside its corridor, blocked the
+  end's cell and gave "no passable path in the search window"; the start and goal cells are now
+  scored at the leg's own ends with the corridor alone. Simplification checks each chord at the
+  time the boat reaches it: on a falling tide a chord could pass at the leg's start time and
+  fail at its own, and the repair was refused with "the path found does not pass the corridor
+  check".
+- Mooring zones suppress look-ahead warnings also when neither heading nor COG is fresh, as at a
+  berth, where every tick was published as `warn` or `alarm` with sound. Acknowledged passages
+  still need a heading.
+- A mooring-zone region whose ring is not closed is reported and not loaded. Its last vertex was
+  dropped as if it repeated the first, which could enlarge the zone and demote warnings outside
+  it to `alert`.
+- After a slow tick or search the escape search waits the full 3 s before running again. A
+  search always slower than 250 ms ran every 2 s, and the heading and the plugin status flipped
+  every second; the status now names the skip until the next search runs.
+- `notifications.navigation.positionIntegrity` is sent at once when its state or kind of reason
+  changes, and at most every 30 s while only its divergence or HDOP numbers drift. A lasting
+  warning went out again, with sound, about once a second.
+- `POST /acks` answers 415 unless the `Content-Type` is `application/json` or another `+json`
+  type. Signal K parses any other body as `{}`, so a form, a `text/plain` body or a request
+  without the header stored a default acknowledgement with no expiry.
+- `acks.json` keeps only unexpired acknowledgements: expired ones are dropped at the next add or
+  delete. `POST /acks` answers 409 once 100 unexpired acknowledgements exist, and refuses a
+  polygon of more than 64 vertices. Every `warn` and `alarm` tick tests the footprint against
+  each acknowledgement, and a client posting in a loop could grow the file and that cost without
+  end.
+- Server file paths are kept out of REST replies. `GET /status` no longer reports `index.dir`,
+  and `index.reason`, `engine.reason`, `wfs.lastError` and `chartBox.lastError` keep only the
+  last part of an absolute path (`…/name`). 5xx replies of the REST routes and UKC tiles show a
+  path as `<path>`, the text after `failed:` as `failed (see the server log)`, and drop the error
+  after "could not be read"; the 503 of `/query` and the route requests repeated the index
+  reason, such as a `scandir` error naming the charts mount. The plugin status and the server
+  log keep the full text.
+- An extension asset URL containing `%00` goes on to the next handler like any unknown path. It
+  reached Express's error handler, which answered 500 with a stack trace naming the install
+  path outside production.
+- Route-check legs from a result older than 3 minutes are drawn `unverified` on the chart, as
+  the panel's "out of date" badge says. After a tablet slept through a falling tide its legs
+  stayed green from the old water level, and while `route.list` failed they stayed green for
+  good. A route hidden while its check runs no longer comes back on the chart, and results for
+  routes the host no longer lists are dropped.
+- The background runtime still starts the look-ahead overlay when a host state write, such as
+  one over the storage quota, or a subscription fails at load; such a failure ended it for the
+  session. A failed Signal K stream subscription falls back to polling `/envelope` every 3 s.
+- On an index read block by block, the living chart reads a cell's chart prior only from a
+  loaded block. Priors read at start, at each rebind and at a cell's first sounding came from
+  the blocks' stand-ins, metres too shallow or uncharted, which hid or missed discrepancies: a
+  cell charted 18.2 m was rebased onto 5.4 m, and 12 m soundings there raised nothing. A cell
+  whose block is not loaded is settled in the background once the block loads and is judged
+  again; `GET /status` counts such cells as `livechart.unsettled`. Restoring the saved cells no
+  longer computes every prior during plugin start: they are settled in slices of 1 000.
+- `GET /livechart/discrepancies` returns `charted: null`, and the note reads "(not charted)",
+  for a discrepancy cell the index in use gives no depth. The note read "charted NaN m".
+- Soundings in a `livechart.json` from an older version stay in it until `soundings.ndjson`
+  holds them. A failed log write followed by a state save lost them.
+- A cell's file stamp covers the updates GDAL applies and is taken just before GDAL reads the
+  cell. For a linked `.000` the updates beside the link's target were left out, so a saved index
+  stayed in use without an update installed there, and an update added during a build was
+  recorded as applied although it had not been read.
+- The Traficom WFS cell is flushed to disk before it replaces the previous one, and the previous
+  cell is kept when the swap fails. A power cut just after a refresh could leave an empty layer
+  file, and a failed rename left no cell at all.

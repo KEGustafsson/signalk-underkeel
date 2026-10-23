@@ -289,13 +289,14 @@ WFS water spreads no depth, since it never reads as `normal` anyway. The positio
 is raised by the integrity check in section 7.
 
 Steps are at most 3 s apart; for a fast boat the step shrinks so neighbouring footprints still
-touch. At 5 kn (2.6 m/s) the horizon is 214 s. A tick scores at most 400 footprints: a long
-horizon at low speed takes longer steps, up to where neighbouring footprints would stop
-touching, and only beyond that is the horizon cut. Past 120 s, the widest window a state is
+touch. At 5 kn (2.6 m/s) the horizon is 214 s. Past 120 s, the widest window a state is
 raised in, only every k-th step is scored, the most that still leaves neighbouring footprints
-touching (every 3rd at 6 kn, every 20th at 1 kn). Where one of those footprints is the first
-to reach P 5 %, P 1 % or a coverage gap, the steps it skipped are scored too, so the time
-to shoal and the time in the reason are those of the 3 s steps. The look-ahead distance is
+touching (every 3rd at 6 kn, every 20th at 1 kn). A tick scores at most 400 footprints: a long
+horizon at low speed spaces the footprints past 120 s wider still, up to where neighbouring
+footprints would stop touching, and only beyond that is the horizon cut; within 120 s the steps
+stay 3 s apart. Where a footprint past 120 s is the first to reach P 5 %, P 1 % or a coverage
+gap, the steps it skipped are scored too, so the time to shoal and the time in the reason are
+those of the 3 s steps. The look-ahead distance is
 at most 5 NM (9260 m) and the minimum horizon at most 600 s.
 
 Below 18 kn the horizon always reaches 555.6 m ahead, so slowing down does not shorten the
@@ -433,15 +434,18 @@ silencing.
 
 In `alert`, `warn` and `alarm` the plugin also looks for a way out. It tries headings in 5°
 steps out to 90° either side, smallest change first, each reached by a turn at the boat's
-maximum rate of turn (3°/s by default). The first heading that stays clear over the whole
-horizon wins; if none does, the one with the most time before shoal water. The footprint at
-the vessel is the same on every heading and is not counted. When every heading reaches shoal
-water at the same time, or within the first step, the escape heading is null: there is no
-heading to recommend. The result is published as `navigation.underKeel.escapeHeading`. It is
-searched at most every 3 s and held in between, once the second's other values are out. After
-a tick or a search that takes over 250 ms (slow hardware or a long horizon), the next search is
-skipped, the heading is null and the plugin status says why. The plugin only publishes it; it
-never steers.
+maximum rate of turn (3°/s by default) and scored with the same spread as the look-ahead's
+five tracks: course ± 5° and rate of turn ± 0.1°/s. The first heading that stays clear over the
+whole horizon wins; if none does, the one with the most time before shoal water. The footprint
+at the vessel is the same on every heading and is not counted. When no heading does better
+than holding course, or none stays clear past the first step, the escape heading is null: there
+is no heading to recommend. The result is published as `navigation.underKeel.escapeHeading`.
+It is searched at most every 3 s and held in between, once the second's other values are out.
+A state held by hysteresis publishes the latest search's heading, or null once the look-ahead
+itself reads `normal`, never the heading found when the state was raised. After a tick or a
+search that takes over 250 ms (slow hardware or a long horizon), the next search is skipped, the
+heading is null and the plugin status says why until a search runs again, at the earliest 3 s
+after the skip. The plugin only publishes it; it never steers.
 
 ### Position integrity
 
@@ -475,10 +479,14 @@ Later, while the footprint is inside that area, the heading inside the sector, t
 no more than 5 cm lower and the draft no deeper, `warn` and `alarm` are published as `alert`
 with the reason "acknowledged passage". They are never published as `normal`. A negative mean
 UKC within 30 s is never suppressed: an acknowledgement covers an uncertain chart, not a charted
-depth shallower than the keel. While the water level is a fallback (a stale or missing feed) no
-acknowledgement applies and `POST /acks` answers 409: whatever its value, the fallback is a
-guess, not a measured level to compare with the acknowledged one. `GET /acks` lists them;
-`POST` and `DELETE /acks/:id` need read-write access.
+depth shallower than the keel. Nor is the `warn` raised when the position uncertainty outgrows
+the 500 m buffer (above): an acknowledgement covers an uncertain chart, not an untrusted
+position. While the water level is a fallback (a stale or missing feed) no acknowledgement
+applies and `POST /acks` answers 409: whatever its value, the fallback is a guess, not a
+measured level to compare with the acknowledged one. `GET /acks` lists them; `POST` and
+`DELETE /acks/:id` need read-write access. `POST` needs `Content-Type: application/json` (415
+otherwise), takes a polygon of at most 64 vertices, and answers 409 once 100 acknowledgements
+are live; expired ones are dropped from `acks.json` at the next add or delete.
 
 Mooring zones work the same way without a heading or water-level condition. They are Signal K
 regions named in the settings, for example the home berth; inside one, `warn` and `alarm` are
@@ -503,7 +511,7 @@ It holds until SOG stays above 0.5 m/s for 10 s.
 
 | Source         | What it reads                                                                                                                         | σ                                                         |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| `none`         | chart datum (0 m)                                                                                                                     | 0.3 m                                                     |
+| `none`         | chart datum (0 m); degraded on a chart whose datum is not low water, below                                                            | 0.3 m                                                     |
 | `manual`       | the height you enter above chart datum                                                                                                | the σ you enter                                           |
 | `signalk-tide` | `environment.tide.heightNow`; from 5 min after the reading the lower of it and `heightLow`, until 6 h past `timeLow` (or the reading) | the σ you enter                                           |
 | `fmi`          | Finnish Meteorological Institute sea-level forecast, anchored to the nearest gauge                                                    | grows with lead time and gauge distance, plus the datum σ |
@@ -515,6 +523,14 @@ flowchart TD
   F -- no --> FB[chart datum, or the last level<br/>when lower, σ 0.3 m,<br/>marked as fallback]
   FB --> AL[look-ahead: at least alert, with the reason<br/>overlay: nothing drawn as clear<br/>route check: no leg is ok]
 ```
+
+With `none`, chart datum stands in for the level only on charts referred to a low-water datum
+(LAT, MLLW and the like), where the tide seldom leaves less water than charted. On a chart whose
+`VERDAT` is mean water (3, 19 and 26, as on the Finnish ENCs), high water or a local datum, the
+Baltic is often 0.3–0.8 m below chart datum, so the level is degraded with the reason "no
+water-level source: chart datum assumed, which is not low water (VERDAT n)" and treated as a
+fallback, as above, until a source is configured. Acknowledged passages and own soundings are
+not used then either.
 
 FMI reports above theoretical mean water and above N2000. Each cell's S-57 vertical datum
 (`VERDAT`) is mapped to one of them: codes 3, 19 and 26 map to mean water by default, cells on
@@ -559,7 +575,8 @@ looks grey-tan.
 A tile's classes stay the same while the threshold depth moves within a range: each cell
 changes class only where its P crosses the alert or warn level. The plugin records that range
 for every tile it serves, and `GET /tiles/ukc/changes` lists the tiles whose range the current
-water level, draft and wave allowance have left, or in which an own sounding changed a cell.
+water level, draft and wave allowance have left, in which an own sounding changed a cell, or
+near a block of the index that was read in or dropped since the tile was drawn.
 The background runtime asks every 15 s and after each 1 cm water-level move, and Freeboard
 fetches only the tiles listed. With the tide rising 2 mm/s that is 2 tile fetches a minute in
 a z14 view instead of 108. The cells of each tile and the reach of their neighbours are kept
@@ -664,9 +681,11 @@ planner.
 
 ## 11. Asking about one spot
 
-The query endpoint answers the same question for one point or area at the current water level,
+The query endpoint answers the same question for one point or area at the water level there,
 using the draft in the request when one is given and the configured vessel draft otherwise: the class, P(UKC < 0), the deciding hazard, the explanation and the same sentence
-as the notification. A plotter can use it for a cursor readout.
+as the notification. With FMI, a point or area more than 30 km from the forecast point gets
+the fallback level, as a route leg does, and is never `clear`. A plotter can use it for a cursor
+readout.
 
 ## 12. Traficom WFS depths (optional)
 

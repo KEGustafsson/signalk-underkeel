@@ -147,7 +147,9 @@ All settings are in the plugin's page in the admin UI. The defaults suit a small
 
 The chart gives depths below chart datum; the water level is how far the sea stands above it.
 
-- `none`: chart datum, with σ 0.3 m for the unknown tide.
+- `none`: chart datum, with σ 0.3 m for the unknown tide. On a chart whose datum is not a
+  low-water datum, such as the Finnish mean-water ENCs, this is a degraded level: the state is at
+  best `alert`, route legs at best `unverified` and nothing `clear` until a source is configured.
 - `manual`: a fixed height above chart datum with its σ.
 - `signalk-tide`: `environment.tide.heightNow` for 5 minutes after each reading, then the
   lower of it and `heightLow` until 6 h past `timeLow`.
@@ -174,7 +176,8 @@ Extensions API shows it without any change to Freeboard:
 | Toolbar button (boat icon)      | details panel: state, water level and source, and a leg table per route          |
 
 Routes shown on the chart are checked 1 s after each edit and every minute; the panel shows
-each result's age and marks it "out of date" after 3 minutes. Stale status is shown as Unknown,
+each result's age and marks it "out of date" after 3 minutes, when the chart draws its legs
+`unverified`. Stale status is shown as Unknown,
 never as the last green state. [How it works §13](docs/HOW-IT-WORKS.md#13-in-freeboard) has
 screenshots.
 
@@ -248,7 +251,8 @@ example, `Monitoring: unknown — position stale`.
 `GET /plugins/signalk-underkeel/v1/status` on the server (for example
 `http://localhost:3000/plugins/signalk-underkeel/v1/status`) reports the engine state, the
 chart index and its cell editions, the look-ahead summary, the water-level source and the
-datum mapping.
+datum mapping. Absolute paths in its reasons are cut to their last part (`…/name`); the plugin
+status line and the server log keep them whole.
 
 | Reason shown                                                  | Cause and fix                                                          |
 | ------------------------------------------------------------- | ---------------------------------------------------------------------- |
@@ -349,23 +353,24 @@ Rebuild and restart the server after each change.
 ## REST API
 
 Base path `/plugins/signalk-underkeel/v1`. Reads are open to readonly users; adding and
-deleting acknowledgements needs a readwrite user. Errors are `{ "errors": [string, …] }`.
+deleting acknowledgements needs a readwrite user. Errors are `{ "errors": [string, …] }`; a
+5xx error names no file path and no nested error text, which the server log keeps.
 
-| Route                                         | Purpose                                                                                           |
-| --------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `GET /status`                                 | engine state, index and cell editions, look-ahead summary, water-level health, datum mapping      |
-| `GET /status?summary`                         | the same without the per-cell lists (`index.cells`, `waterLevel.datums`), for frequent polls      |
-| `GET /envelope?rev=`                          | the look-ahead as GeoJSON; 304 when the client already has that revision                          |
-| `POST /route-check`                           | each leg `ok`, `marginal`, `fail` or `unverified`, with P(UKC < 0), explanation and cell editions |
-| `POST /route-repair`                          | waypoints to insert around failing legs, and the whole route re-checked with them                 |
-| `POST /departure-window`                      | departure intervals within `horizon` in which every leg is `ok`                                   |
-| `POST /query`                                 | class, P(UKC < 0), deciding hazard and explanation for a Point or Polygon                         |
-| `GET /acks`, `POST /acks`, `DELETE /acks/:id` | acknowledged passages; `POST` answers 409 while the water level is a fallback                     |
-| `GET /livechart/discrepancies`                | living-chart cells shallower than charted                                                         |
-| `GET /livechart/csb.geojson`                  | own soundings in the IHO CSB format                                                               |
-| `GET /tiles/ukc/{z}/{x}/{y}.pbf`              | Mapbox vector tiles from zoom 11, one `ukc` layer, `Cache-Control: no-cache`, gzipped on request  |
-| `GET /tiles/ukc/changes?epoch=&rev=`          | the tiles served since that cursor whose classes changed, or `all`; a new cursor                  |
-| `GET /ukc-style.json`                         | a MapLibre style for the tiles                                                                    |
+| Route                                         | Purpose                                                                                                                                                                                                         |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /status`                                 | engine state, index and cell editions, look-ahead summary, water-level health, datum mapping                                                                                                                    |
+| `GET /status?summary`                         | the same without the per-cell lists (`index.cells`, `waterLevel.datums`), for frequent polls                                                                                                                    |
+| `GET /envelope?rev=`                          | the look-ahead as GeoJSON; 304 when the client already has that revision                                                                                                                                        |
+| `POST /route-check`                           | each leg `ok`, `marginal`, `fail` or `unverified`, with P(UKC < 0), explanation and cell editions                                                                                                               |
+| `POST /route-repair`                          | waypoints to insert around failing legs, and the whole route re-checked with them                                                                                                                               |
+| `POST /departure-window`                      | departure intervals within `horizon` in which every leg is `ok`                                                                                                                                                 |
+| `POST /query`                                 | class, P(UKC < 0), deciding hazard and explanation for a Point or Polygon                                                                                                                                       |
+| `GET /acks`, `POST /acks`, `DELETE /acks/:id` | acknowledged passages; `POST` needs `Content-Type: application/json` (415 otherwise) and a polygon of at most 64 vertices, and answers 409 while the water level is a fallback or 100 acknowledgements are live |
+| `GET /livechart/discrepancies`                | living-chart cells shallower than charted                                                                                                                                                                       |
+| `GET /livechart/csb.geojson`                  | own soundings in the IHO CSB format                                                                                                                                                                             |
+| `GET /tiles/ukc/{z}/{x}/{y}.pbf`              | Mapbox vector tiles from zoom 11, one `ukc` layer, `Cache-Control: no-cache`, gzipped on request                                                                                                                |
+| `GET /tiles/ukc/changes?epoch=&rev=`          | the tiles served since that cursor whose classes changed, or `all`; a new cursor                                                                                                                                |
+| `GET /ukc-style.json`                         | a MapLibre style for the tiles                                                                                                                                                                                  |
 
 A route-check body carries `route` (a GeoJSON LineString) or `routeRef`
 (`/resources/routes/<id>`), and optionally `departure` (ISO 8601), `speed` (m/s: one value,
