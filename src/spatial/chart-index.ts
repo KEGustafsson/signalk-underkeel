@@ -1,7 +1,7 @@
 import { randomBytes } from "crypto";
 import fs from "fs";
 import path from "path";
-import { threadId } from "worker_threads";
+import { isMainThread, threadId } from "worker_threads";
 import type { ReadCell } from "../ingest/cell-reader";
 import type { CellCatalogue } from "../ingest/cells";
 import { parseCatalogue } from "../ingest/cells";
@@ -92,8 +92,20 @@ function syncDirectory(dir: string): void {
 }
 
 /**
+ * The files an index directory holds: these three, the build's reach and box
+ * (`build-reuse.ts`, `build-box.ts`) beside them.
+ */
+const INDEX_FILES = new Set([...Object.values(FILES), "reach.json", "box.json"]);
+
+/** The first entry of directory `dir` that is not an index file. */
+function foreignFile(dir: string): string | undefined {
+  return fs.readdirSync(dir).find((name) => !INDEX_FILES.has(name));
+}
+
+/**
  * Writes the three index files into a new staging directory beside `dir`
- * and returns its path; `commitChartIndex` swaps it in.
+ * and returns its path; `commitChartIndex` swaps it in. A failed write
+ * removes the staging.
  */
 export function stageChartIndex(dir: string, index: ChartIndex): string {
   // A trailing separator would put the staging inside `dir`, where no commit can move it.
@@ -103,31 +115,51 @@ export function stageChartIndex(dir: string, index: ChartIndex): string {
   const suffix = `${process.pid}-${threadId}-${randomBytes(4).toString("hex")}`;
   const staging = `${dir}.tmp-${suffix}`;
   fs.mkdirSync(staging, { recursive: true });
-  writeDurable(path.join(staging, FILES.cells), JSON.stringify(index.catalogue, null, 2));
-  writeDurable(path.join(staging, FILES.pyramid), serializePyramid(index.pyramid));
-  const hazards: StoredHazard[] = index.hazards.features.map((f) => ({
-    ...f,
-    depth: Number.isFinite(f.depth) ? f.depth : null
-  }));
-  writeDurable(path.join(staging, FILES.hazards), JSON.stringify(hazards));
-  syncDirectory(staging);
+  try {
+    writeDurable(path.join(staging, FILES.cells), JSON.stringify(index.catalogue, null, 2));
+    writeDurable(path.join(staging, FILES.pyramid), serializePyramid(index.pyramid));
+    const hazards: StoredHazard[] = index.hazards.features.map((f) => ({
+      ...f,
+      depth: Number.isFinite(f.depth) ? f.depth : null
+    }));
+    writeDurable(path.join(staging, FILES.hazards), JSON.stringify(hazards));
+    syncDirectory(staging);
+  } catch (err) {
+    fs.rmSync(staging, { recursive: true, force: true });
+    throw err;
+  }
   return staging;
 }
 
 /**
  * Moves a staged index into `dir` only after all its files are written, so
  * a crash or a full disk never leaves a catalogue from one build beside a
- * pyramid from another.
+ * pyramid from another. A failed commit removes the staging and leaves the
+ * previous index in `dir`.
  */
 export function commitChartIndex(dir: string, staging: string): void {
   dir = path.resolve(dir);
   const suffix = /\.tmp-(.+)$/.exec(path.basename(staging))?.[1] ?? randomBytes(4).toString("hex");
   const previous = `${dir}.old-${suffix}`;
-  const hadIndex = fs.existsSync(dir);
-  if (hadIndex) {
-    fs.renameSync(dir, previous);
+  let hadIndex: boolean;
+  try {
+    hadIndex = fs.existsSync(dir);
+    if (hadIndex) {
+      fs.renameSync(dir, previous);
+    }
+    try {
+      fs.renameSync(staging, dir);
+    } catch (err) {
+      // The running store still reads `dir`; it gets its index back now, not at the next start.
+      if (hadIndex && !fs.existsSync(dir)) {
+        fs.renameSync(previous, dir);
+      }
+      throw err;
+    }
+  } catch (err) {
+    fs.rmSync(staging, { recursive: true, force: true });
+    throw err;
   }
-  fs.renameSync(staging, dir);
   syncDirectory(path.dirname(dir));
   if (hadIndex) {
     fs.rmSync(previous, { recursive: true, force: true });
@@ -171,29 +203,44 @@ export function removeStaging(dir: string, owned: (pid: number, thread: number) 
   }
 }
 
+/** Whether this process has yet to recover an index on its main thread. */
+let firstRecovery = isMainThread;
+
 /**
  * A crash between the two renames in saveChartIndex leaves `dir` absent and
  * the previous index at `<dir>.old-<suffix>`. Moves the newest complete one
  * back so that build is used again; returns whether it did. Staging that a
- * process which has since exited left half-written is removed first.
+ * process which has since exited left half-written is removed first, and the
+ * moved-aside copies once `dir` holds a whole index again.
  */
 export function recoverChartIndex(dir: string): boolean {
   dir = path.resolve(dir);
   // The index directory is configurable and may be shared, so only staging
   // whose writer has gone is removed; another live server may still commit it.
-  removeStaging(dir, (pid) => pid !== process.pid && !isAlive(pid));
-  if (fs.existsSync(dir)) {
-    return false;
-  }
+  // In a container the server gets the same process id at every start, so at
+  // the first recovery, which planning the index at start runs before any build,
+  // staging under this id is a previous run's.
+  const restarted = firstRecovery;
+  firstRecovery = false;
+  removeStaging(dir, (pid) => (pid === process.pid ? restarted : !isAlive(pid)));
   const parent = path.dirname(dir);
   const prefix = `${path.basename(dir)}.old-`;
   if (!fs.existsSync(parent)) {
     return false;
   }
-  const candidates = fs
+  const moved = fs
     .readdirSync(parent)
     .filter((name) => name.startsWith(prefix))
-    .map((name) => path.join(parent, name))
+    .map((name) => path.join(parent, name));
+  if (fs.existsSync(dir)) {
+    if (isCompleteIndex(dir)) {
+      moved
+        .filter((old) => fs.statSync(old).isDirectory() && foreignFile(old) === undefined)
+        .forEach((old) => fs.rmSync(old, { recursive: true, force: true }));
+    }
+    return false;
+  }
+  const candidates = moved
     .filter(isCompleteIndex)
     .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
   const newest = candidates[0];
