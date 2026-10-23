@@ -12,6 +12,7 @@ import type { BuildJob } from "./spatial/build-worker";
 import type { ChartIndex } from "./spatial/chart-index";
 import {
   buildChartIndex,
+  indexDirProblem,
   loadChartIndex,
   recoverChartIndex,
   saveChartIndex,
@@ -394,6 +395,11 @@ function buildPlan(
   if (dirs.length === 0) {
     const none = { indexDir, built: false, reason: `no cells in ${cfg.cellsDir ?? "cellsDir"}` };
     return { load: withNotes(none, notes) };
+  }
+  // The build would be refused only once it is done: minutes on a Pi 4.
+  const refused = indexDirProblem(indexDir);
+  if (refused !== undefined) {
+    return { load: failedLoad(indexDir, new Error(refused)) };
   }
   const build: BuildJob = { dirs, leafZoom: cfg.leafZoom, indexDir };
   return { build: box ? { ...build, box } : build, indexDir, notes };

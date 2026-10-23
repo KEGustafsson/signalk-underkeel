@@ -25,7 +25,12 @@ import type { BuildJob, BuildReply, IndexParts } from "./spatial/build-worker";
 import { adoptIndex } from "./spatial/build-worker";
 import { readsSettled } from "./spatial/block-reader";
 import type { ChartIndex } from "./spatial/chart-index";
-import { commitChartIndex, loadChartIndexAsync, removeStaging } from "./spatial/chart-index";
+import {
+  commitChartIndex,
+  indexDirProblem,
+  loadChartIndexAsync,
+  removeStaging
+} from "./spatial/chart-index";
 
 /**
  * Keeps a Traficom WFS box around the vessel (plan §4.2). When the vessel
@@ -404,6 +409,24 @@ export class WfsService {
     return this.box?.durationMs ?? DEFAULT_REFRESH_MS;
   }
 
+  /**
+   * Whether a commit would refuse `indexDir`, so every build would end refused once done:
+   * said once, and nothing is downloaded or built until it is set right. Checked again at
+   * the retry interval.
+   */
+  private refused(now: number): boolean {
+    const problem = indexDirProblem(this.deps.indexDir);
+    if (problem === undefined) {
+      return false;
+    }
+    this.lastAttempt = now;
+    if (problem !== this.lastError) {
+      this.lastError = problem;
+      this.deps.error(`${this.label}: ${problem}`);
+    }
+    return true;
+  }
+
   /** Where the vessel will be when a refresh started now is handed over, kept inside the box. */
   private centreAhead(pos: LonLat, radiusKm: number): LonLat {
     const m = this.deps.motion();
@@ -417,7 +440,7 @@ export class WfsService {
   async check(): Promise<void> {
     const pos = this.deps.position();
     const now = this.deps.clock.now();
-    if (!pos || !this.due(pos, now)) {
+    if (!pos || !this.due(pos, now) || this.refused(now)) {
       return;
     }
     this.busy = true;

@@ -476,6 +476,30 @@ describe("box service and the index in use", () => {
     expect(h.built).toEqual([[ENC]]);
   });
 
+  test("an indexDir a commit would refuse is reported once and nothing is built for it", async () => {
+    const indexDir = path.join(TMP, "index");
+    fs.mkdirSync(indexDir);
+    fs.writeFileSync(path.join(indexDir, "notes.txt"), "");
+    const h = harness();
+    h.t.pos = POS;
+    await h.service.check();
+    for (let i = 0; i < 3; i++) {
+      h.t.now += 300_000;
+      await h.service.check();
+    }
+    expect(h.fetched).toEqual([]);
+    expect(h.built).toEqual([]);
+    expect(h.errors).toEqual([
+      expect.stringMatching(/^Traficom WFS depths: indexDir .* notes\.txt/)
+    ]);
+    expect(h.service.status().lastError).toMatch(/holds notes\.txt/);
+    // Set right, the box is built at the next retry.
+    fs.rmSync(path.join(indexDir, "notes.txt"));
+    h.t.now += 300_000;
+    await h.service.check();
+    expect(h.indexes).toHaveLength(1);
+  });
+
   test("a check that throws is reported, never left an unhandled rejection", async () => {
     const h = harness(okReply, {
       position: () => {

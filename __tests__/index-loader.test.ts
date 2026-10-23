@@ -101,6 +101,19 @@ describe("cell directories", () => {
     expect(r.reason).toMatch(/not found.*saved index/);
   });
 
+  test("an indexDir a save would refuse fails the start before the build, naming it", () => {
+    copyCell("FI4SYNTH");
+    // The charts' parent: it holds the cells and the plugin's data.
+    const p = planIndex(parseConfig({ cellsDir, indexDir: tmp, boxRadiusKm: 0 }), dataDir);
+    expect(p).toEqual({
+      load: {
+        indexDir: tmp,
+        built: false,
+        reason: expect.stringMatching(/^chart index failed: indexDir .* holds (cells|data), /)
+      }
+    });
+  });
+
   test("an empty cells directory, as an unmounted drive leaves it, keeps the saved index", async () => {
     copyCell("FI4SYNTH");
     await load();
