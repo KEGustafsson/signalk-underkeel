@@ -1,4 +1,6 @@
+import { Readable } from "stream";
 import { gunzipSync } from "zlib";
+import type { Request, RequestHandler, Response } from "express";
 import type { ApiProvider } from "../../src/api/routes";
 import { registerRoutes } from "../../src/api/routes";
 import { fakeRouter } from "../helpers/plugin-harness";
@@ -57,6 +59,39 @@ describe("acknowledgement content type", () => {
       expect(bodies).toEqual([{ ttl: 600 }]);
     }
   );
+
+  test("a +json body the server's parser left as {} is read from the stream, ttl and all", async () => {
+    // Signal K's express.json() parses only application/json: for application/geo+json it
+    // sets `req.body = {}` and leaves the stream unread. Taking that `{}` would store a
+    // default acknowledgement that never expires.
+    const bodies: unknown[] = [];
+    const api = {
+      addAck: (body: unknown) => {
+        bodies.push(body);
+        return { status: 201, body: { id: "a" } };
+      }
+    } as unknown as ApiProvider;
+    let handler: RequestHandler | undefined;
+    const add = (p: string, h: RequestHandler) => {
+      if (p === "/v1/acks") {
+        handler = h;
+      }
+    };
+    registerRoutes({ get: add, post: add, delete: add }, api);
+    const req = Object.assign(Readable.from([Buffer.from('{"ttl":600}')]), {
+      body: {},
+      headers: { "content-type": "application/geo+json" }
+    });
+    const code = await new Promise<number>((resolve) => {
+      const res = {
+        status: (c: number) => ({ json: () => resolve(c), end: () => resolve(c) }),
+        setHeader: () => undefined
+      };
+      handler?.(req as unknown as Request, res as unknown as Response, () => undefined);
+    });
+    expect(code).toBe(201);
+    expect(bodies).toEqual([{ ttl: 600 }]);
+  });
 });
 
 describe("server error reasons on the wire", () => {
