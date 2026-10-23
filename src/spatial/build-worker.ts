@@ -1,3 +1,4 @@
+import fs from "fs";
 import os from "os";
 import { parentPort, Worker, workerData } from "worker_threads";
 import type { CellCatalogue, CellInfo } from "../ingest/cells";
@@ -356,9 +357,15 @@ export function regionPool(
 
 function stage(job: BuildJob, index: BuiltIndex): { staging: string; index: IndexParts } {
   const staging = stageChartIndex(job.indexDir, index);
-  writeReach(staging, index.reaches);
-  if (job.box) {
-    writeBox(staging, { ...job.box, leafZoom: job.leafZoom });
+  try {
+    writeReach(staging, index.reaches);
+    if (job.box) {
+      writeBox(staging, { ...job.box, leafZoom: job.leafZoom });
+    }
+  } catch (err) {
+    // The reply carries no staging path to clean up, so a full card would leave a whole copy.
+    fs.rmSync(staging, { recursive: true, force: true });
+    throw err;
   }
   return { staging, index: indexParts(index) };
 }
