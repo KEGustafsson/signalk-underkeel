@@ -147,10 +147,17 @@ const PRIMITIVES = new Set(["Edge", "ConnectedNode", "IsolatedNode"]);
  */
 export type EncLayers = Record<string, Uint8Array>;
 
+/**
+ * The cell's file stamp, kept with its layers. It is taken before GDAL opens
+ * the cell, so an update added during the read leaves a stamp that differs.
+ */
+const STAMP_LAYER = "_files";
+
+const text = (bytes: Uint8Array): string =>
+  Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("utf8");
+
 const parse = (bytes: Uint8Array): GeoJsonFeatureCollection =>
-  JSON.parse(
-    Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("utf8")
-  ) as GeoJsonFeatureCollection;
+  JSON.parse(text(bytes)) as GeoJsonFeatureCollection;
 
 function shared(parts: Map<string, Uint8Array>): EncLayers {
   let size = 0;
@@ -171,6 +178,7 @@ function shared(parts: Map<string, Uint8Array>): EncLayers {
 export async function readEncLayers(file: string): Promise<EncLayers> {
   const g = await gdalJs();
   const read = await serial(async () => {
+    const stamp = encStamp(file);
     // Update files beside the base cell are found and applied by the driver (UPDATES=APPLY).
     // gdal3.js mounts the cell's folder, and Emscripten's NODEFS cannot mount a symlink.
     const { datasets, errors } = await g.open(fs.realpathSync(file)).catch((err: unknown) => {
@@ -192,6 +200,7 @@ export async function readEncLayers(file: string): Promise<EncLayers> {
           out.set(layer, bytes);
         }
       }
+      out.set(STAMP_LAYER, Buffer.from(stamp));
       return out;
     } finally {
       await g.close(ds);
@@ -259,10 +268,16 @@ export function encCell(
   };
   const cell = readCellLayers(byName, name, cellRef, bandOverride, file);
   const edition = cell.info.update > 0 ? baseEdition(file) : undefined;
+  const stamp = layers[STAMP_LAYER];
   return {
     ...cell,
     // Named by its file, as discovery and the saved index's check name it, whatever DSID_DSNM says.
-    info: { ...cell.info, name, edition: edition ?? cell.info.edition, files: encStamp(file) }
+    info: {
+      ...cell.info,
+      name,
+      edition: edition ?? cell.info.edition,
+      files: stamp ? text(stamp) : encStamp(file)
+    }
   };
 }
 
@@ -275,9 +290,12 @@ export async function readEncCell(
   return encCell(file, await readEncLayers(file), cellRef, bandOverride);
 }
 
-/** The base cell and its updates (`.001`, `.002`, …) beside it, in order. */
+/**
+ * The base cell and its updates (`.001`, `.002`, …) beside it, in order. A
+ * linked `.000` has its updates beside the link's target, where GDAL reads them.
+ */
 export function encFiles(file: string): string[] {
-  const dir = path.dirname(file);
+  const dir = path.dirname(fs.realpathSync(file));
   const base = path.basename(file, path.extname(file));
   const updates = fs
     .readdirSync(dir)
