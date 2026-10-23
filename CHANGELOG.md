@@ -9,7 +9,7 @@ All notable changes to signalk-underkeel are documented here.
 - S-57 ENC cells are read as delivered: **ENC cells directory** takes `.000` files with their
   `.001`, `.002` … updates, also inside an exchange set's `ENC_ROOT` folders, read in the index
   worker with gdal3.js (GDAL compiled to WebAssembly), now a runtime dependency. No export step
-  and no intermediate files; the export script and its GeoJSON directories still work. A saved
+  and no intermediate files. A saved
   index is kept while each cell's files keep their names, sizes and modification times. The
   edition comes from the base cell's DSID, since GDAL reports 0 once NOAA updates are applied.
   The 12 NOAA cells around Miami build in 19 s at leaf zoom 18 on x86.
@@ -67,6 +67,10 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Changed
 
+- `scripts/enc-to-geojson.sh` is removed and **ENC cells directory** no longer reads its GeoJSON
+  folders: it reads the original `.000` cells. A folder named like a cell without one is
+  reported as skipped. The plugin test fixtures are now S-57 cells written by
+  `fixtures/s57/generate.js`.
 - Chart position is graded (plan §4.3). A charted object beyond a footprint and its buffer
   counts with its P(UKC < 0) times Φ(−g/σP), the chance the chart is off by its distance g,
   instead of in full within 2σP. The depth reported under a footprint is the depth charted

@@ -9,12 +9,11 @@ import { POSITION_LAYER, S57_LAYERS } from "./s57-geojson";
 
 /**
  * Reads an S-57 cell straight from its `.000` and update files with GDAL
- * compiled to WebAssembly (gdal3.js): no export step, no container. Each
- * layer the reader uses is converted by ogr2ogr to GeoJSON in gdal3.js's
- * in-memory file system and goes through the same reader as an exported
- * directory, so every parsing rule is shared. The options are those of
- * `scripts/enc-to-geojson.sh`, primitives included for the cell's
- * positional quality. NOAA US5FL61M (1.5 MB, 10 000 features used) reads in
+ * compiled to WebAssembly (gdal3.js): no export step, no container, nothing
+ * written. Each layer the reader uses is converted by ogr2ogr to GeoJSON in
+ * gdal3.js's in-memory file system and parsed by the same rules as the
+ * plugin's own GeoJSON cells, primitives included for the cell's positional
+ * quality. NOAA US5FL61M (1.5 MB, 10 000 features used) reads in
  * 1.7 s at 270 MB RSS; one `ogrinfo -json -features` of every layer took
  * 4.4 s at 510 MB (x86). The WebAssembly memory is never returned to the
  * system, so run this in a worker thread that exits after the build.
@@ -173,7 +172,8 @@ export async function readEncLayers(file: string): Promise<EncLayers> {
   const g = await gdalJs();
   const read = await serial(async () => {
     // Update files beside the base cell are found and applied by the driver (UPDATES=APPLY).
-    const { datasets, errors } = await g.open(file).catch((err: unknown) => {
+    // gdal3.js mounts the cell's folder, and Emscripten's NODEFS cannot mount a symlink.
+    const { datasets, errors } = await g.open(fs.realpathSync(file)).catch((err: unknown) => {
       throw gdalError(file, err);
     });
     const ds = datasets[0];

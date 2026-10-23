@@ -516,8 +516,7 @@ compilation scale (`DSPM_CSCL`), 1 mm on the chart read as a ~95 % bound: σ = 6
 records (edges and nodes), not on the objects: the reader takes those not surveyed (QUAPOS
 other than 1 surveyed, 10 precisely known, 11 calculated) or with a POSACC from GDAL's
 primitive layers, with the connected nodes each edge ends at, since GDAL's Edge geometry holds
-only the interior vertices, and rebuilds every edge whole (`scripts/enc-to-geojson.sh` writes
-the same as `QUAPOS.geojson` for an exported directory). Shoreline on such a
+only the interior vertices, and rebuilds every edge whole. Shoreline on such a
 record keeps its survey's σP, or half the stated POSACC (§4.3). An absent QUAPOS means
 surveyed (S-52 draws such lines solid).
 

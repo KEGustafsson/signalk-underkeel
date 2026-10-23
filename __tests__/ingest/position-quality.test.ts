@@ -9,7 +9,7 @@ import { parseLayer, POSITION_LAYER, TOPOGRAPHY } from "../../src/ingest/s57-geo
 /**
  * Positional quality of the shoreline (plan §4.4): the compilation scale
  * from DSID and the spatial records whose position is not surveyed, from
- * QUAPOS.geojson as scripts/enc-to-geojson.sh exports it.
+ * QUAPOS.geojson as the gdal3.js reader builds it from the primitive layers.
  */
 
 const FIXTURES = path.resolve(__dirname, "..", "..", "fixtures", "enc");

@@ -114,8 +114,9 @@ those cells, and rebuild it when a cell was added or removed, or a cell's `.000`
 changed; `GET /status` names the cells that caused the rebuild. **Rebuild index at start**
 forces a rebuild on every start. A cell folder may be a symbolic link.
 
-Directories of GeoJSON layers written by `scripts/enc-to-geojson.sh` from an earlier version
-are still read, one directory per cell.
+Folders of GeoJSON layers exported by `scripts/enc-to-geojson.sh` for earlier versions are no
+longer read: point **ENC cells directory** at the original `.000` cells instead. Such a folder
+named like a cell is listed in `GET /status` as skipped.
 
 ## Settings
 

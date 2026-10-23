@@ -1,12 +1,10 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { readCellDirectory } from "../src/ingest/cell-reader";
 import type { FetchLike } from "../src/model/fmi";
-import { buildChartIndex, loadChartIndex, saveChartIndex } from "../src/spatial/chart-index";
 import type { IndexBuilder } from "../src/wfs-service";
 import underkeel = require("../src/index");
-import { FIXTURES } from "./helpers/fixture-index";
+import { CELLS, inlineBuilder, prepareFixtureIndex } from "./helpers/fixture-index";
 import { fakeApp, fakeClock, fakeRouter, lastValue, navDelta, T0 } from "./helpers/plugin-harness";
 
 /** One depth area over the whole test water, 10 m. */
@@ -41,16 +39,10 @@ const fetch: FetchLike = (url) => {
 };
 
 /** The worker's job, run in-process: ts-jest has no compiled worker file. */
-const build: IndexBuilder = (job) => {
-  saveChartIndex(
-    job.indexDir,
-    buildChartIndex(
-      job.dirs.map((d, i) => readCellDirectory(d, i)),
-      { leafZoom: job.leafZoom }
-    )
-  );
-  return Promise.resolve(loadChartIndex(job.indexDir));
-};
+const build: IndexBuilder = inlineBuilder;
+
+// Loads gdal3.js once: after that a fixture cell is read within one turn of the event loop.
+beforeAll(prepareFixtureIndex);
 
 const settle = () => new Promise((r) => setImmediate(r));
 
@@ -230,7 +222,7 @@ describe("plugin with the Traficom WFS source", () => {
       const status = call("/v1/status").body as { index: { cells: { name: string }[] } };
       return status.index.cells.map((c) => c.name);
     };
-    const on = { vessel: { draft: 2 }, cellsDir: FIXTURES, wfs: { enabled: true, radiusKm: 3 } };
+    const on = { vessel: { draft: 2 }, cellsDir: CELLS, wfs: { enabled: true, radiusKm: 3 } };
     const first = fakeApp(dataDir);
     const a = underkeel(first.app, clock, fetch, build);
     a.start(on, () => undefined);
@@ -242,7 +234,7 @@ describe("plugin with the Traficom WFS source", () => {
     a.stop();
     // Off: the saved index is rebuilt from the ENC cells alone; the box stays on disk.
     const off = underkeel(fakeApp(dataDir).app, clock, fetch, build);
-    off.start({ vessel: { draft: 2 }, cellsDir: FIXTURES }, () => undefined);
+    off.start({ vessel: { draft: 2 }, cellsDir: CELLS }, () => undefined);
     await settle();
     off.stop();
     const again = fakeApp(dataDir);

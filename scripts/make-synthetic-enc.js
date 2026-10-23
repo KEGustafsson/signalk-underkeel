@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 "use strict";
 
-// Writes the synthetic ENC fixtures in fixtures/enc/ in the layout that
-// scripts/enc-to-geojson.sh produces from a real .000 cell (one GeoJSON
-// FeatureCollection per S-57 layer, plus DSID.geojson). Re-run after
+// Writes the synthetic ENC fixtures in fixtures/enc/ as GeoJSON layers (one
+// FeatureCollection per S-57 layer, plus DSID.geojson), the layout the cell
+// reader parses; fixtures/s57/generate.js writes them as S-57 cells. Re-run after
 // changing the scenario; the output is committed.
 //
 // Scenario (plan §7): a rock inside a swept fairway, a CATZOC C bank, a

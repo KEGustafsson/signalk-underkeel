@@ -8,8 +8,8 @@ import { encStamp, readEncCell } from "./enc-wasm";
 
 /**
  * Where a cell is read from: an S-57 base cell (`.000`, its updates beside
- * it) read with gdal3.js, or a directory of GeoJSON layers in the layout
- * `scripts/enc-to-geojson.sh` writes, as the plugin keeps the Traficom WFS cell.
+ * it) read with gdal3.js, or a directory of GeoJSON layers, as the plugin
+ * keeps the Traficom WFS cell. The cells directory holds S-57 cells only.
  */
 
 export const isEncFile = (source: string): boolean => /\.000$/i.test(source);
@@ -39,7 +39,7 @@ export function readCell(source: string, cellRef: number): Promise<ReadCell> {
 }
 
 export interface CellScan {
-  /** Cell sources in path order. */
+  /** S-57 base cells in path order. */
   sources: string[];
   /** Entries named like a cell that hold none, or a cell name met twice. */
   skipped: string[];
@@ -56,14 +56,10 @@ function isDirectory(p: string): boolean {
   }
 }
 
-/** A directory holding a cell's GeoJSON layers. */
-const isLayerDirectory = (dir: string): boolean =>
-  fs.existsSync(path.join(dir, "DSID.geojson")) || fs.existsSync(path.join(dir, "M_COVR.geojson"));
-
 /**
- * The cells under `cellsDir`: every `.000` file down to MAX_DEPTH, such as
- * an ENC_ROOT exchange set, and every directory of GeoJSON layers. A name
- * met twice keeps its first source in path order.
+ * The S-57 cells under `cellsDir`: every `.000` file down to MAX_DEPTH, such
+ * as in an ENC_ROOT exchange set. A name met twice keeps its first file in
+ * path order.
  */
 export function scanCellSources(cellsDir: string | undefined): CellScan {
   const scan: CellScan = { sources: [], skipped: [] };
@@ -90,9 +86,7 @@ export function scanCellSources(cellsDir: string | undefined): CellScan {
       }
       const full = path.join(dir, e.name);
       const directory = e.isDirectory() || (e.isSymbolicLink() && isDirectory(full));
-      if (directory && isLayerDirectory(full)) {
-        add(full);
-      } else if (directory) {
+      if (directory) {
         const before = scan.sources.length;
         if (depth < MAX_DEPTH) {
           walk(full, depth + 1);

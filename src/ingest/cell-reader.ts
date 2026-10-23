@@ -8,11 +8,12 @@ import { parseLayer, POSITION_LAYER, S57_LAYERS } from "./s57-geojson";
 import { WFS_SOURCE } from "./wfs";
 
 /**
- * Reads one exported ENC cell: a directory holding `<LAYER>.geojson` files
+ * Reads one cell from its GeoJSON layers: a directory holding `<LAYER>.geojson` files
  * plus `DSID.geojson` (the dataset identification record) and the datum
  * areas `M_SDAT.geojson` / `M_VDAT.geojson` for provenance, and
  * `QUAPOS.geojson`, the spatial records whose position is not surveyed.
- * `scripts/enc-to-geojson.sh` produces this layout from a `.000` file.
+ * The gdal3.js reader yields the same layers from a `.000` cell; the plugin
+ * keeps the Traficom WFS cell in this layout.
  */
 
 export interface ReadCell {

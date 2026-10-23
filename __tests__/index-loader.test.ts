@@ -6,7 +6,8 @@ import { cellSources, loadOrBuildIndex, planIndex } from "../src/index-loader";
 import { loadChartIndex, loadChartIndexAsync } from "../src/spatial/chart-index";
 import { gunzipSync } from "zlib";
 
-const FIXTURES = path.resolve(__dirname, "..", "fixtures", "enc");
+/** The synthetic scenario as S-57 cells (fixtures/s57/generate.js). */
+const CELLS = path.resolve(__dirname, "..", "fixtures", "s57", "synth");
 
 let tmp: string;
 let cellsDir: string;
@@ -24,8 +25,13 @@ afterEach(() => {
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
-const copyCell = (name: string): void =>
-  fs.cpSync(path.join(FIXTURES, name), path.join(cellsDir, name), { recursive: true });
+/** `<dir>/<name>/<name>.000`, as in an exchange set; `dir` defaults to the cells directory. */
+const copyCell = (name: string, dir = cellsDir): string => {
+  const folder = path.join(dir, name);
+  fs.mkdirSync(folder, { recursive: true });
+  fs.copyFileSync(path.join(CELLS, `${name}.000`), path.join(folder, `${name}.000`));
+  return folder;
+};
 
 const names = (r: Awaited<ReturnType<typeof loadOrBuildIndex>>): string[] =>
   r.index?.catalogue.cells.map((c) => c.name) ?? [];
@@ -37,10 +43,13 @@ const load = (extra: Record<string, unknown> = {}) =>
 const linkDir = (target: string, link: string) => fs.symlinkSync(target, link, "junction");
 
 describe("cell directories", () => {
-  test("a symlink to a cell directory is indexed like the directory itself", async () => {
-    linkDir(path.join(FIXTURES, "FI4SYNTH"), path.join(cellsDir, "FI4SYNTH"));
+  test("a symlink to a cell's folder is indexed like the folder itself", async () => {
+    linkDir(copyCell("FI4SYNTH", path.join(tmp, "elsewhere")), path.join(cellsDir, "FI4SYNTH"));
     copyCell("FI5SYNTH");
-    expect(cellSources(cellsDir).map((d) => path.basename(d))).toEqual(["FI4SYNTH", "FI5SYNTH"]);
+    expect(cellSources(cellsDir).map((d) => path.basename(d))).toEqual([
+      "FI4SYNTH.000",
+      "FI5SYNTH.000"
+    ]);
     const r = await load();
     expect(names(r)).toEqual(["FI4SYNTH", "FI5SYNTH"]);
     expect(r.reason).toBeUndefined();
@@ -146,32 +155,14 @@ describe("saved index against the cells directory", () => {
     expect(r.reason).toMatch(/removed FI5SYNTH/);
   });
 
-  test("a new edition or update of a cell rebuilds the index", async () => {
-    copyCell("FI5SYNTH");
-    expect((await load()).index?.catalogue.cells[0]?.update).toBe(1);
-    const dsid = path.join(cellsDir, "FI5SYNTH", "DSID.geojson");
-    fs.writeFileSync(
-      dsid,
-      fs.readFileSync(dsid, "utf8").replace('"DSID_UPDN": "1"', '"DSID_UPDN": "2"')
-    );
+  test("a cell file replaced by a new edition or update rebuilds the index", async () => {
+    const folder = copyCell("FI5SYNTH");
+    expect((await load()).index?.catalogue.cells[0]).toMatchObject({ edition: 3, update: 1 });
+    const t = new Date(Date.now() + 60_000);
+    fs.utimesSync(path.join(folder, "FI5SYNTH.000"), t, t);
     const r = await load();
     expect(r.built).toBe(true);
-    expect(r.index?.catalogue.cells[0]?.update).toBe(2);
-    expect(r.reason).toMatch(/FI5SYNTH edition 3 update 2/);
-  });
-
-  test("datum areas exported after the index was saved rebuild it", async () => {
-    copyCell("FI5SYNTH");
-    await load();
-    const area = { type: "Feature", geometry: null, properties: { VERDAT: 24 } };
-    fs.writeFileSync(
-      path.join(cellsDir, "FI5SYNTH", "M_SDAT.geojson"),
-      JSON.stringify({ type: "FeatureCollection", features: [area] })
-    );
-    const r = await load();
-    expect(r.built).toBe(true);
-    expect(r.index?.catalogue.cells[0]?.datumAreas).toEqual([24]);
-    expect(r.reason).toMatch(/FI5SYNTH edition 3 update 1 datum areas 24/);
+    expect(r.reason).toMatch(/rebuilt the index: cells in .* changed .*added FI5SYNTH files/);
   });
 
   test("Rebuild index at start still rebuilds an unchanged directory", async () => {
@@ -268,7 +259,7 @@ describe("a saved index too large to load on the event loop", () => {
     const err = await loadChartIndexAsync(p.read).catch((e: unknown) => e as Error);
     expect(err).toBeInstanceOf(Error);
     expect(p.unreadable(err)).toMatchObject({
-      build: { dirs: [path.join(cellsDir, "FI4SYNTH")] },
+      build: { dirs: [path.join(cellsDir, "FI4SYNTH", "FI4SYNTH.000")] },
       notes: [expect.stringMatching(/could not be read \(pyramid file is truncated\)/)]
     });
     const none = planIndex(parseConfig({ leafZoom: 16 }), dataDir, [], 0);

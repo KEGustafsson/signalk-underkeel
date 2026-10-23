@@ -19,20 +19,6 @@ describe("published package", () => {
     ) as Packed[]
   )[0]?.files;
 
-  const script = packed?.find((f) => f.path === "scripts/enc-to-geojson.sh");
-
-  test("ships the cell export script the README tells users to run", () => {
-    expect(script).toBeDefined();
-  });
-
-  // Windows has no execute bit: npm packs every file there as 0644.
-  (process.platform === "win32" ? test.skip : test)(
-    "packs the cell export script executable",
-    () => {
-      expect((script?.mode ?? 0) & 0o111).not.toBe(0);
-    }
-  );
-
   // The App Store loads screenshots and README images from the published tarball.
   test("ships every App Store screenshot and README image", () => {
     const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")) as {
@@ -49,8 +35,7 @@ describe("published package", () => {
     }
   });
 
-  test("ships no other repository script", () => {
-    const scripts = packed?.filter((f) => f.path.startsWith("scripts/")).map((f) => f.path);
-    expect(scripts).toEqual(["scripts/enc-to-geojson.sh"]);
+  test("ships no repository script: the cells are read as delivered", () => {
+    expect(packed?.filter((f) => f.path.startsWith("scripts/"))).toEqual([]);
   });
 });

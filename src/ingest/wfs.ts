@@ -12,7 +12,7 @@ export { WFS_LIMITS } from "./wfs-fetch";
 /**
  * Optional depth source: the Traficom INSPIRE WFS (`DepthArea_A`,
  * `DredgedArea_A`, `Sounding_P`) for a box around the vessel, written as a cell directory
- * in the layout `scripts/enc-to-geojson.sh` produces. The data is licensed
+ * in the GeoJSON layer layout the cell reader parses. The data is licensed
  * for non-navigational use only and has no land, rocks, wrecks or survey
  * quality, so the cell is marked with `UK_SOURCE` and the index treats it
  * as advisory: water without a depth area is land, and nothing it covers

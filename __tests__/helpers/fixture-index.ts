@@ -1,11 +1,15 @@
 import path from "path";
 import { cellSources } from "../../src/index-loader";
 import { readCellDirectory } from "../../src/ingest/cell-reader";
+import { readCell } from "../../src/ingest/cell-source";
 import type { ChartIndex } from "../../src/spatial/chart-index";
 import { buildChartIndex, loadChartIndex, saveChartIndex } from "../../src/spatial/chart-index";
 import type { IndexBuilder } from "../../src/wfs-service";
 
+/** The scenario as GeoJSON layer directories, read with the internal reader. */
 export const FIXTURES = path.resolve(__dirname, "..", "..", "fixtures", "enc");
+/** The same scenario as S-57 cells (fixtures/s57/generate.js), for `cellsDir`. */
+export const CELLS = path.resolve(__dirname, "..", "..", "fixtures", "s57", "synth");
 
 let cached: ChartIndex | undefined;
 
@@ -29,28 +33,38 @@ export const FAIRWAY_LAT = 60.01;
 /** Metres per degree of longitude at the fixture latitude. */
 export const M_PER_DEG_LON = 111320 * Math.cos((60.01 * Math.PI) / 180);
 
+/** The cells of `sources`, read in order. */
+async function readAll(sources: readonly string[]) {
+  const cells = [];
+  for (const [i, d] of sources.entries()) {
+    cells.push(await readCell(d, i));
+  }
+  return cells;
+}
+
 /** The build worker's job run in-process: ts-jest has no compiled worker file. */
-export const inlineBuilder: IndexBuilder = (job) => {
+export const inlineBuilder: IndexBuilder = async (job) => {
   saveChartIndex(
     job.indexDir,
-    buildChartIndex(
-      job.dirs.map((d, i) => readCellDirectory(d, i)),
-      { leafZoom: job.leafZoom }
-    )
+    buildChartIndex(await readAll(job.dirs), { leafZoom: job.leafZoom })
   );
-  return Promise.resolve(loadChartIndex(job.indexDir));
+  return loadChartIndex(job.indexDir);
 };
 
 let seeded: ChartIndex | undefined;
 
+/** Builds the index `seedFixtureIndex` saves; call it from beforeAll. */
+export async function prepareFixtureIndex(): Promise<void> {
+  seeded ??= buildChartIndex(await readAll(cellSources(CELLS)), { leafZoom: 18 });
+}
+
 /**
- * Saves the index start() would build from `cellsDir: FIXTURES` at leafZoom 18
+ * Saves the index start() would build from `cellsDir: CELLS` at leafZoom 18
  * into `<dataDir>/index`, so start() loads it instead of building one.
  */
 export function seedFixtureIndex(dataDir: string): void {
-  seeded ??= buildChartIndex(
-    cellSources(FIXTURES).map((d, i) => readCellDirectory(d, i)),
-    { leafZoom: 18 }
-  );
+  if (!seeded) {
+    throw new Error("call prepareFixtureIndex() in beforeAll first");
+  }
   saveChartIndex(path.join(dataDir, "index"), seeded);
 }

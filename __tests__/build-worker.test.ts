@@ -6,7 +6,7 @@ import { readCellDirectory } from "../src/ingest/cell-reader";
 import { buildChartIndex, commitChartIndex, loadChartIndex } from "../src/spatial/chart-index";
 import type { IndexBuilder } from "../src/wfs-service";
 import underkeel = require("../src/index");
-import { FIXTURES } from "./helpers/fixture-index";
+import { CELLS, FIXTURES } from "./helpers/fixture-index";
 import { fakeApp, fakeClock, T0 } from "./helpers/plugin-harness";
 import { spreadCells } from "./helpers/shifted-cells";
 
@@ -138,7 +138,7 @@ describe("workerBuilder (compiled lib/)", () => {
     const dataDir = path.join(dir, "data");
     fs.mkdirSync(dataDir);
     const plugin = underkeel(fakeApp(dataDir).app, fakeClock(T0), globalThis.fetch, build);
-    plugin.start({ cellsDir: FIXTURES, leafZoom: 18 }, () => undefined);
+    plugin.start({ cellsDir: CELLS, leafZoom: 18 }, () => undefined);
     await new Promise((resolve) => setImmediate(resolve));
     plugin.stop();
     // A build with an aborted signal settles only once every aborted worker has exited.
