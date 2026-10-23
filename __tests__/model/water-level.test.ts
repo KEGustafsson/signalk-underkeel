@@ -167,6 +167,22 @@ describe("water-level resolution", () => {
     const past = lowestWaterLevel(seriesProvider(NOW), n2000, undefined, NOW, NOW + 50 * HOUR, NOW);
     expect(past.degraded).toBeDefined();
   });
+
+  test("a fallback inside an interval keeps the lower level found before it", () => {
+    // The forecast reaches -4.2 m at 48 h and ends; the fallback is chart datum.
+    const wl = lowestWaterLevel(
+      seriesProvider(NOW),
+      n2000,
+      undefined,
+      NOW + 40 * HOUR,
+      NOW + 50 * HOUR,
+      NOW
+    );
+    expect(wl.h).toBeCloseTo(-4.2, 9);
+    expect(wl.sigma).toBe(CHART_DATUM_SIGMA);
+    expect(wl.source).toBe("fallback");
+    expect(wl.degraded).toMatch(/no n2000 value/);
+  });
 });
 
 describe("Signal K tide provider", () => {

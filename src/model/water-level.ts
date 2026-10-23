@@ -222,7 +222,23 @@ export function resolveWaterLevel(
   return typeof wl === "string" ? fallback(wl, lastLevel(p, uses, now)) : wl;
 }
 
-/** The lowest level, with the widest σ, over [start, end]; any fallback wins. */
+/**
+ * The lower of two levels with the wider σ. A fallback's reason and source
+ * win, but not its height: a lower level already found still applies, since
+ * the fallback can sit well above what the source forecast.
+ */
+export function lowerLevel(a: WaterLevel | undefined, b: WaterLevel): WaterLevel {
+  if (!a) {
+    return b;
+  }
+  const base = a.degraded === undefined && b.degraded !== undefined ? b : a;
+  return { ...base, h: Math.min(a.h, b.h), sigma: Math.max(a.sigma, b.sigma) };
+}
+
+/**
+ * The lowest level, with the widest σ, over [start, end]. Any fallback makes
+ * the result degraded, at no more water than the lowest level found.
+ */
 export function lowestWaterLevel(
   p: WaterLevelProvider | undefined,
   uses: readonly DatumUse[],
@@ -238,11 +254,7 @@ export function lowestWaterLevel(
   }
   let out: WaterLevel | undefined;
   for (const t of times.sort((a, b) => a - b)) {
-    const wl = resolveWaterLevel(p, uses, position, t, now);
-    if (wl.degraded !== undefined) {
-      return wl;
-    }
-    out = out ? { ...out, h: Math.min(out.h, wl.h), sigma: Math.max(out.sigma, wl.sigma) } : wl;
+    out = lowerLevel(out, resolveWaterLevel(p, uses, position, t, now));
   }
   return out as WaterLevel;
 }
