@@ -107,13 +107,15 @@ describe("envelope", () => {
   });
 
   test("a 400-footprint horizon keeps the budget and its outline holds every footprint", () => {
+    // At 7 m/s a 5 NM horizon takes the whole budget: (12 + 20) / 7 = 4.6 s still touch, so
+    // past the warn window the footprints spread to 3.35 s rather than every 3 s step.
     const opts = { ...DEFAULT_LOOKAHEAD, distance: 5 * 1852, minHorizon: 600 };
     for (const rot of [0, 0.004]) {
       const r = evaluateLookahead(
         {
           position: { value: [22.003, 60.0125], at: NOW },
           cog: { value: Math.PI / 2, at: NOW },
-          sog: { value: 0.3, at: NOW },
+          sog: { value: 7, at: NOW },
           rot: { value: rot, at: NOW }
         },
         ctx({ draft: 3.2, length: 12, beam: 4 }),

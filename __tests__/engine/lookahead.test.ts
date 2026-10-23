@@ -341,6 +341,31 @@ describe("probabilistic look-ahead on the synthetic chart", () => {
     expect(cut.horizon).toBeLessThan((5 * 1852) / 0.3);
   });
 
+  test("a long look-ahead keeps the plan step inside the alarm and warn windows", () => {
+    const rock: ChartIndex = {
+      catalogue: { version: 1, cells: [] },
+      pyramid: buildPyramid([...basin([22.0, 60.0, 22.04, 60.02], 10), point(22.02, 60.01, 1)], {
+        minZoom: 12,
+        leafZoom: 18
+      }),
+      hazards: new HazardIndex([])
+    };
+    const opts = { ...DEFAULT_LOOKAHEAD, distance: 5 * 1852 };
+    // 70 m short of the rock at 0.3 m/s: alarm within 60 s. A 5 NM horizon in 400 equal steps
+    // scored 0 s and then 77 s, and read it as a warn 77 s ahead.
+    const r = evaluateLookahead(
+      nav(22.02 - 70 / M_PER_DEG_LON, 60.01, EAST, 0.3),
+      ctx(DEEP_KEEL),
+      rock,
+      NOW,
+      opts
+    );
+    const within = r.footprints.filter((f) => f.t <= opts.warnWithin).map((f) => f.t);
+    expect(within).toEqual(Array.from({ length: 41 }, (_, i) => i * opts.step));
+    expect(r.state).toBe("alarm");
+    expect(r.timeToShoal as number).toBeLessThan(opts.alarmWithin);
+  });
+
   test("squat uses the faster of SOG and STW, even with COG stale", () => {
     const squatOf = (n: NavState) =>
       evaluateLookahead(n, ctx(DEEP_KEEL), index, NOW).worst?.explanation.squat;
