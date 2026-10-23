@@ -32,6 +32,8 @@ export interface LayerContext {
   advisory?: boolean;
   /** 1σ position of the cell's land and shoreline objects, metres (`DepthFeature.topoSigma`). */
   topoSigma?: number;
+  /** The cell's compilation scale denominator (`FeatureBase.scale`). */
+  scale?: number;
 }
 
 /**
@@ -254,9 +256,7 @@ function featureFor(
   part: Part,
   ctx: LayerContext
 ): ChartFeature | undefined {
-  // Only land and shoreline objects take the cell's topographic σ (`placed`).
-  const { topoSigma, ...where } = ctx;
-  const base = { objectClass: layer, geom: part.geom, ...where, lnam: str(props, "LNAM") };
+  const base = { objectClass: layer, geom: part.geom, ...whereOf(ctx), lnam: str(props, "LNAM") };
   const isArea = part.geom.type === "polygon";
   switch (layer) {
     case "M_COVR":
@@ -284,13 +284,20 @@ function featureFor(
     default:
       break;
   }
-  return placed(topoSigma, {
+  return placed(ctx.topoSigma, {
     ...base,
     role: "depth",
     depth: depthOf(layer, props, part),
     hazard: !isArea,
     dredged: layer === "DRGARE"
   });
+}
+
+/** The context every feature of a layer carries: only land objects take the topographic σ (`placed`). */
+function whereOf(ctx: LayerContext): Omit<LayerContext, "topoSigma"> {
+  const where: LayerContext = { ...ctx };
+  delete where.topoSigma;
+  return where;
 }
 
 /** A land or shoreline object with the cell's own position σ, when the export states it. */
@@ -334,7 +341,7 @@ function parsePositions(collection: GeoJsonFeatureCollection, ctx: LayerContext)
       nodes.set(rcid, f.geometry.coordinates);
     }
   }
-  const where = { cellRef: ctx.cellRef, band: ctx.band, advisory: ctx.advisory };
+  const where = whereOf(ctx);
   const out: ChartFeature[] = [];
   collection.features.forEach((f, i) => {
     const props = f.properties ?? {};

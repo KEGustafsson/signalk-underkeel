@@ -24,6 +24,7 @@ import {
   polygonsRectRelation
 } from "./polygon-index";
 import { REACH_SLACK } from "./pyramid";
+import { chartPosition, NO_POSITION } from "./build-position";
 import { sigmaFor, SWEPT_SIGMA_D } from "./quality";
 import { bodyColumns } from "./store";
 
@@ -115,6 +116,22 @@ interface Analysis {
   /** Catalogue index of the covering cell when it is advisory (Traficom WFS). */
   advisoryCell: number | undefined;
   needsSplit: boolean;
+  /** The deepest zoom a feature here is drawn finely enough for (`splitZoom`). */
+  finest: number;
+}
+
+/** Ground metres around the equator: a tile of zoom z is this / 2^z across, or less. */
+const EQUATOR = 40_075_016.686;
+
+/**
+ * The zoom past which splitting tiles for feature `f` resolves nothing its
+ * chart draws: its tiles are then no wider than 1 mm at its compilation
+ * scale, its plotting accuracy (plan §4.3). A feature with no stated scale
+ * (Traficom WFS, synthetic data) splits to the leaf zoom. A tile that stops
+ * here takes the shallowest depth of all it holds, so it is never deeper.
+ */
+export function splitZoom(f: ChartFeature): number {
+  return f.scale === undefined ? Infinity : Math.ceil(Math.log2(EQUATOR / (f.scale * 0.001)));
 }
 
 function minFullDepth(hits: Hit[]): number {
@@ -186,7 +203,16 @@ function analyse(all: Hit[], rect: Rect, tileGround: number): Analysis {
     bandFull === undefined || coverageEdge || depthEdge || areaEdge || qualityEdge(hits);
   const advisoryCell = coverage.find((h) => h.item.f.band === bandFull && h.item.f.advisory)?.item.f
     .cellRef;
-  return { hits, bandFull, shallowest, coverageEdge, advisoryCell, needsSplit };
+  let finest = -Infinity;
+  for (const h of hits) {
+    finest = Math.max(finest, splitZoom(h.item.f));
+  }
+  for (const h of coverage) {
+    if (h.item.f.band >= floor) {
+      finest = Math.max(finest, splitZoom(h.item.f));
+    }
+  }
+  return { hits, bandFull, shallowest, coverageEdge, advisoryCell, needsSplit, finest };
 }
 
 /**
@@ -326,70 +352,11 @@ function uniformValues(a: Analysis, rect: Rect, opts: BuildOptions): NodeValues 
   };
 }
 
-/**
- * Chart position σP of a leaf: the widest of the assessed, non-advisory
- * quality zones reaching it, however much of it they cover.
- */
-function surveySigma(hits: Hit[], opts: BuildOptions): number {
-  let sigmaP = 0;
-  for (const h of hits) {
-    const f = h.item.f;
-    if (f.role === "quality" && f.catzoc !== 6 && !f.advisory) {
-      sigmaP = Math.max(sigmaP, sigmaFor(f.catzoc, 0, f, opts.quality).sigmaP);
-    }
-  }
-  return sigmaP;
-}
-
-/**
- * What a leaf spreads by its chart position (plan §4.3). Land and shoreline
- * objects with a σ of their own (`DepthFeature.topoSigma`) are left out of
- * the depth the survey places and spread by that σ instead, widened to the
- * survey's σ (or the unassessed one) where a record under them is not
- * surveyed, and to half a stated POSACC.
- */
-function chartPosition(hits: Hit[], v: NodeValues, opts: BuildOptions): ChartPosition {
-  const surveySigmaP = surveySigma(hits, opts);
-  if (v.flags & FLAGS.NO_DEPTH) {
-    return { surveySigmaP, topoSigmaP: 0, bathyDMin: Infinity };
-  }
-  let topo = 0;
-  let bathy = Infinity;
-  for (const h of hits) {
-    const f = h.item.f;
-    const d = depthOf(f);
-    if (f.role === "depth" && f.topoSigma !== undefined) {
-      topo = Math.max(topo, f.topoSigma);
-    } else if (d !== undefined) {
-      bathy = Math.min(bathy, d);
-    }
-  }
-  if (topo === 0) {
-    return { surveySigmaP, topoSigmaP: 0, bathyDMin: v.dMin };
-  }
-  const unsurveyed =
-    surveySigmaP > 0 ? surveySigmaP : sigmaFor(undefined, 0, {}, opts.quality).sigmaP;
-  for (const h of hits) {
-    const f = h.item.f;
-    if (f.role === "position") {
-      if (f.posacc !== undefined) {
-        topo = Math.max(topo, f.posacc / 2);
-      }
-      if (f.lowAccuracy) {
-        topo = Math.max(topo, unsurveyed);
-      }
-    }
-  }
-  return { surveySigmaP, topoSigmaP: topo, bathyDMin: bathy };
-}
-
 interface Evaluated {
   v: NodeValues;
   /** The node's chart position: widest σ and shallowest survey depth under it. */
   position: ChartPosition;
 }
-
-const NO_POSITION: ChartPosition = { surveySigmaP: 0, topoSigmaP: 0, bathyDMin: Infinity };
 
 function evaluate(
   store: NodeStore,
@@ -400,14 +367,15 @@ function evaluate(
   items: Item[]
 ): Evaluated {
   const rect = tileRect(z, x, y);
-  const all = classify(items, rect);
+  const outside = opts.within !== undefined && !rectsOverlap(rect, opts.within);
+  const all = outside ? [] : classify(items, rect);
   if (!all.some((h) => h.item.f.role === "coverage")) {
     store.add(z, x, y, NO_DATA, false, NO_POSITION);
     return { v: NO_DATA, position: NO_POSITION };
   }
   const tileGround = (rect.maxX - rect.minX) / groundToMercator(1, maxAbsLat(rect));
   const a = analyse(all, rect, tileGround);
-  if (!a.needsSplit || z === opts.leafZoom) {
+  if (!a.needsSplit || z >= Math.min(opts.leafZoom, a.finest)) {
     const v = uniformValues(a, rect, opts);
     const position = chartPosition(a.hits, v, opts);
     store.add(z, x, y, v, false, position);

@@ -306,6 +306,55 @@ function visitBeyond(w: Walk, i: number, ground: number, z: number, x: number, y
 }
 
 /**
+ * A tile not known to lie within the buffer: false when it lies beyond it
+ * and has been counted there (or out of reach), true when it lies within.
+ * Beyond the buffer the distance is ground metres past it at the reach's
+ * poleward edge: never more than the true distance, so the weight is never
+ * less (invariant 2).
+ */
+function takeOutside(w: Walk, i: number, rect: Rect, z: number, x: number, y: number): boolean {
+  const gap = rectGap(w.bounds, rect);
+  const reach = reachOf(w, i);
+  if (gap > reach || negligible(w, i, gap)) {
+    return false;
+  }
+  const d = distanceTo(w, rect, reach);
+  if (d <= w.buffer) {
+    return true;
+  }
+  if (d <= reach) {
+    w.visits++;
+    visitBeyond(w, i, (d - w.buffer) / w.perMetre, z, x, y);
+  }
+  return false;
+}
+
+/**
+ * Whether node i can be left out without measuring its distance: the gap to
+ * the footprint's bounds is no more than the distance, and a nearer tile
+ * only weighs more, so if even at that gap its flags lie out of reach and
+ * its risk bound cannot raise the footprint's P (past RISK_STOP_BELOW), the
+ * exact distance would leave it out too.
+ */
+function negligible(w: Walk, i: number, gap: number): boolean {
+  if (!w.graded || i < 0) {
+    return false;
+  }
+  if (gap <= w.buffer) {
+    return false;
+  }
+  const ground = (gap - w.buffer) / w.perMetre;
+  if (ground <= flagReach(w.store.surveySigma(i))) {
+    return false;
+  }
+  if (!w.risk) {
+    return true;
+  }
+  const bound = reachRisk(w, i, w.store.values(i), ground, w.store.isSplit(i))?.risk ?? 0;
+  return bound <= Math.max(w.maxRisk, RISK_STOP_BELOW);
+}
+
+/**
  * `inside`: the tile lies wholly within `w.buffer`, the least reach any
  * node gets, of the footprint, so it and every tile under it are in reach
  * without testing.
@@ -317,19 +366,8 @@ function visit(w: Walk, z: number, x: number, y: number, inside: boolean): void 
   // Read before the children are visited, which overwrite it.
   const rect = tileRectInto(z, x, y, w.rect);
   const i = w.store.find(z, x, y);
-  if (!inside) {
-    const reach = reachOf(w, i);
-    const d = distanceTo(w, rect, reach);
-    if (d > reach) {
-      return;
-    }
-    if (d > w.buffer) {
-      w.visits++;
-      // Ground metres past the buffer, at the reach's poleward edge: never
-      // more than the true distance, so the weight is never less (invariant 2).
-      visitBeyond(w, i, (d - w.buffer) / w.perMetre, z, x, y);
-      return;
-    }
+  if (!inside && !takeOutside(w, i, rect, z, x, y)) {
+    return;
   }
   w.visits++;
   if (i < 0) {

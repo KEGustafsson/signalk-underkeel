@@ -162,6 +162,8 @@ interface Analysis {
   /** Catalogue index of the covering cell when it is advisory (Traficom WFS). */
   advisoryCell: number | undefined;
   needsSplit: boolean;
+  /** The deepest zoom any feature here is drawn finely enough for. */
+  finest: number;
 }
 
 function minFullDepth(hits: Hit[]): number {
@@ -233,7 +235,15 @@ function analyse(all: Hit[], rect: Rect, tileGround: number): Analysis {
     bandFull === undefined || coverageEdge || depthEdge || areaEdge || qualityEdge(hits);
   const advisoryCell = coverage.find((h) => h.item.f.band === bandFull && h.item.f.advisory)?.item.f
     .cellRef;
-  return { hits, bandFull, shallowest, coverageEdge, advisoryCell, needsSplit };
+  // A tile no wider than 1 mm at the finest compilation scale here resolves all it draws.
+  const zoomOf = (f: ChartFeature) =>
+    f.scale === undefined ? Infinity : Math.ceil(Math.log2(40_075_016.686 / (f.scale * 0.001)));
+  const finest = Math.max(
+    -Infinity,
+    ...hits.map((h) => zoomOf(h.item.f)),
+    ...coverage.filter((h) => h.item.f.band >= floor).map((h) => zoomOf(h.item.f))
+  );
+  return { hits, bandFull, shallowest, coverageEdge, advisoryCell, needsSplit, finest };
 }
 
 /**
@@ -446,7 +456,7 @@ function evaluate(
   }
   const tileGround = (rect.maxX - rect.minX) / groundToMercator(1, maxAbsLat(rect));
   const a = analyse(all, rect, tileGround);
-  if (!a.needsSplit || z === opts.leafZoom) {
+  if (!a.needsSplit || z >= Math.min(opts.leafZoom, a.finest)) {
     const v = uniformValues(a, rect, opts);
     const position = chartPosition(a.hits, v, opts);
     store.add(z, x, y, v, false, position);

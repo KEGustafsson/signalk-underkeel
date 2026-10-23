@@ -38,12 +38,13 @@ import {
  * columns; version 5: a tile key column instead of x and y, nodes in key
  * order; version 6: resident nodes and blocks; version 7: the topographic
  * σ and survey-placed depth columns for graded chart position, points in
- * assessed water no longer burned), so an index built under
+ * assessed water no longer burned; version 8: tiles split no finer than 1 mm
+ * at their cells' compilation scale), so an index built under
  * older rules is rebuilt rather than reused.
  */
 
 const MAGIC = "underkeel-pyramid";
-export const PYRAMID_VERSION = 7;
+export const PYRAMID_VERSION = 8;
 
 export interface PyramidHeader extends BlockLayout {
   magic: string;

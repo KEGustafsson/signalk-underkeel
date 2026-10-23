@@ -19,6 +19,12 @@ interface FeatureBase {
   lnam?: string;
   /** From a source licensed for non-navigational use only (the Traficom WFS). */
   advisory?: boolean;
+  /**
+   * Compilation scale denominator of the source cell (DSPM_CSCL), when it
+   * states one: nothing it draws is placed finer than 1 mm on that chart,
+   * so the index splits tiles no finer for it (plan §4.3).
+   */
+  scale?: number;
 }
 
 /** Anything that bounds the depth from above: areas, soundings, hazards, land. */

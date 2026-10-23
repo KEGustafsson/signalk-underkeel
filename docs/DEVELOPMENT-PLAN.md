@@ -331,6 +331,17 @@ explanations and for refinement near the threshold. A burn disc more than 8 tile
 not by itself subdivide a tile: the tile takes the disc's depth over its whole area, which is
 pessimistic by at most one tile width.
 
+**Split depth by compilation scale.** Nothing a cell draws is placed finer than 1 mm at its
+compilation scale (`DSPM_CSCL`), so a tile stops splitting once it is that narrow at the
+equator (and narrower nearer the poles) for every feature and coverage it holds: z14 for a
+1:3 500 000 overview, z16 for 1:1 200 000, z19 for 1:80 000, the leaf zoom from about 1:45 000.
+A tile that stops takes the shallowest depth of all it holds, as a leaf does, so it is never
+deeper than a full-resolution build (`__tests__/spatial/scale-split.test.ts`). Without it the
+one NOAA overview cell of the Gulf of Mexico, 6 537 features, was cut along every coastline and
+contour into z20 tiles: 145 005 tiles at z14 took 55 s, 709 861 at z16 256 s, and the 25 cells
+around Miami built for over 15 minutes; with it they build in 94 s (717 465 tiles), the overview
+cell in 48 s. A source with no stated scale (the Traficom WFS cell) splits to the leaf zoom.
+
 **Build cost.** Each area polygon keeps its bounding box and, for rings of 64 or more
 vertices, a uniform grid of its edges, so a tile test reads only the edges near the tile and
 the edges that span the corner's row; one boundary pass and four corner tests decide both "the

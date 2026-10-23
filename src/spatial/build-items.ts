@@ -16,6 +16,11 @@ export interface BuildOptions {
   /** Point hazards and soundings outside assessed water are burned within k·σP of their position. */
   k: number;
   quality: QualityOptions;
+  /**
+   * Build only the tiles meeting this Mercator rectangle (a local box
+   * around the vessel); every other tile is no coverage, never water.
+   */
+  within?: Rect;
 }
 
 export const DEFAULT_BUILD: BuildOptions = {

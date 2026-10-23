@@ -75,7 +75,10 @@ All notable changes to signalk-underkeel are documented here.
   the chance it lies under the keel.
 - A look-ahead footprint scored beyond the warn window covers the hulls of the steps it skips,
   so in a turn its P is never below scoring every step.
-- Pyramid format version 7: an index built by an earlier version is rebuilt at start.
+- The index splits tiles no finer than 1 mm at each cell's compilation scale: an overview
+  cell's coastline stops at z14 instead of z20. The 25 NOAA cells around Miami build in 94 s
+  instead of over 15 minutes; a stopped tile takes the shallowest depth it holds.
+- Pyramid format version 8: an index built by an earlier version is rebuilt at start.
 - A Traficom WFS refresh builds only the z10 index roots that the old or new box reaches, or a
   cell with a new DSID, and copies the other roots from the saved index, which now keeps each
   cell's reach in `reach.json`; the result is byte-identical to a full build. With 16 copies of
