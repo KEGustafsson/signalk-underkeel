@@ -212,8 +212,14 @@ describe("escape search after the tick", () => {
     expect(r.deferred.length).toBe(0);
     expect(r.statuses.at(-1)).toMatch(/escape search skipped: a tick took \d+ ms/);
     r.lookupMs = 0;
-    r.tick(approach(37, T0 + 5000));
-    r.tick(approach(36, T0 + 6000));
+    // The skip holds until the next search is due, ESCAPE_EVERY_MS after it.
+    r.tick(approach(37, T0 + 4000));
+    expect(r.deferred.length).toBe(0);
+    expect(r.statuses.at(-1)).toMatch(/skipped/);
+    for (let s = 36; s > 30 && r.deferred.length === 0; s--) {
+      r.tick(approach(s, T0 + (41 - s) * 1000));
+    }
+    expect(r.deferred.length).toBe(1);
     expect(r.statuses.at(-1)).not.toMatch(/skipped/);
   });
 

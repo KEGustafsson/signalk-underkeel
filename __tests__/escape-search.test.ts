@@ -1,4 +1,4 @@
-import { EscapeSearch } from "../src/escape-search";
+import { ESCAPE_EVERY_MS, EscapeSearch, SLOW_TICK_MS } from "../src/escape-search";
 
 /**
  * A search queued after a tick is dropped when a later tick ends the danger
@@ -48,4 +48,30 @@ describe.each([true, false])("escape search (deferral cancels: %s)", (cancellabl
     expect(s.published).toEqual([1.5]);
     expect(s.escape.heading).toBeNull();
   });
+});
+
+test("a search that is always slow runs no more often than every ESCAPE_EVERY_MS", () => {
+  let now = 0;
+  let searches = 0;
+  const published: (number | null)[] = [];
+  const escape = new EscapeSearch(
+    { now: () => now },
+    () => {
+      searches++;
+      now += SLOW_TICK_MS + 50;
+      return 1.5;
+    },
+    (h) => published.push(h)
+  );
+  const skipped: (string | undefined)[] = [];
+  const ticks = 12;
+  for (let i = 0; i < ticks; i++) {
+    now = i * 1000;
+    escape.after("warn", 5);
+    skipped.push(escape.skipped);
+  }
+  expect(searches).toBeLessThanOrEqual(Math.ceil((ticks * 1000) / ESCAPE_EVERY_MS));
+  // The status names the skip until the next search runs, not on every other tick.
+  expect(skipped.slice(1, 4).every((s) => s !== undefined)).toBe(true);
+  expect(published.slice(0, 2)).toEqual([1.5, null]);
 });
