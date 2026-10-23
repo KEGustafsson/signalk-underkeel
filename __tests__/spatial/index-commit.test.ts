@@ -34,7 +34,7 @@ describe("an indexDir with a trailing separator", () => {
     expect(names(dir)).toEqual(["index"]);
     expect(names(target)).toEqual(["cells.json", "hazards.json", "pyramid.bin"]);
     expect(loadChartIndex(target).catalogue.cells.map((c) => c.name)).toEqual(["FI5SYNTH"]);
-    fs.renameSync(target, path.join(dir, "index.old-1-0-aa"));
+    fs.renameSync(path.join(dir, "index"), path.join(dir, "index.old-1-0-aa"));
     expect(recoverChartIndex(target)).toBe(true);
     expect(names(dir)).toEqual(["index"]);
   });
