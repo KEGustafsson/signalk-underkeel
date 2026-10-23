@@ -203,18 +203,21 @@ export class Monitor {
   /**
    * Acknowledged passages and mooring zones act on the published state,
    * after hysteresis: they change the state, not P, so hysteresis would
-   * otherwise never let an acknowledged warn go.
+   * otherwise never let an acknowledged warn go. A mooring zone needs no
+   * heading, so a boat at rest with neither heading nor COG is still in it;
+   * only acknowledgements, which hold for a heading sector, need one.
    */
   private suppressed(r: LookaheadResult): LookaheadResult {
     const vessel = this.vessel();
     const heading = this.heading();
-    if (!vessel || heading === undefined) {
+    if (!vessel) {
       return r;
     }
     return suppress(r, {
-      acks: this.acks?.list(this.clock.now()) ?? [],
+      acks: heading === undefined ? [] : (this.acks?.list(this.clock.now()) ?? []),
       zones: this.zones,
-      heading,
+      // With no acknowledgements to match, the heading is never read.
+      heading: heading ?? 0,
       waterLevel: this.waterLevel(),
       draft: vessel.draft,
       now: this.clock.now(),
