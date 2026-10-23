@@ -91,8 +91,9 @@ source picked under **Water level** (section 8).
 The index is built at the first start, in a worker thread so the server keeps running, and
 saved under the plugin data directory; until it is ready the engine is `off` with the reason
 `building chart index`. Later starts load the saved index (a large one in the background,
-`off` with `loading chart index` meanwhile) unless a cell directory was added or removed or its
-`DSID` edition or update changed; then the index is rebuilt and the index reason in `/status` names the cells.
+`off` with `loading chart index` meanwhile) unless a cell was added or removed, or a cell's
+`.000` or update files changed name, size or modification time; then the index is rebuilt and
+the index reason in `/status` names the cells.
 **Rebuild index at start** rebuilds it on every start. An index saved by an older plugin version
 whose index format differs is rebuilt too, and so is one whose files cannot be read, as a power
 cut during a save can leave them; the reason then names the read error.
@@ -159,8 +160,8 @@ flowchart TD
 - Each tile also keeps what it spreads by its chart position: its survey's σP, the σ of its
   land and shoreline objects' own positions, and the shallowest depth its survey places. Land
   and shoreline are placed by the cell's compilation scale (1 mm on the chart, so 6 m at
-  1:12 000), not by CATZOC, where the export carries `QUAPOS.geojson`; on an edge or node whose
-  QUAPOS says it is not surveyed they keep the survey's σP.
+  1:12 000), not by CATZOC; on an edge or node whose QUAPOS, read from GDAL's primitive
+  layers, says it is not surveyed they keep the survey's σP.
 - A leaf zoom of 20 makes the smallest tile about 19 m across at 60° N. The Nauvo box built
   158,784 tiles.
 - Each stored tile also carries flags: `NO_COVERAGE`, `UNASSESSED` (no survey quality, or

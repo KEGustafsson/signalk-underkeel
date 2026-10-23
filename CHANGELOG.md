@@ -78,8 +78,8 @@ All notable changes to signalk-underkeel are documented here.
   assessed water are no longer burned as discs. Flags still count within 2σP.
 - Land and shoreline objects are placed by their own accuracy: the cell's compilation scale,
   or the survey's σP on edges and nodes whose QUAPOS says they are not surveyed.
-  `scripts/enc-to-geojson.sh` exports those records as `QUAPOS.geojson`; cells exported
-  without it keep the survey's σP for their shoreline.
+  The reader takes those records from GDAL's primitive layers (Edge, ConnectedNode,
+  IsolatedNode).
 - UKC tiles mark cells raised only by a nearby cell's chart position with `reach`, which the
   style draws fainter, so the solid classes follow the chart's own depth areas.
 - Explanations of a deciding tile beyond the footprint give its distance, its position σ and

@@ -76,7 +76,7 @@ function exists(dir: string): boolean {
   return fs.existsSync(path.join(dir, "pyramid.bin"));
 }
 
-/** The S-57 cells and GeoJSON cell directories under `cellsDir`, in path order. */
+/** The S-57 base cells (`.000` files) under `cellsDir`, in path order. */
 export function cellSources(cellsDir: string | undefined): string[] {
   return scanCellSources(cellsDir).sources;
 }

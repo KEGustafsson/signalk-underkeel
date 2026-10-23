@@ -218,7 +218,7 @@ signalk-underkeel/
   process.
 - GDAL/OGR compiled to WebAssembly (gdal3.js, GDAL 3.8.4, about 40 MB installed), for reading
   S-57. Decision: the plugin reads the cells as delivered, each `.000` with its updates,
-  anywhere under the cells directory (an exchange set's `ENC_ROOT` included), and writes
+  down to three folders deep under the cells directory (an exchange set's `ENC_ROOT` included), and writes
   nothing beside them and no intermediate files; only the built index is saved. GDAL runs only
   in the index build's worker thread: it reads each cell once per build, its layers as GeoJSON
   held in one SharedArrayBuffer that the region threads read without a copy, and its 512 MB
@@ -288,20 +288,20 @@ signalk-underkeel/
 
 **S-57 object classes used:**
 
-| Class                          | Attributes                             | Role                                                                            |
-| ------------------------------ | -------------------------------------- | ------------------------------------------------------------------------------- |
-| `DEPARE`                       | `DRVAL1`, `DRVAL2`                     | depth areas; rasterise with **`DRVAL1`** (shallow bound), which is conservative |
-| `DRGARE`                       | `DRVAL1`                               | dredged areas                                                                   |
-| `SWPARE`                       | `DRVAL1`                               | swept depth; **guaranteed minimum**, σ_depth ≈ 0.1 m                            |
-| `SOUNDG`                       | 3D multipoint                          | spot depths; graded by the survey's σP (burned only in unassessed water)        |
-| `UWTROC`, `WRECKS`, `OBSTRN`   | `VALSOU`, `WATLEV`, `EXPSOU`, `QUASOU` | point hazards → R-tree, buffered                                                |
-| `LNDARE`, `COALNE`, `SLCONS`   | —                                      | depth −∞ (hard obstacles)                                                       |
-| `PONTON`, `FLODOC`, `HULKES`   | —                                      | depth −∞ (hard obstacles)                                                       |
-| `UNSARE`                       | —                                      | no depth: `NO_COVERAGE`, so legs are _unverified_ and look-ahead never _normal_ |
-| `M_QUAL`                       | `CATZOC`, `POSACC`, `SOUACC`           | survey quality zones                                                            |
-| `M_COVR`                       | `CATCOV`                               | coverage; no coverage means _unverified_, not _safe_                            |
-| DSID / `M_SDAT`, `M_VDAT`      | sounding / vertical datum              | water-level reduction (§4.5); `DSPM_CSCL` compilation scale (§4.4)              |
-| Edge, nodes (`QUAPOS.geojson`) | `QUAPOS`, `POSACC`                     | spatial records not surveyed: their shoreline keeps the survey's σP (§4.3)      |
+| Class                         | Attributes                             | Role                                                                            |
+| ----------------------------- | -------------------------------------- | ------------------------------------------------------------------------------- |
+| `DEPARE`                      | `DRVAL1`, `DRVAL2`                     | depth areas; rasterise with **`DRVAL1`** (shallow bound), which is conservative |
+| `DRGARE`                      | `DRVAL1`                               | dredged areas                                                                   |
+| `SWPARE`                      | `DRVAL1`                               | swept depth; **guaranteed minimum**, σ_depth ≈ 0.1 m                            |
+| `SOUNDG`                      | 3D multipoint                          | spot depths; graded by the survey's σP (burned only in unassessed water)        |
+| `UWTROC`, `WRECKS`, `OBSTRN`  | `VALSOU`, `WATLEV`, `EXPSOU`, `QUASOU` | point hazards → R-tree, buffered                                                |
+| `LNDARE`, `COALNE`, `SLCONS`  | —                                      | depth −∞ (hard obstacles)                                                       |
+| `PONTON`, `FLODOC`, `HULKES`  | —                                      | depth −∞ (hard obstacles)                                                       |
+| `UNSARE`                      | —                                      | no depth: `NO_COVERAGE`, so legs are _unverified_ and look-ahead never _normal_ |
+| `M_QUAL`                      | `CATZOC`, `POSACC`, `SOUACC`           | survey quality zones                                                            |
+| `M_COVR`                      | `CATCOV`                               | coverage; no coverage means _unverified_, not _safe_                            |
+| DSID / `M_SDAT`, `M_VDAT`     | sounding / vertical datum              | water-level reduction (§4.5); `DSPM_CSCL` compilation scale (§4.4)              |
+| Edge, nodes (GDAL primitives) | `QUAPOS`, `POSACC`                     | spatial records not surveyed: their shoreline keeps the survey's σP (§4.3)      |
 
 **Coverage mosaic.** For every location, use the cell from the **largest-scale usage band**
 that covers it. Where bands overlap, the larger scale wins, and the smaller scale is used only
@@ -410,12 +410,11 @@ restated accordingly (below and in AGENTS.md).
 
 **Topography is placed by its own accuracy.** CATZOC rates the hydrographic survey. Land and
 shoreline objects (`LNDARE`, `COALNE`, `SLCONS`, `PONTON`, `FLODOC`, `HULKES`) come
-from the shoreline compilation, so where the export states the cell's positional quality
-they spread by their own σ (§4.4), kept per node in `topoSigmaP`, and the depth the survey
+from the shoreline compilation, so they spread by their own σ (§4.4), kept per node in `topoSigmaP`, and the depth the survey
 spreads (`bathyDMin`) leaves them out. A leaf on a spatial record that is not surveyed
 (QUAPOS other than 1, 10 or 11) takes its survey's σP for them (the unassessed one where it
-has none), and half a stated POSACC. An export without that file keeps them on the survey's
-σP, as before.
+has none), and half a stated POSACC. A cell without a compilation scale keeps them on the
+survey's σP.
 
 A leaf's survey σP comes from `surveySigmaP`, the widest σP of the assessed, non-advisory
 quality zones reaching it, so a leaf only partly assessed keeps the reach of its assessed part.

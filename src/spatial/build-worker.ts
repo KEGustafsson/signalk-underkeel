@@ -42,7 +42,7 @@ import { storeOnBody } from "./store";
  */
 
 export interface BuildJob {
-  /** Cell directories in catalogue order. */
+  /** Cell sources in catalogue order: S-57 `.000` files, and the Traficom WFS cell's directory. */
   dirs: string[];
   leafZoom: number;
   indexDir: string;

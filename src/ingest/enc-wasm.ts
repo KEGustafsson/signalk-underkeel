@@ -261,7 +261,8 @@ export function encCell(
   const edition = cell.info.update > 0 ? baseEdition(file) : undefined;
   return {
     ...cell,
-    info: { ...cell.info, edition: edition ?? cell.info.edition, files: encStamp(file) }
+    // Named by its file, as discovery and the saved index's check name it, whatever DSID_DSNM says.
+    info: { ...cell.info, name, edition: edition ?? cell.info.edition, files: encStamp(file) }
   };
 }
 

@@ -66,6 +66,12 @@ describe("S-57 cells read with gdal3.js", () => {
     expect(fs.readdirSync(enc)).toEqual(["FI5RAW01.000"]);
   });
 
+  test("a cell is named by its file, as discovery and the saved index's check name it", async () => {
+    const renamed = path.join(tmp, "FI5OTHER.000");
+    fs.copyFileSync(CELL, renamed);
+    expect((await readEncCell(renamed, 0)).info.name).toBe("FI5OTHER");
+  });
+
   test("the edition comes from the base cell's DSID record, which updates leave alone", () => {
     expect(baseEdition(CELL)).toBe(1);
     const bad = path.join(tmp, "FI5BAD01.000");
