@@ -32,12 +32,18 @@ interface Res {
 type Next = () => void;
 export type Middleware = (req: Req, res: Res, next: Next) => void;
 
-/** The path under `root` that `urlPath` names, or undefined when it is outside or of no served type. */
+/**
+ * The path under `root` that `urlPath` names, or undefined when it is
+ * outside or of no served type. A NUL byte, which `fs` throws on, names none.
+ */
 function assetPath(root: string, urlPath: string): string | undefined {
   let rel: string;
   try {
     rel = decodeURIComponent(urlPath);
   } catch {
+    return undefined;
+  }
+  if (rel.includes("\0")) {
     return undefined;
   }
   const file = path.resolve(root, `.${rel.startsWith("/") ? rel : `/${rel}`}`);

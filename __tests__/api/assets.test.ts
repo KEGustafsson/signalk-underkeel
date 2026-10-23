@@ -96,7 +96,14 @@ describe("extension assets", () => {
     expect(assetFile(PUBLIC, "/../package.json")).toBeUndefined();
     expect(assetFile(PUBLIC, "/%2e%2e/package.json")).toBeUndefined();
     expect(assetFile(PUBLIC, "/%E0%A4%A")).toBeUndefined();
+    expect(assetFile(PUBLIC, "/widget%00.html")).toBeUndefined();
     expect(assetFile(PUBLIC, "/ukc-shared.js")).toBe(path.join(PUBLIC, "ukc-shared.js"));
+  });
+
+  test("a NUL byte in the path falls through instead of throwing", () => {
+    for (const p of ["/x%00.html", "/widget.html%00.js"]) {
+      expect(serve(p).next).toBe(true);
+    }
   });
 
   test("the pages are mounted once per server app", () => {
