@@ -4,7 +4,9 @@ import type { UnderKeelState } from "./foundation/state";
  * The escape fan (plan §4.8) searched after a tick's result is published,
  * so the tick and the search block the server's event loop as two pieces.
  * After a tick or a search slower than SLOW_TICK_MS the next search is
- * skipped and the heading cleared, and `skipped` says why for the status.
+ * skipped and the heading cleared, and `skipped` says why for the status
+ * until a search runs again. The skip restarts the ESCAPE_EVERY_MS wait, so
+ * a search that is always slow runs less often, not more.
  */
 
 /** The escape fan is searched at most once in this many ms; the heading is held between. */
@@ -59,7 +61,7 @@ export class EscapeSearch {
     this.slowMs = 0;
     if (slow > SLOW_TICK_MS) {
       this.skipped = `escape search skipped: a tick took ${slow.toFixed(0)} ms`;
-      this.at = -Infinity;
+      this.at = this.clock.now();
       if (this.heading !== null) {
         // The tick already went out with the heading; clear it now, not a tick later.
         this.heading = null;
@@ -67,11 +69,11 @@ export class EscapeSearch {
       }
       return;
     }
-    this.skipped = undefined;
     const now = this.clock.now();
     if (now - this.at < ESCAPE_EVERY_MS || this.pending !== undefined) {
       return;
     }
+    this.skipped = undefined;
     this.at = now;
     const generation = this.generation;
     const run = (): void => {
