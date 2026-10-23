@@ -1,6 +1,6 @@
 import { gunzipSync } from "zlib";
 import type { ApiProvider } from "../../src/api/routes";
-import { registerRoutes } from "../../src/api/routes";
+import { publicReason, registerRoutes } from "../../src/api/routes";
 import { fakeRouter } from "../helpers/plugin-harness";
 
 /** How the REST layer turns handler failures into replies. */
@@ -57,6 +57,55 @@ describe("acknowledgement content type", () => {
       expect(bodies).toEqual([{ ttl: 600 }]);
     }
   );
+});
+
+describe("server error reasons on the wire", () => {
+  test("file paths and nested error text stay off the wire", () => {
+    expect(
+      publicReason(
+        "chart index failed: ENOENT: no such file or directory, scandir '/media/usb/ENC'"
+      )
+    ).toBe("chart index failed (see the server log)");
+    expect(publicReason("no cells in /home/pi/charts; C:\\charts not found")).toBe(
+      "no cells in <path>; <path> not found"
+    );
+    expect(
+      publicReason("rebuilt the index: the saved one could not be read (bad header in /x/y.bin)")
+    ).toBe("rebuilt the index: the saved one could not be read");
+    for (const plain of [
+      "no chart index loaded",
+      "busy: 5 requests are waiting; try again shortly"
+    ]) {
+      expect(publicReason(plain)).toBe(plain);
+    }
+  });
+
+  test("a 503 from a POST route or a tile carries the reason without its paths", async () => {
+    const reason = "no cells in /home/pi/charts";
+    const unavailable = () => Promise.resolve({ status: 503, body: { errors: [reason] } });
+    const api = {
+      query: unavailable,
+      ukcTile: () => ({ status: 503, contentType: "application/json", body: { errors: [reason] } })
+    } as unknown as ApiProvider;
+    const { router, call, post } = fakeRouter();
+    registerRoutes(router as never, api);
+    const wire = { errors: ["no cells in <path>"] };
+    expect(await post("/v1/query", {})).toEqual({ code: 503, body: wire });
+    const tile = call("/v1/tiles/ukc/:z/:x/:file", {}, { z: "16", x: "0", file: "0.pbf" });
+    expect(tile).toMatchObject({ code: 503, body: wire });
+  });
+
+  test("a 4xx reply is the client's and goes out as it is", async () => {
+    const api = {
+      query: () => Promise.resolve({ status: 400, body: { errors: ["geometry: /bad"] } })
+    } as unknown as ApiProvider;
+    const { router, post } = fakeRouter();
+    registerRoutes(router as never, api);
+    expect(await post("/v1/query", {})).toEqual({
+      code: 400,
+      body: { errors: ["geometry: /bad"] }
+    });
+  });
 });
 
 describe("UKC tile headers", () => {

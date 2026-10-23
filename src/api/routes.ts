@@ -119,6 +119,34 @@ function isJson(req: Request): boolean {
   return /^application\/([\w.+-]+\+)?json$/.test(type.trim().toLowerCase());
 }
 
+/** An absolute file path, Unix or Windows, after the start, a space, a quote or a bracket. */
+const FILE_PATH = /(^|[\s'"(])(?:[A-Za-z]:)?[\\/][^\s'"`;,()]+/g;
+
+/**
+ * A server-side error reason as it may go on the wire: the text of a
+ * nested error, which may name anything, gives way to "see the server
+ * log", and file paths are hidden. The full reason stays in the plugin
+ * status and the server log.
+ */
+export function publicReason(reason: string): string {
+  return reason
+    .replace(/\bfailed: [^;]*/g, "failed (see the server log)")
+    .replace(/could not be read \([^)]*\)/g, "could not be read")
+    .replace(FILE_PATH, "$1<path>");
+}
+
+/** A 5xx reply's error reasons, with internals kept off the wire. */
+function publicBody(status: number, body: unknown): unknown {
+  const errors = (body as { errors?: unknown } | null)?.errors;
+  if (status < 500 || !Array.isArray(errors)) {
+    return body;
+  }
+  return {
+    ...(body as object),
+    errors: errors.map((e) => (typeof e === "string" ? publicReason(e) : e))
+  };
+}
+
 function send(res: Response, reply: ApiReply): void {
   for (const [name, value] of Object.entries(reply.headers ?? {})) {
     res.setHeader(name, value);
@@ -126,7 +154,7 @@ function send(res: Response, reply: ApiReply): void {
   if (reply.body === undefined) {
     res.status(reply.status).end();
   } else {
-    res.status(reply.status).json(reply.body);
+    res.status(reply.status).json(publicBody(reply.status, reply.body));
   }
 }
 
@@ -188,7 +216,7 @@ export function registerRoutes(
       const body = gzip ? gzipSync(reply.body) : Buffer.from(reply.body);
       res.status(reply.status).type(reply.contentType).send(body);
     } else {
-      res.status(reply.status).json(reply.body);
+      res.status(reply.status).json(publicBody(reply.status, reply.body));
     }
   });
   r.get(`${API_BASE}/tiles/ukc/changes`, (req: Request, res: Response) =>
