@@ -180,6 +180,28 @@ describe("extension runtime", () => {
     expect(r.fresh).toEqual(["ok"]);
     expect(r.woken).toEqual(["unverified"]);
   });
+
+  test("a route hidden while its check runs does not come back on the chart", () => {
+    const r = run("hidden");
+    expect(r.routeChecks).toBe(1);
+    expect(r.after).toEqual([]);
+  });
+
+  test("a route no longer listed loses its legs at the next check of all routes", () => {
+    const r = run("prune");
+    expect(r.listed).toEqual(["ok"]);
+    expect(r.unlisted).toEqual([]);
+  });
+});
+
+describe("one run at a time", () => {
+  test("a forgotten start is not run again after the run in progress", () => {
+    const once = UKC.oneAtATime();
+    expect(once.start("R")).toBe(true);
+    expect(once.start("R")).toBe(false);
+    once.forget("R");
+    expect(once.end("R")).toBe(false);
+  });
 });
 
 describe("route legs on the chart", () => {
