@@ -254,8 +254,11 @@ function reachOf(store: NodeStore, z: number, x: number, y: number, kinds: Kinds
       const v = { ...LAND, dMin: r.bathyDMin, sigmaD: r.values.sigmaD };
       add(kinds.of(v, r.bound), r.surveySigma);
     }
-    if (r.topoSigma > 0) {
+    if (r.topoSigma > 0 && r.topoDMin === -Infinity) {
       add(kinds.of(LAND, false), r.topoSigma);
+    } else if (r.topoSigma > 0 && r.topoDMin !== Infinity) {
+      const v = { ...LAND, dMin: r.topoDMin, sigmaD: r.values.sigmaD };
+      add(kinds.of(v, r.bound), r.topoSigma);
     }
     if (r.surveySigma > 0 && (r.values.flags & UNVERIFIED) !== 0) {
       const k = kinds.of(r.values, r.bound);

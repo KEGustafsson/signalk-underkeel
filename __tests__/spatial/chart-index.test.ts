@@ -189,6 +189,8 @@ describe("index persistence", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-index-"));
     try {
       const target = path.join(dir, "index");
+      // The first recovery in a process also removes its own id's staging (index-commit.test.ts).
+      recoverChartIndex(target);
       const exited = spawnSync(process.execPath, ["-e", ""]).pid;
       const names = [
         `index.tmp-${exited}-0-aa`,

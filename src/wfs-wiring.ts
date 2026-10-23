@@ -3,7 +3,6 @@ import path from "path";
 import type { ServerAPI } from "@signalk/server-api";
 import type { PluginState } from "./api-wiring";
 import type { PluginConfig, WfsConfig } from "./config";
-import { cellSources } from "./index-loader";
 import type { Rect } from "./foundation/geo";
 import { toMercator } from "./foundation/geo";
 import type { Bbox } from "./ingest/wfs";
@@ -13,7 +12,7 @@ import { cellsNear } from "./livechart/rebind";
 import type { FetchLike } from "./model/fmi";
 import type { Clock } from "./monitor";
 import type { ChartIndex } from "./spatial/chart-index";
-import type { IndexBuilder } from "./wfs-service";
+import type { EncBoxConfig, IndexBuilder } from "./wfs-service";
 import { inThreadRefresher, workerBuilder, workerRefresher, WfsService } from "./wfs-service";
 
 /** What the Traficom WFS box needs from the running plugin. */
@@ -84,15 +83,35 @@ function freshMotion(w: WfsWiring): { sog: number; cog: number } | undefined {
     : undefined;
 }
 
-export function startWfs(w: WfsWiring, wfs: WfsConfig): WfsService {
-  const dir = path.join(w.app.getDataDirPath(), "wfs");
+/**
+ * The box kept around the vessel: the Traficom WFS box when that source is on, else a box
+ * the ENC cells alone are built in; none when `boxRadiusKm` is 0 and the WFS is off.
+ */
+export function startBox(w: WfsWiring): WfsService | undefined {
+  const { wfs, cellsDir, boxRadiusKm } = w.config;
+  if (wfs) {
+    return startWfs(w, wfs);
+  }
+  return cellsDir && boxRadiusKm > 0
+    ? startWfs(w, { radiusKm: boxRadiusKm }, "chart-box")
+    : undefined;
+}
+
+export function startWfs(
+  w: WfsWiring,
+  config: WfsConfig | EncBoxConfig,
+  dirName = "wfs"
+): WfsService {
+  const dir = path.join(w.app.getDataDirPath(), dirName);
   fs.mkdirSync(dir, { recursive: true });
   return new WfsService({
-    config: wfs,
+    config,
     dir,
     indexDir: w.config.indexDir ?? path.join(w.app.getDataDirPath(), "index"),
     leafZoom: w.config.leafZoom,
-    encDirs: () => cellSources(w.config.cellsDir),
+    cellsDir: w.config.cellsDir,
+    inBox: w.config.boxRadiusKm > 0,
+    index: () => w.state.load?.index,
     // The worker fetches with its own global fetch; an injected builder, as in the tests,
     // gets the download on this thread with the injected fetch.
     refresh: w.build === workerBuilder ? workerRefresher : inThreadRefresher(w.fetch, w.build),
@@ -101,6 +120,14 @@ export function startWfs(w: WfsWiring, wfs: WfsConfig): WfsService {
     motion: () => freshMotion(w),
     lookahead: w.config.lookahead,
     onIndex: (index, changed) => useIndex(w, index, changed),
-    error: (m) => w.app.error(m)
+    error: (m) => {
+      w.app.error(m);
+      // With no index in use the failure is why the look-ahead is off: an error, not "waiting".
+      const { load, monitor } = w.state;
+      if (load && !load.index) {
+        w.state.load = { ...load, reason: m };
+        monitor?.noIndex(m);
+      }
+    }
   });
 }

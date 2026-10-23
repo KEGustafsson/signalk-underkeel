@@ -6,6 +6,30 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Added
 
+- Depth areas and contours are placed by the chart's own drawing (0.5 mm at the cell's
+  compilation scale, 6 m at 1:12 000), as land already was, instead of by the survey's CATZOC
+  position accuracy; soundings and point dangers keep CATZOC. A record NOAA marks approximate
+  (QUAPOS 4) widens the drawing to four times its σ, not to the survey's. Over the 1939 CATZOC C
+  water at Bakers Haulover Inlet every cell within about 300 m of the shore or a drying contour
+  had read `danger` for a 0.9 m draft; now only those within reach of the zone's charted
+  obstructions do. An `M_CSCL` area compiled at a smaller scale widens the drawing where it
+  applies, and a sounding inside a shallower drawn area keeps its survey spread when its tile
+  splits. The saved index is rebuilt (pyramid version 9).
+- The index is built around the vessel: **Index box around the vessel (km)** (`boxRadiusKm`,
+  default 10) builds only the S-57 cells reaching a box around the vessel and rebuilds it as
+  the vessel moves, as the Traficom WFS box does. Outside the box the plugin reports no
+  coverage. Cells are picked by their extent, read from the `.000` without GDAL. The 698-cell
+  NOAA set no longer builds whole at start (over 15 minutes); a 10 km box takes 22 s on x86.
+  Tiles are built 2 km past the box, flagged no coverage but keeping their depth, so a hazard
+  just outside still counts for a footprint just inside; cells are read to 6 km past the box.
+  A start loads the saved box index while its cells, box and leaf zoom match and otherwise
+  rebuilds it in its box, never from every cell. An empty or unmounted cells directory keeps
+  the index in use, and a torn saved WFS cell is downloaded again rather than failing the
+  start. `GET /status` reports the box under `chartBox`. `boxRadiusKm: 0` indexes every cell;
+  a radius under 2 km is raised to 2.
+- `indexDir` is owned by the plugin: a directory holding anything but an index is refused
+  rather than replaced, a trailing separator is accepted, and staging or backup copies left by
+  a failed save or a restart are removed.
 - S-57 ENC cells are read as delivered: **ENC cells directory** takes `.000` files with their
   `.001`, `.002` … updates, also inside an exchange set's `ENC_ROOT` folders, read in the index
   worker with gdal3.js (GDAL compiled to WebAssembly), now a runtime dependency. No export step

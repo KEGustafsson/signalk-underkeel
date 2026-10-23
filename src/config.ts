@@ -28,6 +28,11 @@ export interface PluginConfig {
   rebuildIndex: boolean;
   /** Leaf zoom of the pyramid; z20 ≈ 19 m tiles at 60°N. */
   leafZoom: number;
+  /**
+   * Half-width of the box around the vessel the index is built in, km; rebuilt as the
+   * vessel moves. 0 builds every cell. With the Traficom WFS on, its radius is used.
+   */
+  boxRadiusKm: number;
   vessel: Partial<VesselModel>;
   dynamics: DynamicsOptions;
   waterLevel: WaterLevelConfig;
@@ -222,6 +227,12 @@ function parseGrounding(g: Record<string, unknown>): GroundingOptions | undefine
   };
 }
 
+/** 0 builds every cell; a box smaller than the WFS minimum is raised to it, not reset to 10 km. */
+function boxRadius(v: unknown): number {
+  const km = num(v, 10, 0, 50);
+  return km === 0 ? 0 : Math.max(WFS_LIMITS.minRadiusKm, km);
+}
+
 export function parseConfig(raw: unknown): PluginConfig {
   const r = record(raw);
   const v = record(r.vessel);
@@ -231,6 +242,7 @@ export function parseConfig(raw: unknown): PluginConfig {
     cellsDir: str(r.cellsDir),
     rebuildIndex: r.rebuildIndex === true,
     leafZoom: Math.round(num(r.leafZoom, 20, 14, 22)),
+    boxRadiusKm: boxRadius(r.boxRadiusKm),
     vessel: {
       draft: optionalPositive(v.draft),
       length: optionalPositive(v.length),

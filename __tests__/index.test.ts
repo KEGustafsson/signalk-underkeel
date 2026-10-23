@@ -69,7 +69,7 @@ describe("index build at start (plan §6: off the event loop)", () => {
     const plugin = underkeel(f.app, clock, globalThis.fetch, b.build);
     const { router, call, post } = fakeRouter();
     plugin.registerWithRouter?.(router as never);
-    plugin.start({ cellsDir: CELLS, leafZoom: 18 }, () => undefined);
+    plugin.start({ cellsDir: CELLS, boxRadiusKm: 0, leafZoom: 18 }, () => undefined);
     expect(b.calls.map((c) => c.job.dirs.map((d) => path.basename(d)))).toEqual([
       ["FI4SYNTH.000", "FI5SYNTH.000"]
     ]);
@@ -109,7 +109,7 @@ describe("index build at start (plan §6: off the event loop)", () => {
     const plugin = underkeel(f.app, clock, globalThis.fetch, b.build);
     const { router, call } = fakeRouter();
     plugin.registerWithRouter?.(router as never);
-    plugin.start({ cellsDir: CELLS, leafZoom: 18 }, () => undefined);
+    plugin.start({ cellsDir: CELLS, boxRadiusKm: 0, leafZoom: 18 }, () => undefined);
     b.finish({ error: new Error("worker out of memory") });
     await settle();
     f.send(navDelta(ROCK[0] - 110 / M_PER_DEG_LON, ROCK[1], 3, T0));
@@ -126,7 +126,7 @@ describe("index build at start (plan §6: off the event loop)", () => {
     const plugin = underkeel(f.app, clock, globalThis.fetch, b.build);
     const { router, call } = fakeRouter();
     plugin.registerWithRouter?.(router as never);
-    plugin.start({ cellsDir: CELLS, leafZoom: 18 }, () => undefined);
+    plugin.start({ cellsDir: CELLS, boxRadiusKm: 0, leafZoom: 18 }, () => undefined);
     plugin.stop();
     expect(b.calls[0]?.signal.aborted).toBe(true);
     b.finish({ index: fixtureIndex() });
@@ -158,7 +158,7 @@ describe("index build at start (plan §6: off the event loop)", () => {
       const plugin = underkeel(f.app, clock, globalThis.fetch, b.build);
       const { router, call } = fakeRouter();
       plugin.registerWithRouter?.(router as never);
-      plugin.start({ cellsDir: CELLS, leafZoom: 18 }, () => undefined);
+      plugin.start({ cellsDir: CELLS, boxRadiusKm: 0, leafZoom: 18 }, () => undefined);
       expect(status(call)).toMatchObject({
         engine: { state: "off", reason: "loading chart index" },
         index: { loaded: false }
@@ -186,7 +186,7 @@ describe("index build at start (plan §6: off the event loop)", () => {
       const plugin = underkeel(f.app, clock, globalThis.fetch, b.build);
       const { router, call } = fakeRouter();
       plugin.registerWithRouter?.(router as never);
-      plugin.start({ cellsDir: CELLS, leafZoom: 18 }, () => undefined);
+      plugin.start({ cellsDir: CELLS, boxRadiusKm: 0, leafZoom: 18 }, () => undefined);
       await until(() => b.calls.length > 0);
       clock.advance(1000);
       expect(status(call).engine).toMatchObject({ state: "off", reason: "building chart index" });
@@ -208,7 +208,7 @@ describe("index build at start (plan §6: off the event loop)", () => {
     const plugin = underkeel(f.app, fakeClock(T0), globalThis.fetch, b.build);
     const { router, call } = fakeRouter();
     plugin.registerWithRouter?.(router as never);
-    plugin.start({ cellsDir: CELLS, leafZoom: 18 }, () => undefined);
+    plugin.start({ cellsDir: CELLS, boxRadiusKm: 0, leafZoom: 18 }, () => undefined);
     expect(b.calls).toEqual([]);
     expect(status(call).index.loaded).toBe(true);
     plugin.stop();
@@ -279,7 +279,7 @@ describe("plugin lifecycle", () => {
     const plugin = underkeel(f.app, clock, globalThis.fetch, inlineBuilder);
     const { router, call } = fakeRouter();
     plugin.registerWithRouter?.(router as never);
-    plugin.start({ cellsDir: CELLS, leafZoom: 18 }, () => undefined);
+    plugin.start({ cellsDir: CELLS, boxRadiusKm: 0, leafZoom: 18 }, () => undefined);
     await settle();
 
     expect(fs.existsSync(path.join(dataDir, "index", "pyramid.bin"))).toBe(true);
@@ -343,7 +343,7 @@ describe("plugin lifecycle", () => {
     const clock = fakeClock(T0);
     const plugin = underkeel(f.app, clock);
     seedFixtureIndex(dataDir);
-    plugin.start({ cellsDir: CELLS, leafZoom: 18 }, () => undefined);
+    plugin.start({ cellsDir: CELLS, boxRadiusKm: 0, leafZoom: 18 }, () => undefined);
     // West of the fixture island (22.025–22.03 E, 60.013–60.016 N), heading onto it.
     f.send(navDelta(22.022, 60.0145, 3, T0));
     clock.advance(1000);
@@ -388,6 +388,7 @@ describe("plugin lifecycle", () => {
     plugin.start(
       {
         cellsDir: CELLS,
+        boxRadiusKm: 0,
         leafZoom: 18,
         waterLevel: { source: "fmi", datums: [{ verdat: 13, series: "mw", sigma: 0.05 }] }
       },
@@ -432,7 +433,7 @@ describe("plugin lifecycle", () => {
     const clock = fakeClock(T0);
     const plugin = underkeel(f.app, clock);
     seedFixtureIndex(dataDir);
-    plugin.start({ cellsDir: CELLS, leafZoom: 18 }, () => undefined);
+    plugin.start({ cellsDir: CELLS, boxRadiusKm: 0, leafZoom: 18 }, () => undefined);
     const integrity = () =>
       lastValue(f.deltas, "notifications.navigation.positionIntegrity") as {
         state: string;
@@ -473,7 +474,7 @@ describe("plugin lifecycle", () => {
     plugin.registerWithRouter?.(router as never);
     expect((await post("/v1/acks", {})).code).toBe(503);
     seedFixtureIndex(dataDir);
-    plugin.start({ cellsDir: CELLS, leafZoom: 18 }, () => undefined);
+    plugin.start({ cellsDir: CELLS, boxRadiusKm: 0, leafZoom: 18 }, () => undefined);
     // Held 100 s of travel west of the rock in the fairway: warn.
     const lon = ROCK[0] - 300 / M_PER_DEG_LON;
     const tick = () => {
@@ -511,7 +512,12 @@ describe("plugin lifecycle", () => {
     plugin.registerWithRouter?.(router as never);
     seedFixtureIndex(dataDir);
     plugin.start(
-      { cellsDir: CELLS, leafZoom: 18, waterLevel: { source: "signalk-tide", sigma: 0.05 } },
+      {
+        cellsDir: CELLS,
+        boxRadiusKm: 0,
+        leafZoom: 18,
+        waterLevel: { source: "signalk-tide", sigma: 0.05 }
+      },
       () => undefined
     );
     const lon = ROCK[0] - 300 / M_PER_DEG_LON;
@@ -553,7 +559,7 @@ describe("plugin lifecycle", () => {
     const { router, post, del } = fakeRouter();
     plugin.registerWithRouter?.(router as never);
     seedFixtureIndex(dataDir);
-    plugin.start({ cellsDir: CELLS, leafZoom: 18 }, () => undefined);
+    plugin.start({ cellsDir: CELLS, boxRadiusKm: 0, leafZoom: 18 }, () => undefined);
     f.send(navDelta(ROCK[0] - 300 / M_PER_DEG_LON, ROCK[1], 3, clock.now() + 1000));
     clock.advance(1000);
     const made = await post("/v1/acks", {});
@@ -575,7 +581,7 @@ describe("plugin lifecycle", () => {
       const f = fakeApp(dataDir, { "design.draft": { value: { maximum: 1.8 } } });
       const clock = fakeClock(T0);
       const plugin = underkeel(f.app, clock);
-      plugin.start({ cellsDir: CELLS, leafZoom: 18, ...options }, () => undefined);
+      plugin.start({ cellsDir: CELLS, boxRadiusKm: 0, leafZoom: 18, ...options }, () => undefined);
       const at = (t: number, sog: number) => {
         const d = navDelta(22.005, 60.015, sog, T0 + t);
         d.updates[0]?.values.push({ path: "environment.depth.belowSurface" as never, value: 1.9 });
@@ -618,7 +624,12 @@ describe("plugin lifecycle", () => {
     expect(call("/v1/livechart/discrepancies").code).toBe(404);
     seedFixtureIndex(dataDir);
     plugin.start(
-      { cellsDir: CELLS, leafZoom: 18, livechart: { enabled: true, writeNotes: true } },
+      {
+        cellsDir: CELLS,
+        boxRadiusKm: 0,
+        leafZoom: 18,
+        livechart: { enabled: true, writeNotes: true }
+      },
       () => undefined
     );
     // The fairway is charted 10 m west of the swept area; the sounder reads 6 m there.
@@ -664,7 +675,7 @@ describe("plugin lifecycle", () => {
     const { router, post } = fakeRouter();
     plugin.registerWithRouter?.(router as never);
     seedFixtureIndex(dataDir);
-    plugin.start({ cellsDir: CELLS, leafZoom: 18 }, () => undefined);
+    plugin.start({ cellsDir: CELLS, boxRadiusKm: 0, leafZoom: 18 }, () => undefined);
     const route = {
       type: "LineString",
       coordinates: [
@@ -719,7 +730,7 @@ describe("plugin lifecycle", () => {
     const before = await post("/v1/route-check", { route: { type: "LineString" } });
     expect(before.code).toBe(400);
     seedFixtureIndex(dataDir);
-    plugin.start({ cellsDir: CELLS, leafZoom: 18 }, () => undefined);
+    plugin.start({ cellsDir: CELLS, boxRadiusKm: 0, leafZoom: 18 }, () => undefined);
     const r = await post("/v1/route-check", {
       route: {
         type: "LineString",
@@ -745,7 +756,7 @@ describe("plugin lifecycle", () => {
       503
     );
     seedFixtureIndex(dataDir);
-    plugin.start({ cellsDir: CELLS, leafZoom: 18 }, () => undefined);
+    plugin.start({ cellsDir: CELLS, boxRadiusKm: 0, leafZoom: 18 }, () => undefined);
 
     const rock = await post("/v1/query", { geometry: { type: "Point", coordinates: ROCK } });
     expect(rock.code).toBe(200);
@@ -808,7 +819,7 @@ describe("plugin lifecycle", () => {
     const clock = fakeClock(T0);
     const plugin = underkeel(f.app, clock);
     seedFixtureIndex(dataDir);
-    plugin.start({ cellsDir: CELLS, leafZoom: 18 }, () => undefined);
+    plugin.start({ cellsDir: CELLS, boxRadiusKm: 0, leafZoom: 18 }, () => undefined);
     f.send(navDelta(22.003, 60.01, 3, T0 + 3_600_000));
     clock.advance(11_000);
     // Receipt time T0 is 11 s old by now: stale, not trusted for an hour.
@@ -821,7 +832,7 @@ describe("plugin lifecycle", () => {
     const clock = fakeClock(T0);
     const plugin = underkeel(f.app, clock);
     seedFixtureIndex(dataDir);
-    plugin.start({ cellsDir: CELLS, leafZoom: 18 }, () => undefined);
+    plugin.start({ cellsDir: CELLS, boxRadiusKm: 0, leafZoom: 18 }, () => undefined);
     f.send(navDelta(ROCK[0] - 75 / M_PER_DEG_LON, ROCK[1], 3, T0));
     clock.advance(1000);
     expect(lastValue(f.deltas, "navigation.underKeel.timeToShoal")).toEqual(expect.any(Number));
@@ -840,7 +851,7 @@ describe("plugin lifecycle", () => {
     const { router, call } = fakeRouter();
     plugin.registerWithRouter?.(router as never);
     seedFixtureIndex(dataDir);
-    plugin.start({ cellsDir: CELLS, leafZoom: 18 }, () => undefined);
+    plugin.start({ cellsDir: CELLS, boxRadiusKm: 0, leafZoom: 18 }, () => undefined);
     for (const bad of [navDelta(NaN, 60.01, 3, T0), navDelta(22.003, 91, 3, T0)]) {
       f.send(navDelta(22.003, 60.01, 3, T0));
       f.send(bad);
@@ -857,7 +868,7 @@ describe("plugin lifecycle", () => {
     const clock = fakeClock(T0);
     const plugin = underkeel(f.app, clock);
     seedFixtureIndex(dataDir);
-    plugin.start({ cellsDir: CELLS, leafZoom: 18 }, () => undefined);
+    plugin.start({ cellsDir: CELLS, boxRadiusKm: 0, leafZoom: 18 }, () => undefined);
     f.send(navDelta(22.003, 60.01, 3, T0));
     f.send({
       updates: [{ values: [{ path: "navigation.position" as never, value: null }] }]
@@ -871,7 +882,7 @@ describe("plugin lifecycle", () => {
     const clock = fakeClock(T0);
     const plugin = underkeel(f.app, clock);
     seedFixtureIndex(dataDir);
-    plugin.start({ cellsDir: CELLS, leafZoom: 18 }, () => undefined);
+    plugin.start({ cellsDir: CELLS, boxRadiusKm: 0, leafZoom: 18 }, () => undefined);
     const nullFrom = (source: string) => ({
       updates: [
         {
@@ -902,7 +913,10 @@ describe("plugin lifecycle", () => {
 
 describe("index loader", () => {
   test("reports a missing cells directory as a reason", async () => {
-    const r = await loadOrBuildIndex(parseConfig({ cellsDir: "/nonexistent/cells" }), os.tmpdir());
+    const r = await loadOrBuildIndex(
+      parseConfig({ cellsDir: "/nonexistent/cells", boxRadiusKm: 0 }),
+      os.tmpdir()
+    );
     expect(r.index).toBeUndefined();
     expect(r.reason).toMatch(/chart index failed/);
   });
@@ -910,7 +924,7 @@ describe("index loader", () => {
   test("an empty cells directory is reported", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-empty-"));
     try {
-      const cfg = parseConfig({ cellsDir: dir, indexDir: path.join(dir, "ix") });
+      const cfg = parseConfig({ cellsDir: dir, boxRadiusKm: 0, indexDir: path.join(dir, "ix") });
       expect((await loadOrBuildIndex(cfg, dir)).reason).toMatch(/no cells/);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
@@ -920,7 +934,7 @@ describe("index loader", () => {
   test("loads a saved index without rebuilding", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-load-"));
     try {
-      const cfg = parseConfig({ cellsDir: CELLS, leafZoom: 16 });
+      const cfg = parseConfig({ cellsDir: CELLS, boxRadiusKm: 0, leafZoom: 16 });
       expect((await loadOrBuildIndex(cfg, dir)).built).toBe(true);
       const again = await loadOrBuildIndex(cfg, dir);
       expect(again.built).toBe(false);
@@ -933,7 +947,7 @@ describe("index loader", () => {
   test("rebuilds a saved index of an older pyramid version", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-old-"));
     try {
-      const cfg = parseConfig({ cellsDir: CELLS, leafZoom: 16 });
+      const cfg = parseConfig({ cellsDir: CELLS, boxRadiusKm: 0, leafZoom: 16 });
       expect((await loadOrBuildIndex(cfg, dir)).built).toBe(true);
       const file = path.join(dir, "index", "pyramid.bin");
       const buf = fs.readFileSync(file);

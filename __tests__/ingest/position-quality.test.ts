@@ -63,18 +63,22 @@ describe("compilation scale and positional quality", () => {
     expect(depthFeatures(cell.features).every((f) => f.topoSigma === undefined)).toBe(true);
   });
 
-  test("with QUAPOS.geojson only land and shoreline objects take the scale's σ", () => {
+  test("with QUAPOS.geojson land, shoreline and depth areas take the scale's σ", () => {
     writeJson("QUAPOS.geojson", { type: "FeatureCollection", features: [] });
     const cell = readCellDirectory(dir, 0);
     expect(cell.info.positionQuality).toBe(true);
     const depths = depthFeatures(cell.features);
-    const land = depths.filter((f) => TOPOGRAPHY.has(f.objectClass));
-    expect(land.length).toBeGreaterThan(0);
-    expect(land.every((f) => f.topoSigma === 6)).toBe(true);
-    // Depth areas, soundings and rocks stay on their survey.
-    const water = depths.filter((f) => !TOPOGRAPHY.has(f.objectClass));
-    expect(water.length).toBeGreaterThan(0);
-    expect(water.every((f) => f.topoSigma === undefined)).toBe(true);
+    const drawn = depths.filter(
+      (f) =>
+        TOPOGRAPHY.has(f.objectClass) || f.objectClass === "DEPARE" || f.objectClass === "DRGARE"
+    );
+    expect(drawn.some((f) => TOPOGRAPHY.has(f.objectClass))).toBe(true);
+    expect(drawn.some((f) => f.objectClass === "DEPARE")).toBe(true);
+    expect(drawn.every((f) => f.topoSigma === 6)).toBe(true);
+    // Soundings and rocks stay on their survey.
+    const points = depths.filter((f) => !drawn.includes(f));
+    expect(points.length).toBeGreaterThan(0);
+    expect(points.every((f) => f.topoSigma === undefined && f.geom.type === "point")).toBe(true);
     expect(cell.features.filter((f) => f.role !== "depth").every((f) => !("topoSigma" in f))).toBe(
       true
     );
@@ -92,6 +96,65 @@ describe("compilation scale and positional quality", () => {
     const info = { ...readCellInfo(dir), band: 5 };
     const back = parseCatalogue(JSON.parse(JSON.stringify({ version: 1, cells: [info] })));
     expect(back.cells[0]).toMatchObject({ compilationScale: 12000, positionQuality: true });
+  });
+});
+
+describe("M_CSCL areas compiled at another scale", () => {
+  const rect = ([w, s, e, n]: number[]) => ({
+    type: "Polygon",
+    coordinates: [
+      [
+        [w, s],
+        [e, s],
+        [e, n],
+        [w, n],
+        [w, s]
+      ]
+    ]
+  });
+  const mcscl = (...areas: [number, number[]][]) =>
+    writeJson("M_CSCL.geojson", {
+      type: "FeatureCollection",
+      features: areas.map(([CSCALE, box]) => feature({ CSCALE }, rect(box)))
+    });
+  const drawnOf = (cls: string) =>
+    depthFeatures(readCellDirectory(dir, 0).features).filter((f) => f.objectClass === cls);
+
+  beforeEach(() => {
+    // A low-accuracy node by the 2 m bank (22.01–22.015, 59.988–59.991).
+    writeJson("QUAPOS.geojson", {
+      type: "FeatureCollection",
+      features: [feature({ PRIM: "inode", RCID: 1, QUAPOS: 4 }, point([22.012, 59.989]))]
+    });
+  });
+
+  test("what the drawing places in a 1:80 000 area takes its σ (40 m), not DSPM_CSCL's", () => {
+    mcscl([80000, [22.009, 59.987, 22.016, 59.992]]);
+    const cell = readCellDirectory(dir, 0);
+    const areas = drawnOf("DEPARE");
+    expect(areas.length).toBeGreaterThan(1);
+    // Every depth area meeting the 1:80 000 area by box, the 10 m one around it too.
+    expect(areas.every((f) => f.topoSigma === 40 && f.scale === 80000)).toBe(true);
+    // Land away from it keeps the cell's 1:12 000.
+    expect(drawnOf("LNDARE").every((f) => f.topoSigma === 6 && f.scale === 12000)).toBe(true);
+    const node = cell.features.find((f): f is PositionFeature => f.role === "position");
+    expect(node?.scale).toBe(80000);
+    // Soundings and rocks stay on their survey.
+    expect(
+      depthFeatures(cell.features)
+        .filter((f) => f.hazard)
+        .every((f) => f.topoSigma === undefined)
+    ).toBe(true);
+  });
+
+  test("an area at a larger scale than the cell's never narrows the σ", () => {
+    mcscl([5000, [21.9, 59.9, 22.1, 60.1]]);
+    expect(drawnOf("DEPARE").every((f) => f.topoSigma === 6 && f.scale === 12000)).toBe(true);
+  });
+
+  test("an M_CSCL area is no chart feature", () => {
+    mcscl([80000, [22.009, 59.987, 22.016, 59.992]]);
+    expect(readCellDirectory(dir, 0).features.some((f) => f.objectClass === "M_CSCL")).toBe(false);
   });
 });
 

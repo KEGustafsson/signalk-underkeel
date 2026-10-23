@@ -22,7 +22,9 @@ interface FeatureBase {
   /**
    * Compilation scale denominator of the source cell (DSPM_CSCL), when it
    * states one: nothing it draws is placed finer than 1 mm on that chart,
-   * so the index splits tiles no finer for it (plan §4.3).
+   * so the index splits tiles no finer for it (plan §4.3). For what the
+   * drawing places and a record not surveyed, the smaller scale of an
+   * M_CSCL area it may meet, where the cell has one.
    */
   scale?: number;
 }
@@ -36,11 +38,11 @@ export interface DepthFeature extends FeatureBase {
   hazard: boolean;
   dredged: boolean;
   /**
-   * Land and shoreline objects (`TOPOGRAPHY`): the 1σ of their own charted
-   * position in metres, from the cell's compilation scale (plan §4.4). Set
-   * only when the export carries the cell's positional quality
-   * (`QUAPOS.geojson`); without it the object is placed by the survey's
-   * CATZOC like the depths around it.
+   * Land and shoreline objects (`TOPOGRAPHY`) and depth areas: the 1σ of
+   * their charted position in metres, from their compilation scale (`scale`,
+   * plan §4.3, §4.4). Set only when the export carries the cell's
+   * positional quality (`QUAPOS.geojson`); without it the object is placed by
+   * the survey's CATZOC like the soundings around it.
    */
   topoSigma?: number;
 }
@@ -74,9 +76,11 @@ export interface UnsurveyedFeature extends FeatureBase {
 /**
  * A spatial record (edge or node) whose position the cell does not give as
  * surveyed: QUAPOS other than 1 (surveyed), 10 (precisely known) or 11
- * (calculated), or a stated POSACC. Land and shoreline objects on it keep
- * the survey's position σ, or POSACC when stated, rather than the
- * compilation scale's.
+ * (calculated), or a stated POSACC. Land, shoreline and depth areas on it
+ * are read as drawn from a source four times smaller in scale
+ * (`NOT_SURVEYED_SCALE`): 24 m (1σ) at 1:12 000, or the survey's σP in a
+ * cell with no compilation scale. A stated POSACC widens their σ to half
+ * of it (plan §4.3).
  */
 export interface PositionFeature extends FeatureBase {
   role: "position";

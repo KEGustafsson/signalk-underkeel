@@ -54,11 +54,18 @@ export function statusReport(s: {
     ...(s.monitor ? monitorSection(s.monitor, summary) : { engine: s.stopped, vessel: [] }),
     index: indexSection(s.load, summary),
     livechart: s.livechart?.status() ?? null,
-    wfs: s.wfs?.status() ?? null,
+    wfs: s.wfs?.downloads ? s.wfs.status() : null,
+    chartBox: s.wfs ? boxSection(s.wfs) : null,
     mooringZones: {
       loaded: s.monitor?.zones.map((z) => z.name) ?? [],
       errors: s.zoneErrors ?? []
     },
     checkedAt: new Date(s.now).toISOString()
   };
+}
+
+/** The box the index is built in around the vessel, as the box service keeps it. */
+function boxSection(box: WfsService): unknown {
+  const { busy, lastError } = box.status();
+  return { box: box.current ?? null, busy, lastError: lastError ?? null };
 }

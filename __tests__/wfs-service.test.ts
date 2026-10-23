@@ -4,11 +4,15 @@ import type { LonLat } from "../src/foundation/geo";
 import { haversine, project } from "../src/foundation/geo";
 import type { Bbox, WfsFetch } from "../src/ingest/wfs";
 import type { ChartIndex } from "../src/spatial/chart-index";
-import { WFS_LIMITS } from "../src/ingest/wfs";
-import type { IndexBuilder, WfsServiceDeps } from "../src/wfs-service";
+import { boxAround, WFS_LIMITS, WFS_SOURCE } from "../src/ingest/wfs";
+import { sourceKeys } from "../src/index-loader";
+import type { BuildJob } from "../src/spatial/build-worker";
+import type { IndexBuilder, WfsBox, WfsServiceDeps } from "../src/wfs-service";
 import { inThreadRefresher, WfsService } from "../src/wfs-service";
 
 const TMP = path.join(__dirname, "temp", "wfs-service");
+const CHARTS = path.join(TMP, "charts");
+const ENC = path.join(CHARTS, "FI5ENC01.000");
 const KM_LON_60 = 1 / (111.195 * Math.cos(Math.PI / 3));
 
 function okReply() {
@@ -26,11 +30,13 @@ const downloads = (fetched: string[]): number =>
     return q.get("typeNames") === "rajoitettu:DepthArea_A" && q.get("resultType") === "hits";
   }).length;
 
-function harness(fetch: WfsFetch = okReply) {
+function harness(fetch: WfsFetch = okReply, extra: Partial<WfsServiceDeps> = {}) {
   const t = {
     now: 1_800_000_000_000,
     pos: undefined as LonLat | undefined,
-    motion: undefined as { sog: number; cog: number } | undefined
+    motion: undefined as { sog: number; cog: number } | undefined,
+    /** The index in use: the last one handed over, or one loaded at start. */
+    index: undefined as ChartIndex | undefined
   };
   const fetched: string[] = [];
   const built: string[][] = [];
@@ -48,7 +54,9 @@ function harness(fetch: WfsFetch = okReply) {
     dir: TMP,
     indexDir: path.join(TMP, "index"),
     leafZoom: 20,
-    encDirs: () => ["/charts/FI5ENC01"],
+    cellsDir: CHARTS,
+    inBox: false,
+    index: () => t.index,
     refresh: inThreadRefresher(
       (url, init) => {
         fetched.push(url);
@@ -62,9 +70,11 @@ function harness(fetch: WfsFetch = okReply) {
     lookahead: { distance: 555.6, minHorizon: 60 },
     onIndex: (i, changed) => {
       indexes.push(i);
+      t.index = i;
       handed.push(changed);
     },
-    error: (m) => errors.push(m)
+    error: (m) => errors.push(m),
+    ...extra
   };
   return {
     t,
@@ -81,7 +91,8 @@ function harness(fetch: WfsFetch = okReply) {
 
 beforeEach(() => {
   fs.rmSync(TMP, { recursive: true, force: true });
-  fs.mkdirSync(TMP, { recursive: true });
+  fs.mkdirSync(CHARTS, { recursive: true });
+  fs.writeFileSync(ENC, "S-57 base cell");
 });
 afterAll(() => fs.rmSync(TMP, { recursive: true, force: true }));
 
@@ -98,7 +109,7 @@ describe("WFS box around the vessel", () => {
     await h.service.check();
     // A count, then one page, per layer.
     expect(h.fetched).toHaveLength(6);
-    expect(h.built).toEqual([["/charts/FI5ENC01", path.join(TMP, "FI1WFS01")]]);
+    expect(h.built).toEqual([[ENC, path.join(TMP, "FI1WFS01")]]);
     expect(h.indexes).toHaveLength(1);
     expect(h.service.status().box?.centre).toEqual([22.08, 60.07]);
     expect(h.service.status().notice).toMatch(/not for navigational purposes/);
@@ -294,9 +305,139 @@ describe("WFS box around the vessel", () => {
     first.t.pos = [22.08, 60.07];
     await first.service.check();
     const again = harness();
+    again.t.index = first.indexes[0];
     expect(again.service.savedCell()).toBe(path.join(TMP, "FI1WFS01"));
     again.t.pos = [22.08 + 2 * KM_LON_60, 60.07];
     await again.service.check();
     expect(again.fetched).toHaveLength(0);
+  });
+
+  test("a saved cell torn by a power cut is left out of the start and downloaded again", async () => {
+    const first = harness();
+    first.t.pos = [22.08, 60.07];
+    await first.service.check();
+    fs.writeFileSync(path.join(TMP, "FI1WFS01", "DSID.geojson"), "");
+    const again = harness();
+    expect(again.service.savedCell()).toBeUndefined();
+    expect(again.service.status().lastError).toMatch(/saved cell unreadable/);
+    expect(again.errors).toEqual([expect.stringMatching(/saved cell unreadable/)]);
+  });
+});
+
+describe("box service and the index in use", () => {
+  const POS: LonLat = [22.08, 60.07];
+  const savedBox = (): WfsBox => ({
+    bbox: boxAround(POS, 10),
+    centre: POS,
+    radiusKm: 10,
+    catzoc: 3,
+    fetchedAt: "2026-10-20T07:00:00Z",
+    features: { depthAreas: 1, dredgedAreas: 0, soundings: 0 }
+  });
+  const indexOf = (...cells: { name: string; source?: string }[]) =>
+    ({ catalogue: { version: 1, cells } }) as unknown as ChartIndex;
+
+  test("a saved box at the vessel is built again while no index is in use", async () => {
+    // As after an upgrade from a whole build, or with the index directory deleted.
+    fs.writeFileSync(path.join(TMP, "box.json"), JSON.stringify(savedBox()));
+    const h = harness();
+    h.t.pos = POS;
+    await h.service.check();
+    expect(h.indexes).toHaveLength(1);
+  });
+
+  test("in box mode a saved box the saved index was not built in is built again", async () => {
+    fs.writeFileSync(path.join(TMP, "box.json"), JSON.stringify(savedBox()));
+    const h = harness(okReply, { inBox: true });
+    h.t.index = indexOf({ name: "FI5ENC01" });
+    h.t.pos = POS;
+    await h.service.check();
+    expect(h.indexes).toHaveLength(1);
+    // Once built, the box is kept while the vessel stays inside it.
+    h.t.now += 120_000;
+    await h.service.check();
+    expect(h.indexes).toHaveLength(1);
+  });
+
+  test("the cells are found and stamped by the refresh, after the download", async () => {
+    const jobs: BuildJob[] = [];
+    const h = harness(okReply, { inBox: true });
+    const build = h.builder.build;
+    h.builder.build = (job, signal) => {
+      jobs.push(job);
+      return build(job, signal);
+    };
+    const refresh = h.deps.refresh;
+    const posted: Parameters<typeof refresh>[0][] = [];
+    const service = new WfsService({
+      ...h.deps,
+      refresh: (job, signal) => {
+        posted.push(job);
+        return refresh(job, signal);
+      }
+    });
+    h.t.pos = POS;
+    await service.check();
+    // The event loop neither scans the cells directory nor stamps a cell.
+    expect(posted[0]).toMatchObject({ cellsDir: CHARTS, box: expect.any(Array) });
+    expect(posted[0]?.build).toEqual({
+      dirs: [path.join(TMP, "FI1WFS01")],
+      leafZoom: 20,
+      indexDir: path.join(TMP, "index")
+    });
+    const dirs = [ENC, path.join(TMP, "FI1WFS01")];
+    expect(jobs[0]?.dirs).toEqual(dirs);
+    // The new WFS cell is stamped by its downloaded edition, so the next start keeps the index.
+    expect(jobs[0]?.box?.sources).toEqual(sourceKeys(dirs));
+    expect(jobs[0]?.box?.sources).toContain("FI1WFS01 edition 1 update 0");
+  });
+
+  test("a missing cells directory fails the refresh, which is retried once it is back", async () => {
+    fs.rmSync(CHARTS, { recursive: true });
+    const h = harness(okReply, { config: { radiusKm: 10 }, inBox: true });
+    h.t.pos = POS;
+    await expect(h.service.check()).resolves.toBeUndefined();
+    expect(h.service.status()).toMatchObject({
+      busy: false,
+      lastError: expect.stringMatching(/ENOENT/)
+    });
+    expect(h.errors).toEqual([expect.stringMatching(/^chart box around the vessel: ENOENT/)]);
+    fs.mkdirSync(CHARTS);
+    fs.writeFileSync(ENC, "S-57 base cell");
+    h.t.now += 300_000;
+    await h.service.check();
+    expect(h.built).toEqual([[ENC]]);
+  });
+
+  test("a check that throws is reported, never left an unhandled rejection", async () => {
+    const h = harness(okReply, {
+      position: () => {
+        throw new Error("no navigation data");
+      }
+    });
+    h.service.start();
+    await new Promise((r) => setImmediate(r));
+    expect(h.errors).toEqual(["Traficom WFS depths: no navigation data"]);
+  });
+
+  test("an empty cells directory keeps the ENC index in use", async () => {
+    fs.rmSync(ENC);
+    const box = harness(okReply, { config: { radiusKm: 10 }, inBox: true });
+    box.t.index = indexOf({ name: "FI5ENC01" });
+    box.t.pos = POS;
+    await box.service.check();
+    expect(box.built).toEqual([]);
+    expect(box.errors).toEqual([`chart box around the vessel: no S-57 cell found in ${CHARTS}`]);
+    // With the WFS on, an index of ENC cells is kept too, but WFS depths alone are rebuilt.
+    const wfs = harness();
+    wfs.t.index = indexOf({ name: "FI5ENC01" }, { name: "FI1WFS01", source: WFS_SOURCE });
+    wfs.t.pos = POS;
+    await wfs.service.check();
+    expect(wfs.built).toEqual([]);
+    const alone = harness();
+    alone.t.index = indexOf({ name: "FI1WFS01", source: WFS_SOURCE });
+    alone.t.pos = POS;
+    await alone.service.check();
+    expect(alone.built).toEqual([[path.join(TMP, "FI1WFS01")]]);
   });
 });

@@ -1,6 +1,8 @@
 import { parentPort, workerData } from "worker_threads";
-import type { WfsDownload, WfsFetch } from "./ingest/wfs";
+import { cellSources, sourceKeys } from "./index-loader";
+import type { Bbox, WfsDownload, WfsFetch } from "./ingest/wfs";
 import { downloadWfsCell } from "./ingest/wfs";
+import { readBox } from "./spatial/build-box";
 import type { BuildJob, BuildReply, IndexParts } from "./spatial/build-worker";
 import { runBuild, transfers } from "./spatial/build-worker";
 
@@ -13,14 +15,51 @@ import { runBuild, transfers } from "./spatial/build-worker";
  */
 
 export interface WfsJob {
-  download: Omit<WfsDownload, "fetch" | "signal" | "now"> & { now: string };
+  /** Absent for a box of ENC cells alone: the index is rebuilt around the vessel only. */
+  download?: Omit<WfsDownload, "fetch" | "signal" | "now"> & { now: string };
+  /** The S-57 cells found under it are built ahead of `build.dirs`. */
+  cellsDir?: string;
+  /**
+   * Finding no S-57 cell in `cellsDir` fails the refresh and keeps the index in use: the
+   * drive holding the cells has most likely been unmounted.
+   */
+  cellsRequired?: boolean;
+  /** Builds in this box (plan §4.2), not whole. */
+  box?: Bbox;
   build: BuildJob;
 }
 
 export type WfsCounts = Awaited<ReturnType<typeof downloadWfsCell>>;
 
+export const NO_FEATURES: WfsCounts = { depthAreas: 0, dredgedAreas: 0, soundings: 0 };
+
 export interface WfsReply extends BuildReply {
   features?: WfsCounts;
+}
+
+/**
+ * The S-57 cells under `cellsDir`, found before the download. Scanning and stamping the 698
+ * NOAA cells took 31–47 ms (x86), so the refresh does it, not the event loop.
+ */
+export function refreshCells(job: WfsJob): string[] {
+  const cells = cellSources(job.cellsDir);
+  if (job.cellsDir !== undefined && job.cellsRequired && cells.length === 0) {
+    throw new Error(`no S-57 cell found in ${job.cellsDir}`);
+  }
+  return cells;
+}
+
+/**
+ * The build once the WFS cell is downloaded: `cells` first and, for a box, every source's
+ * stamp as it is now, so a cell downloaded for the first time is recorded by its edition.
+ */
+export function refreshBuild(job: WfsJob, cells: string[]): BuildJob {
+  const { changed, ...build } = { ...job.build, dirs: [...cells, ...job.build.dirs] };
+  if (job.box) {
+    return { ...build, box: { bbox: job.box, sources: sourceKeys(build.dirs) } };
+  }
+  // Past its box an index built in one is no coverage: none of its roots is copied.
+  return changed && !readBox(build.indexDir) ? { ...build, changed } : build;
 }
 
 export async function runWfsJob(
@@ -28,13 +67,11 @@ export async function runWfsJob(
   fetch: WfsFetch,
   signal?: AbortSignal
 ): Promise<{ staging: string; index: IndexParts; features: WfsCounts }> {
-  const features = await downloadWfsCell({
-    ...job.download,
-    now: new Date(job.download.now),
-    fetch,
-    signal
-  });
-  return { ...(await runBuild(job.build)), features };
+  const cells = refreshCells(job);
+  const features = job.download
+    ? await downloadWfsCell({ ...job.download, now: new Date(job.download.now), fetch, signal })
+    : NO_FEATURES;
+  return { ...(await runBuild(refreshBuild(job, cells))), features };
 }
 
 if (parentPort && workerData) {

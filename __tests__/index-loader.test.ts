@@ -2,9 +2,20 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { parseConfig } from "../src/config";
-import { cellSources, loadOrBuildIndex, planIndex } from "../src/index-loader";
-import { loadChartIndex, loadChartIndexAsync } from "../src/spatial/chart-index";
+import {
+  BOX_WAITING_REASON,
+  cellSources,
+  loadOrBuildIndex,
+  planIndex,
+  sourceKeys
+} from "../src/index-loader";
+import * as encWasm from "../src/ingest/enc-wasm";
+import { boxAround } from "../src/ingest/wfs";
+import { BOX_FILE, readBox } from "../src/spatial/build-box";
+import { runBuild } from "../src/spatial/build-worker";
+import { commitChartIndex, loadChartIndex, loadChartIndexAsync } from "../src/spatial/chart-index";
 import { gunzipSync } from "zlib";
+import { ROCK } from "./helpers/fixture-index";
 
 /** The synthetic scenario as S-57 cells (fixtures/s57/generate.js). */
 const CELLS = path.resolve(__dirname, "..", "fixtures", "s57", "synth");
@@ -37,7 +48,7 @@ const names = (r: Awaited<ReturnType<typeof loadOrBuildIndex>>): string[] =>
   r.index?.catalogue.cells.map((c) => c.name) ?? [];
 
 const load = (extra: Record<string, unknown> = {}) =>
-  loadOrBuildIndex(parseConfig({ cellsDir, leafZoom: 16, ...extra }), dataDir);
+  loadOrBuildIndex(parseConfig({ cellsDir, boxRadiusKm: 0, leafZoom: 16, ...extra }), dataDir);
 
 // A junction on Windows, which needs no symlink privilege; the type is ignored elsewhere.
 const linkDir = (target: string, link: string) => fs.symlinkSync(target, link, "junction");
@@ -230,7 +241,7 @@ describe("a saved index too large to load on the event loop", () => {
   test("is planned as a read, and the read off the loop loads the same index", async () => {
     copyCell("FI4SYNTH");
     await load();
-    const p = planIndex(parseConfig({ cellsDir, leafZoom: 16 }), dataDir, [], 0);
+    const p = planIndex(parseConfig({ cellsDir, boxRadiusKm: 0, leafZoom: 16 }), dataDir, [], 0);
     expect(p).toMatchObject({ read: path.join(dataDir, "index"), notes: [] });
     if (!("read" in p)) {
       return;
@@ -252,7 +263,7 @@ describe("a saved index too large to load on the event loop", () => {
     await load();
     const file = path.join(dataDir, "index", "pyramid.bin");
     fs.truncateSync(file, Math.floor(fs.statSync(file).size / 2));
-    const p = planIndex(parseConfig({ cellsDir, leafZoom: 16 }), dataDir, [], 0);
+    const p = planIndex(parseConfig({ cellsDir, boxRadiusKm: 0, leafZoom: 16 }), dataDir, [], 0);
     if (!("read" in p)) {
       throw new Error("expected a read plan");
     }
@@ -270,5 +281,97 @@ describe("a saved index too large to load on the event loop", () => {
         reason: expect.stringMatching(/chart index failed: pyramid file is truncated/)
       }
     });
+  });
+});
+
+describe("a saved index built in a box around the vessel", () => {
+  const indexDir = (): string => path.join(dataDir, "index");
+  const BOX = boxAround(ROCK, 1);
+  const config = (extra: Record<string, unknown> = {}) =>
+    parseConfig({ cellsDir, leafZoom: 16, ...extra });
+  /** Builds and commits the cells around ROCK, as the box service does. */
+  const saveBoxIndex = async (): Promise<void> => {
+    const dirs = cellSources(cellsDir);
+    const job = { dirs, leafZoom: 16, indexDir: indexDir(), threads: 1 };
+    const r = await runBuild({ ...job, box: { bbox: BOX, sources: sourceKeys(dirs) } });
+    commitChartIndex(indexDir(), r.staging);
+  };
+
+  beforeEach(async () => {
+    copyCell("FI4SYNTH");
+    copyCell("FI5SYNTH");
+    await saveBoxIndex();
+  });
+
+  test("with boxRadiusKm 0 is rebuilt from every cell, not loaded as if whole", () => {
+    const p = planIndex(config({ boxRadiusKm: 0 }), dataDir);
+    expect(p).toMatchObject({
+      build: { dirs: cellSources(cellsDir) },
+      notes: ["rebuilt the index: the saved one was built in a box around the vessel"]
+    });
+    expect("build" in p && p.build.box).toBeUndefined();
+  });
+
+  test.each([
+    ["an empty cells.json", () => fs.truncateSync(path.join(indexDir(), "cells.json"), 0)],
+    ["an empty hazards.json", () => fs.truncateSync(path.join(indexDir(), "hazards.json"), 0)]
+  ])("with %s is rebuilt in its saved box, not from every cell", (_what, tear) => {
+    tear();
+    const p = planIndex(config(), dataDir);
+    expect("build" in p && p.build.box).toEqual({
+      bbox: BOX,
+      sources: sourceKeys(cellSources(cellsDir))
+    });
+    expect("build" in p && p.notes).toEqual([
+      expect.stringMatching(/^rebuilt the index: the saved one could not be read \(.+\)$/)
+    ]);
+  });
+
+  test("read off the event loop and found unreadable, it is rebuilt in its saved box", () => {
+    const p = planIndex(config(), dataDir, [], 0);
+    if (!("read" in p)) {
+      throw new Error("expected a read plan");
+    }
+    const next = p.unreadable(new Error("pyramid file is truncated"));
+    expect("build" in next && next.build.box?.bbox).toEqual(BOX);
+  });
+
+  test("unreadable without its box file, nothing is built until the vessel's position", () => {
+    fs.truncateSync(path.join(indexDir(), "cells.json"), 0);
+    fs.rmSync(path.join(indexDir(), BOX_FILE));
+    expect(planIndex(config(), dataDir)).toEqual({
+      load: {
+        indexDir: indexDir(),
+        built: false,
+        reason: expect.stringMatching(
+          new RegExp(`^${BOX_WAITING_REASON}; not using the saved index: the saved one could not`)
+        )
+      }
+    });
+  });
+
+  test("from an older pyramid version is rebuilt and says so, not that the zoom differs", () => {
+    const file = path.join(indexDir(), "pyramid.bin");
+    const buf = fs.readFileSync(file);
+    const nl = buf.indexOf(0x0a);
+    const header = JSON.parse(buf.subarray(0, nl).toString("utf8")) as Record<string, unknown>;
+    const old = Buffer.from(`${JSON.stringify({ ...header, version: 3 })}\n`, "utf8");
+    fs.writeFileSync(file, Buffer.concat([old, buf.subarray(nl + 1)]));
+    const p = planIndex(config(), dataDir);
+    expect("build" in p && p.notes).toEqual([
+      "rebuilt the index: the saved one is from an older pyramid version or its header is damaged"
+    ]);
+    expect(readBox(indexDir())?.leafZoom).toBe(16);
+  });
+
+  test("each cell is stamped once at start", () => {
+    const stamp = jest.spyOn(encWasm, "encStamp");
+    try {
+      const p = planIndex(config(), dataDir);
+      expect("load" in p && p.load.index?.catalogue.cells).toHaveLength(2);
+      expect(stamp).toHaveBeenCalledTimes(2);
+    } finally {
+      stamp.mockRestore();
+    }
   });
 });

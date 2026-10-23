@@ -23,7 +23,8 @@ import {
   geomContainsRect,
   geomRectDistance
 } from "../../src/foundation/geometry";
-import type { ChartFeature, QualityFeature } from "../../src/ingest/features";
+import type { ChartFeature, DepthFeature, QualityFeature } from "../../src/ingest/features";
+import { MAX_CHART_BUFFER } from "../../src/spatial/chart-position";
 import type { ChartPosition, NodeValues } from "../../src/spatial/node-store";
 import { combine, EMPTY, FLAGS, NO_DATA, NodeStore } from "../../src/spatial/node-store";
 import type { QualityOptions } from "../../src/spatial/quality";
@@ -43,6 +44,13 @@ interface BuildOptions {
   /** Point hazards and soundings are burned within k·σP of their position. */
   k: number;
   quality: QualityOptions;
+  /**
+   * A box around the vessel: tiles are built out to the chart position
+   * reach past it, and none not wholly inside it reads as covered.
+   */
+  within?: Rect;
+  /** Drop features the children cannot need (`forChildren`); on by default. */
+  prune?: boolean;
 }
 
 const DEFAULT_BUILD: BuildOptions = {
@@ -247,17 +255,38 @@ function analyse(all: Hit[], rect: Rect, tileGround: number): Analysis {
 }
 
 /**
- * Features handed to the children. A partial depth feature no shallower
- * than an area containing the whole tile cannot lower any child's dMin, so
- * it is dropped; dredged and swept features stay for their flags. Where a
- * larger-scale cell's coverage ends inside the tile, the children may
- * switch to that cell and drop the current areas, so nothing is pruned.
+ * Features handed to the children. A partial depth feature is dropped when
+ * a feature containing the whole tile is no deeper and placed the same way
+ * (survey, or drawing with a σ no narrower): it then cannot lower any
+ * child's dMin or chart position. With `prune` off nothing is dropped.
+ * Dredged and swept features stay for their flags. Where a larger-scale
+ * cell's coverage ends inside the tile, the children may switch to that
+ * cell and drop the current areas, so nothing is pruned.
  */
-function forChildren(all: Hit[], a: Analysis): Item[] {
+function forChildren(all: Hit[], a: Analysis, prune: boolean): Item[] {
   const coverageItems = all.filter((h) => h.item.f.role === "coverage").map((h) => h.item);
+  const full = a.hits.filter((h) => h.full).map((h) => h.item.f);
+  const covers = (f: DepthFeature, g: ChartFeature): boolean => {
+    const d = depthOf(g);
+    const drawn = g.role === "depth" ? g.topoSigma : undefined;
+    if (d === undefined || d > f.depth) {
+      return false;
+    }
+    if (f.topoSigma === undefined) {
+      return drawn === undefined;
+    }
+    return drawn !== undefined && drawn >= f.topoSigma;
+  };
   const kept = a.hits.filter((h) => {
     const f = h.item.f;
-    return a.coverageEdge || h.full || f.role !== "depth" || f.dredged || f.depth < a.shallowest;
+    return (
+      !prune ||
+      a.coverageEdge ||
+      h.full ||
+      f.role !== "depth" ||
+      f.dredged ||
+      !full.some((g) => covers(f, g))
+    );
   });
   return [...coverageItems, ...kept.map((h) => h.item)];
 }
@@ -396,24 +425,30 @@ function surveySigma(hits: Hit[], opts: BuildOptions): number {
   return sigmaP;
 }
 
-/** A leaf's chart position: survey σ, its land's own σ, and the depth the survey places. */
+/**
+ * A leaf's chart position: survey σ with the depth the survey places
+ * (soundings, point dangers), and the drawing's σ with the depth it places
+ * (land, depth areas).
+ */
 function chartPosition(hits: Hit[], v: NodeValues, opts: BuildOptions): ChartPosition {
   const survey = surveySigma(hits, opts);
   if (v.flags & FLAGS.NO_DEPTH) {
-    return { surveySigmaP: survey, topoSigmaP: 0, bathyDMin: Infinity };
+    return { ...NO_POSITION, surveySigmaP: survey };
   }
   let topo = 0;
+  let drawn = Infinity;
   let bathy = Infinity;
   for (const h of hits) {
     const f = h.item.f;
     if (f.role === "depth" && f.topoSigma !== undefined) {
       topo = Math.max(topo, f.topoSigma);
+      drawn = Math.min(drawn, f.depth);
     } else if (f.role === "depth" || f.role === "swept") {
       bathy = Math.min(bathy, f.depth);
     }
   }
   if (topo === 0) {
-    return { surveySigmaP: survey, topoSigmaP: 0, bathyDMin: v.dMin };
+    return { surveySigmaP: survey, topoSigmaP: 0, bathyDMin: v.dMin, topoDMin: Infinity };
   }
   for (const h of hits) {
     const f = h.item.f;
@@ -422,14 +457,13 @@ function chartPosition(hits: Hit[], v: NodeValues, opts: BuildOptions): ChartPos
         topo = Math.max(topo, f.posacc / 2);
       }
       if (f.lowAccuracy) {
-        topo = Math.max(
-          topo,
-          survey > 0 ? survey : sigmaFor(undefined, 0, {}, opts.quality).sigmaP
-        );
+        const unsurveyed = survey > 0 ? survey : sigmaFor(undefined, 0, {}, opts.quality).sigmaP;
+        // Read as drawn from a source four times smaller in scale (`NOT_SURVEYED_SCALE`).
+        topo = Math.max(topo, f.scale === undefined ? unsurveyed : 4 * ((f.scale * 0.001) / 2));
       }
     }
   }
-  return { surveySigmaP: survey, topoSigmaP: topo, bathyDMin: bathy };
+  return { surveySigmaP: survey, topoSigmaP: topo, bathyDMin: bathy, topoDMin: drawn };
 }
 
 interface Evaluated {
@@ -438,7 +472,32 @@ interface Evaluated {
   position: ChartPosition;
 }
 
-const NO_POSITION: ChartPosition = { surveySigmaP: 0, topoSigmaP: 0, bathyDMin: Infinity };
+const NO_POSITION: ChartPosition = {
+  surveySigmaP: 0,
+  topoSigmaP: 0,
+  bathyDMin: Infinity,
+  topoDMin: Infinity
+};
+
+/** Interior overlap: `a` and `b` share more than an edge. */
+function interiorsMeet(a: Rect, b: Rect): boolean {
+  return a.minX < b.maxX && b.minX < a.maxX && a.minY < b.maxY && b.minY < a.maxY;
+}
+
+function inside(outer: Rect, inner: Rect): boolean {
+  return (
+    inner.minX >= outer.minX &&
+    inner.maxX <= outer.maxX &&
+    inner.minY >= outer.minY &&
+    inner.maxY <= outer.maxY
+  );
+}
+
+/** The box grown by the widest chart position reach, rounded up to a km. */
+function areaOf(box: Rect): Rect {
+  const reach = Math.ceil(MAX_CHART_BUFFER / 1000) * 1000;
+  return expandRect(box, groundToMercator(reach, maxAbsLat(box)));
+}
 
 function evaluate(
   store: NodeStore,
@@ -449,20 +508,27 @@ function evaluate(
   items: Item[]
 ): Evaluated {
   const rect = tileRect(z, x, y);
-  const all = classify(items, rect);
+  const box = opts.within;
+  const area = box && areaOf(box);
+  const all = area && !interiorsMeet(rect, area) ? [] : classify(items, rect);
   if (!all.some((h) => h.item.f.role === "coverage")) {
     store.add(z, x, y, NO_DATA, false, NO_POSITION);
     return { v: NO_DATA, position: NO_POSITION };
   }
   const tileGround = (rect.maxX - rect.minX) / groundToMercator(1, maxAbsLat(rect));
   const a = analyse(all, rect, tileGround);
-  if (!a.needsSplit || z >= Math.min(opts.leafZoom, a.finest)) {
-    const v = uniformValues(a, rect, opts);
+  // Tiles across the box's edge or its area's split to the leaf zoom.
+  const across = (r: Rect) => interiorsMeet(rect, r) && !inside(r, rect);
+  const edge = box !== undefined && area !== undefined && (across(box) || across(area));
+  if (z >= opts.leafZoom || (!edge && (!a.needsSplit || z >= a.finest))) {
+    const built = uniformValues(a, rect, opts);
+    const v =
+      box && !inside(box, rect) ? { ...built, flags: built.flags | FLAGS.NO_COVERAGE } : built;
     const position = chartPosition(a.hits, v, opts);
     store.add(z, x, y, v, false, position);
     return { v, position };
   }
-  const passed = forChildren(all, a);
+  const passed = forChildren(all, a, opts.prune ?? true);
   let v = EMPTY;
   let position = NO_POSITION;
   for (const [dx, dy] of [
@@ -476,7 +542,8 @@ function evaluate(
     position = {
       surveySigmaP: Math.max(position.surveySigmaP, child.position.surveySigmaP),
       topoSigmaP: Math.max(position.topoSigmaP, child.position.topoSigmaP),
-      bathyDMin: Math.min(position.bathyDMin, child.position.bathyDMin)
+      bathyDMin: Math.min(position.bathyDMin, child.position.bathyDMin),
+      topoDMin: Math.min(position.topoDMin, child.position.topoDMin)
     };
   }
   store.add(z, x, y, v, true, position);

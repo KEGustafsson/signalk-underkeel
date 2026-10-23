@@ -6,14 +6,15 @@ import {
   groundToMercator,
   MERCATOR_HALF_WORLD,
   maxAbsLat,
+  rectContainsRect,
   rectsOverlap,
   tileRange,
   tileRect
 } from "../foundation/geo";
 import { areasCoverRect, geomContainsRect, geomRectDistance } from "../foundation/geometry";
-import type { ChartFeature, QualityFeature } from "../ingest/features";
+import type { ChartFeature, DepthFeature, QualityFeature } from "../ingest/features";
 import type { BuildOptions, Item } from "./build-items";
-import { DEFAULT_BUILD, prepareItems } from "./build-items";
+import { buildArea, DEFAULT_BUILD, prepareItems } from "./build-items";
 import type { ChartPosition, NodeColumns, NodeValues } from "./node-store";
 import { combine, EMPTY, FLAGS, joinPosition, NO_DATA, NodeStore } from "./node-store";
 import {
@@ -109,8 +110,6 @@ interface Analysis {
   hits: Hit[];
   /** Highest usage band whose coverage holds the whole tile. */
   bandFull: number | undefined;
-  /** Shallowest depth of an area that contains the whole tile. */
-  shallowest: number;
   /** A larger-scale cell's coverage boundary crosses the tile. */
   coverageEdge: boolean;
   /** Catalogue index of the covering cell when it is advisory (Traficom WFS). */
@@ -212,21 +211,45 @@ function analyse(all: Hit[], rect: Rect, tileGround: number): Analysis {
       finest = Math.max(finest, splitZoom(h.item.f));
     }
   }
-  return { hits, bandFull, shallowest, coverageEdge, advisoryCell, needsSplit, finest };
+  return { hits, bandFull, coverageEdge, advisoryCell, needsSplit, finest };
+}
+
+/** σ of a feature the chart's drawing places (`chartPosition`); undefined for the survey's. */
+const drawnSigma = (f: ChartFeature): number | undefined =>
+  f.role === "depth" ? f.topoSigma : undefined;
+
+/**
+ * Whether a feature containing the whole tile gives every child all `f`
+ * would: a depth no deeper, placed the same way (`chartPosition`), and when
+ * drawn a σ no narrower. A sounding inside a shallower drawn area still
+ * sets the depth its survey places, and spreads by the survey's σ.
+ */
+function dominated(f: DepthFeature, full: Hit[]): boolean {
+  const sigma = f.topoSigma;
+  return full.some(({ item: { f: g } }) => {
+    const d = depthOf(g);
+    if (d === undefined || d > f.depth) {
+      return false;
+    }
+    const s = drawnSigma(g);
+    return sigma === undefined ? s === undefined : s !== undefined && s >= sigma;
+  });
 }
 
 /**
- * Features handed to the children. A partial depth feature no shallower
- * than an area containing the whole tile cannot lower any child's dMin, so
- * it is dropped; dredged and swept features stay for their flags. Where a
- * larger-scale cell's coverage ends inside the tile, the children may
- * switch to that cell and drop the current areas, so nothing is pruned.
+ * Features handed to the children. A partial depth feature that a feature
+ * containing the whole tile dominates (`dominated`) cannot lower any
+ * child's dMin or chart position, so it is dropped; dredged and swept
+ * features stay for their flags. Where a larger-scale cell's coverage ends
+ * inside the tile, the children may switch to that cell and drop the
+ * current areas, so nothing is pruned.
  */
 function forChildren(all: Hit[], a: Analysis): Item[] {
   const coverage = all.filter((h) => h.item.f.role === "coverage");
+  const full = a.hits.filter((h) => h.full);
   const kept = a.hits.filter((h) => {
     const f = h.item.f;
-    return a.coverageEdge || h.full || f.role !== "depth" || f.dredged || f.depth < a.shallowest;
+    return a.coverageEdge || h.full || f.role !== "depth" || f.dredged || !dominated(f, full);
   });
   // A child lies inside its parent, so what contains the parent contains it.
   const pass = (h: Hit): Item => (h.full && !h.item.full ? { ...h.item, full: true } : h.item);
@@ -358,16 +381,30 @@ interface Evaluated {
   position: ChartPosition;
 }
 
+/** A local build's box (`BuildOptions.within`) and the area its tiles are built in. */
+interface Box {
+  inner: Rect;
+  area: Rect;
+}
+
+/** `rect` holds ground inside `r`, not just a shared edge. */
+const reaches = (rect: Rect, r: Rect): boolean =>
+  rect.minX < r.maxX && r.minX < rect.maxX && rect.minY < r.maxY && r.minY < rect.maxY;
+
+/** `rect` holds ground on both sides of an edge of `r`. */
+const straddles = (rect: Rect, r: Rect): boolean => reaches(rect, r) && !rectContainsRect(r, rect);
+
 function evaluate(
   store: NodeStore,
   opts: BuildOptions,
+  box: Box | undefined,
   z: number,
   x: number,
   y: number,
   items: Item[]
 ): Evaluated {
   const rect = tileRect(z, x, y);
-  const outside = opts.within !== undefined && !rectsOverlap(rect, opts.within);
+  const outside = box !== undefined && !reaches(rect, box.area);
   const all = outside ? [] : classify(items, rect);
   if (!all.some((h) => h.item.f.role === "coverage")) {
     store.add(z, x, y, NO_DATA, false, NO_POSITION);
@@ -375,8 +412,17 @@ function evaluate(
   }
   const tileGround = (rect.maxX - rect.minX) / groundToMercator(1, maxAbsLat(rect));
   const a = analyse(all, rect, tileGround);
-  if (!a.needsSplit || z >= Math.min(opts.leafZoom, a.finest)) {
-    const v = uniformValues(a, rect, opts);
+  // A tile across the edge of the box or of its area splits to the leaf zoom, whatever its
+  // scale: only a leaf may hold ground on both sides. No coarser tile then puts water in
+  // the box under NO_COVERAGE, or carries a value far past the area from cells not read there.
+  const edge = box !== undefined && (straddles(rect, box.inner) || straddles(rect, box.area));
+  if (z >= opts.leafZoom || (!edge && (!a.needsSplit || z >= a.finest))) {
+    const values = uniformValues(a, rect, opts);
+    // Past the box a tile keeps its depth and σ, so it still spreads its risk into the box.
+    const v =
+      box && !rectContainsRect(box.inner, rect)
+        ? { ...values, flags: values.flags | FLAGS.NO_COVERAGE }
+        : values;
     const position = chartPosition(a.hits, v, opts);
     store.add(z, x, y, v, false, position);
     return { v, position };
@@ -390,7 +436,7 @@ function evaluate(
     [0, 1],
     [1, 1]
   ] as const) {
-    const child = evaluate(store, opts, z + 1, 2 * x + dx, 2 * y + dy, passed);
+    const child = evaluate(store, opts, box, z + 1, 2 * x + dx, 2 * y + dy, passed);
     v = combine(v, child.v);
     position = joinPosition(position, child.position);
   }
@@ -428,9 +474,10 @@ export function rootRange(items: readonly Item[], minZoom: number): RootRange | 
  */
 export function buildRoots(items: Item[], opts: BuildOptions, range: RootRange): NodeStore {
   const store = new NodeStore(opts.minZoom, opts.leafZoom);
+  const box = opts.within && { inner: opts.within, area: buildArea(opts.within) };
   for (let x = range.minX; x <= range.maxX; x++) {
     for (let y = range.minY; y <= range.maxY; y++) {
-      evaluate(store, opts, opts.minZoom, x, y, items);
+      evaluate(store, opts, box, opts.minZoom, x, y, items);
     }
   }
   return store;
@@ -463,6 +510,7 @@ export function rootColumns(store: NodeStore, x: number, y: number): NodeColumns
     cols.surveySigmaP[at] = store.surveySigmaP[i] as number;
     cols.topoSigmaP[at] = store.topoSigmaP[i] as number;
     cols.bathyDMin[at] = store.bathyDMin[i] as number;
+    cols.topoDMin[at] = store.topoDMin[i] as number;
     cols.flags[at] = store.flags[i] as number;
     cols.cellRef[at] = store.cellRef[i] as number;
     cols.split[at] = store.split[i] as number;

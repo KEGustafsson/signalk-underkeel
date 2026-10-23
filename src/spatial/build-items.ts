@@ -1,8 +1,16 @@
 import type { Rect } from "../foundation/geo";
-import { emptyRect, extendRect, rectsOverlap } from "../foundation/geo";
+import {
+  emptyRect,
+  expandRect,
+  extendRect,
+  groundToMercator,
+  maxAbsLat,
+  rectsOverlap
+} from "../foundation/geo";
 import type { Geom } from "../foundation/geometry";
 import { geomBounds, geomRectDistance } from "../foundation/geometry";
 import type { ChartFeature, QualityFeature } from "../ingest/features";
+import { MAX_CHART_BUFFER } from "./chart-position";
 import type { PolygonIndex } from "./polygon-index";
 import { indexPolygon } from "./polygon-index";
 import type { QualityOptions } from "./quality";
@@ -17,10 +25,26 @@ export interface BuildOptions {
   k: number;
   quality: QualityOptions;
   /**
-   * Build only the tiles meeting this Mercator rectangle (a local box
-   * around the vessel); every other tile is no coverage, never water.
+   * The Mercator box around the vessel a local build serves. Tiles are built
+   * out to `buildArea` of it, so a charted hazard just past the box still
+   * spreads its risk into it, but every tile not wholly inside the box
+   * carries NO_COVERAGE: nothing outside it reads as charted water
+   * (invariants 3 and 4). Tiles further out are no coverage, never water.
    */
   within?: Rect;
+}
+
+/**
+ * Ground metres past the box a local build gives tiles their values: the
+ * widest chart position reach (`MAX_CHART_BUFFER`), rounded up to a km. A
+ * tile further out reaches a footprint in the box only within its buffer,
+ * which then also meets the NO_COVERAGE of the tiles between.
+ */
+export const BOX_REACH = Math.ceil(MAX_CHART_BUFFER / 1000) * 1000;
+
+/** The Mercator rectangle a build within `box` gives values: `box` grown by BOX_REACH. */
+export function buildArea(box: Rect): Rect {
+  return expandRect(box, groundToMercator(BOX_REACH, maxAbsLat(box)));
 }
 
 export const DEFAULT_BUILD: BuildOptions = {

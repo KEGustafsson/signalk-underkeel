@@ -225,6 +225,78 @@ describe("land and shoreline placed by their own accuracy", () => {
   });
 });
 
+describe("depth areas placed by the chart's drawing (decision 2026-10-23)", () => {
+  // A drying strip 50 m north of AT in CATZOC C water, 6 m water elsewhere, a 1:12 000 cell.
+  const drying = area([22.0, north(50), 22.08, north(100)], -0.5);
+  const drawn = (f: DepthFeature, topoSigma = 6): DepthFeature => ({
+    ...f,
+    topoSigma,
+    scale: 12000
+  });
+  const chart = (strip: ChartFeature): ChartFeature[] => [
+    coverage(BOX),
+    quality(BOX, 4),
+    drawn(area(BOX, 6)),
+    strip
+  ];
+
+  test("a drawn drying area 50 m off spreads by the drawing's σ, not the survey's 250 m", () => {
+    const own = query(chart(drawn(drying)));
+    const survey = query(chart(drying));
+    expect(survey.riskTile?.chart).toMatchObject({ source: "survey", sigmaP: 250 });
+    expect(survey.maxRisk).toBeGreaterThan(0.3);
+    // A z20 leaf may reach about 19 m closer: Φ(−(50 − 10 − 19) / 6) ≈ 2·10⁻⁴.
+    expect(own.maxRisk).toBeLessThan(1e-3);
+  });
+
+  test("a sounding as shallow, as far off, still spreads by the survey (CATZOC rates its position)", () => {
+    const sounding = point(AT[0], north(50), -0.5);
+    const r = query(chart(sounding));
+    expect(r.riskTile?.chart).toMatchObject({ source: "survey", sigmaP: 250 });
+    expect(r.riskTile?.dMin).toBe(-0.5);
+  });
+
+  test("a wreck in a shallower drawn area keeps its survey's spread when a rock splits its tile", () => {
+    // A 2 m drawn area from 50 m north of AT, a 4 m wreck in it 100 m north, a draft of 4.5 m.
+    const patch = drawn(area([22.0, north(50), 22.08, north(1500)], 2));
+    const wreck = point(AT[0], north(100), 4, { objectClass: "WRECKS" });
+    const rock = point(AT[0] + 0.006, north(400), 1);
+    const deep = { risk: { threshold: 4.5, sigmaExtra: 0.3 } };
+    const alone = query([...chart(patch), wreck], deep);
+    expect(alone.riskTile?.chart).toMatchObject({ source: "survey", sigmaP: 250 });
+    expect(alone.riskTile?.dMin).toBe(4);
+    // Adding a hazard never lowers P (invariant 2): the wreck still spreads by the survey's σP.
+    // Its leaf is finer beside the rock, so its distance may differ by a rounding.
+    const both = query([...chart(patch), wreck, rock], deep);
+    expect(both.maxRisk).toBeGreaterThanOrEqual(alone.maxRisk - 1e-9);
+    expect(both.riskTile?.dMin).toBe(4);
+  });
+
+  test("a wider drawing σ never lowers P (invariant 2)", () => {
+    const risks = [6, 12, 24, 100].map((sigma) => query(chart(drawn(drying, sigma))).maxRisk);
+    risks.slice(1).forEach((r, i) => expect(r).toBeGreaterThanOrEqual(risks[i] as number));
+    expect(risks[3]).toBeGreaterThan(0.1);
+  });
+
+  test("a record not surveyed widens a 1:12 000 drawing to four times its σ (24 m)", () => {
+    const edge: ChartFeature = {
+      role: "position",
+      objectClass: "QUAPOS",
+      geom: {
+        type: "line",
+        coords: [toMercator(22.0, north(50)), toMercator(22.08, north(50))]
+      },
+      cellRef: 0,
+      band: 5,
+      scale: 12000,
+      lowAccuracy: true
+    };
+    const r = query([...chart(drawn(drying)), edge]);
+    expect(r.riskTile?.chart).toMatchObject({ source: "topography", sigmaP: 24 });
+    expect(r.riskTile?.dMin).toBe(-0.5);
+  });
+});
+
 describe("leaves only partly in an assessed survey", () => {
   test("a drying area in a leaf straddling B and U water counts from B water 40 m off", () => {
     // A z20 leaf the B/U boundary cuts in half; the patch lies in its B half.

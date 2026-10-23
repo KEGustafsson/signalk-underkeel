@@ -128,6 +128,7 @@ export interface BlockSource {
   surveySigma(i: number): number;
   topoSigma(i: number): number;
   bathyDMin(i: number): number;
+  topoDMin(i: number): number;
   /** For split node i at (cutZoom, x, y): undefined once its block is loaded, else its stand-in. */
   standIn(i: number, x: number, y: number): StandIn | undefined;
   entries(z: number): Generator<[number, number, number]>;
@@ -143,6 +144,7 @@ export interface NodeColumns {
   surveySigmaP: Float32Array;
   topoSigmaP: Float32Array;
   bathyDMin: Float32Array;
+  topoDMin: Float32Array;
   flags: Uint16Array;
   cellRef: Int32Array;
   split: Uint8Array;
@@ -178,10 +180,12 @@ export class NodeStore {
    * but not the assessed part of a leaf that is only partly assessed.
    */
   surveySigmaP = new Float32Array(1024);
-  /** Widest σ of the land and shoreline objects' own positions (`ChartPosition`). */
+  /** Widest σ of what the chart places by its own drawing (`ChartPosition`). */
   topoSigmaP = new Float32Array(1024);
   /** Shallowest depth the survey places (`ChartPosition`), rounded shallower. */
   bathyDMin = new Float32Array(1024);
+  /** Shallowest depth the chart's drawing places (`ChartPosition`), rounded shallower. */
+  topoDMin = new Float32Array(1024);
   flags = new Uint16Array(1024);
   cellRef = new Int32Array(1024);
   split = new Uint8Array(1024);
@@ -226,6 +230,7 @@ export class NodeStore {
       surveySigmaP: cols.surveySigmaP,
       topoSigmaP: cols.topoSigmaP,
       bathyDMin: cols.bathyDMin,
+      topoDMin: cols.topoDMin,
       flags: cols.flags,
       cellRef: cols.cellRef,
       split: cols.split
@@ -287,6 +292,7 @@ export class NodeStore {
     this.surveySigmaP = g(this.surveySigmaP, (n) => new Float32Array(n));
     this.topoSigmaP = g(this.topoSigmaP, (n) => new Float32Array(n));
     this.bathyDMin = g(this.bathyDMin, (n) => new Float32Array(n));
+    this.topoDMin = g(this.topoDMin, (n) => new Float32Array(n));
     this.flags = g(this.flags, (n) => new Uint16Array(n));
     this.cellRef = g(this.cellRef, (n) => new Int32Array(n));
     this.split = g(this.split, (n) => new Uint8Array(n));
@@ -335,6 +341,7 @@ export class NodeStore {
     this.surveySigmaP[i] = p.surveySigmaP;
     this.topoSigmaP[i] = p.topoSigmaP;
     this.bathyDMin[i] = float32AtMost(p.bathyDMin);
+    this.topoDMin[i] = float32AtMost(p.topoDMin);
     this.flags[i] = v.flags;
     this.cellRef[i] = v.cellRef;
     this.split[i] = split ? 1 : 0;
@@ -412,6 +419,14 @@ export class NodeStore {
       return this.bathyDMin[i] as number;
     }
     return this.source ? this.source.bathyDMin(i) : Infinity;
+  }
+
+  /** Node i's drawing-placed shallowest depth (`ChartPosition.topoDMin`); Infinity when unknown. */
+  topoDMinOf(i: number): number {
+    if (i >= 0 && i < this.own) {
+      return this.topoDMin[i] as number;
+    }
+    return this.source ? this.source.topoDMin(i) : Infinity;
   }
 
   /**

@@ -1,3 +1,4 @@
+import fs from "fs";
 import os from "os";
 import { parentPort, Worker, workerData } from "worker_threads";
 import type { CellCatalogue, CellInfo } from "../ingest/cells";
@@ -9,7 +10,7 @@ import type { EncLayers } from "../ingest/enc-wasm";
 import { encCell, readEncLayers } from "../ingest/enc-wasm";
 import type { ChartFeature, DepthFeature } from "../ingest/features";
 import type { CellReach } from "./build-items";
-import { cellReach, DEFAULT_BUILD, prepareItems } from "./build-items";
+import { buildArea, cellReach, DEFAULT_BUILD, prepareItems } from "./build-items";
 import type { SavedIndex } from "./build-reuse";
 import { copiedRoots, savedIndex, unchangedInfo, writeReach } from "./build-reuse";
 import type { ChartIndex } from "./chart-index";
@@ -28,6 +29,10 @@ import {
   rootRegions
 } from "./pyramid-regions";
 import { storeOnBody } from "./store";
+import type { Rect } from "../foundation/geo";
+import { tileRange } from "../foundation/geo";
+import type { BuildBox } from "./build-box";
+import { boxCells, boxRect, writeBox } from "./build-box";
 
 /**
  * Index build off the event loop: a worker thread reads the cells, builds
@@ -58,6 +63,13 @@ export interface BuildJob {
    * `indexDir` instead of built.
    */
   changed?: string[];
+  /**
+   * Builds only around the vessel: the cells reaching this box are read and only the tiles
+   * within chart position reach of it built, every tile not inside it being no coverage
+   * (plan §4.2). Not with `changed`: roots of a saved index built in another box are not
+   * copied.
+   */
+  box?: BuildBox;
 }
 
 /** One region of roots and the cells that reach it, by directory and catalogue index. */
@@ -66,6 +78,8 @@ export interface RegionJob {
   cells: { dir: string; ref: number; layers?: EncLayers }[];
   leafZoom: number;
   region: RootRange;
+  /** The box in Mercator metres (`BuildOptions.within`): no tile outside it reads as covered. */
+  within?: Rect;
 }
 
 export type RegionRunner = (job: RegionJob) => Promise<NodeColumns>;
@@ -115,7 +129,7 @@ class EncReads {
  * reach this one are indexed.
  */
 export function runRegion(job: RegionJob): NodeColumns {
-  const opts = { ...DEFAULT_BUILD, leafZoom: job.leafZoom };
+  const opts = { ...DEFAULT_BUILD, leafZoom: job.leafZoom, within: job.within };
   const keep = regionReach(job.region, opts.minZoom);
   return buildRegion(prepareItems(readFeatures(job), opts, keep), opts, job.region);
 }
@@ -158,6 +172,23 @@ async function survey(
   return out;
 }
 
+/** The roots of `range` that `box` also holds; all of `range` without a box. */
+function clipRange(
+  range: RootRange | undefined,
+  box: RootRange | undefined
+): RootRange | undefined {
+  if (!range || !box) {
+    return range;
+  }
+  const r = {
+    minX: Math.max(range.minX, box.minX),
+    minY: Math.max(range.minY, box.minY),
+    maxX: Math.min(range.maxX, box.maxX),
+    maxY: Math.min(range.maxY, box.maxY)
+  };
+  return r.minX <= r.maxX && r.minY <= r.maxY ? r : undefined;
+}
+
 /** A built index with what the next build reuses and the main thread adopts. */
 export interface BuiltIndex extends ChartIndex {
   reaches: CellReach[];
@@ -167,12 +198,17 @@ export interface BuiltIndex extends ChartIndex {
 }
 
 /** The chart index of `job.dirs`, the pyramid built region by region through `run`. */
-export async function buildByRegion(job: BuildJob, run: RegionRunner): Promise<BuiltIndex> {
+export async function buildByRegion(whole: BuildJob, run: RegionRunner): Promise<BuiltIndex> {
   const { minZoom } = DEFAULT_BUILD;
+  const job = whole.box ? { ...whole, dirs: boxCells(whole.dirs, whole.box.bbox) } : whole;
+  const within = job.box && boxRect(job.box.bbox);
   const saved = job.changed ? savedIndex(job.indexDir, job.dirs, job.leafZoom) : undefined;
   const reads = new EncReads();
   const s = await survey(job, saved, reads);
-  const range = cellsRootRange(s.reaches, minZoom);
+  const range = clipRange(
+    cellsRootRange(s.reaches, minZoom),
+    within && tileRange(minZoom, buildArea(within))
+  );
   const roots = range ? rootRegions(range) : [];
   const copies = saved
     ? copiedRoots(
@@ -195,7 +231,8 @@ export async function buildByRegion(job: BuildJob, run: RegionRunner): Promise<B
             })
           ),
           leafZoom: job.leafZoom,
-          region
+          region,
+          within
         }))
     }))
   );
@@ -320,7 +357,16 @@ export function regionPool(
 
 function stage(job: BuildJob, index: BuiltIndex): { staging: string; index: IndexParts } {
   const staging = stageChartIndex(job.indexDir, index);
-  writeReach(staging, index.reaches);
+  try {
+    writeReach(staging, index.reaches);
+    if (job.box) {
+      writeBox(staging, { ...job.box, leafZoom: job.leafZoom });
+    }
+  } catch (err) {
+    // The reply carries no staging path to clean up, so a full card would leave a whole copy.
+    fs.rmSync(staging, { recursive: true, force: true });
+    throw err;
+  }
   return { staging, index: indexParts(index) };
 }
 
