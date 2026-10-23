@@ -12,6 +12,7 @@ import { footprintGeom, mercatorBuffer, minDepthOver } from "../spatial/pyramid"
 import { DEFAULT_BUILD } from "../spatial/pyramid-build";
 import type { Explanation } from "./explain";
 import { explainTile } from "./explain";
+import { queryWork } from "./work";
 
 /**
  * Corridor route check (plan §4.11): each leg is checked over
@@ -217,6 +218,8 @@ export function legCorridors(a: LonLat, b: LonLat, r: number): LonLat[][] {
 interface LegDepth {
   result: DepthResult;
   ring: LonLat[];
+  /** Work its corridor queries did (work.ts). */
+  work: number;
 }
 
 /** Depths deeper than the UKC-zero depth plus this are reported as a lower bound. */
@@ -246,9 +249,10 @@ function* corridorSteps(
   r: number,
   s: Scoring
 ): Steps<LegDepth> {
-  let best: LegDepth | undefined;
+  let best: Omit<LegDepth, "work"> | undefined;
   let flags = 0;
   let covered = Infinity;
+  let work = 0;
   const cells = new Set<number>();
   for (const ring of legCorridors(a, b, r)) {
     const result = minDepthOver(index.pyramid, footprintGeom(ring), {
@@ -256,6 +260,7 @@ function* corridorSteps(
       clearAbove: s.threshold + CLEARANCE_RESOLUTION,
       risk: { threshold: s.threshold, sigmaExtra: s.sigmaExtra }
     });
+    work += queryWork(result);
     flags |= result.flags;
     covered = Math.min(covered, result.coveredDMin);
     result.cellRefs.forEach((c) => cells.add(c));
@@ -264,8 +269,12 @@ function* corridorSteps(
     }
     yield;
   }
-  const leg = best as LegDepth;
-  return { ...leg, result: { ...leg.result, flags, coveredDMin: covered, cellRefs: [...cells] } };
+  const leg = best as Omit<LegDepth, "work">;
+  return {
+    ...leg,
+    work,
+    result: { ...leg.result, flags, coveredDMin: covered, cellRefs: [...cells] }
+  };
 }
 
 /** P at or above this fails a leg whatever the accepted probability. */
@@ -292,6 +301,8 @@ function finiteOrNull(v: number): number | null {
 interface CheckedLeg {
   leg: LegResult;
   cellRefs: number[];
+  /** Work its corridor queries did (work.ts). */
+  work: number;
 }
 
 export function checkLeg(
@@ -317,7 +328,7 @@ function* legSteps(
   const wl = input.waterLevel(start, end, [from, to]);
   const terms = vesselTerms(input.vessel, { speed, waveHeight: input.waveHeight }, input.dynamics);
   const s = { threshold: thresholdDepth(terms, wl), sigmaExtra: sigmaExtra(terms, wl) };
-  const { result, ring } = yield* corridorSteps(
+  const { result, ring, work } = yield* corridorSteps(
     index,
     from,
     to,
@@ -358,7 +369,7 @@ function* legSteps(
     worst: tile && { position: tile.center, hazard: why?.hazard },
     explanation: why?.explanation
   };
-  return { leg, cellRefs: result.cellRefs };
+  return { leg, cellRefs: result.cellRefs, work };
 }
 
 export function checkRoute(
@@ -386,20 +397,52 @@ export async function checkRouteYielding(
   }
 }
 
+/** Legs of a route checked in order, and what checking them took. */
+export interface CheckedLegs {
+  legs: LegResult[];
+  cells: Set<number>;
+  /** Work their corridor queries did (work.ts). */
+  work: number;
+  /** False when the check stopped at `limit` before the last leg. */
+  complete: boolean;
+}
+
+/**
+ * Legs of `input` checked in order, the first leaving at `start`, each at
+ * the time the one before ends; stops before a leg once `work` has reached
+ * `limit`.
+ */
+export function* legsSteps(
+  index: ChartIndex,
+  input: RouteCheckInput,
+  start: number,
+  limit = Infinity
+): Steps<CheckedLegs> {
+  const legs: LegResult[] = [];
+  const cells = new Set<number>();
+  let work = 0;
+  let t = start;
+  for (let i = 0; i + 1 < input.coordinates.length; i++) {
+    if (work >= limit) {
+      return { legs, cells, work, complete: false };
+    }
+    const c = yield* legSteps(index, input, i, t);
+    t = Date.parse(c.leg.eta.end);
+    legs.push(c.leg);
+    c.cellRefs.forEach((ref) => cells.add(ref));
+    work += c.work;
+  }
+  return { legs, cells, work, complete: true };
+}
+
 function* routeSteps(
   index: ChartIndex,
   input: RouteCheckInput,
   now: number
 ): Steps<RouteCheckResult> {
-  const legs: LegResult[] = [];
-  const cells = new Set<number>();
-  let t = input.departure;
-  for (let i = 0; i + 1 < input.coordinates.length; i++) {
-    const { leg, cellRefs } = yield* legSteps(index, input, i, t);
-    t = Date.parse(leg.eta.end);
-    legs.push(leg);
-    cellRefs.forEach((c) => cells.add(c));
-  }
+  const { legs, cells } = yield* legsSteps(index, input, input.departure);
+  const last = legs.at(-1);
+  const t = last ? Date.parse(last.eta.end) : input.departure;
   const wl = input.waterLevel(input.departure, t, input.coordinates);
   return {
     checkedAt: new Date(now).toISOString(),

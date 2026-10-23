@@ -1,6 +1,7 @@
 import fc from "fast-check";
 import type { RouteCheckInput } from "../../src/engine/route-check";
-import { checkRoute, corridorRing, legCorridors } from "../../src/engine/route-check";
+import { checkLeg, checkRoute, corridorRing, legCorridors } from "../../src/engine/route-check";
+import { QUERY_WORK } from "../../src/engine/work";
 import { flagNames } from "../../src/spatial/node-store";
 import { fromMercator, haversine, project, toMercator } from "../../src/foundation/geo";
 import type { LonLat } from "../../src/foundation/geo";
@@ -8,6 +9,7 @@ import { pointInPolygon, pointSegmentDistance } from "../../src/foundation/geome
 import type { ChartIndex } from "../../src/spatial/chart-index";
 import type { Catzoc } from "../../src/ingest/features";
 import { HazardIndex } from "../../src/spatial/hazards";
+import * as pyramid from "../../src/spatial/pyramid";
 import { FLAGS } from "../../src/spatial/node-store";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
 import { BANK, fixtureIndex, ROCK } from "../helpers/fixture-index";
@@ -172,6 +174,26 @@ describe("corridor route check on the synthetic chart", () => {
     expect(Date.parse(r.legs[0]?.eta.end ?? "") - NOW).toBeCloseTo((l0 / 2) * 1000, -1);
     expect(r.legs[1]?.eta.start).toBe(r.legs[0]?.eta.end);
     expect(Date.parse(r.legs[1]?.eta.end ?? "") - NOW).toBeCloseTo((l0 / 2 + l1 / 4) * 1000, -1);
+  });
+
+  test("a leg check reports its work", () => {
+    const queries = jest.spyOn(pyramid, "minDepthOver");
+    const { work } = checkLeg(index, input([[22.004, 60.012], ROCK], 3.6), 0, NOW);
+    const results = queries.mock.results.map((r) => r.value as pyramid.DepthResult);
+    queries.mockRestore();
+    expect(results.length).toBeGreaterThan(0);
+    expect(work).toBe(results.reduce((sum, r) => sum + r.visits + QUERY_WORK, 0));
+  });
+
+  test("checking legs in order changes no field of the route check", () => {
+    // checkRoute's output for this route before the leg loop moved into legsSteps.
+    const coords: LonLat[] = [
+      [22.004, 60.012],
+      [22.02, 60.01],
+      [22.02, 60.018]
+    ];
+    const r = checkRoute(index, input(coords, 3.6, { speeds: [2, 4] }), NOW);
+    expect(JSON.parse(JSON.stringify(r))).toEqual(BEFORE_LEGS_STEPS);
   });
 
   test("a long leg is checked along its whole length", () => {
@@ -450,3 +472,82 @@ describe("chart position uncertainty", () => {
     expect(checkRoute(chart(1), input(leg, 1.8), NOW).legs[0]?.status).toBe("ok");
   });
 });
+
+/** checkRoute of the three-point route in "checking legs in order changes no field". */
+const BEFORE_LEGS_STEPS = {
+  checkedAt: "2026-10-18T07:00:00.000Z",
+  charts: [{ cell: "FI5SYNTH", edition: 3, update: 1 }],
+  waterLevelSource: "chart-datum",
+  legs: [
+    {
+      index: 0,
+      status: "fail",
+      from: [22.004, 60.012],
+      to: [22.02, 60.01],
+      length: 917,
+      eta: { start: "2026-10-18T07:00:00.000Z", end: "2026-10-18T07:07:38.325Z" },
+      minUkc: -0.16,
+      sigma: 0.62,
+      risk: 0.6028,
+      charted: 3.5,
+      flags: ["SWEPT"],
+      worst: {
+        position: [22.020034790039063, 60.0103141786628],
+        hazard: { class: "UWTROC", lnam: "FI5-ROCK", valsou: 3.5 }
+      },
+      explanation: {
+        charted: 3.5,
+        sigmaCharted: 0.54,
+        flags: ["SWEPT"],
+        cell: { name: "FI5SYNTH", edition: 3, update: 1 },
+        hazard: { class: "UWTROC", lnam: "FI5-ROCK", depth: 3.5 },
+        waterLevel: 0,
+        sigmaWaterLevel: 0.3,
+        waterLevelSource: "chart-datum",
+        draft: 3.6,
+        heel: 0,
+        squat: 0.06,
+        wave: 0,
+        margin: 0,
+        mean: -0.16,
+        sigma: 0.62,
+        risk: 0.6028
+      }
+    },
+    {
+      index: 1,
+      status: "fail",
+      from: [22.02, 60.01],
+      to: [22.02, 60.018],
+      length: 890,
+      eta: { start: "2026-10-18T07:07:38.325Z", end: "2026-10-18T07:11:20.715Z" },
+      minUkc: -0.34,
+      sigma: 0.62,
+      risk: 0.7094,
+      charted: 3.5,
+      flags: ["SWEPT"],
+      worst: {
+        position: [22.020034790039063, 60.0103141786628],
+        hazard: { class: "UWTROC", lnam: "FI5-ROCK", valsou: 3.5 }
+      },
+      explanation: {
+        charted: 3.5,
+        sigmaCharted: 0.54,
+        flags: ["SWEPT"],
+        cell: { name: "FI5SYNTH", edition: 3, update: 1 },
+        hazard: { class: "UWTROC", lnam: "FI5-ROCK", depth: 3.5 },
+        waterLevel: 0,
+        sigmaWaterLevel: 0.3,
+        waterLevelSource: "chart-datum",
+        draft: 3.6,
+        heel: 0,
+        squat: 0.24,
+        wave: 0,
+        margin: 0,
+        mean: -0.34,
+        sigma: 0.62,
+        risk: 0.7094
+      }
+    }
+  ]
+};
