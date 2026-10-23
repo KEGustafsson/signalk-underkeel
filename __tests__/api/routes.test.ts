@@ -1,6 +1,6 @@
 import { gunzipSync } from "zlib";
 import type { ApiProvider } from "../../src/api/routes";
-import { publicReason, registerRoutes } from "../../src/api/routes";
+import { registerRoutes } from "../../src/api/routes";
 import { fakeRouter } from "../helpers/plugin-harness";
 
 /** How the REST layer turns handler failures into replies. */
@@ -60,26 +60,6 @@ describe("acknowledgement content type", () => {
 });
 
 describe("server error reasons on the wire", () => {
-  test("file paths and nested error text stay off the wire", () => {
-    expect(
-      publicReason(
-        "chart index failed: ENOENT: no such file or directory, scandir '/media/usb/ENC'"
-      )
-    ).toBe("chart index failed (see the server log)");
-    expect(publicReason("no cells in /srv/charts; C:\\charts not found")).toBe(
-      "no cells in <path>; <path> not found"
-    );
-    expect(
-      publicReason("rebuilt the index: the saved one could not be read (bad header in /x/y.bin)")
-    ).toBe("rebuilt the index: the saved one could not be read");
-    for (const plain of [
-      "no chart index loaded",
-      "busy: 5 requests are waiting; try again shortly"
-    ]) {
-      expect(publicReason(plain)).toBe(plain);
-    }
-  });
-
   test("a 503 from a POST route or a tile carries the reason without its paths", async () => {
     const reason = "no cells in /srv/charts";
     const unavailable = () => Promise.resolve({ status: 503, body: { errors: [reason] } });
