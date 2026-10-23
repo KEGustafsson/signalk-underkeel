@@ -241,6 +241,37 @@ describe("route repair", () => {
     expect(repaired.legs.map((l) => l.eta)).toEqual(recheck.legs.map((l) => l.eta));
   });
 
+  test("the search plans at the water level the detour is sailed in, not the leg's", () => {
+    // A drying shoal reaching further south than north, so the way round to the north is the
+    // shorter. North of the leg's last part, a bank passable only until the water falls, 20 s
+    // after the straight leg would arrive: the northern detour reaches it after that.
+    const tidal: ChartIndex = {
+      ...index,
+      pyramid: buildPyramid(
+        [
+          ...basin([22.0, 60.0, 22.06, 60.03], 10),
+          area([22.027, 60.008, 22.033, 60.02], -1),
+          area([22.033, 60.0175, 22.05, 60.025], 1.5)
+        ],
+        { minZoom: 12, leafZoom: 18 }
+      )
+    };
+    const leg = checkRoute(tidal, input(LEG), NOW).legs[0] as LegResult;
+    const drop = Date.parse(leg.eta.end) + 20_000;
+    const falling = input(LEG, {
+      waterLevel: (_s, e) => ({ h: e < drop ? 1.5 : 0, sigma: 0.05, source: "manual" })
+    });
+    expect(checkRoute(tidal, falling, NOW).legs[0]?.status).toBe("fail");
+    const repair = repairLeg(tidal, falling, leg);
+    expect(repair.reason).toBeUndefined();
+    expect(repair.legs.every((l) => l.status === "ok")).toBe(true);
+    // Round the south, clear of the bank the boat would reach after the water falls.
+    expect(repair.waypoints.length).toBeGreaterThan(0);
+    for (const [, lat] of repair.waypoints) {
+      expect(lat).toBeLessThan(60.015);
+    }
+  });
+
   test("simplification keeps a point only where the chord would fail", () => {
     const pts: LonLat[] = [
       [0, 0],

@@ -181,14 +181,17 @@ function* searchSteps(
 ): Steps<LonLat[] | undefined> {
   const limit = opts.searchShare * opts.maxWork;
   const speed = input.speeds[leg.index] as number;
-  const wl = input.waterLevel(Date.parse(leg.eta.start), Date.parse(leg.eta.end), [
-    leg.from,
-    leg.to
-  ]);
-  const terms = vesselTerms(input.vessel, { speed, waveHeight: input.waveHeight }, input.dynamics);
-  const risk = { threshold: thresholdDepth(terms, wl), sigmaExtra: sigmaExtra(terms, wl) };
   const corridor = input.xteLimit + input.planningBuffer;
   const grid = gridFor(leg.from, leg.to, corridor, opts);
+  // A detour is longer than the leg, so the final check reads its later pieces after the leg's
+  // own end. The grid takes the lowest level until the boat could have sailed the grid's width
+  // and height, a path along the window's edge, so on a falling tide it does not plan through
+  // water the final check then finds too shallow.
+  const start = Date.parse(leg.eta.start);
+  const reach = start + (((grid.nx + grid.ny) * grid.cell) / speed) * 1000;
+  const wl = input.waterLevel(start, Math.max(Date.parse(leg.eta.end), reach), [leg.from, leg.to]);
+  const terms = vesselTerms(input.vessel, { speed, waveHeight: input.waveHeight }, input.dynamics);
+  const risk = { threshold: thresholdDepth(terms, wl), sigmaExtra: sigmaExtra(terms, wl) };
   /** The cost of the water around `at`; undefined, not queried, once the search's work is spent. */
   const score = (at: LonLat, bufferMetres: number): number | undefined => {
     if (budget.work >= limit) {
