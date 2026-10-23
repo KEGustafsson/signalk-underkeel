@@ -401,6 +401,43 @@ describe("probabilistic look-ahead on the synthetic chart", () => {
     }
   });
 
+  test("a rock only the fan's spread reaches never yields hold course as the escape", () => {
+    const rock: ChartIndex = {
+      catalogue: { version: 1, cells: [] },
+      pyramid: buildPyramid([...basin([22.0, 60.0, 22.04, 60.02], 10), point(22.02, 60.01, 1)], {
+        minZoom: 12,
+        leafZoom: 18
+      }),
+      hazards: new HazardIndex([])
+    };
+    // The rock is `ahead` m along the course and `off` m to port: a straight track passes it
+    // clear, the COG + σ member does not. Scored on its track alone, holding course came out as
+    // the escape in every state.
+    const at = (ahead: number, off: number) =>
+      evaluateLookahead(
+        nav(22.02 - ahead / M_PER_DEG_LON, 60.01 - off / 111320),
+        { ...ctx(DEEP_KEEL), escape: true },
+        rock,
+        NOW
+      );
+    for (const [ahead, off, state] of [
+      [300, 30, "warn"],
+      [400, 50, "warn"],
+      [200, 30, "alarm"]
+    ] as const) {
+      const r = at(ahead, off);
+      expect(r.state).toBe(state);
+      // A turn to starboard, away from the rock.
+      const turn = (r.escapeHeading as number) - EAST;
+      expect(turn).toBeGreaterThanOrEqual((5 * Math.PI) / 180 - 1e-9);
+      expect(turn).toBeLessThanOrEqual(Math.PI / 2 + 1e-9);
+    }
+    // Held course stays clear of warn: no heading does better, so there is nothing to dodge to.
+    const alert = at(300, 50);
+    expect(alert.state).toBe("alert");
+    expect(alert.escapeHeading).toBeNull();
+  });
+
   test("an escape heading never counts water off the chart as clear", () => {
     // A deep basin whose east edge is 200 m ahead; the vessel runs east near its north side.
     const edge: ChartIndex = {

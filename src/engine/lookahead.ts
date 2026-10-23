@@ -199,7 +199,7 @@ export interface LookaheadInputs {
   positionSigma?: number;
   /** Why `positionSigma` is inflated, for the reason when it exceeds the buffer cap. */
   positionReason?: string;
-  /** Search the escape fan when not normal; it costs up to 37 extra tracks. */
+  /** Search the escape fan when not normal; it costs up to 37 extra headings of five tracks. */
   escape?: boolean;
 }
 
