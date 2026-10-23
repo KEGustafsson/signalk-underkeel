@@ -3,11 +3,13 @@ import http from "http";
 import type { AddressInfo } from "net";
 import os from "os";
 import path from "path";
+import { cellSources, sourceKeys } from "../src/index-loader";
 import { boxAround } from "../src/ingest/wfs";
+import { readBox } from "../src/spatial/build-box";
 import { commitChartIndex, loadChartIndex } from "../src/spatial/chart-index";
 import type { WfsRefresher } from "../src/wfs-service";
 import type { WfsJob, WfsReply } from "../src/wfs-worker";
-import { FIXTURES } from "./helpers/fixture-index";
+import { CELLS, FIXTURES } from "./helpers/fixture-index";
 
 /**
  * The Traficom WFS refresh worker (PL4): download, parse, clip, cell write and index build
@@ -105,6 +107,52 @@ describe("WFS refresh worker entry", () => {
     } finally {
       wfs.close();
     }
+  });
+});
+
+describe("WFS box refresh with S-57 cells", () => {
+  test("finds the cells and stamps every source after the download, off the event loop", async () => {
+    const wfs = await wfsServer(collection([AREA]));
+    try {
+      const cell = path.join(dir, "wfs", "FI1WFS01");
+      const { runWfsJob } = await import("../src/wfs-worker");
+      const r = await runWfsJob(
+        {
+          ...job(wfs.url),
+          cellsDir: CELLS,
+          cellsRequired: true,
+          box: BOX,
+          build: { dirs: [cell], leafZoom: 16, indexDir: path.join(dir, "index"), threads: 1 }
+        },
+        globalThis.fetch
+      );
+      expect(r.index.catalogue.cells.map((c) => c.name)).toEqual([
+        "FI4SYNTH",
+        "FI5SYNTH",
+        "FI1WFS01"
+      ]);
+      // Stamped before the download, the new cell would read as edition 0 and the next start
+      // would rebuild the index for a change that never happened.
+      const sources = sourceKeys([...cellSources(CELLS), cell]);
+      expect(readBox(r.staging)).toEqual({ bbox: BOX, sources, leafZoom: 16 });
+      expect(sources).toContain("FI1WFS01 edition 1 update 0");
+    } finally {
+      wfs.close();
+    }
+  });
+
+  test("an empty cells directory fails before anything is downloaded", async () => {
+    const empty = path.join(dir, "cells");
+    fs.mkdirSync(empty);
+    const fetched: string[] = [];
+    const { runWfsJob } = await import("../src/wfs-worker");
+    await expect(
+      runWfsJob({ ...job("http://wfs.test/wfs"), cellsDir: empty, cellsRequired: true }, (url) => {
+        fetched.push(url);
+        return Promise.reject(new Error("no network"));
+      })
+    ).rejects.toThrow(`no S-57 cell found in ${empty}`);
+    expect(fetched).toEqual([]);
   });
 });
 

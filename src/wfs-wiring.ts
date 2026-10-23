@@ -3,7 +3,6 @@ import path from "path";
 import type { ServerAPI } from "@signalk/server-api";
 import type { PluginState } from "./api-wiring";
 import type { PluginConfig, WfsConfig } from "./config";
-import { cellSources, sourceKeys } from "./index-loader";
 import type { Rect } from "./foundation/geo";
 import { toMercator } from "./foundation/geo";
 import type { Bbox } from "./ingest/wfs";
@@ -110,8 +109,9 @@ export function startWfs(
     dir,
     indexDir: w.config.indexDir ?? path.join(w.app.getDataDirPath(), "index"),
     leafZoom: w.config.leafZoom,
-    encDirs: () => cellSources(w.config.cellsDir),
-    boxSources: w.config.boxRadiusKm > 0 ? sourceKeys : undefined,
+    cellsDir: w.config.cellsDir,
+    inBox: w.config.boxRadiusKm > 0,
+    index: () => w.state.load?.index,
     // The worker fetches with its own global fetch; an injected builder, as in the tests,
     // gets the download on this thread with the injected fetch.
     refresh: w.build === workerBuilder ? workerRefresher : inThreadRefresher(w.fetch, w.build),
@@ -120,6 +120,14 @@ export function startWfs(
     motion: () => freshMotion(w),
     lookahead: w.config.lookahead,
     onIndex: (index, changed) => useIndex(w, index, changed),
-    error: (m) => w.app.error(m)
+    error: (m) => {
+      w.app.error(m);
+      // With no index in use the failure is why the look-ahead is off: an error, not "waiting".
+      const { load, monitor } = w.state;
+      if (load && !load.index) {
+        w.state.load = { ...load, reason: m };
+        monitor?.noIndex(m);
+      }
+    }
   });
 }
