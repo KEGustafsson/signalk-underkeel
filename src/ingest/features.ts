@@ -22,7 +22,9 @@ interface FeatureBase {
   /**
    * Compilation scale denominator of the source cell (DSPM_CSCL), when it
    * states one: nothing it draws is placed finer than 1 mm on that chart,
-   * so the index splits tiles no finer for it (plan §4.3).
+   * so the index splits tiles no finer for it (plan §4.3). For what the
+   * drawing places and a record not surveyed, the smaller scale of an
+   * M_CSCL area it may meet, where the cell has one.
    */
   scale?: number;
 }
@@ -37,8 +39,8 @@ export interface DepthFeature extends FeatureBase {
   dredged: boolean;
   /**
    * Land and shoreline objects (`TOPOGRAPHY`) and depth areas: the 1σ of
-   * their charted position in metres, from the cell's compilation scale
-   * (plan §4.3, §4.4). Set only when the export carries the cell's
+   * their charted position in metres, from their compilation scale (`scale`,
+   * plan §4.3, §4.4). Set only when the export carries the cell's
    * positional quality (`QUAPOS.geojson`); without it the object is placed by
    * the survey's CATZOC like the soundings around it.
    */

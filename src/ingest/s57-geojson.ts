@@ -57,6 +57,13 @@ export const TOPOGRAPHY: ReadonlySet<string> = new Set([
  */
 export const POSITION_LAYER = "QUAPOS";
 
+/**
+ * M_CSCL: the parts of a cell compiled from a smaller scale (CSCALE) than
+ * its DSPM_CSCL. It sets the scale of what lies there (`cell-reader.ts`)
+ * and gives no feature of its own.
+ */
+export const SCALE_LAYER = "M_CSCL";
+
 /** QUAPOS 1 (surveyed), 10 (precisely known) and 11 (calculated); absent means surveyed. */
 const SURVEYED_QUAPOS: ReadonlySet<number> = new Set([1, 10, 11]);
 
@@ -78,6 +85,7 @@ export const S57_LAYERS = [
   "UNSARE",
   "M_QUAL",
   "M_COVR",
+  SCALE_LAYER,
   POSITION_LAYER
 ] as const;
 
@@ -274,6 +282,8 @@ function featureFor(
       return isArea ? { ...base, role: "swept", depth: num(props, "DRVAL1") ?? 0 } : undefined;
     case "UNSARE":
       return isArea ? { ...base, role: "unsurveyed" } : undefined;
+    case SCALE_LAYER:
+      return undefined;
     case "DEPARE":
     case "DRGARE":
       if (!isArea) {
