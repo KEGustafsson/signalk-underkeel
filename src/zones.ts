@@ -19,6 +19,11 @@ function ringOf(coords: unknown): LonLat[] | undefined {
     }
     ring.push([lon, lat]);
   }
+  const [first, last] = [ring[0], ring[ring.length - 1]];
+  // A ring that is not closed is not GeoJSON; dropping its last point would lose a vertex.
+  if (first?.[0] !== last?.[0] || first?.[1] !== last?.[1]) {
+    return undefined;
+  }
   return ring.slice(0, -1);
 }
 
