@@ -119,6 +119,8 @@ export function fakeApp(dataDir: string, self: Record<string, unknown> = {}) {
   };
 }
 
+const JSON_TYPE = { "content-type": "application/json" };
+
 export function fakeRouter(withAccess = true) {
   const routes = new Map<string, Handler>();
   const levels = new Map<string, string>();
@@ -173,8 +175,8 @@ export function fakeRouter(withAccess = true) {
       };
       routes.get(`DELETE ${p}`)?.({ params }, res);
     });
-  /** A POST whose client can go away before the reply, as `close` does. */
-  const open = (p: string, reqBody: unknown) => {
+  /** A POST whose client can go away before the reply, as `close` does. JSON unless told. */
+  const open = (p: string, reqBody: unknown, reqHeaders: Record<string, string> = JSON_TYPE) => {
     const closed: (() => void)[] = [];
     const headers: Record<string, string> = {};
     const reply = new Promise<{ code: number; body: unknown; headers: Record<string, string> }>(
@@ -191,13 +193,13 @@ export function fakeRouter(withAccess = true) {
             return { ...res, end: () => resolve({ code, body: undefined, headers }) };
           }
         };
-        routes.get(`POST ${p}`)?.({ body: reqBody }, res);
+        routes.get(`POST ${p}`)?.({ body: reqBody, headers: reqHeaders }, res);
       }
     );
     return { reply, close: () => closed.forEach((f) => f()) };
   };
-  const post = (p: string, reqBody: unknown) =>
-    open(p, reqBody).reply.then(({ code, body }) => ({ code, body }));
+  const post = (p: string, reqBody: unknown, reqHeaders?: Record<string, string>) =>
+    open(p, reqBody, reqHeaders).reply.then(({ code, body }) => ({ code, body }));
   return { router, call, post, open, del, levels };
 }
 

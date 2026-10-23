@@ -47,8 +47,9 @@ export const MAX_BODY_BYTES = 256 * 1024;
 class BodyError extends Error {}
 
 /**
- * The parsed JSON body. Signal K normally runs express.json() before plugin
- * routes; when it has not, the raw stream is read here with a size cap.
+ * The parsed JSON body. Signal K runs express.json() before plugin routes,
+ * and it leaves `{}` for a body of any other type; only without it is the
+ * raw stream read here, with a size cap.
  */
 export function readJsonBody(req: Request): Promise<unknown> {
   if (req.body !== undefined && typeof req.body === "object") {
@@ -108,6 +109,16 @@ function fail(res: Response, err: unknown, log: (message: string) => void): void
   }
 }
 
+/**
+ * Whether the request declares a JSON body. express.json() turns a form or
+ * a body with no Content-Type into `{}`, which a write route would take as a
+ * request with every field left to its default.
+ */
+function isJson(req: Request): boolean {
+  const [type = ""] = String(req.headers?.["content-type"] ?? "").split(";");
+  return /^application\/([\w.+-]+\+)?json$/.test(type.trim().toLowerCase());
+}
+
 function send(res: Response, reply: ApiReply): void {
   for (const [name, value] of Object.entries(reply.headers ?? {})) {
     res.setHeader(name, value);
@@ -122,7 +133,7 @@ function send(res: Response, reply: ApiReply): void {
 /**
  * REST routes, base `/plugins/signalk-underkeel/v1` (plan §4.10). Reads
  * are open to readonly users; adding or deleting an acknowledgement needs
- * readwrite. `GET
+ * readwrite, and adding one a JSON body, so a cross-site form cannot. `GET
  * /envelope?rev=N` answers 304 when the client already holds rev N, so
  * clients can poll on the `envelopeRev` delta without refetching.
  */
@@ -195,6 +206,10 @@ export function registerRoutes(
   );
   const w = readwrite(router);
   w.post(`${API_BASE}/acks`, (req: Request, res: Response) => {
+    if (!isJson(req)) {
+      res.status(415).json({ errors: ["Content-Type must be application/json"] });
+      return;
+    }
     readJsonBody(req)
       .then((body) => send(res, api.addAck(body)))
       .catch((err: unknown) => fail(res, err, log));
