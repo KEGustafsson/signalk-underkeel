@@ -507,4 +507,24 @@ describe("box service and the index in use", () => {
     await alone.service.check();
     expect(alone.built).toEqual([[path.join(TMP, "FI1WFS01")]]);
   });
+
+  test("an empty cells directory keeps an index of ENC cells saved but not in use", async () => {
+    fs.rmSync(ENC);
+    const indexDir = path.join(TMP, "index");
+    fs.mkdirSync(indexDir);
+    const saved = { version: 1, cells: [{ name: "FI5ENC01", edition: 1, update: 0 }] };
+    fs.writeFileSync(path.join(indexDir, "cells.json"), JSON.stringify(saved));
+    // As when the saved index could not be read at start.
+    const none = harness();
+    none.t.pos = POS;
+    await none.service.check();
+    expect(none.built).toEqual([]);
+    expect(none.errors).toEqual([`Traficom WFS depths: no S-57 cell found in ${CHARTS}`]);
+    // As after an older version replaced it in memory with WFS depths alone.
+    const alone = harness();
+    alone.t.index = indexOf({ name: "FI1WFS01", source: WFS_SOURCE });
+    alone.t.pos = POS;
+    await alone.service.check();
+    expect(alone.built).toEqual([]);
+  });
 });

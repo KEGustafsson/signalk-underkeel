@@ -85,6 +85,33 @@ export function cellSources(cellsDir: string | undefined): string[] {
   return scanCellSources(cellsDir).sources;
 }
 
+/**
+ * Whether finding `found` in `cellsDir` means its drive is most likely unmounted rather than
+ * emptied: no S-57 cell is left, but `cells`, the catalogue of an index in use or saved, holds
+ * some. A mount point stays as an empty directory, and taking it at face value would replace
+ * an index of charted hazards with WFS depths alone, or with none.
+ */
+export function cellsMissing(
+  cellsDir: string | undefined,
+  found: readonly string[],
+  cells: readonly Pick<CellInfo, "source">[] | undefined
+): boolean {
+  return (
+    Boolean(cellsDir) &&
+    found.length === 0 &&
+    (cells?.some((c) => c.source !== WFS_SOURCE) ?? false)
+  );
+}
+
+/** The catalogue saved in `indexDir`, or undefined when there is none or it cannot be read. */
+export function savedCatalogue(indexDir: string): CellInfo[] | undefined {
+  try {
+    return savedCells(indexDir);
+  } catch {
+    return undefined;
+  }
+}
+
 function skippedNote(cellsDir: string | undefined, scan: CellScan): string[] {
   return scan.skipped.length === 0
     ? []
@@ -181,6 +208,24 @@ function readSaved(indexDir: string): { cells?: CellInfo[]; error?: Error } {
   }
 }
 
+/**
+ * The cells directory's scan or, with an index saved, why the directory says nothing about
+ * that index's cells: it is gone, as an unmounted or moved drive leaves it, or it holds none
+ * of them while the saved index holds S-57 cells (`cellsMissing`).
+ */
+function scanCells(
+  cellsDir: string | undefined,
+  saved: readonly CellInfo[] | undefined
+): { scan: CellScan } | { away: string } {
+  if (saved && cellsDir && !fs.existsSync(cellsDir)) {
+    return { away: `${cellsDir} not found` };
+  }
+  const scan = scanCellSources(cellsDir);
+  return cellsMissing(cellsDir, scan.sources, saved)
+    ? { away: `no S-57 cell found in ${cellsDir ?? "cellsDir"}` }
+    : { scan };
+}
+
 function plan(
   cfg: PluginConfig,
   indexDir: string,
@@ -193,13 +238,13 @@ function plan(
     stale
       ? { load: { indexDir, built: false, reason: missingReason(cfg, indexDir, true) } }
       : savedPlan(indexDir, notes, unreadable, syncLoadBytes);
-  // An unmounted or moved cells directory says nothing about the saved index's cells.
-  if (saved && cfg.cellsDir && !fs.existsSync(cfg.cellsDir)) {
-    return fromSaved([`${cfg.cellsDir} not found; using the saved index`], (err) => ({
+  const found = scanCells(cfg.cellsDir, saved);
+  if ("away" in found) {
+    return fromSaved([`${found.away}; using the saved index`], (err) => ({
       load: failedLoad(indexDir, err)
     }));
   }
-  const scan = scanCellSources(cfg.cellsDir);
+  const { scan } = found;
   // Each cell is stamped once, for the saved catalogue and the saved box alike.
   let stamps: string[] | undefined;
   const encKeys = (): string[] => (stamps ??= scan.sources.map(sourceKey));

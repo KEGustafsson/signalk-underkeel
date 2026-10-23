@@ -10,7 +10,7 @@ import {
   sourceKeys
 } from "../src/index-loader";
 import * as encWasm from "../src/ingest/enc-wasm";
-import { boxAround } from "../src/ingest/wfs";
+import { boxAround, toCellLayers, writeCell } from "../src/ingest/wfs";
 import { BOX_FILE, readBox } from "../src/spatial/build-box";
 import { runBuild } from "../src/spatial/build-worker";
 import { commitChartIndex, loadChartIndex, loadChartIndexAsync } from "../src/spatial/chart-index";
@@ -99,6 +99,16 @@ describe("cell directories", () => {
     expect(names(r)).toEqual(["FI4SYNTH"]);
     expect(r.built).toBe(false);
     expect(r.reason).toMatch(/not found.*saved index/);
+  });
+
+  test("an empty cells directory, as an unmounted drive leaves it, keeps the saved index", async () => {
+    copyCell("FI4SYNTH");
+    await load();
+    fs.rmSync(path.join(cellsDir, "FI4SYNTH"), { recursive: true });
+    const r = await load();
+    expect(names(r)).toEqual(["FI4SYNTH"]);
+    expect(r.built).toBe(false);
+    expect(r.reason).toBe(`no S-57 cell found in ${cellsDir}; using the saved index`);
   });
 });
 
@@ -376,6 +386,26 @@ describe("a saved index built in a box around the vessel", () => {
     expect(planIndex(config({ wfs: { enabled: true } }), dataDir)).toMatchObject({
       build: { box: { bbox: BOX } }
     });
+  });
+
+  test("with the WFS on, an empty cells directory loads it rather than WFS depths alone", async () => {
+    const wfsCell = path.join(tmp, "wfs", "FI1WFS01");
+    const empty = { depthAreas: [], dredgedAreas: [], soundings: [] };
+    writeCell(wfsCell, toCellLayers(empty, BOX, new Date("2026-10-20T07:00:00Z"), 3));
+    const dirs = [...cellSources(cellsDir), wfsCell];
+    const job = { dirs, leafZoom: 16, indexDir: indexDir(), threads: 1 };
+    const r = await runBuild({ ...job, box: { bbox: BOX, sources: sourceKeys(dirs) } });
+    commitChartIndex(indexDir(), r.staging);
+    ["FI4SYNTH", "FI5SYNTH"].forEach((c) => fs.rmSync(path.join(cellsDir, c), { recursive: true }));
+    const p = planIndex(config({ wfs: { enabled: true } }), dataDir, [wfsCell]);
+    expect(p).toMatchObject({
+      load: { built: false, reason: `no S-57 cell found in ${cellsDir}; using the saved index` }
+    });
+    expect("load" in p && p.load.index?.catalogue.cells.map((c) => c.name)).toEqual([
+      "FI4SYNTH",
+      "FI5SYNTH",
+      "FI1WFS01"
+    ]);
   });
 
   test("each cell is stamped once at start", () => {
