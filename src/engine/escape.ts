@@ -71,7 +71,8 @@ export function escapeHeading(
         change,
         opts.maxTurnRate,
         { cog: opts.sigmaCog, rot: opts.sigmaRot },
-        opts.turnFor
+        opts.turnFor,
+        m.age
       );
       const tts = headingTts(tracks, times, step, origin, m, vessel, index, s, opts);
       if (tts > best.tts) {

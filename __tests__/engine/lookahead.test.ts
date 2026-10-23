@@ -1,4 +1,4 @@
-import type { NavState } from "../../src/engine/lookahead";
+import type { FootprintResult, NavState } from "../../src/engine/lookahead";
 import {
   DEFAULT_LOOKAHEAD,
   MAX_FOOTPRINTS,
@@ -7,6 +7,7 @@ import {
   navState
 } from "../../src/engine/lookahead";
 import { Hysteresis } from "../../src/engine/hysteresis";
+import { haversine } from "../../src/foundation/geo";
 import type { VesselModel } from "../../src/model/vessel";
 import type { ChartIndex } from "../../src/spatial/chart-index";
 import { HazardIndex } from "../../src/spatial/hazards";
@@ -228,6 +229,32 @@ describe("probabilistic look-ahead on the synthetic chart", () => {
     expect(r.worst?.explanation.risk).toBe(1);
     // -Infinity would not survive JSON and breaks database writers subscribed in-process.
     expect(r.clearance).toBeNull();
+  });
+
+  test("footprints start where the vessel is now, not at an older fix", () => {
+    // A fix 5 s old at 3 m/s is 15 m behind the vessel.
+    const aged = evaluateLookahead(
+      nav(westOfRock(40) - 15 / M_PER_DEG_LON, FAIRWAY_LAT, EAST, 3, 5),
+      { ...ctx(DEEP_KEEL), escape: true },
+      index,
+      NOW
+    );
+    const now = evaluateLookahead(
+      nav(westOfRock(40), FAIRWAY_LAT),
+      { ...ctx(DEEP_KEEL), escape: true },
+      index,
+      NOW
+    );
+    expect(aged.footprints.map((f) => f.t)).toEqual(now.footprints.map((f) => f.t));
+    aged.footprints.forEach((f, i) => {
+      expect(haversine(f.center, (now.footprints[i] as FootprintResult).center)).toBeLessThan(0.1);
+    });
+    // Speed error since the fix lengthens the aged footprints: the shoal comes no later.
+    expect(aged.state).toBe(now.state);
+    expect(aged.timeToShoal as number).toBeLessThanOrEqual(now.timeToShoal as number);
+    // The escape turns from where the vessel is now, not from the fix.
+    expect(now.escapeHeading).not.toBeNull();
+    expect(aged.escapeHeading).toBe(now.escapeHeading);
   });
 
   test("the horizon follows max(minHorizon, distance / SOG)", () => {

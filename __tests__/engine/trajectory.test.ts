@@ -74,6 +74,20 @@ describe("CTRV tracks", () => {
     expect(escapeTrack(1, 3, 0, 0.05)).toEqual({ course: 1, sog: 3, rot: 0, turnFor: 0 });
   });
 
+  test("an escape track from an older fix runs straight until now, then turns", () => {
+    const track = escapeTrack(0, 2, 30 * DEG, 3 * DEG, 5);
+    const at5 = trackAt(ORIGIN, track, 5);
+    expect(haversine(at5.position, project(ORIGIN, 0, 10))).toBeLessThan(0.01);
+    expect(at5.course).toBe(0);
+    expect(trackAt(ORIGIN, track, 10).course).toBeCloseTo(15 * DEG, 12);
+    const at15 = trackAt(ORIGIN, track, 15);
+    expect(at15.course).toBeCloseTo(30 * DEG, 12);
+    // Its spread members turn after it too, the spread itself from the fix.
+    const spread = escapeMembers(0, 2, 30 * DEG, 3 * DEG, { cog: 0, rot: 0.1 * DEG }, 60, 5)[1];
+    expect(trackAt(ORIGIN, spread as Track, 5).course).toBeCloseTo(0.5 * DEG, 12);
+    expect(trackAt(ORIGIN, spread as Track, 15).course).toBeCloseTo(31.5 * DEG, 12);
+  });
+
   test("an escape heading's fan lays the ROT and COG spread over its turn", () => {
     const sigma = { cog: 0.1, rot: 0.002 };
     const members = escapeMembers(1, 3, 0.5, 0.05, sigma, 60);

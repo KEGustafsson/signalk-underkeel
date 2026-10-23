@@ -11,7 +11,8 @@ describe("scheduleFor", () => {
     sog,
     rot: 0,
     heading: 0,
-    horizon
+    horizon,
+    age: 0
   });
 
   test("the plan step holds out to the warn window at any horizon; beyond it footprints touch", () => {
