@@ -154,6 +154,14 @@ export class BlockCache implements BlockSource {
     return this.loaded.size;
   }
 
+  /**
+   * Whether block `key` is in the file but neither loaded nor refused for good: a query
+   * reaching it reads stand-ins until it loads.
+   */
+  unloaded(key: number): boolean {
+    return this.table.has(key) && !this.loaded.has(key) && !this.failed.has(key);
+  }
+
   /** The block tile holding tile (z, x, y), z ≥ the block zoom; x and y are below 2^26. */
   private keyOf(z: number, x: number, y: number): number {
     const d = z - this.blockZoom;
