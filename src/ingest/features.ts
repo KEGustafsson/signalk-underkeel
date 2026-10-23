@@ -76,9 +76,11 @@ export interface UnsurveyedFeature extends FeatureBase {
 /**
  * A spatial record (edge or node) whose position the cell does not give as
  * surveyed: QUAPOS other than 1 (surveyed), 10 (precisely known) or 11
- * (calculated), or a stated POSACC. Land and shoreline objects on it keep
- * the survey's position σ, or POSACC when stated, rather than the
- * compilation scale's.
+ * (calculated), or a stated POSACC. Land, shoreline and depth areas on it
+ * are read as drawn from a source four times smaller in scale
+ * (`NOT_SURVEYED_SCALE`): 24 m (1σ) at 1:12 000, or the survey's σP in a
+ * cell with no compilation scale. A stated POSACC widens their σ to half
+ * of it (plan §4.3).
  */
 export interface PositionFeature extends FeatureBase {
   role: "position";
