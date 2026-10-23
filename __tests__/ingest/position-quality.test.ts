@@ -63,18 +63,22 @@ describe("compilation scale and positional quality", () => {
     expect(depthFeatures(cell.features).every((f) => f.topoSigma === undefined)).toBe(true);
   });
 
-  test("with QUAPOS.geojson only land and shoreline objects take the scale's σ", () => {
+  test("with QUAPOS.geojson land, shoreline and depth areas take the scale's σ", () => {
     writeJson("QUAPOS.geojson", { type: "FeatureCollection", features: [] });
     const cell = readCellDirectory(dir, 0);
     expect(cell.info.positionQuality).toBe(true);
     const depths = depthFeatures(cell.features);
-    const land = depths.filter((f) => TOPOGRAPHY.has(f.objectClass));
-    expect(land.length).toBeGreaterThan(0);
-    expect(land.every((f) => f.topoSigma === 6)).toBe(true);
-    // Depth areas, soundings and rocks stay on their survey.
-    const water = depths.filter((f) => !TOPOGRAPHY.has(f.objectClass));
-    expect(water.length).toBeGreaterThan(0);
-    expect(water.every((f) => f.topoSigma === undefined)).toBe(true);
+    const drawn = depths.filter(
+      (f) =>
+        TOPOGRAPHY.has(f.objectClass) || f.objectClass === "DEPARE" || f.objectClass === "DRGARE"
+    );
+    expect(drawn.some((f) => TOPOGRAPHY.has(f.objectClass))).toBe(true);
+    expect(drawn.some((f) => f.objectClass === "DEPARE")).toBe(true);
+    expect(drawn.every((f) => f.topoSigma === 6)).toBe(true);
+    // Soundings and rocks stay on their survey.
+    const points = depths.filter((f) => !drawn.includes(f));
+    expect(points.length).toBeGreaterThan(0);
+    expect(points.every((f) => f.topoSigma === undefined && f.geom.type === "point")).toBe(true);
     expect(cell.features.filter((f) => f.role !== "depth").every((f) => !("topoSigma" in f))).toBe(
       true
     );

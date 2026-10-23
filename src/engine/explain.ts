@@ -189,7 +189,7 @@ export function sentence(e: Explanation): string {
   }
   const p = e.chartPosition;
   if (p) {
-    const what = p.source === "topography" ? "shoreline" : "survey";
+    const what = p.source === "topography" ? "chart drawing" : "survey";
     terms[0] = `${terms[0]} ${m(p.distance)} away, placed ±${m(2 * p.sigmaP)} by its ${what} (${pct(p.weight)} % under the keel)`;
   }
   const mean = e.mean === null ? "−∞ m" : m(e.mean).replace(/^-/, "−");

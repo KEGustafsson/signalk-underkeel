@@ -39,12 +39,13 @@ import {
  * order; version 6: resident nodes and blocks; version 7: the topographic
  * σ and survey-placed depth columns for graded chart position, points in
  * assessed water no longer burned; version 8: tiles split no finer than 1 mm
- * at their cells' compilation scale), so an index built under
+ * at their cells' compilation scale; version 9: the drawn-depth column, depth areas placed by
+ * the chart's drawing), so an index built under
  * older rules is rebuilt rather than reused.
  */
 
 const MAGIC = "underkeel-pyramid";
-export const PYRAMID_VERSION = 8;
+export const PYRAMID_VERSION = 9;
 
 export interface PyramidHeader extends BlockLayout {
   magic: string;
@@ -71,6 +72,7 @@ function columnsOf(count: number): Columns {
     surveySigmaP: new Float32Array(count),
     topoSigmaP: new Float32Array(count),
     bathyDMin: new Float32Array(count),
+    topoDMin: new Float32Array(count),
     flags: new Uint16Array(count),
     cellRef: new Int32Array(count),
     split: new Uint8Array(count)
@@ -85,6 +87,7 @@ const ORDER: (keyof Columns)[] = [
   "surveySigmaP",
   "topoSigmaP",
   "bathyDMin",
+  "topoDMin",
   "cellRef",
   "flags",
   "z",
@@ -112,6 +115,7 @@ export function pyramidColumns(store: NodeStore): NodeColumns {
       cols.surveySigmaP[n] = store.surveySigma(i);
       cols.topoSigmaP[n] = store.topoSigma(i);
       cols.bathyDMin[n] = store.bathyDMinOf(i);
+      cols.topoDMin[n] = store.topoDMinOf(i);
       cols.flags[n] = v.flags;
       cols.cellRef[n] = v.cellRef;
       cols.split[n] = store.isSplit(i) ? 1 : 0;

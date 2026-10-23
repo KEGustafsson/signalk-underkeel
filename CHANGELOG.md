@@ -6,6 +6,13 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Added
 
+- Depth areas and contours are placed by the chart's own drawing (0.5 mm at the cell's
+  compilation scale, 6 m at 1:12 000), as land already was, instead of by the survey's CATZOC
+  position accuracy; soundings and point dangers keep CATZOC. A record NOAA marks approximate
+  (QUAPOS 4) widens the drawing to four times its σ, not to the survey's. Over the 1939 CATZOC C
+  water at Bakers Haulover Inlet every cell within about 300 m of the shore or a drying contour
+  had read `danger` for a 0.9 m draft; now only those within reach of the zone's charted
+  obstructions do. The saved index is rebuilt (pyramid version 9).
 - The index is built around the vessel: **Index box around the vessel (km)** (`boxRadiusKm`,
   default 10) builds only the S-57 cells reaching a box around the vessel and rebuilds it as
   the vessel moves, as the Traficom WFS box does. Outside the box the plugin reports no

@@ -36,11 +36,11 @@ export interface DepthFeature extends FeatureBase {
   hazard: boolean;
   dredged: boolean;
   /**
-   * Land and shoreline objects (`TOPOGRAPHY`): the 1σ of their own charted
-   * position in metres, from the cell's compilation scale (plan §4.4). Set
-   * only when the export carries the cell's positional quality
-   * (`QUAPOS.geojson`); without it the object is placed by the survey's
-   * CATZOC like the depths around it.
+   * Land and shoreline objects (`TOPOGRAPHY`) and depth areas: the 1σ of
+   * their charted position in metres, from the cell's compilation scale
+   * (plan §4.3, §4.4). Set only when the export carries the cell's
+   * positional quality (`QUAPOS.geojson`); without it the object is placed by
+   * the survey's CATZOC like the soundings around it.
    */
   topoSigma?: number;
 }

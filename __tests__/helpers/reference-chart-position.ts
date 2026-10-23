@@ -65,8 +65,16 @@ export function referenceChartPosition(
         maxRisk = Math.max(maxRisk, p * chartWeight(g, survey));
       }
       const topo = store.topoSigma(i);
-      if (topo > 0) {
-        maxRisk = Math.max(maxRisk, chartWeight(g, topo));
+      const drawn = store.topoDMinOf(i);
+      if (topo > 0 && drawn !== Infinity) {
+        const p =
+          drawn === -Infinity
+            ? 1
+            : probabilityBelowZero(
+                drawn - opts.risk.threshold,
+                Math.hypot(v.sigmaD, opts.risk.sigmaExtra)
+              );
+        maxRisk = Math.max(maxRisk, p * chartWeight(g, topo));
       }
     }
   }

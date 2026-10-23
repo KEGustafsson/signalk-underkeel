@@ -202,8 +202,9 @@ function bathyRisk(w: Walk, bathy: number, sigmaD: number, bound: boolean): numb
 
 /**
  * The weighted P a tile beyond the buffer adds, `ground` metres past it:
- * its survey depth's P times the chance its survey is off that far, or the
- * chance its land is. Exact for a leaf, a bound for a split node.
+ * its survey depth's P times the chance its survey is off that far, or its
+ * drawn depth's (land, depth areas) times the chance the drawing is. Exact
+ * for a leaf, a bound for a split node.
  */
 function reachRisk(
   w: Walk,
@@ -236,12 +237,15 @@ function reachRisk(
       }
     };
   }
-  if (topo > 0) {
+  // Land reads −Infinity, which v.dMin then is too; float32 rounding as for the survey depth.
+  const drawn = Math.max(w.store.topoDMinOf(i), v.dMin);
+  if (topo > 0 && drawn !== Infinity) {
     const weight = chartWeight(ground, topo);
-    if (!best || weight > best.risk) {
+    const risk = bathyRisk(w, drawn, v.sigmaD, bound) * weight;
+    if (!best || risk > best.risk) {
       best = {
-        risk: weight,
-        dMin: -Infinity,
+        risk,
+        dMin: drawn,
         chart: {
           distance: ground,
           sigmaP: Math.min(MAX_CHART_SIGMA, topo),
@@ -274,7 +278,7 @@ function takeBeyond(
   }
   const r = reachRisk(w, i, v, ground, bound);
   if (r && (w.riskTile === undefined || r.risk > w.riskTile.risk)) {
-    const sigmaD = r.chart.source === "topography" ? 0 : v.sigmaD;
+    const sigmaD = r.chart.source === "topography" && r.dMin === -Infinity ? 0 : v.sigmaD;
     w.riskTile = {
       v: { ...v, dMin: r.dMin, sigmaD, flags },
       z,

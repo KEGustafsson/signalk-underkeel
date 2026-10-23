@@ -299,9 +299,21 @@ function whereOf(ctx: LayerContext): Omit<LayerContext, "topoSigma"> {
   return where;
 }
 
-/** A land or shoreline object with the cell's own position σ, when the export states it. */
+/**
+ * Depth areas: their contours are compiled at the cell's scale and fitted to
+ * its shoreline, so they are placed by its drawing like land (plan §4.3).
+ * CATZOC's position accuracy rates where the survey put its soundings and
+ * dangers; its depth accuracy stays in σD.
+ */
+const DRAWN_AREAS: ReadonlySet<string> = new Set(["DEPARE", "DRGARE"]);
+
+/**
+ * A land or shoreline object, or a depth area, with the cell's own position
+ * σ, when the export states the cell's positional quality.
+ */
 function placed(topoSigma: number | undefined, f: DepthFeature): DepthFeature {
-  return topoSigma !== undefined && TOPOGRAPHY.has(f.objectClass) ? { ...f, topoSigma } : f;
+  const drawn = TOPOGRAPHY.has(f.objectClass) || DRAWN_AREAS.has(f.objectClass);
+  return topoSigma !== undefined && drawn ? { ...f, topoSigma } : f;
 }
 
 /**
