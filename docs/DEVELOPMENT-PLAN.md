@@ -775,11 +775,13 @@ table its largest change over the range. Roll above 60° or stale is no roll, wh
 keel no lift and a table its largest change.
 
 **Hull presets (configuration v2).** The configuration names a hull instead of asking for Cb
-and a heel model: fin keel (Cb 0.40, fin heel), long keel (0.45, no heel), planing motorboat
-(0.40, no heel) or displacement motorboat (0.60, no heel). Not set is Cb 0.40 and no heel, the
-version 1 defaults, and is the form's default and first choice, since the admin form fills an
-empty choice with the first one and a fin keel there would lift every saved keel with heel. An
-expert `blockCoefficient` or `keel` overrides the hull.
+and a heel model, since those are the two things the model reads of it: sailboat (Cb 0.45, fin
+heel) or motorboat (Cb 0.60, no heel). Any keel whose deepest point is on the centreline rises
+with heel, fin or long, so one sailboat choice covers both, with the long keel's higher Cb. A
+motorboat takes the displacement hull's Cb, more squat than a planing hull's. Not set is Cb 0.40
+and no heel, the version 1 defaults, and is the form's default and first choice, since the
+admin form fills an empty choice with the first one and a sailboat there would lift every
+saved keel with heel. An expert `blockCoefficient` or `keel` overrides the hull.
 
 ### 4.7 Risk model (core math)
 

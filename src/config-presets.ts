@@ -60,7 +60,7 @@ export const WARNING_PRESETS: Record<WarningStyle, WarningPreset> = {
   }
 };
 
-export const HULLS = ["finKeel", "longKeel", "planing", "displacement"] as const;
+export const HULLS = ["sailboat", "motorboat"] as const;
 export type Hull = (typeof HULLS)[number];
 
 export interface HullPreset {
@@ -69,12 +69,16 @@ export interface HullPreset {
   keel: "none" | "fin";
 }
 
-/** Ignoring heel keeps the full draft, which errs toward more caution than a fin keel. */
+/**
+ * The model reads two things of a hull: squat Cb and whether heel lifts the
+ * keel. Any keel whose deepest point is on the centreline rises with heel,
+ * fin or long, and Cb 0.45 is the higher of the two keels'. A motorboat takes
+ * the displacement hull's Cb 0.60, more squat than a planing hull, and its
+ * heel is ignored, which keeps the full draft.
+ */
 export const HULL_PRESETS: Record<Hull, HullPreset> = {
-  finKeel: { blockCoefficient: 0.4, keel: "fin" },
-  longKeel: { blockCoefficient: 0.45, keel: "none" },
-  planing: { blockCoefficient: 0.4, keel: "none" },
-  displacement: { blockCoefficient: 0.6, keel: "none" }
+  sailboat: { blockCoefficient: 0.45, keel: "fin" },
+  motorboat: { blockCoefficient: 0.6, keel: "none" }
 };
 
 /** Squat and heel with no hull chosen: the earlier defaults. */

@@ -140,25 +140,7 @@ function hullShape(hull, keelY, known) {
   const hb = VIEW.hullBottom;
   const mast = h("svg:line", { x1: 168, y1: 8, x2: 168, y2: VIEW.deck, stroke: "var(--ink)", "stroke-width": 2 });
   const rudder = (x, bottom) => h("svg:path", { d: `M${x - 4} ${hb - 4} L${x + 6} ${hb - 4} L${x + 4} ${bottom} L${x - 4} ${bottom} Z`, ...solid });
-  if (hull === "longKeel") {
-    return {
-      keelX: 190,
-      parts: [mast, hullBody(hb, false), h("svg:path", { d: `M100 ${hb} L265 ${hb} L240 ${keelY} L104 ${keelY} Z`, ...solid })]
-    };
-  }
-  if (hull === "planing") {
-    const bottom = Math.max(VIEW.water + 8, VIEW.water + (keelY - VIEW.water) * 0.45);
-    return {
-      keelX: 58,
-      parts: [
-        hullBody(bottom, true),
-        h("svg:path", { d: `M196 ${VIEW.deck} L214 26 L252 26 L262 ${VIEW.deck}`, fill: "none", stroke: "var(--ink)", "stroke-width": 2 }),
-        h("svg:path", { d: `M53 ${bottom} L63 ${bottom} L62 ${keelY - 10} L54 ${keelY - 10} Z`, ...solid }),
-        h("svg:ellipse", { cx: 58, cy: keelY - 5, rx: 4, ry: 5, ...solid })
-      ]
-    };
-  }
-  if (hull === "displacement") {
+  if (hull === "motorboat") {
     const bottom = Math.max(hb, VIEW.water + (keelY - VIEW.water) * 0.7);
     return {
       keelX: 96,
@@ -171,17 +153,12 @@ function hullShape(hull, keelY, known) {
     };
   }
   const fin = h("svg:path", { d: `M173 ${hb} L209 ${hb} L203 ${keelY} L179 ${keelY} Z`, ...solid });
-  // A fin keel carries a bulb; with no hull chosen the fin is drawn plain.
-  const bulb = hull === "finKeel" ? h("svg:ellipse", { cx: 191, cy: keelY - 5, rx: 24, ry: 5, ...solid }) : null;
+  // A sailboat's keel carries a bulb; with no hull chosen the fin is drawn plain.
+  const bulb = hull === "sailboat" ? h("svg:ellipse", { cx: 191, cy: keelY - 5, rx: 24, ry: 5, ...solid }) : null;
   return { keelX: 191, parts: [mast, hullBody(hb, false), fin, bulb, rudder(70, hb + (keelY - hb) * 0.5)] };
 }
 
-const HULL_NAMES = {
-  finKeel: "fin-keel sailboat",
-  longKeel: "long-keel sailboat",
-  planing: "planing motorboat",
-  displacement: "displacement motorboat"
-};
+const HULL_NAMES = { sailboat: "sailboat", motorboat: "motorboat" };
 
 function boatSvg() {
   const b = boatValues();
@@ -338,10 +315,8 @@ function numberField(id, label, path, placeholder, hint) {
 }
 
 const HULL_TEXT = {
-  finKeel: ["Sailboat, fin keel", "heel lifts the keel"],
-  longKeel: ["Sailboat, long keel", "heel ignored"],
-  planing: ["Motorboat, planing", "no heel"],
-  displacement: ["Motorboat, displacement", "no heel"]
+  sailboat: ["Sailboat", "keel rises when heeled"],
+  motorboat: ["Motorboat", "full draft when rolling"]
 };
 
 function boatStep() {
@@ -373,7 +348,8 @@ function boatStep() {
           "button",
           { type: "button", "aria-pressed": hull === id, onclick: () => edit("vessel.hull", hull === id ? "none" : id) },
           title,
-          h("small", {}, `${heel} · squat Cb ${presets[id].blockCoefficient.toFixed(2)}`)
+          // Squat in words: S = Cb·V²/100 m at V knots, here at the reference speed.
+          h("small", {}, `${heel} · sits ${Math.round(presets[id].blockCoefficient * REFERENCE_KNOTS ** 2)} cm deeper at ${REFERENCE_KNOTS} kn`)
         )
       )
     ),

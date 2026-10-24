@@ -37,7 +37,7 @@ describe("settings patch", () => {
         {
           cellsDir: "/charts",
           warningStyle: "early",
-          vessel: { draft: 2.1, hull: "longKeel", margin: null },
+          vessel: { draft: 2.1, hull: "sailboat", margin: null },
           waterLevel: { source: "fmi" },
           livechart: { enabled: true, transducerDepth: 0.4 },
           mooringZones: ["home"]
@@ -62,7 +62,7 @@ describe("settings patch", () => {
     ).toEqual([
       "colour is not a setting",
       "vessel.draft must be a number",
-      "vessel.hull must be one of none, finKeel, longKeel, planing, displacement",
+      "vessel.hull must be one of none, sailboat, motorboat",
       "waterLevel must be an object",
       "warningStyle must be one of early, balanced, late",
       "wfs.enabled must be a boolean"
@@ -72,8 +72,8 @@ describe("settings patch", () => {
   test("objects merge field by field, null removes a field, arrays are replaced", () => {
     const base = { vessel: { draft: 2, margin: 0.3 }, mooringZones: ["a", "b"], cellsDir: "/c" };
     expect(
-      applyPatch(base, { vessel: { draft: null, hull: "planing" }, mooringZones: ["c"] })
-    ).toEqual({ vessel: { margin: 0.3, hull: "planing" }, mooringZones: ["c"], cellsDir: "/c" });
+      applyPatch(base, { vessel: { draft: null, hull: "motorboat" }, mooringZones: ["c"] })
+    ).toEqual({ vessel: { margin: 0.3, hull: "motorboat" }, mooringZones: ["c"], cellsDir: "/c" });
     expect(base.vessel).toEqual({ draft: 2, margin: 0.3 });
   });
 });
@@ -89,12 +89,12 @@ describe("saving settings", () => {
     const s = state({ cellsDir: "/c", configVersion: 2, vessel: { draft: 2 } }, (c) =>
       restarts.push(c)
     );
-    const reply = saveSettings({ vessel: { hull: "finKeel" } }, s, fail, (f) => later.push(f));
+    const reply = saveSettings({ vessel: { hull: "sailboat" } }, s, fail, (f) => later.push(f));
     expect(reply).toEqual({ status: 202, body: { restarting: true } });
     expect(restarts).toEqual([]);
     later.forEach((f) => f());
     expect(restarts).toEqual([
-      { cellsDir: "/c", configVersion: 2, vessel: { draft: 2, hull: "finKeel" } }
+      { cellsDir: "/c", configVersion: 2, vessel: { draft: 2, hull: "sailboat" } }
     ]);
   });
 

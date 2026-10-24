@@ -80,12 +80,22 @@ describe("hull", () => {
     expect(c.dynamics.heel).toEqual({ kind: HULL_PRESETS[hull].keel });
   });
 
-  test("only a fin keel lifts the keel with heel", () => {
-    expect(HULLS.filter((h) => HULL_PRESETS[h].keel === "fin")).toEqual(["finKeel"]);
+  test("a sailboat's keel rises with heel; a motorboat keeps its full draft and squats more", () => {
+    expect(HULL_PRESETS).toEqual({
+      sailboat: { blockCoefficient: 0.45, keel: "fin" },
+      motorboat: { blockCoefficient: 0.6, keel: "none" }
+    });
+  });
+
+  // Each choice squats at least as much as the version 1 default, Cb 0.40.
+  test("no hull squats less than not setting one", () => {
+    expect(HULLS.map((h) => HULL_PRESETS[h].blockCoefficient >= 0.4)).toEqual(
+      HULLS.map(() => true)
+    );
   });
 
   test("expert block coefficient and keel override the hull", () => {
-    const c = parseConfig({ vessel: { hull: "finKeel", blockCoefficient: 0.7, keel: "none" } });
+    const c = parseConfig({ vessel: { hull: "sailboat", blockCoefficient: 0.7, keel: "none" } });
     expect(c.dynamics).toMatchObject({ blockCoefficient: 0.7, heel: { kind: "none" } });
   });
 });

@@ -58,17 +58,15 @@ const VESSEL_ESSENTIAL = {
     },
     margin: { type: "number", title: "Safety margin under the keel (m)", default: 0 },
     // The form fills an empty field with the first choice, so "none" comes first and is the
-    // default: a fin keel there would lift the keel with heel on every saved configuration.
+    // default: a sailboat there would lift the keel with heel on every saved configuration.
     hull: {
       type: "string",
       title: "Hull (sets squat and heel)",
       default: "none",
       oneOf: [
         { const: "none", title: "Not set: squat Cb 0.4, heel ignored" },
-        { const: "finKeel", title: "Sailboat, fin keel" },
-        { const: "longKeel", title: "Sailboat, long keel" },
-        { const: "planing", title: "Motorboat, planing" },
-        { const: "displacement", title: "Motorboat, displacement" }
+        { const: "sailboat", title: "Sailboat: keel rises when heeled; squat Cb 0.45" },
+        { const: "motorboat", title: "Motorboat: full draft when rolling; squat Cb 0.60" }
       ]
     }
   }

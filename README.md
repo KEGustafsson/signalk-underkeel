@@ -143,13 +143,13 @@ There are two places to set the plugin up, and both write the same configuration
 
 ![The setup steps: boat, water level and warnings](docs/images/how-it-works/setup-panel.png)
 
-| Setting             | What it does                                                                                                                                                                                                                                                                                                   |
-| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ENC cells directory | where the `.000` cells are                                                                                                                                                                                                                                                                                     |
-| Boat                | draft (empty uses Signal K `design.draft.maximum`); safety margin under the keel (0 m); hull, which sets squat and heel: fin keel (Cb 0.40, heel lifts the keel), long keel (0.45), planing motorboat (0.40) or displacement motorboat (0.60), the last three ignoring heel; not set means Cb 0.40 and no heel |
-| Water level         | source (`none`, `manual`, `signalk-tide`, `fmi`, see below); only the chosen source's fields are shown                                                                                                                                                                                                         |
-| Warnings            | Early, Balanced or Late, in the table below                                                                                                                                                                                                                                                                    |
-| Optional features   | living chart (own soundings), Traficom WFS depths, grounding detector; each off until enabled                                                                                                                                                                                                                  |
+| Setting             | What it does                                                                                                                                                                                   |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ENC cells directory | where the `.000` cells are                                                                                                                                                                     |
+| Boat                | draft (empty uses Signal K `design.draft.maximum`); safety margin under the keel (0 m); hull, sailboat or motorboat, which sets heel and squat (below); not set means Cb 0.40 and heel ignored |
+| Water level         | source (`none`, `manual`, `signalk-tide`, `fmi`, see below); only the chosen source's fields are shown                                                                                         |
+| Warnings            | Early, Balanced or Late, in the table below                                                                                                                                                    |
+| Optional features   | living chart (own soundings), Traficom WFS depths, grounding detector; each off until enabled                                                                                                  |
 
 | Warning style      | Looks ahead | Alert at | Warn at, within | Alarm at, within | Alarm on negative mean UKC |
 | ------------------ | ----------- | -------- | --------------- | ---------------- | -------------------------- |
@@ -158,6 +158,20 @@ There are two places to set the plugin up, and both write the same configuration
 | Late               | 0.2 NM      | 2 %      | 10 %, 90 s      | 30 %, 45 s       | within 30 s                |
 
 Early is at least as cautious as Balanced in every column, and Balanced as Late.
+
+The hull sets two corrections to the draft. **Heel**: a boat leaning over lifts its keel, since
+the keel tip swings up and sideways; the draft shrinks by draft × (1 − cos heel), 13 cm for a
+2.2 m keel at 20°. The plugin takes the least roll of the last 10 s, so a boat rolling through
+upright gets no lift. **Squat**: a hull under way sits deeper in the water, by Cb × V² / 100 m
+at V knots (Barrass), where Cb is the block coefficient, how full the hull is below the water.
+A planing boat rises at planing speed, but its drive or propeller stays the deepest point and it
+squats most just before planing, so no lift is subtracted.
+
+| Hull      | Heel                   | Squat at 6 kn |
+| --------- | ---------------------- | ------------- |
+| Sailboat  | keel rises when heeled | 16 cm         |
+| Motorboat | full draft kept        | 22 cm         |
+| Not set   | full draft kept        | 14 cm         |
 
 Expert settings, with their defaults:
 

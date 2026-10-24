@@ -14,8 +14,8 @@ All notable changes to signalk-underkeel are documented here.
   save is a patch checked against the schema, and the server's restart callback writes it and
   restarts the plugin.
 - Warning styles Early, Balanced and Late set the look-ahead thresholds, windows and distance;
-  Balanced is the earlier default. A hull choice (fin keel, long keel, planing or displacement
-  motorboat) sets squat and heel. An expert value overrides its field.
+  Balanced is the earlier default. A hull choice, sailboat or motorboat, sets squat and heel.
+  An expert value overrides its field.
 - The admin form asks for the cells directory, draft, margin, hull, water-level source,
   warning style and optional features; **Show expert settings** opens 29 more fields and a
   feature's fields appear once it is enabled. Its description lists the setup check, and the

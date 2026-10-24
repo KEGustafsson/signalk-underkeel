@@ -23,9 +23,9 @@ describe("setup edits", () => {
   });
 
   test("leaves the patch it was given unchanged", () => {
-    const p = { vessel: { hull: "planing" } };
+    const p = { vessel: { hull: "motorboat" } };
     M.setEdit(p, saved, "vessel.margin", 0.5);
-    expect(p).toEqual({ vessel: { hull: "planing" } });
+    expect(p).toEqual({ vessel: { hull: "motorboat" } });
   });
 
   test("typed metres take a comma or a point; anything else is no number", () => {

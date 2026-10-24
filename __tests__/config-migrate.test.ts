@@ -98,7 +98,7 @@ describe("configuration migration", () => {
     const raw = {
       warningStyle: "late",
       lookahead: { warnRisk: 0.05 },
-      vessel: { hull: "planing", keel: "none" }
+      vessel: { hull: "motorboat", keel: "none" }
     };
     expect(migrateConfig(raw).config).toMatchObject(raw);
   });
