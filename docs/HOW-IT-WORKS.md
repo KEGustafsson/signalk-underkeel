@@ -314,7 +314,7 @@ still leaves neighbouring footprints touching (every 3rd at 6 kn, every 20th at 
 scores at most 400 footprints: a long horizon at low speed spaces the footprints past the window
 wider still, up to where neighbouring footprints would stop touching, and only beyond that is the
 horizon cut; within the window the steps stay 3 s apart. Where a footprint past the window is the
-first to reach P 5 %, P 1 % or a coverage gap, the steps it skipped are scored too, so the time
+first to reach the warn or alert level or a coverage gap, the steps it skipped are scored too, so the time
 to shoal and the time in the reason are those of the 3 s steps. The look-ahead distance is
 at most 5 NM (9260 m) and the minimum horizon at most 600 s.
 

@@ -28,6 +28,21 @@ describe("setup edits", () => {
     expect(p).toEqual({ vessel: { margin: 0.2 } });
   });
 
+  // The panel keeps its edits after a save until the settings read back hold them.
+  test("what the read-back settings do not hold stays in the patch", () => {
+    const patch = { vessel: { draft: 2.2, margin: null }, warningStyle: "early" };
+    expect(M.unsaved(patch, { vessel: { draft: 2.2 }, warningStyle: "early" })).toEqual({});
+    expect(M.unsaved(patch, saved)).toEqual({
+      vessel: { draft: 2.2, margin: null },
+      warningStyle: "early"
+    });
+    expect(M.unsaved(patch, { vessel: { draft: 2.2, margin: 0.3 } })).toEqual({
+      vessel: { margin: null },
+      warningStyle: "early"
+    });
+    expect(patch).toEqual({ vessel: { draft: 2.2, margin: null }, warningStyle: "early" });
+  });
+
   test("typed metres take a comma or a point; anything else is no number", () => {
     expect([M.metres("2,15"), M.metres(" 1.8 "), M.metres(""), M.metres("deep")]).toEqual([
       2.15,

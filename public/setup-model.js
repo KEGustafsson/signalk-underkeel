@@ -64,6 +64,22 @@
     return edited !== undefined ? edited : get(saved, path);
   }
 
+  /** [path, value] of each field the patch sets or removes. */
+  function leaves(obj, prefix) {
+    return Object.keys(obj).reduce(function (out, k) {
+      const v = obj[k];
+      const path = prefix ? prefix + "." + k : k;
+      return out.concat(v && typeof v === "object" && !Array.isArray(v) ? leaves(v, path) : [[path, v]]);
+    }, []);
+  }
+
+  /** The part of the patch the saved configuration does not hold yet. */
+  function unsaved(patch, saved) {
+    return leaves(patch || {}, "").reduce(function (p, leaf) {
+      return setEdit(p, saved, leaf[0], leaf[1]);
+    }, patch || {});
+  }
+
   /** Metres as a number, or undefined for text that is not one. */
   function metres(text) {
     const t = String(text === null || text === undefined ? "" : text).trim().replace(",", ".");
@@ -120,6 +136,7 @@
     get: get,
     setEdit: setEdit,
     current: current,
+    unsaved: unsaved,
     metres: metres,
     snap: snap,
     boatScale: boatScale,

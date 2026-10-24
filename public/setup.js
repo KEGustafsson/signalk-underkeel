@@ -150,7 +150,7 @@ function boatSvg() {
     "svg:svg",
     {
       viewBox: `0 0 ${VIEW.w} ${VIEW.h}`,
-      role: "img",
+      role: "group",
       "aria-label": `Side view: draft ${b.draft ?? "not set"} m, margin ${b.margin} m`
     },
     h("svg:rect", { x: 0, y: 0, width: VIEW.w, height: VIEW.h, fill: "var(--panel)" }),
@@ -518,27 +518,32 @@ function warningsStep() {
 
 // ── Navigation and saving ────────────────────────────────────────────────
 
+// The edits stay in the patch until the settings read back hold them: the
+// restart runs after the 202 and can still fail, and fields edited while the
+// request was out were not sent.
 async function save() {
   s.saving = true;
   renderNav();
+  const patch = s.patch;
+  let sent = false;
   try {
     const res = await fetch(`${M.API}/settings`, {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(s.patch),
+      body: JSON.stringify(patch),
       signal: AbortSignal.timeout(10000)
     });
     const body = await res.json().catch(() => null);
     const result = M.saveMessage(res.status, body);
     message(result.text, result.ok);
-    if (result.ok) {
-      s.patch = {};
-      setTimeout(() => void load(), 4000);
-    }
+    sent = result.ok;
   } catch (err) {
     message(`Not saved: ${err && err.message ? err.message : String(err)}`);
-  } finally {
+  }
+  if (sent) {
+    setTimeout(() => void load(patch), 4000);
+  } else {
     s.saving = false;
     renderNav();
   }
@@ -581,7 +586,8 @@ function blocked(text, link) {
   document.getElementById("nav").replaceChildren();
 }
 
-async function load() {
+async function load(sent) {
+  s.saving = false;
   try {
     const res = await fetch(`${M.API}/settings`, { credentials: "same-origin", signal: AbortSignal.timeout(8000) });
     if (res.status === 401 || res.status === 403) {
@@ -593,7 +599,12 @@ async function load() {
       return;
     }
     s.data = await res.json();
+    s.patch = M.unsaved(s.patch, s.data.values);
     render();
+    if (sent) {
+      const left = Object.keys(M.unsaved(sent, s.data.values)).length > 0;
+      message(left ? "Not all changes were saved yet. Check the server log, then save again." : "Saved.", !left);
+    }
   } catch (err) {
     blocked(`The plugin did not answer: ${err && err.message ? err.message : String(err)}`, ADMIN_PAGE);
     console.warn("under-keel setup", err);
