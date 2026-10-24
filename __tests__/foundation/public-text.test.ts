@@ -56,6 +56,18 @@ describe("public reason", () => {
     expect(publicReason(raw)).toBe(shown);
   });
 
+  test.each([
+    ["open '/home/O'Reilly/private/chart.json'", "open '<path>'"],
+    ['open "C:\\Users\\O\'Brien\\box.json"', 'open "<path>"'],
+    ["open '/srv/Jones' files/chart.json'", "open '<path>'"],
+    ["open '/srv/Jones'.bak/chart.json'", "open '<path>'"],
+    ["cannot read /home/O'Reilly/chart.json", "cannot read <path>"],
+    ["rename '/srv/a/x.tmp' -> '/srv/a/US5MA22M.000'", "rename '<path>' -> '<path>/US5MA22M.000'"],
+    ["open '/srv/sk/box.json', retrying", "open '<path>', retrying"]
+  ])("a path with an apostrophe is hidden whole, to its closing quote: %s", (raw, shown) => {
+    expect(publicReason(raw)).toBe(shown);
+  });
+
   test("an S-57 cell file keeps its name, its directory does not", () => {
     expect(publicReason("cell /srv/charts/ENC_ROOT/US5MA22M/US5MA22M.000: bad record")).toBe(
       "cell <path>/US5MA22M.000: bad record"

@@ -1,7 +1,6 @@
 "use strict";
 const path = require("node:path");
 
-/** How many of the slowest test files the run summary names. */
 const SLOWEST = 10;
 
 /**

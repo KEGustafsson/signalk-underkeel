@@ -4,8 +4,11 @@
  * reason stays in the plugin status and the server log.
  */
 
-/** A run of path characters ending in one that is not a closing `.` or `:`. */
-const SEGMENT = String.raw`[^\s'"\`;,()<>]*[^\s'"\`;,()<>.:]`;
+/**
+ * A run of path characters ending in one that is not a closing `.` or `:`. An
+ * apostrophe followed by a path character is part of a name, as in `O'Reilly`.
+ */
+const SEGMENT = String.raw`(?:[^\s'"\`;,()<>]|'(?=[^\s'"\`;,()<>]))*[^\s'"\`;,()<>.:]`;
 
 /**
  * An absolute file path: Unix (`/srv/x`), Windows (`C:\x`, `C:/x`) or UNC
@@ -19,8 +22,16 @@ const FILE_PATH = new RegExp(
   "g"
 );
 
-/** An absolute path in quotes, as Node's errors give one, hidden to its closing quote. */
-const QUOTED_PATH = /(['"`])((?:[A-Za-z]:)?[\\/][^'"`\n]*)\1/g;
+/**
+ * An absolute path in quotes, as Node's errors give one, hidden to its closing
+ * quote: the first one followed by the end or a space, perhaps after
+ * punctuation, where the next word holds no path separator. A quote inside a
+ * name (`'/home/O'Reilly/x'`, `'/srv/Jones' files/x'`) does not close it.
+ */
+const QUOTED_PATH = new RegExp(
+  String.raw`(['"\`])((?:[A-Za-z]:)?[\\/][^\n]*?)\1(?=[,;:.)\]]*(?:$|\s(?![^\s'"\`]*[\\/])))`,
+  "g"
+);
 
 /** An S-57 cell file name, base or update, kept from a path so the cell stays named. */
 const CELL_FILE = /[\\/]([A-Za-z0-9]{8}\.\d{3})$/;
