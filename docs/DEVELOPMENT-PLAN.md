@@ -875,7 +875,10 @@ suppressing.
   never pass again: σ_pos would reach kilometres within the hour with GNSS correct. Learned, the
   offset stops growing and σ_DR covers it; a 1 m/s step clears in about 2 minutes. The cost: a
   spoofer that drags the position at a steady velocity, or ramps it inside σ_DR, is flagged for
-  minutes rather than for good; a jump stays flagged until σ_DR covers it. A fix whose
+  minutes rather than for good, and so is a GNSS velocity bias, since without an independent
+  reference it reads as a current; a jump stays flagged until σ_DR covers it. The learned current
+  is bounded at 3 m/s (5.8 kn, `maxCurrent`): a drag or bias faster than that is never explained
+  away and stays flagged, and in a stream faster than that the check stays failed, the safe way. A fix whose
   `methodQuality` is not a satellite fix sets σ_pos ≥ 50 m. Without speed through water the
   check reports itself unavailable in the notification and in `/status`.
 - Hysteresis applies between `normal`, `alert`, `warn` and `alarm`. `unknown` and `off` pass

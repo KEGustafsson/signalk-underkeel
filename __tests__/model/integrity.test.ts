@@ -90,6 +90,20 @@ describe("position integrity", () => {
     expect(n).toBeCloseTo(1.5, 1);
   });
 
+  test("a drag faster than the fastest current learned is never explained away", () => {
+    // GNSS position and velocity dragged 4 m/s east beyond the water track: no
+    // independent reference tells it from a current, so only the bound flags it.
+    const m = new IntegrityMonitor();
+    const out = run(m, passage(1800, 3, [4, 0]));
+    expect(out.slice(900).every((r) => !r.ok)).toBe(true);
+    expect(Math.hypot(...m.currentEstimate())).toBeCloseTo(DEFAULT_INTEGRITY.maxCurrent, 6);
+  });
+
+  test("a real stream under the bound is still learned and clears", () => {
+    const out = run(new IntegrityMonitor(), passage(1800, 3, [0, 2.5]));
+    expect(out.slice(900).every((r) => r.ok)).toBe(true);
+  });
+
   test("a stream entered mid-passage clears once it is learned", () => {
     // 600 s in still water, then a 1 m/s stream setting south.
     let position = START;

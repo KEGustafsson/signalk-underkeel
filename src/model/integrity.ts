@@ -48,6 +48,12 @@ export interface IntegrityOptions {
   window: number;
   /** Low-pass time constant of the current estimate, seconds. */
   currentTau: number;
+  /**
+   * The fastest current learned, m/s. Without an independent reference a GNSS
+   * velocity bias, or a position dragged with its velocity, reads as a current;
+   * past this it is never explained away and stays flagged.
+   */
+  maxCurrent: number;
   /** HDOP above this inflates σ_pos and is reported. */
   maxHdop: number;
   /** σ_pos when the fix is not a satellite fix, metres. */
@@ -59,6 +65,7 @@ export const DEFAULT_INTEGRITY: IntegrityOptions = {
   sigmaVelocity: 0.2,
   window: 60,
   currentTau: 120,
+  maxCurrent: 3,
   maxHdop: 4,
   poorFixSigma: 50
 };
@@ -182,9 +189,9 @@ export class IntegrityMonitor {
     const [ge, gn] = vector(nav.cog, nav.sog);
     const [we, wn] = vector(nav.heading as number, nav.stw as number);
     const a = Math.min(1, dt / this.opts.currentTau);
-    this.current = [
-      this.current[0] + a * (ge - we - this.current[0]),
-      this.current[1] + a * (gn - wn - this.current[1])
-    ];
+    const e = this.current[0] + a * (ge - we - this.current[0]);
+    const n = this.current[1] + a * (gn - wn - this.current[1]);
+    const scale = Math.min(1, this.opts.maxCurrent / (Math.hypot(e, n) || 1));
+    this.current = [e * scale, n * scale];
   }
 }
