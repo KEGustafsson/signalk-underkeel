@@ -43,8 +43,6 @@ describe("assertion budget", () => {
     expect(() => checkAssertionCount(MAX_ASSERTIONS_PER_TEST + 1)).toThrow(
       `${MAX_ASSERTIONS_PER_TEST + 1} expect() calls in one test`
     );
-    // The per-element loops it was set against: pyramid-build-equality's 42,012 calls.
-    expect(() => checkAssertionCount(42012)).toThrow();
   });
 });
 

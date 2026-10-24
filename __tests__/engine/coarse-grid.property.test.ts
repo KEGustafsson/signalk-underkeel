@@ -100,7 +100,6 @@ test("an off-grid coarse footprint takes in every plan step it stands for", () =
         age: 0
       };
       const { times, step } = scheduleFor(m, KEEL, opts);
-      // The coarse footprints lie off the step grid.
       expect(times.some((t) => Math.abs(t / step - Math.round(t / step)) > 1e-6)).toBe(true);
       const tracks = fanMembers(
         m.cog,

@@ -9,7 +9,6 @@
  */
 export const MAX_ASSERTIONS_PER_TEST = 20000;
 
-/** Throws when one test made `n` expect() calls, more than the budget allows. */
 export function checkAssertionCount(n: number): void {
   if (n > MAX_ASSERTIONS_PER_TEST) {
     throw new Error(
