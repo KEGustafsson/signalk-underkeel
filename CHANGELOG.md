@@ -298,7 +298,7 @@ All notable changes to signalk-underkeel are documented here.
   and are answered 304 when the browser holds them, still with `Cache-Control: no-cache`. A
   Freeboard reload fetched 56.2 kB of them and now 12.7 kB; a first load 57.5 kB and now
   36.3 kB, since the three pages share four scripts.
-- `npm test` runs its 1049 tests in about 51 s instead of about 4.5 minutes on a laptop, with
+- `npm test` runs its 1086 tests in about 51 s instead of about 4.5 minutes on a laptop, with
   every property test, the replay and the safety-invariant suites at full depth, also in the
   Signal K registry's sandboxed run. Jest's stock Node environment builds each test file's
   context from a proxy, so every lookup of `Math`, `Number` and typed arrays in the chart and
@@ -576,7 +576,9 @@ All notable changes to signalk-underkeel are documented here.
   chart-datum fallback, marked degraded and with nothing `clear`. A query takes the same test
   over its polygon's box widened by its buffer, so an area the reach cuts between two vertices,
   or reaches only through the buffer, counts too, and beyond the reach it reports
-  `waterLevelDegraded` and is never `clear`. A cursor readout off Vaasa took the surge forecast
+  `waterLevelDegraded` and is never `clear`. The degraded reason there, as on a route leg, says
+  the position is more than 30 km from where the forecast was fetched; it had said FMI held no
+  value for the time. A cursor readout off Vaasa took the surge forecast
   for Kemi, +0.62 m, as measured, and wherever the index reached more than 30 km from the
   forecast point the tiles there could read `clear` over water that may not be there. The tile
   change list re-sends only the tiles that a new forecast point moves across the 30 km edge.

@@ -722,8 +722,9 @@ and `h = 0` would then assume more water than was last observed.
     fallback's σ 0.3 m and degraded reason, which is what a route leg spanning both would get.
     A tile wholly beyond the reach takes this rather than the fallback alone, which is never
     wetter and needs no third level or distance test.
-  - A tile is inside when all four of its corners are within the reach: a spherical cap is
-    convex, and the farthest point of a lon/lat box from any point is a corner. Any other tile
+  - A tile is inside when all four of its corners are within the reach. Along a parallel the
+    distance from the reach's centre grows with the longitude difference, so the tile's top and
+    bottom edges are inside too, and the cap holds every meridian arc between them. Any other tile
     is drawn at the beyond level and shows no `clear` cell. `POST /query` applies the same test
     to its ring's lon/lat box plus its buffer, so a reach cutting an edge between two outside
     vertices, or reached only by the buffer, counts too.
@@ -1216,8 +1217,9 @@ the same answer on any machine.
   (`maxRequestWork`); later legs are listed as "not searched: this request has used its repair
   work limit". Every searched leg runs with the full limit, so its outcome does not depend on the
   other legs in the request.
-- A leg can go past its limit by one query, one chord check or one final-check leg; the corridor
-  admission bounds each of these.
+- A leg can go past its limit by the line checks of one expanded cell (two for each of its up to
+  8 neighbours), one chord check or one final-check leg; the corridor admission bounds each of
+  these.
 - `npm run bench` times an adversarial synthetic chart (135 000 soundings at 3.2–5.2 m over 25 m
   water and a drying wall with a gap) on the built `lib/` in a plain node child process, outside
   Jest's module sandbox. The 47 km leg is repaired at ±40 m in 382 138 units, and refused at
@@ -1712,7 +1714,7 @@ and the invariant suites run at full depth in every run, the registry's included
   `vm.constants.DONT_CONTEXTIFY` context (Node 22.8 or later; on an older Node it is the stock
   environment). It throws if Jest stops building its context with one `vm.createContext` call,
   and `__tests__/test-environment.test.ts` checks that it is active. `jest-environment-node` is
-  a direct dev dependency. On an i5-8350U laptop the suite's 1049 tests take about 51 s and the
+  a direct dev dependency. On an i5-8350U laptop the suite's 1086 tests take about 51 s and the
   replay test about 3 s.
 - A test may make at most 20 000 `expect()` calls (`__tests__/helpers/assertion-budget.ts`),
   since each costs about 30 µs. Per-element checks inside property loops are collected and
@@ -1825,6 +1827,20 @@ it is distributed. Needed from the start:
    Pi 4 before a release that changes route repair, the pyramid or the corridor check, and
    lowers both limits together, in the same ratio, if the worst µs per unit × `maxWork` exceeds
    1.5 s.
+8. How should the living chart weigh soundings against the chart (§4.13)? Two faults found in
+   review are not fixed yet:
+   - The update treats each sample's error as its own. A sounding's σ is
+     `0.1 + 0.01 · depth + σ_water level`, but the transducer offset, sound speed and water
+     level errors are shared by a pass's samples. So the posterior σ shrinks as √N within a
+     pass. A steady 0.1 m forecast error then marks a cell protected after one pass, which
+     breaks the retention bound on a flat bottom at its charted depth. Over enough passes it
+     also raises a suspected-shoal note.
+   - A tight chart prior swamps the soundings. Against an 8 m ± 0.1 m chart, six readings at
+     6 m move the posterior only to 7.56 m. That is what an adjustment would apply, although
+     the soundings say 6 m.
+   - Candidate, to be decided here before any change: judge a cell by its soundings' own
+     evidence against the chart, with the shared error not averaging below one sounding's σ
+     over √passes. Adjust to the evidence, never deeper than the chart.
 
 ---
 
