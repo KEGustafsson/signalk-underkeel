@@ -231,10 +231,16 @@ function edgesOf(group: Gathered[]): Gathered[] {
   if (cut.length === 0) {
     return group;
   }
-  const x0 = Math.min(...cut.map((b) => b[0])) - 1;
-  const y0 = Math.min(...cut.map((b) => b[1])) - 1;
-  const w = Math.max(...cut.map((b) => b[2])) + 1 - x0;
-  const h = Math.max(...cut.map((b) => b[3])) + 1 - y0;
+  // One pass: spreading a group of many sources into Math.min/max can pass the argument limit.
+  let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
+  for (const [a, b, c, d] of cut) {
+    x0 = Math.min(x0, a - 1);
+    y0 = Math.min(y0, b - 1);
+    x1 = Math.max(x1, c + 1);
+    y1 = Math.max(y1, d + 1);
+  }
+  const w = x1 - x0;
+  const h = y1 - y0;
   const held = new Uint8Array(w * h);
   for (const [a, b, c, d] of cut) {
     for (let j = b; j < d; j++) {
