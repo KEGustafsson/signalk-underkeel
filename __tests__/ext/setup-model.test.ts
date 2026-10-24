@@ -61,7 +61,7 @@ describe("warning style in words", () => {
 
 describe("save outcome", () => {
   test.each([
-    [202, null, true, /^Saved/],
+    [202, null, true, /^Sent\. The plugin saves the settings and restarts/],
     [401, null, false, /administrator/],
     [403, null, false, /administrator/],
     [400, { errors: ["vessel.draft must be a number"] }, false, /Not saved: vessel\.draft/],

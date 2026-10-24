@@ -121,6 +121,6 @@ export function apiFor(
     discrepancies: () => livechartReply(s, (l) => l.discrepancies()),
     csb: () => livechartReply(s, (l) => l.csb()),
     settings: () => settingsReply(app, s),
-    saveSettings: (body) => saveSettings(body, s)
+    saveSettings: (body) => saveSettings(body, s, (message) => app.error(message))
   };
 }

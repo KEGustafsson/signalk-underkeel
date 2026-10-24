@@ -79,14 +79,18 @@ describe("settings patch", () => {
 });
 
 describe("saving settings", () => {
+  const fail = (message: string) => {
+    throw new Error(`unexpected log: ${message}`);
+  };
+
   test("answers 202 and restarts with the patched configuration after the reply", () => {
     const restarts: object[] = [];
     const later: (() => void)[] = [];
     const s = state({ cellsDir: "/c", configVersion: 2, vessel: { draft: 2 } }, (c) =>
       restarts.push(c)
     );
-    const reply = saveSettings({ vessel: { hull: "finKeel" } }, s, (f) => later.push(f));
-    expect(reply).toEqual({ status: 202, body: { saved: true, restarting: true } });
+    const reply = saveSettings({ vessel: { hull: "finKeel" } }, s, fail, (f) => later.push(f));
+    expect(reply).toEqual({ status: 202, body: { restarting: true } });
     expect(restarts).toEqual([]);
     later.forEach((f) => f());
     expect(restarts).toEqual([
@@ -97,8 +101,8 @@ describe("saving settings", () => {
   test("a bad patch is refused 400 and nothing restarts", () => {
     const restarts: object[] = [];
     const s = state({}, (c) => restarts.push(c));
-    expect(saveSettings([], s, (f) => f()).status).toBe(400);
-    expect(saveSettings({ vessel: { draft: "deep" } }, s, (f) => f())).toEqual({
+    expect(saveSettings([], s, fail, (f) => f()).status).toBe(400);
+    expect(saveSettings({ vessel: { draft: "deep" } }, s, fail, (f) => f())).toEqual({
       status: 400,
       body: { errors: ["vessel.draft must be a number"] }
     });
@@ -106,7 +110,24 @@ describe("saving settings", () => {
   });
 
   test("before start there is nothing to save to", () => {
-    expect(saveSettings({}, state(), (f) => f()).status).toBe(503);
+    expect(saveSettings({}, state(), fail, (f) => f()).status).toBe(503);
+  });
+
+  // The restart runs after the reply, where a throw would be uncaught and stop the server.
+  test("a restart that throws is logged, not thrown", () => {
+    const logged: string[] = [];
+    const s = state({}, () => {
+      throw new Error("disk full");
+    });
+    expect(
+      saveSettings(
+        {},
+        s,
+        (m) => logged.push(m),
+        (f) => f()
+      ).status
+    ).toBe(202);
+    expect(logged).toEqual(["settings not saved, plugin not restarted: disk full"]);
   });
 });
 

@@ -106,7 +106,7 @@
   /** What to tell the user after a save answered `status`. */
   function saveMessage(status, body) {
     if (status === 202) {
-      return { ok: true, text: "Saved. The plugin is restarting with the new settings." };
+      return { ok: true, text: "Sent. The plugin saves the settings and restarts; they are read back in a few seconds." };
     }
     if (status === 401 || status === 403) {
       return { ok: false, text: "Log in to Signal K as an administrator to change settings." };

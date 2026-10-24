@@ -143,13 +143,17 @@ const PATCHABLE = {
 };
 
 /**
- * Checks and applies a patch, answers 202 and then restarts the plugin with
- * the new configuration; the restart saves it. `later` runs the restart
- * after the reply is sent.
+ * Checks and applies a patch, answers 202 and then hands the new
+ * configuration to the server's restart callback, which saves it and
+ * restarts the plugin. The reply comes first, so it claims no save; the
+ * panel reads the settings back to show what was saved. `later` runs the
+ * restart after the reply is sent, where a throw would be uncaught, so it is
+ * logged instead.
  */
 export function saveSettings(
   body: unknown,
   s: PluginState,
+  log: (message: string) => void,
   later: (f: () => void) => void = setImmediate
 ): ApiReply {
   const restart = s.restart;
@@ -164,6 +168,12 @@ export function saveSettings(
     return { status: 400, body: { errors } };
   }
   const config = { ...applyPatch(s.options, body), configVersion: CONFIG_VERSION };
-  later(() => restart(config));
-  return { status: 202, body: { saved: true, restarting: true } };
+  later(() => {
+    try {
+      restart(config);
+    } catch (err) {
+      log(`settings not saved, plugin not restarted: ${(err as Error).message}`);
+    }
+  });
+  return { status: 202, body: { restarting: true } };
 }

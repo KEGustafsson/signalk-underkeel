@@ -3,7 +3,7 @@ import { LOOKAHEAD_LIMITS } from "./engine/lookahead";
 /**
  * JSON schema of the plugin configuration, as shown in the Signal K admin UI.
  *
- * ADMIN_SCHEMA is the one written by hand. Its top level asks for the
+ * adminSchema() is the one written by hand. Its top level asks for the
  * charts, the boat, the water level, a warning style and the optional
  * features; everything else appears only with "Show expert settings", and a
  * feature's own fields only once it is on, through `dependencies`. SCHEMA is
