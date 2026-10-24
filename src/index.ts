@@ -2,7 +2,12 @@ import type { Path, Plugin, PluginRouter, ServerAPI } from "@signalk/server-api"
 import { mountAssets } from "./api/assets";
 import { manifestProvider, PLUGIN_ID } from "./api/manifest";
 import { registerRoutes } from "./api/routes";
-import { parseConfig, SCHEMA } from "./config";
+import { parseConfig } from "./config";
+import { migrateConfig } from "./config-migrate";
+import { adminSchema, flatten, formsFollowDependencies, UI_SCHEMA } from "./config-schema";
+import type { SchemaHints } from "./config-schema";
+import { schemaHints } from "./setup-checks";
+import { persistMigration } from "./settings-service";
 import type { EngineStatus } from "./foundation/state";
 import { createStatus, PATHS } from "./foundation/state";
 import { planIndex } from "./index-loader";
@@ -65,6 +70,25 @@ function stopPlugin(app: ServerAPI, clock: Clock, state: PluginState): void {
   });
 }
 
+/**
+ * The admin form for this server: the essentials with expert settings
+ * behind a checkbox where the admin UI forwards `dependencies`, every field
+ * at once where it does not. The setup checks are decoration: a failure
+ * there leaves them out rather than replace the form with the server's
+ * error schema, which saving would write over the configuration.
+ */
+function formSchema(app: ServerAPI, state: PluginState): object {
+  let hints: SchemaHints = {};
+  try {
+    hints = state.monitor ? schemaHints(app, state) : {};
+  } catch (err) {
+    app.error(`setup checks failed: ${(err as Error).message}`);
+  }
+  const schema = adminSchema(hints);
+  const version = (app as { config?: { version?: unknown } }).config?.version;
+  return formsFollowDependencies(version) ? schema : flatten(schema);
+}
+
 export = function underkeel(
   app: ServerAPI,
   clock: Clock = SYSTEM_CLOCK,
@@ -84,10 +108,13 @@ export = function underkeel(
     description:
       "Look-ahead grounding risk, route checks and a living chart. Advisory only: not for navigation.",
 
-    schema: SCHEMA,
+    schema: () => formSchema(app, state),
+    uiSchema: UI_SCHEMA,
 
-    start(options: unknown): void {
-      const config = parseConfig(options);
+    start(options: unknown, restart?: (config: object) => void): void {
+      const migration = migrateConfig(options);
+      persistMigration(app, options, migration);
+      const config = parseConfig(migration.config);
       const wfs = startBox({ app, clock, state, config, fetch, build });
       const plan = planIndex(config, app.getDataDirPath(), wfs?.savedCell() ? [wfs.cellDir] : []);
       const load = "load" in plan ? plan.load : pendingLoad(plan);
@@ -101,6 +128,7 @@ export = function underkeel(
       const livechart = startLivechart(app, clock, config, load.index, monitor);
       monitor.start();
       Object.assign(state, { config, load, monitor, acks, livechart, wfs, zoneErrors: [] });
+      Object.assign(state, { options: migration.config, restart });
       if ("load" in plan) {
         wfs?.start();
       } else {

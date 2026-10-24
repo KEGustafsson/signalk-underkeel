@@ -156,7 +156,9 @@ describe("workerBuilder (compiled lib/)", () => {
     const dataDir = path.join(dir, "data");
     fs.mkdirSync(dataDir);
     const plugin = underkeel(fakeApp(dataDir).app, fakeClock(T0), globalThis.fetch, build);
-    plugin.start({ cellsDir: CELLS, boxRadiusKm: 0, leafZoom: 18 }, () => undefined);
+    // A current configuration, so no version 1 backup lands in the data directory.
+    const options = { configVersion: 2, cellsDir: CELLS, boxRadiusKm: 0, leafZoom: 18 };
+    plugin.start(options, () => undefined);
     await new Promise((resolve) => setImmediate(resolve));
     plugin.stop();
     // A build with an aborted signal settles only once every aborted worker has exited.

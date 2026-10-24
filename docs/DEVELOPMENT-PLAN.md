@@ -774,6 +774,13 @@ Heel uses the range of absolute roll over the last 10 s: a fin keel takes the le
 table its largest change over the range. Roll above 60° or stale is no roll, which gives a fin
 keel no lift and a table its largest change.
 
+Decision (configuration v2, safety invariant 2): the boat is its keel's lowest point. Squat and
+the wave allowance only add depth and stay automatic. Heel is the one term that lowers the
+draft, and its credit assumes the boat stays heeled across the look-ahead, which a tack, a
+bear-away or dropped sails ends; so `keel` defaults to `none`, the version 1 default, and the
+fin and table models are expert settings. No hull choice is asked: without heel it would only
+pick Cb, a few centimetres of squat at yacht speeds.
+
 ### 4.7 Risk model (core math)
 
 For a footprint `F` at time `t`:
@@ -805,6 +812,20 @@ P   = Φ(−UKC / σ)                                            // P(UKC < 0)
 | `alert`  | P ≥ 1 % and TTS > 120 s                                              |
 | `warn`   | P ≥ 5 % and TTS ≤ 120 s, or `NO_COVERAGE` ahead                      |
 | `alarm`  | P ≥ 20 % and TTS ≤ 60 s, or deterministic UKC < 0 at P50 within 30 s |
+
+**Warning styles (configuration v2).** The thresholds, the warn and alarm windows and the
+look-ahead distance come from a warning style; each expert value set overrides its field alone.
+Balanced is the table above and the version 1 defaults. Early looks 0.5 NM ahead and alerts at
+0.5 %, warns at 2 % within 180 s and alarms at 10 % within 90 s; Late looks 0.2 NM ahead and
+alerts at 2 %, warns at 10 % within 90 s and alarms at 30 % within 45 s. All three alarm on a
+negative mean UKC within 30 s. Early is at least as cautious as Balanced in every field and
+Balanced as Late (`__tests__/config-presets.test.ts`).
+
+Decision (safety invariants 2 and 3): a style moves only the thresholds and windows, which were
+settings before. P(UKC < 0) and the inputs that degrade a state are untouched, so monotonic
+risk and "never silent" hold for every style; a quieter style answers the same P later or at a
+higher level, as a user could already configure. Late keeps the 30 s alarm on a negative mean
+UKC. Version 1 configurations migrate without a change in behaviour (Configuration below).
 
 **Hysteresis.** Raising a state needs 2 consecutive ticks. Lowering it needs 5 consecutive
 ticks below the threshold minus 20 %, with P taken over the footprints inside the held state's
@@ -1041,6 +1062,7 @@ pulled only on change.
 | GET             | `/tiles/ukc/changes`         | the served tiles to fetch again since a cursor (§4.14)                                              |
 | GET/PUT         | `/vessel`                    | vessel model                                                                                        |
 | GET/POST/DELETE | `/acks`                      | acknowledged passages                                                                               |
+| GET/POST        | `/settings`                  | admin only: configuration, what the plugin sees and setup checks; `POST` a patch, then a restart    |
 | GET             | `/livechart/discrepancies`   | suspected shoals                                                                                    |
 | GET             | `/livechart/csb.geojson`     | IHO CSB export                                                                                      |
 
@@ -1495,7 +1517,7 @@ copied from `signalk-plotterext-bus` into `public/vendor/` at build time.
 | overlay `routecheck`               | route legs coloured `ok` / `marginal` / `fail` / `unverified`; every leg of a result older than 3 min, or without a receipt time, `unverified`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | overlay `ukc`                      | the M3 UKC tiles, off by default                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | widget `status` (2×1)              | state colour, minimum clearance in the host's depth unit, time to shoal and the reason; a tap opens the panel                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| panel `details`                    | advisory note, state, water level, the WFS notice when that source is on, and a leg table per route with its age and re-check; a result older than 3 min reads "out of date"                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| panel `details`                    | advisory note, state, water level, the WFS notice when that source is on, and a leg table per route with its age and re-check; a result older than 3 min reads "out of date"; **Open setup** loads `setup.html?from=details` in the same panel, with a link back (§4.15)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | button `open-details` (mapToolbar) | toggles the panel                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 
 `requires` is empty: on a host without a capability, the page that needs it shows less and
@@ -1560,6 +1582,46 @@ rise was drawn for lower water, so it shows equal or more danger than the truth.
 reach (§4.5).
 
 ---
+
+### 4.15 Configuration
+
+**Decision (configuration v2): the essentials first, presets for the rest.** The version 1
+form showed 54 fields at once. Version 2 asks for the cells directory, draft, safety margin,
+water-level source, warning style and the three optional features; the other fields follow
+the warning style or keep their defaults, and are edited under **Show
+expert settings**.
+
+- **One schema.** `adminSchema()` in `src/config-schema.ts` is written by hand with
+  `dependencies`: expert fields behind `showExpert`, a source's fields behind `source`, a
+  feature's behind `enabled`, the heel table behind `keel: table`. `SCHEMA` is the same schema
+  flattened, every field at once, and is served to admin UIs before Signal K 2.32, which drop
+  `dependencies` (server commit 257ccf9, "forward a plugin's whole schema"); an unknown server
+  version gets it too. The plugin's `schema()` builds the form when the admin page opens and
+  adds the setup checks to its description, the Signal K draft to the draft field and the
+  charts' datums to the water-level source; a failure there leaves the hints out, never the
+  form, since the server's error schema would be saved over the configuration.
+- **No default on a preset field.** The admin form writes every default into the saved
+  configuration, where it would override the preset. The style's fields have none.
+- **Versioned configuration.** `configVersion` is saved outside the schema, which the form
+  keeps as extra data. `migrateConfig()` runs one step per version at start; version 1 to 2
+  drops the look-ahead values equal to the version 1 form defaults, unless the configuration
+  already names a style. Over generated version 1 configurations the
+  parsed options are identical before and after (`__tests__/config-migrate.test.ts`). The
+  first migration keeps the original as `config-v1.json` in the plugin data directory and
+  saves the result with `savePluginOptions`, which writes without a restart; a backup that
+  cannot be written leaves the saved configuration alone. A newer version is read as it is.
+- **Setup lives in the details panel.** **Open setup** in the details panel loads
+  `setup.html` in the same iframe, which links back to `panel.html`; the toolbar keeps one
+  button for the plugin. The page needs no Plotter Extensions bus, so it also opens alone in a
+  browser, without the link back.
+- **The setup page saves through the server.** `POST /settings` is registered on the plain
+  plugin router, which the server keeps admin-only, needs a JSON body, checks the patch
+  against `SCHEMA` field by field and calls the `restart` callback `start()` receives, which
+  saves the configuration and restarts the plugin. The plugin never writes its configuration
+  file itself.
+- **Suggestions, not choices.** The panel and the form mark the water-level source that fits
+  the charts' datums, the same one the degraded reason names; no source is chosen by the
+  plugin (§4.5).
 
 ## 5. Freeboard-SK core
 

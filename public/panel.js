@@ -3,6 +3,10 @@
 import { connectExtension } from "./vendor/plotterext-bus/extension.js";
 
 const UKC = globalThis.UKC;
+// Setup opens in this panel rather than one of its own, so the toolbar keeps one button.
+document.getElementById("open-setup").addEventListener("click", () => {
+  location.assign("setup.html?from=details");
+});
 const client = await connectExtension();
 let unit = "m";
 

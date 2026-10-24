@@ -10,6 +10,8 @@ import type { DynamicsOptions, VesselModel } from "./model/vessel";
 import { DEFAULT_DYNAMICS } from "./model/vessel";
 import { LIMITS } from "./api/route-request";
 import { DEFAULT_WFS_URL, WFS_LIMITS } from "./ingest/wfs";
+import type { WarningStyle } from "./config-presets";
+import { WARNING_PRESETS, warningStyle } from "./config-presets";
 
 export { SCHEMA } from "./config-schema";
 
@@ -33,6 +35,8 @@ export interface PluginConfig {
    * vessel moves. 0 builds every cell. With the Traficom WFS on, its radius is used.
    */
   boxRadiusKm: number;
+  /** Sets the look-ahead fields the configuration leaves empty. */
+  warningStyle: WarningStyle;
   vessel: Partial<VesselModel>;
   dynamics: DynamicsOptions;
   waterLevel: WaterLevelConfig;
@@ -101,6 +105,7 @@ function degrees(v: unknown, fallback: number, min: number, max: number): number
   return Number.isNaN(d) ? fallback : d * DEG;
 }
 
+/** Heel gives no credit unless the configuration sets a heel model: the keel counts at full depth. */
 function heelModel(v: Record<string, unknown>): HeelModel {
   if (v.keel === "fin") {
     return { kind: "fin" };
@@ -158,15 +163,16 @@ function parseWaterLevel(w: Record<string, unknown>): WaterLevelConfig {
   };
 }
 
-function parseLookahead(l: Record<string, unknown>): LookaheadOptions {
+function parseLookahead(l: Record<string, unknown>, style: WarningStyle): LookaheadOptions {
   const d = DEFAULT_LOOKAHEAD;
-  const alert = num(l.alertRisk, d.thresholds.alert, 1e-6, 1);
-  const warn = Math.max(alert, num(l.warnRisk, d.thresholds.warn, 1e-6, 1));
-  const alarm = Math.max(warn, num(l.alarmRisk, d.thresholds.alarm, 1e-6, 1));
-  const alarmWithin = num(l.alarmWithin, d.alarmWithin, 0);
+  const p = WARNING_PRESETS[style];
+  const alert = num(l.alertRisk, p.alertRisk, 1e-6, 1);
+  const warn = Math.max(alert, num(l.warnRisk, p.warnRisk, 1e-6, 1));
+  const alarm = Math.max(warn, num(l.alarmRisk, p.alarmRisk, 1e-6, 1));
+  const alarmWithin = num(l.alarmWithin, p.alarmWithin, 0);
   return {
     ...d,
-    distance: Math.min(num(l.distance, d.distance, 0), LOOKAHEAD_LIMITS.distance),
+    distance: Math.min(num(l.distance, p.distance, 0), LOOKAHEAD_LIMITS.distance),
     minHorizon: Math.min(num(l.minHorizon, d.minHorizon, 0), LOOKAHEAD_LIMITS.minHorizon),
     positionBuffer: num(l.positionBuffer, d.positionBuffer, 0),
     kp: num(l.kp, d.kp, 0, 5),
@@ -175,9 +181,9 @@ function parseLookahead(l: Record<string, unknown>): LookaheadOptions {
     maxTurnRate: degrees(l.maxTurnRate, d.maxTurnRate, 0.1, 30),
     thresholds: { alert, warn, alarm },
     // A window for a more severe state wider than a milder one's would skip the milder state.
-    warnWithin: Math.max(num(l.warnWithin, d.warnWithin, 0), alarmWithin),
+    warnWithin: Math.max(num(l.warnWithin, p.warnWithin, 0), alarmWithin),
     alarmWithin,
-    certainWithin: Math.min(num(l.certainWithin, d.certainWithin, 0), alarmWithin)
+    certainWithin: Math.min(num(l.certainWithin, p.certainWithin, 0), alarmWithin)
   };
 }
 
@@ -237,12 +243,14 @@ export function parseConfig(raw: unknown): PluginConfig {
   const r = record(raw);
   const v = record(r.vessel);
   const rc = record(r.routeCheck);
+  const style = warningStyle(r.warningStyle);
   return {
     indexDir: str(r.indexDir),
     cellsDir: str(r.cellsDir),
     rebuildIndex: r.rebuildIndex === true,
     leafZoom: Math.round(num(r.leafZoom, 20, 14, 22)),
     boxRadiusKm: boxRadius(r.boxRadiusKm),
+    warningStyle: style,
     vessel: {
       draft: optionalPositive(v.draft),
       length: optionalPositive(v.length),
@@ -250,7 +258,7 @@ export function parseConfig(raw: unknown): PluginConfig {
     },
     dynamics: parseDynamics(v),
     waterLevel: parseWaterLevel(record(r.waterLevel)),
-    lookahead: parseLookahead(record(r.lookahead)),
+    lookahead: parseLookahead(record(r.lookahead), style),
     livechart: parseLivechart(record(r.livechart)),
     mooringZones: (Array.isArray(r.mooringZones) ? r.mooringZones : [])
       .map(str)

@@ -33,6 +33,10 @@ export interface ApiProvider {
   deleteAck(id: string): ApiReply;
   discrepancies(): ApiReply;
   csb(): ApiReply;
+  /** The configuration, what the plugin sees and the setup checks, for the setup panel. */
+  settings(): ApiReply;
+  /** Applies a patch to the configuration and restarts the plugin with it. */
+  saveSettings(body: unknown): ApiReply;
 }
 
 type Registrar = {
@@ -149,7 +153,8 @@ function send(res: Response, reply: ApiReply): void {
 /**
  * REST routes, base `/plugins/signalk-underkeel/v1` (plan §4.10). Reads
  * are open to readonly users; adding or deleting an acknowledgement needs
- * readwrite, and adding one a JSON body, so a cross-site form cannot. `GET
+ * readwrite, and adding one a JSON body, so a cross-site form cannot. The
+ * settings routes are admin-only and saving needs a JSON body too. `GET
  * /envelope?rev=N` answers 304 when the client already holds rev N, so
  * clients can poll on the `envelopeRev` delta without refetching.
  */
@@ -232,6 +237,21 @@ export function registerRoutes(
   });
   w.delete(`${API_BASE}/acks/:id`, (req: Request, res: Response) => {
     send(res, api.deleteAck(String((req.params as Record<string, unknown> | undefined)?.id ?? "")));
+  });
+  registerSettings(router, api, log);
+}
+
+/** On the plain router, so admin-only: the configuration names directories on the server. */
+function registerSettings(router: Registrar, api: ApiProvider, log: (m: string) => void): void {
+  router.get(`${API_BASE}/settings`, (_req: Request, res: Response) => send(res, api.settings()));
+  router.post(`${API_BASE}/settings`, (req: Request, res: Response) => {
+    if (!isJson(req)) {
+      res.status(415).json({ errors: ["Content-Type must be application/json"] });
+      return;
+    }
+    readJsonBody(req)
+      .then((body) => send(res, api.saveSettings(body)))
+      .catch((err: unknown) => fail(res, err, log));
   });
 }
 

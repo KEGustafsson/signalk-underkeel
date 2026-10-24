@@ -6,7 +6,9 @@ import { API_BASE } from "./routes";
  * is declared here rather than built into a plotter: the UKC tile overlay,
  * the look-ahead envelope and route-check legs as data overlays a
  * background runtime keeps current, a status widget, a details panel and a
- * toolbar button. Their pages are served from ASSET_BASE (see assets.ts).
+ * toolbar button. The setup steps open inside the details panel, so the
+ * plugin adds one button to the toolbar. Their pages are served from
+ * ASSET_BASE (see assets.ts).
  */
 
 export const PLUGIN_ID = "signalk-underkeel";

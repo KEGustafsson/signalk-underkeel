@@ -81,10 +81,18 @@ look-ahead, a corridor around each leg for a route check, or a map tile for the 
 
 ![Plugin configuration in the Signal K admin UI](images/how-it-works/config.png)
 
+The setup steps, opened with **Open setup** in Freeboard's Under-keel details panel, ask for the
+same essentials in three steps:
+the boat on a side view whose keel, margin line and sounder can be dragged, the water-level
+source with the one that fits the charts' datum marked, and a warning style. The admin page
+asks for them first too and shows the rest under **Show expert settings**.
+
+![The setup steps: boat, water level and warnings](images/how-it-works/setup-panel.png)
+
 The plugin reads unencrypted S-57 cells as delivered, each `.000` with its updates, with GDAL
 compiled to WebAssembly; **ENC cells directory** points at the folder that holds them, such as
 an exchange set's `ENC_ROOT` (the [README](../README.md#prepare-the-charts) has the details).
-The draft comes from **Vessel**, or else from Signal K `design.draft.maximum`; length and beam fall back to `design.length.overall` and
+The draft comes from **Boat**, or else from Signal K `design.draft.maximum`; length and beam fall back to `design.length.overall` and
 `design.beam`. Without a draft the engine stays `unknown`. The water level comes from the
 source picked under **Water level** (section 8).
 
@@ -272,7 +280,7 @@ flowchart TD
   M -- no --> ONE[check only the hull<br/>at the current position]
   M -- yes --> S{SOG ≥ 0.5 kn?}
   S -- no --> ONE
-  S -- yes --> CONE[fan of five tracks from COG, SOG<br/>and rate of turn, for<br/>H = max 60 s, 555.6 m ÷ SOG]
+  S -- yes --> CONE[fan of five tracks from COG, SOG<br/>and rate of turn, for<br/>H = the longer of the minimum horizon,<br/>60 s by default, and<br/>look-ahead distance ÷ SOG]
   ONE & CONE --> Q[for each step: one footprint<br/>around the five hulls; shallowest depth<br/>+ σ from the index, P per index tile,<br/>keep the highest]
   Q --> ST[state table and hysteresis,<br/>section 7]
   ST --> Z{inside an acknowledged<br/>passage or mooring zone?}
@@ -298,23 +306,27 @@ charted there. Its flags (no coverage, unassessed) count within 2 × σP. Unasse
 WFS water spreads no depth, since it never reads as `normal` anyway. The position σ comes from the GNSS (HDOP × 3 m, 5 m without HDOP) and
 is raised by the integrity check in section 7.
 
-Within the 120 s warning window the steps are at most 3 s apart; for a fast boat the step
-shrinks so neighbouring footprints still touch. At 5 kn (2.6 m/s) the horizon is 214 s. Past 120 s, the widest window a state is
-raised in, only every k-th step is scored, the most that still leaves neighbouring footprints
-touching (every 3rd at 6 kn, every 20th at 1 kn). A tick scores at most 400 footprints: a long
-horizon at low speed spaces the footprints past 120 s wider still, up to where neighbouring
-footprints would stop touching, and only beyond that is the horizon cut; within 120 s the steps
-stay 3 s apart. Where a footprint past 120 s is the first to reach P 5 %, P 1 % or a coverage
-gap, the steps it skipped are scored too, so the time to shoal and the time in the reason are
-those of the 3 s steps. The look-ahead distance is
+The warning window is set by the warning style: 120 s with Balanced, 180 s with Early, 90 s with
+Late. Within it the steps are at most 3 s apart; for a fast boat the step shrinks so neighbouring
+footprints still touch. At 5 kn (2.6 m/s) the Balanced horizon is 214 s. Past the warning
+window, the widest window a state is raised in, only every k-th step is scored, the most that
+still leaves neighbouring footprints touching (every 3rd at 6 kn, every 20th at 1 kn). A tick
+scores at most 400 footprints: a long horizon at low speed spaces the footprints past the window
+wider still, up to where neighbouring footprints would stop touching, and only beyond that is the
+horizon cut; within the window the steps stay 3 s apart. Where a footprint past the window is the
+first to reach the warn or alert level or a coverage gap, the steps it skipped are scored too, so the time
+to shoal and the time in the reason are those of the 3 s steps. The look-ahead distance is
 at most 5 NM (9260 m) and the minimum horizon at most 600 s.
 
-Below 18 kn the horizon always reaches 555.6 m ahead, so slowing down does not shorten the
+With fresh COG and SOG and SOG at least 0.5 kn, the horizon reaches the configured look-ahead
+distance (555.6 m, 0.3 NM, with Balanced; below 18 kn), so slowing down does not shorten the
 envelope. The same distance takes longer, though: 154 s at 7 kn, 270 s at 4 kn. Warn and alarm
-count seconds to the shoal, so at lower speed they come closer to it.
+count seconds to the shoal, so at lower speed they come closer to it. Below 0.5 kn, or when COG or
+SOG is stale, only the hull at the current position is checked.
 
 The look-ahead uses the higher of speed over ground and speed through water for squat, even
-when the course is stale, and the roll of the last 10 s for heel. A `fin`
+when the course is stale. Heel counts only when a heel model is set under expert settings, from
+the roll of the last 10 s; by default the keel counts at full depth. A `fin`
 keel is lifted only by the least roll in that window, since a boat rolling through upright has
 its full draft at the bottom of each roll; a `table` keel takes the largest draft change over
 the rolls seen. Roll older than 10 s or above 60° counts as no roll: no lift for a `fin` keel,
@@ -368,7 +380,9 @@ the highest P; in clear water that can be a large tile whose centre lies off the
 The escape heading published at the same points is 255° in `alert`, 245° in `warn` and 220° in
 `alarm`: a turn to port that passes south of the island, growing as the island gets closer.
 
-The thresholds and time windows are set under **Look-ahead**:
+The thresholds and time windows come from the warning style, Early, Balanced or Late (the
+[README](../README.md#settings) has the table); the values above are Balanced. Under **Show
+expert settings**, **Look-ahead** overrides any of them:
 
 ![Look-ahead and route check settings](images/how-it-works/config-lookahead.png)
 
