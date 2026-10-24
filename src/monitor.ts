@@ -368,9 +368,9 @@ export class Monitor {
       ...raw,
       escapeHeading: this.escape.headingFor(raw.state, escapable)
     });
-    // Hysteresis publishes this tick's heading, never a held one, and headingFor already gives
-    // null when the tick is not escapable: the override below repeats that null.
-    const next = this.suppressed(escapable ? held : { ...held, escapeHeading: null });
+    // Hysteresis publishes this tick's heading, never a held one; headingFor gives null when
+    // the tick is not escapable.
+    const next = this.suppressed(held);
     if (next.state !== this.last.state) {
       this.since = this.clock.now();
     }
