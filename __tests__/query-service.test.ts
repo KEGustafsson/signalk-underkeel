@@ -21,7 +21,7 @@ const FALLBACK: WaterLevel = {
   h: 0,
   sigma: 0.3,
   source: "fallback",
-  degraded: "no forecast within 30 km"
+  degraded: "water level from fmi: more than 30 km from where its forecast was fetched"
 };
 
 /** A source that holds `inside` within `metres` of `centre` and falls back beyond, as FMI does. */
@@ -74,7 +74,9 @@ describe("POST /query water level", () => {
   test("far from the forecast is the fallback, marked degraded and never clear", async () => {
     // The vessel, and its forecast, 150 km north: its +0.62 m is not this sea's.
     const r = await ask(reachAt(offset(ROCK, 0, 150000)), ring);
-    expect(r.waterLevelDegraded).toBe("no forecast within 30 km");
+    expect(r.waterLevelDegraded).toBe(
+      "water level from fmi: more than 30 km from where its forecast was fetched"
+    );
     expect(r.class).not.toBe("clear");
   });
 
@@ -83,7 +85,9 @@ describe("POST /query water level", () => {
     // the fallback, so the level there is the forecast's height with the fallback's reason.
     const low: WaterLevel = { h: -0.2, sigma: 0.14, source: "fmi:forecast" };
     const r = await ask(reachAt(offset(ROCK, 0, 300), 500, low), box(600, 10));
-    expect(r.waterLevelDegraded).toBe("no forecast within 30 km");
+    expect(r.waterLevelDegraded).toBe(
+      "water level from fmi: more than 30 km from where its forecast was fetched"
+    );
     expect(r.explanation).toMatchObject({ waterLevel: -0.2, sigmaWaterLevel: 0.3 });
   });
 
@@ -91,7 +95,9 @@ describe("POST /query water level", () => {
     // The ring's farthest vertex about 470 m from the centre, within 500 m; its buffer is not.
     const levels = reachAt(offset(ROCK, 0, -440), 500);
     expect((await ask(levels, ring)).waterLevelDegraded).toBeUndefined();
-    expect((await ask(levels, ring, 100)).waterLevelDegraded).toBe("no forecast within 30 km");
+    expect((await ask(levels, ring, 100)).waterLevelDegraded).toBe(
+      "water level from fmi: more than 30 km from where its forecast was fetched"
+    );
   });
 });
 

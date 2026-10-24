@@ -170,6 +170,16 @@ describe("water level over areas", () => {
     expect(r.beyond?.level.h).toBeLessThanOrEqual(r.inside.h);
   });
 
+  test("beyond the forecast's reach the reason names the distance, not a missing time", async () => {
+    const s = await fmiAtKemi();
+    expect(s.now(VAASA, NOW).degraded).toBe(
+      "water level from fmi: more than 30 km from where its forecast was fetched"
+    );
+    expect(s.regimes(NOW).beyond?.level.degraded).toBe(
+      "water level from fmi: more than 30 km from where its forecast was fetched"
+    );
+  });
+
   test("a tile or point never gets more water or a narrower σ than the level at its own positions", async () => {
     // Invariant 2: the level over an area is no wetter than any position in it would get.
     const s = await fmiAtKemi();

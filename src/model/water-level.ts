@@ -1,4 +1,5 @@
 import type { LonLat } from "../foundation/geo";
+import { haversine } from "../foundation/geo";
 import type { DatumUse, LevelSeries } from "../ingest/datum";
 import type { WaterLevel } from "./uncertainty";
 
@@ -166,6 +167,21 @@ function unusable(p: WaterLevelProvider, now: number): string | undefined {
   return undefined;
 }
 
+/** Why `p` has no level at `position` and `t`: past its reach, or no value for the time. */
+function noValue(
+  p: WaterLevelProvider,
+  position: LonLat | undefined,
+  t: number,
+  series?: LevelSeries
+): string {
+  const from = `water level from ${p.id}`;
+  const reach = position && p.reach?.();
+  if (reach && haversine(position, reach.centre) > reach.metres) {
+    return `${from}: more than ${reach.metres / 1000} km from where its forecast was fetched`;
+  }
+  return `${from}: no ${series === undefined ? "" : `${series} `}value for ${iso(t)}`;
+}
+
 /** The level at `t`, or why there is none. */
 function sampleAt(
   p: WaterLevelProvider,
@@ -175,7 +191,7 @@ function sampleAt(
 ): WaterLevel | string {
   if (p.reference === "chart") {
     const s = p.levelAt(position, t, "mw");
-    return s ? { ...s } : `water level from ${p.id}: no value for ${iso(t)}`;
+    return s ? { ...s } : noValue(p, position, t);
   }
   // Cells on different datums share one level: take the lowest and the
   // widest σ, which per invariant 2 can only raise P(UKC < 0).
@@ -184,7 +200,7 @@ function sampleAt(
   for (const use of uses) {
     const s = p.levelAt(position, t, use.series);
     if (!s) {
-      return `water level from ${p.id}: no ${use.series} value for ${iso(t)}`;
+      return noValue(p, position, t, use.series);
     }
     if (!use.known) {
       unknown.push(...use.cells);
