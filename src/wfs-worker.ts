@@ -1,5 +1,5 @@
 import { parentPort, workerData } from "worker_threads";
-import { cellSources, sourceKeys } from "./index-loader";
+import { cellSources, cellsMissing, savedCatalogue, sourceKeys } from "./index-loader";
 import type { Bbox, WfsDownload, WfsFetch } from "./ingest/wfs";
 import { downloadWfsCell } from "./ingest/wfs";
 import { readBox } from "./spatial/build-box";
@@ -21,7 +21,8 @@ export interface WfsJob {
   cellsDir?: string;
   /**
    * Finding no S-57 cell in `cellsDir` fails the refresh and keeps the index in use: the
-   * drive holding the cells has most likely been unmounted.
+   * drive holding the cells has most likely been unmounted. Without it the refresh fails so
+   * too while the index saved in `build.indexDir` holds S-57 cells (`cellsMissing`).
    */
   cellsRequired?: boolean;
   /** Builds in this box (plan §4.2), not whole. */
@@ -43,7 +44,11 @@ export interface WfsReply extends BuildReply {
  */
 export function refreshCells(job: WfsJob): string[] {
   const cells = cellSources(job.cellsDir);
-  if (job.cellsDir !== undefined && job.cellsRequired && cells.length === 0) {
+  if (job.cellsDir === undefined || cells.length > 0) {
+    return cells;
+  }
+  // With no index in use, or one of WFS depths alone, the saved catalogue still tells.
+  if (job.cellsRequired || cellsMissing(job.cellsDir, cells, savedCatalogue(job.build.indexDir))) {
     throw new Error(`no S-57 cell found in ${job.cellsDir}`);
   }
   return cells;

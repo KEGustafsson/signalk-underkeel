@@ -1,6 +1,7 @@
 import type { Request, RequestHandler, Response } from "express";
 import { gzipSync } from "zlib";
 import type { Envelope } from "../engine/envelope";
+import { publicReason } from "../foundation/public-text";
 
 export const API_BASE = "/v1";
 
@@ -47,12 +48,15 @@ export const MAX_BODY_BYTES = 256 * 1024;
 class BodyError extends Error {}
 
 /**
- * The parsed JSON body. Signal K runs express.json() before plugin routes,
- * and it leaves `{}` for a body of any other type; only without it is the
- * raw stream read here, with a size cap.
+ * The parsed JSON body. Signal K runs express.json() before plugin routes.
+ * It parses only `application/json` and leaves `{}` for any other type,
+ * `application/geo+json` too, with the stream unread; so `req.body` is
+ * taken only once the stream has been read, and otherwise the raw stream
+ * is read here, with a size cap.
  */
 export function readJsonBody(req: Request): Promise<unknown> {
-  if (req.body !== undefined && typeof req.body === "object") {
+  const unread = req.readableEnded === false;
+  if (!unread && req.body !== undefined && typeof req.body === "object") {
     return Promise.resolve(req.body);
   }
   return new Promise((resolve, reject) => {
@@ -117,22 +121,6 @@ function fail(res: Response, err: unknown, log: (message: string) => void): void
 function isJson(req: Request): boolean {
   const [type = ""] = String(req.headers?.["content-type"] ?? "").split(";");
   return /^application\/([\w.+-]+\+)?json$/.test(type.trim().toLowerCase());
-}
-
-/** An absolute file path, Unix or Windows, after the start, a space, a quote or a bracket. */
-const FILE_PATH = /(^|[\s'"(])(?:[A-Za-z]:)?[\\/][^\s'"`;,()]+/g;
-
-/**
- * A server-side error reason as it may go on the wire: the text of a
- * nested error, which may name anything, gives way to "see the server
- * log", and file paths are hidden. The full reason stays in the plugin
- * status and the server log.
- */
-export function publicReason(reason: string): string {
-  return reason
-    .replace(/\bfailed: [^;]*/g, "failed (see the server log)")
-    .replace(/could not be read \([^)]*\)/g, "could not be read")
-    .replace(FILE_PATH, "$1<path>");
 }
 
 /** A 5xx reply's error reasons, with internals kept off the wire. */

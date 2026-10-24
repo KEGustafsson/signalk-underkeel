@@ -115,7 +115,9 @@ describe("index build at start (plan §6: off the event loop)", () => {
     f.send(navDelta(ROCK[0] - 110 / M_PER_DEG_LON, ROCK[1], 3, T0));
     clock.advance(1000);
     expect(lastValue(f.deltas, "navigation.underKeel.state")).toBe("off");
-    expect(status(call).engine.reason).toBe("chart index failed: worker out of memory");
+    // The plugin error, which only an admin sees, keeps the build error; the wire does not.
+    expect(f.errors).toContain("chart index failed: worker out of memory");
+    expect(status(call).engine.reason).toBe("chart index failed (see the server log)");
     plugin.stop();
   });
 

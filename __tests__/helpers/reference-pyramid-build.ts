@@ -428,7 +428,7 @@ function surveySigma(hits: Hit[], opts: BuildOptions): number {
 /**
  * A leaf's chart position: survey σ with the depth the survey places
  * (soundings, point dangers), and the drawing's σ with the depth it places
- * (land, depth areas).
+ * (land, depth areas), at the smallest scale of the M_CSCL areas reaching it.
  */
 function chartPosition(hits: Hit[], v: NodeValues, opts: BuildOptions): ChartPosition {
   const survey = surveySigma(hits, opts);
@@ -438,6 +438,7 @@ function chartPosition(hits: Hit[], v: NodeValues, opts: BuildOptions): ChartPos
   let topo = 0;
   let drawn = Infinity;
   let bathy = Infinity;
+  const areaScales: number[] = [];
   for (const h of hits) {
     const f = h.item.f;
     if (f.role === "depth" && f.topoSigma !== undefined) {
@@ -445,10 +446,16 @@ function chartPosition(hits: Hit[], v: NodeValues, opts: BuildOptions): ChartPos
       drawn = Math.min(drawn, f.depth);
     } else if (f.role === "depth" || f.role === "swept") {
       bathy = Math.min(bathy, f.depth);
+    } else if (f.role === "scale") {
+      areaScales.push(f.scale);
     }
   }
   if (topo === 0) {
     return { surveySigmaP: survey, topoSigmaP: 0, bathyDMin: v.dMin, topoDMin: Infinity };
+  }
+  // 1 mm at the area's scale as a 95 % bound (`compilationSigma`).
+  for (const scale of areaScales) {
+    topo = Math.max(topo, (scale * 0.001) / 2);
   }
   for (const h of hits) {
     const f = h.item.f;
@@ -459,7 +466,13 @@ function chartPosition(hits: Hit[], v: NodeValues, opts: BuildOptions): ChartPos
       if (f.lowAccuracy) {
         const unsurveyed = survey > 0 ? survey : sigmaFor(undefined, 0, {}, opts.quality).sigmaP;
         // Read as drawn from a source four times smaller in scale (`NOT_SURVEYED_SCALE`).
-        topo = Math.max(topo, f.scale === undefined ? unsurveyed : 4 * ((f.scale * 0.001) / 2));
+        if (f.scale === undefined) {
+          topo = Math.max(topo, unsurveyed);
+        } else {
+          for (const scale of [f.scale, ...areaScales]) {
+            topo = Math.max(topo, 4 * ((scale * 0.001) / 2));
+          }
+        }
       }
     }
   }

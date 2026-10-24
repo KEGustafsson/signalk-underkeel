@@ -8,7 +8,7 @@ import { NOTIFY_REFRESH_MS } from "../src/engine/notify";
 import { BUILDING_REASON, LOADING_REASON, WFS_WAITING_REASON } from "../src/index-loader";
 import type { ChartIndex } from "../src/spatial/chart-index";
 import { fixtureIndex, M_PER_DEG_LON, ROCK } from "./helpers/fixture-index";
-import { navDelta, T0, values } from "./helpers/plugin-harness";
+import { lastValue, navDelta, T0, values } from "./helpers/plugin-harness";
 
 /**
  * What a tick publishes: values on change with a keep-alive, the status on
@@ -321,6 +321,31 @@ describe("index status", () => {
     expect(r.errors).toEqual(["chart index failed: disk gone"]);
     expect(r.statuses).toEqual([]);
   });
+
+  test.each([
+    ["no cells in /srv/signalk/charts", "no cells in <path>"],
+    [
+      "no chart index in C:\\srv\\sk\\index; set cellsDir",
+      "no chart index in <path>; set cellsDir"
+    ],
+    [
+      "chart index failed: ENOENT: no such file or directory, scandir '/srv/usb/ENC'",
+      "chart index failed (see the server log)"
+    ]
+  ])(
+    "any client reads the notification for %s without its server path; the plugin error keeps it",
+    (reason, shown) => {
+      const r = rig(false, null, reason);
+      r.tick();
+      const n = lastValue(r.deltas, NOTIFICATION) as { state: string; message: string };
+      // Still raised: monitoring off is never silent (safety invariant 3).
+      expect(n.state).toBe("alert");
+      expect(n.message).toBe(`UKC monitoring off: ${shown}`);
+      expect(n.message).not.toMatch(/srv/);
+      expect(r.monitor.last.reason).toBe(reason);
+      expect(r.errors).toEqual([reason]);
+    }
+  );
 
   test("notes about a loaded index go in the status beside the monitoring state", () => {
     const r = rig(false, fixtureIndex(), "skipped X.000 in cells: not a cell directory");

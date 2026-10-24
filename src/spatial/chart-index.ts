@@ -103,23 +103,35 @@ function foreignFile(dir: string): string | undefined {
 }
 
 /**
- * A commit replaces `dir` whole, so one holding anything but an index, such
- * as the charts or the plugin's data set as indexDir by mistake, is refused
- * rather than deleted.
+ * Why a commit would refuse `dir`, or undefined when it may replace it. A
+ * commit replaces `dir` whole, so one holding anything but an index, such as
+ * the charts or the plugin's data set as indexDir by mistake, is refused
+ * rather than deleted. The start plan and the box refresh ask before they
+ * build, so a refused directory costs no build.
  */
-function assertIndexDir(dir: string): void {
+export function indexDirProblem(dir: string): string | undefined {
   if (!fs.existsSync(dir)) {
-    return;
+    return undefined;
   }
-  if (!fs.statSync(dir).isDirectory()) {
-    throw new Error(`indexDir ${dir} is not a directory`);
+  let foreign: string | undefined;
+  try {
+    if (!fs.statSync(dir).isDirectory()) {
+      return `indexDir ${dir} is not a directory`;
+    }
+    foreign = foreignFile(dir);
+  } catch (err) {
+    return `indexDir ${dir} cannot be read: ${(err as Error).message}`;
   }
-  const foreign = foreignFile(dir);
-  if (foreign !== undefined) {
-    throw new Error(
-      `indexDir ${dir} holds ${foreign}, which is not part of a chart index; ` +
-        "a save replaces the whole directory, so set indexDir to an empty or new directory"
-    );
+  return foreign === undefined
+    ? undefined
+    : `indexDir ${dir} holds ${foreign}, which is not part of a chart index; ` +
+        "a save replaces the whole directory, so set indexDir to an empty or new directory";
+}
+
+function assertIndexDir(dir: string): void {
+  const problem = indexDirProblem(dir);
+  if (problem !== undefined) {
+    throw new Error(problem);
   }
 }
 

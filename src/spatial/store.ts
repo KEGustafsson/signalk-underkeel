@@ -40,12 +40,13 @@ import {
  * σ and survey-placed depth columns for graded chart position, points in
  * assessed water no longer burned; version 8: tiles split no finer than 1 mm
  * at their cells' compilation scale; version 9: the drawn-depth column, depth areas placed by
- * the chart's drawing), so an index built under
+ * the chart's drawing; version 10: the drawing σ and split limit of an M_CSCL area applied only
+ * where the area reaches a leaf), so an index built under
  * older rules is rebuilt rather than reused.
  */
 
 const MAGIC = "underkeel-pyramid";
-export const PYRAMID_VERSION = 9;
+export const PYRAMID_VERSION = 10;
 
 export interface PyramidHeader extends BlockLayout {
   magic: string;

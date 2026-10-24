@@ -1,6 +1,7 @@
 import fs from "fs";
 import { usableMemory } from "./foundation/memory";
 import path from "path";
+import { MAX_POSITION_BUFFER } from "./engine/fan";
 import { Worker } from "worker_threads";
 import type { LonLat } from "./foundation/geo";
 import { haversine, project } from "./foundation/geo";
@@ -19,17 +20,23 @@ import type { WfsCounts, WfsJob, WfsReply } from "./wfs-worker";
 import { NO_FEATURES, refreshBuild, refreshCells } from "./wfs-worker";
 import type { Clock } from "./monitor";
 import { readBox } from "./spatial/build-box";
+import { MAX_CHART_BUFFER } from "./spatial/chart-position";
 import type { BuildJob, BuildReply, IndexParts } from "./spatial/build-worker";
 import { adoptIndex } from "./spatial/build-worker";
 import { readsSettled } from "./spatial/block-reader";
 import type { ChartIndex } from "./spatial/chart-index";
-import { commitChartIndex, loadChartIndexAsync, removeStaging } from "./spatial/chart-index";
+import {
+  commitChartIndex,
+  indexDirProblem,
+  loadChartIndexAsync,
+  removeStaging
+} from "./spatial/chart-index";
 
 /**
  * Keeps a Traficom WFS box around the vessel (plan §4.2). When the vessel
  * is more than half the box radius from its centre, or at its speed would
- * reach the box edge less the look-ahead before another refresh could
- * arrive, a box centred ahead along its course is downloaded and the index
+ * reach the box edge less the look-ahead and the no-coverage band inside the
+ * edge before another refresh could arrive, a box centred ahead along its course is downloaded and the index
  * rebuilt off the event loop, then handed over; until then the previous
  * index stays in use.
  */
@@ -261,6 +268,13 @@ const DEFAULT_REFRESH_MS = 600_000;
 const REFRESH_MARGIN = 1.5;
 /** The next box is centred at most this share of the radius ahead of the vessel. */
 const MAX_LEAD = 0.8;
+/**
+ * How far inside the box edge a footprint can read no coverage, beyond the look-ahead's reach:
+ * the widest position buffer and chart reach, as `block-keeper.ts` keeps. A tile across the
+ * edge is no coverage and keeps its survey σ, so its flag reaches 2σ (1 km in CATZOC D) past
+ * the footprint's buffer.
+ */
+const EDGE_BAND = MAX_POSITION_BUFFER + MAX_CHART_BUFFER;
 
 const sameBbox = (a: Bbox | undefined, b: Bbox | undefined): boolean =>
   a !== undefined && b !== undefined && a.every((v, i) => v === b[i]);
@@ -268,12 +282,16 @@ const sameBbox = (a: Bbox | undefined, b: Bbox | undefined): boolean =>
 export class WfsService {
   private box?: WfsBox;
   /**
-   * Whether the index saved in `indexDir` was built in `box`. A whole build, another
-   * `indexDir` or a crash between the two saves leaves them apart.
+   * Whether the index saved in `indexDir` was built in `box` and, when this run built it,
+   * handed over. A whole build, another `indexDir` or a crash between the two saves leaves
+   * them apart. Found at the first check, after the start plan has recovered a crash-left
+   * index or built one.
    */
-  private indexed: boolean;
+  private indexed?: boolean;
   /** The box of the last index this service handed over in this run. */
   private handed?: Bbox;
+  /** The saved WFS cell was missing or unreadable at start: the box is downloaded again. */
+  private cellLost = false;
   private busy = false;
   private lastAttempt = -Infinity;
   private lastError?: string;
@@ -282,7 +300,6 @@ export class WfsService {
 
   constructor(private readonly deps: WfsServiceDeps) {
     this.box = this.readBox();
-    this.indexed = !deps.inBox || sameBbox(readBox(deps.indexDir)?.bbox, this.box?.bbox);
   }
 
   /** Whether this box downloads Traficom WFS depths, not only builds ENC cells around the vessel. */
@@ -302,16 +319,21 @@ export class WfsService {
   /**
    * The saved cell, when one was downloaded and indexed before and its DSID still reads. A
    * cell torn by a power cut would otherwise fail the start's whole plan, ENC cells included;
-   * it is left out and downloaded again.
+   * it is left out and downloaded again at the first check, as is a cell gone missing.
    */
   savedCell(): string | undefined {
-    if (!this.box || !fs.existsSync(this.cellDir)) {
+    if (!this.box || !this.downloads) {
+      return undefined;
+    }
+    if (!fs.existsSync(this.cellDir)) {
+      this.cellLost = true;
       return undefined;
     }
     try {
       readCellInfo(this.cellDir);
       return this.cellDir;
     } catch (err) {
+      this.cellLost = true;
       this.lastError = `saved cell unreadable, downloading it again: ${(err as Error).message}`;
       this.deps.error(`${this.label}: ${this.lastError}`);
       return undefined;
@@ -344,8 +366,10 @@ export class WfsService {
       return false;
     }
     const b = this.box;
+    this.indexed ??= !this.deps.inBox || sameBbox(readBox(this.deps.indexDir)?.bbox, b?.bbox);
     return (
       b === undefined ||
+      this.cellLost ||
       !this.indexed ||
       this.deps.index() === undefined ||
       b.radiusKm !== this.deps.config.radiusKm ||
@@ -356,16 +380,19 @@ export class WfsService {
   }
 
   /**
-   * Whether the vessel would reach the box edge, less the look-ahead's reach, before a
-   * refresh started now, with the margin, could be handed over. At 15 kn the half-radius
-   * rule left 10.8 min of the 10 km box ahead, and a Pi 3 takes 11–14 min.
+   * Whether the vessel would reach the box edge, less the look-ahead's reach and EDGE_BAND,
+   * before a refresh started now, with the margin, could be handed over. At 15 kn the
+   * half-radius rule left 10.8 min of the 10 km box ahead, and a Pi 3 takes 11–14 min. A box
+   * too small to hold the band can at best be kept around the vessel: the band counts up to
+   * half the radius, or a drifting vessel would rebuild a 2 km box every minute.
    */
   private edgeSoon(pos: LonLat, b: WfsBox): boolean {
     const m = this.deps.motion();
     if (!m || !(m.sog > 0)) {
       return false;
     }
-    const reach = Math.max(this.deps.lookahead.distance, m.sog * this.deps.lookahead.minHorizon);
+    const look = Math.max(this.deps.lookahead.distance, m.sog * this.deps.lookahead.minHorizon);
+    const reach = Math.max(look, Math.min(look + EDGE_BAND, (b.radiusKm * 1000) / 2));
     const travel = (m.sog * REFRESH_MARGIN * this.refreshMs()) / 1000;
     return edgeAhead(pos, m.cog, b.bbox) < travel + reach;
   }
@@ -383,6 +410,24 @@ export class WfsService {
     return this.box?.durationMs ?? DEFAULT_REFRESH_MS;
   }
 
+  /**
+   * Whether a commit would refuse `indexDir`, so every build would end refused once done:
+   * said once, and nothing is downloaded or built until it is set right. Checked again at
+   * the retry interval.
+   */
+  private refused(now: number): boolean {
+    const problem = indexDirProblem(this.deps.indexDir);
+    if (problem === undefined) {
+      return false;
+    }
+    this.lastAttempt = now;
+    if (problem !== this.lastError) {
+      this.lastError = problem;
+      this.deps.error(`${this.label}: ${problem}`);
+    }
+    return true;
+  }
+
   /** Where the vessel will be when a refresh started now is handed over, kept inside the box. */
   private centreAhead(pos: LonLat, radiusKm: number): LonLat {
     const m = this.deps.motion();
@@ -396,7 +441,7 @@ export class WfsService {
   async check(): Promise<void> {
     const pos = this.deps.position();
     const now = this.deps.clock.now();
-    if (!pos || !this.due(pos, now)) {
+    if (!pos || !this.due(pos, now) || this.refused(now)) {
       return;
     }
     this.busy = true;
@@ -446,11 +491,8 @@ export class WfsService {
       };
       fs.writeFileSync(path.join(this.deps.dir, "box.json"), JSON.stringify(box));
       this.box = box;
-      this.indexed = true;
       this.lastError = undefined;
-      const changed = this.handed && [this.handed, bbox];
-      this.handed = bbox;
-      await this.deps.onIndex(index, changed);
+      await this.handOver(index, bbox);
     } catch (err) {
       if (controller.signal.aborted) {
         return;
@@ -460,6 +502,19 @@ export class WfsService {
     } finally {
       this.busy = false;
     }
+  }
+
+  /**
+   * Puts the index of `bbox` in use. The box stays due until it is, so a failed handover
+   * is tried again.
+   */
+  private async handOver(index: ChartIndex, bbox: Bbox): Promise<void> {
+    const changed = this.handed && [this.handed, bbox];
+    this.indexed = false;
+    await this.deps.onIndex(index, changed);
+    this.indexed = true;
+    this.cellLost = false;
+    this.handed = bbox;
   }
 
   private readBox(): WfsBox | undefined {

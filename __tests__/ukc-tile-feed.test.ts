@@ -73,10 +73,12 @@ describe("UKC tile change feed", () => {
       expect(reply.all).toBe(false);
       reply.tiles.forEach(([z, x, y]) => f.fetchTile(z, x, y));
       listed += reply.tiles.length;
-      for (const [z, x, y] of f.tiles) {
+      // One assertion per poll, not per tile (§7 Test runtime): the held tiles now stale.
+      const stale = f.tiles.filter(([z, x, y]) => {
         const now = Buffer.from(ukcTileReply(z, x, y, f.deps).body as Uint8Array);
-        expect(now.equals(f.held.get(`${z}/${x}/${y}`) as Buffer)).toBe(true);
-      }
+        return !now.equals(f.held.get(`${z}/${x}/${y}`) as Buffer);
+      });
+      expect({ i, stale }).toEqual({ i, stale: [] });
     }
     expect(listed).toBeGreaterThan(0);
     expect(listed).toBeLessThan((160 * f.tiles.length) / 4);

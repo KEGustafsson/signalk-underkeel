@@ -106,6 +106,14 @@ describe("extension assets", () => {
     }
   });
 
+  test("a name fs fails on falls through instead of a 500 with the stack", () => {
+    // Too long for the file system: statSync throws ENAMETOOLONG instead of returning nothing.
+    const long = `/${"a".repeat(300)}.html`;
+    expect(serve(long).next).toBe(true);
+    expect(serve(long, "HEAD").next).toBe(true);
+    expect(assetFile(PUBLIC, long)).toBeUndefined();
+  });
+
   test("the pages are mounted once per server app", () => {
     const mounts: string[] = [];
     const app = { use: (prefix: string) => mounts.push(prefix) };

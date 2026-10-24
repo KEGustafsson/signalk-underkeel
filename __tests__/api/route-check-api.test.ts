@@ -1,4 +1,5 @@
 import { EventEmitter } from "events";
+import { Readable } from "stream";
 import type { Request } from "express";
 import {
   LIMITS,
@@ -273,6 +274,23 @@ describe("JSON body", () => {
     await expect(readJsonBody(streamRequest(['{"a":', "2}"]))).resolves.toEqual({ a: 2 });
     await expect(readJsonBody(streamRequest([]))).resolves.toEqual({});
     await expect(readJsonBody(streamRequest(["not json"]))).rejects.toThrow(/not JSON/);
+  });
+
+  test("reads the stream when the server's parser left it unread, whatever req.body holds", async () => {
+    // express.json() sets `req.body = {}` for a type it does not parse, application/geo+json too.
+    const unread = Object.assign(Readable.from([Buffer.from('{"ttl":600}')]), { body: {} });
+    await expect(readJsonBody(unread as unknown as Request)).resolves.toEqual({ ttl: 600 });
+  });
+
+  test("takes req.body once the parser has read the stream", async () => {
+    const parsed = Object.assign(Readable.from([Buffer.from('{"ttl":600}')]), {
+      body: { ttl: 600 }
+    });
+    for await (const _ of parsed) {
+      // The parser drains the stream before the route runs.
+    }
+    expect(parsed.readableEnded).toBe(true);
+    await expect(readJsonBody(parsed as unknown as Request)).resolves.toEqual({ ttl: 600 });
   });
 
   test("refuses oversized bodies", async () => {

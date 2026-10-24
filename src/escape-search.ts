@@ -3,10 +3,12 @@ import type { UnderKeelState } from "./foundation/state";
 /**
  * The escape fan (plan §4.8) searched after a tick's result is published,
  * so the tick and the search block the server's event loop as two pieces.
- * After a tick or a search slower than SLOW_TICK_MS the next search is
- * skipped and the heading cleared, and `skipped` says why for the status
- * until a search runs again. The skip restarts the ESCAPE_EVERY_MS wait, so
- * a search that is always slow runs less often, not more.
+ * After a tick slower than SLOW_TICK_MS the next search is skipped and the
+ * heading cleared, and `skipped` says why for the status until a search
+ * runs again. After a search that slow its fresh heading is kept, as any
+ * heading is between searches, and `skipped` says so until a search is
+ * fast again. Either restarts the ESCAPE_EVERY_MS wait, so a search that is
+ * always slow runs less often, not more.
  */
 
 /** The escape fan is searched at most once in this many ms; the heading is held between. */
@@ -24,10 +26,12 @@ export interface Deferral {
 
 export class EscapeSearch {
   heading: number | null = null;
-  /** Why no search runs now; undefined while searches run. */
+  /** Why searches are skipped or spaced out; undefined while they run on time. */
   skipped?: string;
   private at = -Infinity;
+  /** How long the last search took, until the tick after it reads it, ms. */
   private slowMs = 0;
+  private searchSlow = false;
   private pending?: unknown;
   /** Bumped to void a search queued before it; a deferral may have no cancel. */
   private generation = 0;
@@ -51,17 +55,15 @@ export class EscapeSearch {
   /** After a tick whose engine state was `state` and which took `tickMs`. */
   after(state: UnderKeelState, tickMs: number, escapable = true): void {
     if (idle(state, escapable)) {
-      this.heading = null;
-      this.at = -Infinity;
-      this.skipped = undefined;
-      this.drop();
+      this.reset();
       return;
     }
-    const slow = Math.max(tickMs, this.slowMs);
+    const now = this.clock.now();
+    const searchMs = this.slowMs;
     this.slowMs = 0;
-    if (slow > SLOW_TICK_MS) {
-      this.skipped = `escape search skipped: a tick took ${slow.toFixed(0)} ms`;
-      this.at = this.clock.now();
+    if (tickMs > SLOW_TICK_MS) {
+      this.skipped = `escape search skipped: a tick took ${tickMs.toFixed(0)} ms`;
+      this.at = now;
       if (this.heading !== null) {
         // The tick already went out with the heading; clear it now, not a tick later.
         this.heading = null;
@@ -69,11 +71,19 @@ export class EscapeSearch {
       }
       return;
     }
-    const now = this.clock.now();
+    if (searchMs > SLOW_TICK_MS) {
+      // The heading the slow search just found is no staler than one held
+      // between searches: keep it, and only push the next search back.
+      this.at = now;
+      return;
+    }
     if (now - this.at < ESCAPE_EVERY_MS || this.pending !== undefined) {
       return;
     }
-    this.skipped = undefined;
+    // A skip after a slow tick ends here; a slow search's note waits for a fast one.
+    if (!this.searchSlow) {
+      this.skipped = undefined;
+    }
     this.at = now;
     const generation = this.generation;
     const run = (): void => {
@@ -84,6 +94,10 @@ export class EscapeSearch {
       const t0 = this.clock.now();
       this.heading = this.search();
       this.slowMs = this.clock.now() - t0;
+      this.searchSlow = this.slowMs > SLOW_TICK_MS;
+      this.skipped = this.searchSlow
+        ? `escape search slowed: a search took ${this.slowMs.toFixed(0)} ms`
+        : undefined;
       this.publish(this.heading);
     };
     if (this.clock.defer) {
@@ -95,6 +109,16 @@ export class EscapeSearch {
 
   stop(): void {
     this.stopped = true;
+    this.drop();
+  }
+
+  /** Once the danger has passed: no heading, no queued search, and the next one runs at once. */
+  private reset(): void {
+    this.heading = null;
+    this.at = -Infinity;
+    this.skipped = undefined;
+    this.slowMs = 0;
+    this.searchSlow = false;
     this.drop();
   }
 

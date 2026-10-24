@@ -1,7 +1,7 @@
 import type { Geom, PolygonGeom } from "../foundation/geometry";
 import type { XY } from "../foundation/geo";
 import { toMercator } from "../foundation/geo";
-import type { Catzoc, ChartFeature, DepthFeature, PositionFeature } from "./features";
+import type { Catzoc, ChartFeature, DepthFeature, PositionFeature, ScaleFeature } from "./features";
 
 /**
  * Reads S-57 object classes that GDAL's S-57 driver exported as one GeoJSON
@@ -59,8 +59,8 @@ export const POSITION_LAYER = "QUAPOS";
 
 /**
  * M_CSCL: the parts of a cell compiled from a smaller scale (CSCALE) than
- * its DSPM_CSCL. It sets the scale of what lies there (`cell-reader.ts`)
- * and gives no feature of its own.
+ * its DSPM_CSCL, kept as areas of their own (`ScaleFeature`): the build
+ * widens the drawing σ only where one reaches a leaf.
  */
 export const SCALE_LAYER = "M_CSCL";
 
@@ -283,7 +283,7 @@ function featureFor(
     case "UNSARE":
       return isArea ? { ...base, role: "unsurveyed" } : undefined;
     case SCALE_LAYER:
-      return undefined;
+      return scaleArea(num(props, "CSCALE"), base, ctx);
     case "DEPARE":
     case "DRGARE":
       if (!isArea) {
@@ -307,6 +307,25 @@ function whereOf(ctx: LayerContext): Omit<LayerContext, "topoSigma"> {
   const where: LayerContext = { ...ctx };
   delete where.topoSigma;
   return where;
+}
+
+/**
+ * An M_CSCL area that widens the drawing σ: a polygon at a smaller scale
+ * than the cell's, in a cell whose drawing has a σ of its own (`placed`). An
+ * area at a larger scale would only narrow it, so it is left out.
+ */
+function scaleArea(
+  cscale: number | undefined,
+  base: Omit<ScaleFeature, "role" | "scale">,
+  ctx: LayerContext
+): ScaleFeature | undefined {
+  const widens =
+    base.geom.type === "polygon" &&
+    ctx.topoSigma !== undefined &&
+    ctx.scale !== undefined &&
+    cscale !== undefined &&
+    cscale > ctx.scale;
+  return widens ? { ...base, role: "scale", scale: cscale } : undefined;
 }
 
 /**

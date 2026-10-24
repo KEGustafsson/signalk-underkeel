@@ -82,6 +82,35 @@ describe("S-57 cells read with gdal3.js", () => {
     }
   );
 
+  test("a .000 linked under another name is stamped with the updates named after its target", () => {
+    const real = path.join(tmp, "ENC_ROOT", "FI5RAW01");
+    const cells = path.join(tmp, "cells");
+    fs.mkdirSync(real, { recursive: true });
+    fs.mkdirSync(cells);
+    const target = path.join(real, "FI5RAW01.000");
+    fs.copyFileSync(CELL, target);
+    // A copy stands in for the link and a spy resolves it, since Windows makes a file
+    // symlink only from an elevated process or in developer mode.
+    const link = path.join(cells, "harbour.000");
+    fs.copyFileSync(CELL, link);
+    const realpath = fs.realpathSync;
+    const resolve = (p: fs.PathLike): string => (p === link ? target : realpath(p));
+    const spy = jest
+      .spyOn(fs, "realpathSync")
+      .mockImplementation(resolve as unknown as typeof fs.realpathSync);
+    try {
+      // GDAL opens the target and applies the updates named after it, not after the link.
+      fs.writeFileSync(path.join(real, "harbour.001"), "update");
+      const before = encStamp(link);
+      expect(encFiles(link)).toEqual([link]);
+      fs.writeFileSync(path.join(real, "FI5RAW01.001"), "update");
+      expect(encFiles(link)).toEqual([link, path.join(real, "FI5RAW01.001")]);
+      expect(encStamp(link)).not.toBe(before);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   test("the stamp recorded is the one taken before the read, not after", async () => {
     const base = path.join(tmp, "FI5RAW01.000");
     fs.copyFileSync(CELL, base);

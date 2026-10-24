@@ -2,6 +2,7 @@ import type { Path, ServerAPI } from "@signalk/server-api";
 import type { GroundingCheck } from "./engine/grounding-detect";
 import type { UnderKeelNotification } from "./engine/notify";
 import { NOTIFY_REFRESH_MS } from "./engine/notify";
+import { publicReason } from "./foundation/public-text";
 import type { IntegrityResult } from "./model/integrity";
 
 /** Notification values the plugin publishes beside the look-ahead's own. */
@@ -82,7 +83,9 @@ export interface Repeat {
 /**
  * Publishes a notification path only when its state or message changes,
  * or with `repeat`, when its key changes, and its message at most every
- * `refreshMs` while the key holds.
+ * `refreshMs` while the key holds. Any client can read the notifications,
+ * so a message goes out as `publicReason` leaves it: a reason such as
+ * "no cells in <dir>" names no server directory there.
  */
 export class ChangeNotifier {
   private readonly last = new Map<
@@ -95,7 +98,8 @@ export class ChangeNotifier {
     private readonly pluginId: string
   ) {}
 
-  send(path: string, value: NotificationValue, repeat?: Repeat): void {
+  send(path: string, raw: NotificationValue, repeat?: Repeat): void {
+    const value = { ...raw, message: publicReason(raw.message) };
     const text = `${value.state}|${value.message}`;
     const key = repeat?.key ?? text;
     const now = repeat?.now ?? 0;

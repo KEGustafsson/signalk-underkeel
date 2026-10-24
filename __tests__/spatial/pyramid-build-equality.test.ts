@@ -98,15 +98,25 @@ describe("indexed polygon tests equal foundation/geometry.ts", () => {
           return;
         }
         const shape = geom.polygons.map(indexPolygon);
+        // One assertion per run, not per rect (§7 Test runtime); Object.is keeps toBe's test.
+        const bad: Array<{ r: Rect; what: string; got: unknown; want: unknown }> = [];
+        const check = (r: Rect, what: string, got: unknown, want: unknown): void => {
+          if (!Object.is(got, want)) {
+            bad.push({ r, what, got, want });
+          }
+        };
         for (const r of rectsFor(geom, picks)) {
           for (const limit of [0, 3, 40, Infinity]) {
-            expect(polygonsRectDistance(shape, r, limit)).toBe(geomRectDistance(geom, r, limit));
+            const want = geomRectDistance(geom, r, limit);
+            check(r, `distance ${limit}`, polygonsRectDistance(shape, r, limit), want);
           }
           const contains = geomContainsRect(geom, r);
-          expect(polygonsContainRect(shape, r)).toBe(contains);
+          check(r, "contains", polygonsContainRect(shape, r), contains);
           const touches = geomRectDistance(geom, r, 0) === 0;
-          expect(polygonsRectRelation(shape, r)).toBe(contains ? FULL : touches ? PARTIAL : MISS);
+          const relation = contains ? FULL : touches ? PARTIAL : MISS;
+          check(r, "relation", polygonsRectRelation(shape, r), relation);
         }
+        expect({ count: bad.length, first: bad.slice(0, 10) }).toEqual({ count: 0, first: [] });
       }),
       { numRuns: 150 }
     );
@@ -126,9 +136,9 @@ describe("indexed polygon tests equal foundation/geometry.ts", () => {
               CENTRE[1] + (v - 0.5) * 2 * RADIUS
             ])
           ];
-          for (const q of points) {
-            expect(inPolygon(q[0], q[1], ix)).toBe(pointInPolygon(q, p));
-          }
+          // One assertion per run, not per point (§7 Test runtime).
+          const bad = points.filter((q) => inPolygon(q[0], q[1], ix) !== pointInPolygon(q, p));
+          expect(bad).toEqual([]);
         }
       ),
       { numRuns: 200 }
@@ -239,6 +249,15 @@ describe("pruning drops only what no child needs", () => {
       lon0 + (u - 0.5) * 0.006,
       lat0 + (v - 0.5) * 0.003
     ];
+    // A part of the cell compiled at 1:24 000 (σ 12 m), between the areas' two σ.
+    const part: ChartFeature = {
+      role: "scale",
+      objectClass: "M_CSCL",
+      geom: boxGeom([...at(0.2, 0.2), ...at(0.6, 0.6)]),
+      cellRef: 0,
+      band: 5,
+      scale: 24000
+    };
     fc.assert(
       fc.property(
         fc.array(
@@ -260,6 +279,7 @@ describe("pruning drops only what no child needs", () => {
             coverage(box),
             quality(box, 4),
             drawn(boxGeom(box), 25, 6),
+            part,
             ...areas.map(([u, v, r, d, s]) => {
               const [lon, lat] = at(u, v);
               const h = 0.0003 + r * 0.002;

@@ -47,9 +47,10 @@ const TWO_PI = 2 * Math.PI;
  * each reached by a turn at the boat's maximum rate and scored with the
  * fan's COG and ROT spread, as the state is. The heading with the longest
  * time to shoal wins; ties go to the smallest change. Null when no
- * heading does better than holding course, which needs no dodge, or none
- * stays clear past the first step: the current heading would then be
- * published as the way out.
+ * heading does better than holding a steady course, which needs no dodge,
+ * or none stays clear past the first step: the current heading would then
+ * be published as the way out. A boat turning faster than the fan's ROT σ
+ * gets its current heading when holding it does best: stop the turn.
  */
 export function escapeHeading(
   times: number[],
@@ -86,7 +87,11 @@ export function escapeHeading(
     }
   }
   const first = times.find((t) => t > 0) ?? Infinity;
-  if (best.change === 0 || best.tts <= first) {
+  // Holding course needs no dodge, unless the boat is turning: the state fan
+  // follows the turn, the change-0 heading stops it, and steadying on the
+  // current heading is then the way out.
+  const steady = Math.abs(m.rot) <= opts.sigmaRot;
+  if ((best.change === 0 && steady) || best.tts <= first) {
     return null;
   }
   return (((m.heading + best.change) % TWO_PI) + TWO_PI) % TWO_PI;

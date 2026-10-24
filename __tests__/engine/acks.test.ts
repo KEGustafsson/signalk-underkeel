@@ -1,5 +1,6 @@
 import type { Ack, SuppressionContext } from "../../src/engine/acks";
 import { ACK_LEVEL_TOLERANCE, suppress } from "../../src/engine/acks";
+import { Hysteresis } from "../../src/engine/hysteresis";
 import type { FootprintResult, LookaheadResult } from "../../src/engine/lookahead";
 import { DEFAULT_LOOKAHEAD } from "../../src/engine/lookahead";
 import { uncertainPosition } from "../../src/engine/verdict";
@@ -123,18 +124,42 @@ describe("acknowledged passages", () => {
     expect(suppress(certain, ctx()).state).toBe("alarm");
   });
 
-  test("a warn raised by the capped position buffer is never suppressed", () => {
-    // The chart alone gives alert; the capped buffer raises it to warn. The rings lie in the
-    // passage and the zone, but the vessel may be well outside them.
+  test("no warn or alarm is suppressed while the position buffer is capped", () => {
+    // The rings lie in the passage and the zone, but the vessel may be well outside them.
+    const zones = [{ name: "home berth", polygon: PASSAGE, holes: [] }];
+    // The chart alone gives alert; the capped buffer raises it to warn.
     const chart = { state: "alert" as const, reason: "shoal risk ahead in 30 s", tts: null };
     const raised = uncertainPosition(chart, 150, "HDOP 12");
-    const capped = { ...WARN, state: raised.state, reason: raised.reason };
-    const zones = [{ name: "home berth", polygon: PASSAGE, holes: [] }];
-    expect(suppress(capped, ctx())).toEqual(capped);
-    expect(suppress(capped, ctx({ acks: [], zones }))).toEqual(capped);
-    // A warn or alarm the chart gave is still covered while the buffer is capped.
+    // A warn the chart gave passes through uncertainPosition with the chart's reason.
     const fromChart = uncertainPosition({ state: "warn", reason: WARN.reason, tts: 40 }, 150);
-    expect(suppress({ ...WARN, reason: fromChart.reason }, ctx()).state).toBe("alert");
+    const cases: LookaheadResult[] = [
+      { ...WARN, state: raised.state, reason: raised.reason, capped: true },
+      { ...WARN, state: fromChart.state, reason: fromChart.reason, capped: true },
+      { ...WARN, state: "alarm", capped: true }
+    ];
+    for (const capped of cases) {
+      expect(suppress(capped, ctx())).toEqual(capped);
+      expect(suppress(capped, ctx({ acks: [], zones }))).toEqual(capped);
+    }
+    // The same chart warn with the buffer uncapped is covered.
+    expect(suppress({ ...WARN, capped: false }, ctx()).state).toBe("alert");
+  });
+
+  test("a held chart alarm on a capped tick is not suppressed", () => {
+    // Hysteresis holds an alarm's reason while a capped tick lowers the raw state to warn;
+    // the published reason is then the chart's, and only the tick's flag says it was capped.
+    const hysteresis = new Hysteresis(DEFAULT_LOOKAHEAD);
+    const alarm = { ...WARN, state: "alarm" as const, reason: "shoal ahead in 20 s" };
+    hysteresis.next(alarm);
+    const raised = uncertainPosition({ state: "alert", reason: "shoal risk", tts: null }, 150);
+    const held = hysteresis.next({
+      ...WARN,
+      state: raised.state,
+      reason: raised.reason,
+      capped: true
+    });
+    expect(held).toMatchObject({ state: "alarm", reason: alarm.reason, capped: true });
+    expect(suppress(held, ctx())).toEqual(held);
   });
 
   test("normal and alert pass unchanged, and nothing becomes normal", () => {

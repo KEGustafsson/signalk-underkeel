@@ -106,15 +106,22 @@ describe("pyramid.bin in blocks", () => {
       expect(body.length).toBe(BYTES_PER_NODE * b.nodes);
       const cols = columnsOn(body, b.nodes);
       expect(ordered(cols.z, cols.key)).toBe(true);
+      // One assertion per block, not per node (§7 Test runtime).
+      const bad: Array<{ i: number; z: number; tile: number }> = [];
       cols.z.forEach((z, i) => {
-        expect(z).toBeGreaterThan(header.residentZoom);
         const n = 2 ** z;
         const x = Math.floor(cols.key[i]! / n);
         const s = 2 ** (z - header.blockZoom);
-        expect(
-          tileKey(header.blockZoom, Math.floor(x / s), Math.floor((cols.key[i]! % n) / s))
-        ).toBe(b.key);
+        const tile = tileKey(
+          header.blockZoom,
+          Math.floor(x / s),
+          Math.floor((cols.key[i]! % n) / s)
+        );
+        if (!(z > header.residentZoom) || tile !== b.key) {
+          bad.push({ i, z, tile });
+        }
       });
+      expect({ block: b.key, bad: bad.slice(0, 10) }).toEqual({ block: b.key, bad: [] });
       nodes += b.nodes;
     }
     expect(nodes).toBe(header.count);

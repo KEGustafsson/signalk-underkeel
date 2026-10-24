@@ -3,7 +3,12 @@ import os from "os";
 import path from "path";
 import { readCellDirectory, readCellInfo } from "../../src/ingest/cell-reader";
 import { compilationSigma, parseCatalogue } from "../../src/ingest/cells";
-import type { ChartFeature, DepthFeature, PositionFeature } from "../../src/ingest/features";
+import type {
+  ChartFeature,
+  DepthFeature,
+  PositionFeature,
+  ScaleFeature
+} from "../../src/ingest/features";
 import { parseLayer, POSITION_LAYER, TOPOGRAPHY } from "../../src/ingest/s57-geojson";
 
 /**
@@ -128,33 +133,52 @@ describe("M_CSCL areas compiled at another scale", () => {
     });
   });
 
-  test("what the drawing places in a 1:80 000 area takes its σ (40 m), not DSPM_CSCL's", () => {
+  const scaleAreas = (features: ChartFeature[]): ScaleFeature[] =>
+    features.filter((f): f is ScaleFeature => f.role === "scale");
+
+  test("a 1:80 000 area is kept as its own area; the features meeting it keep the cell's scale", () => {
     mcscl([80000, [22.009, 59.987, 22.016, 59.992]]);
     const cell = readCellDirectory(dir, 0);
-    const areas = drawnOf("DEPARE");
-    expect(areas.length).toBeGreaterThan(1);
-    // Every depth area meeting the 1:80 000 area by box, the 10 m one around it too.
-    expect(areas.every((f) => f.topoSigma === 40 && f.scale === 80000)).toBe(true);
-    // Land away from it keeps the cell's 1:12 000.
-    expect(drawnOf("LNDARE").every((f) => f.topoSigma === 6 && f.scale === 12000)).toBe(true);
+    // The cell-wide depth areas and land keep 1:12 000: the build widens σ only where the
+    // area reaches a leaf (build-position.ts).
+    const drawn = ["DEPARE", "LNDARE"].flatMap(drawnOf);
+    expect(drawn.some((f) => f.objectClass === "DEPARE")).toBe(true);
+    expect(drawn.every((f) => f.topoSigma === 6 && f.scale === 12000)).toBe(true);
     const node = cell.features.find((f): f is PositionFeature => f.role === "position");
-    expect(node?.scale).toBe(80000);
-    // Soundings and rocks stay on their survey.
-    expect(
-      depthFeatures(cell.features)
-        .filter((f) => f.hazard)
-        .every((f) => f.topoSigma === undefined)
-    ).toBe(true);
+    expect(node?.scale).toBe(12000);
+    const [area, ...rest] = scaleAreas(cell.features);
+    expect(rest).toHaveLength(0);
+    expect(area).toMatchObject({ objectClass: "M_CSCL", scale: 80000, cellRef: 0, band: 5 });
+    expect(area?.geom.type).toBe("polygon");
+  });
+
+  test("every area at a smaller scale than the cell's is kept", () => {
+    mcscl([80000, [22.009, 59.987, 22.016, 59.992]], [45000, [22.02, 59.98, 22.03, 59.99]]);
+    expect(scaleAreas(readCellDirectory(dir, 0).features).map((f) => f.scale)).toEqual([
+      80000, 45000
+    ]);
   });
 
   test("an area at a larger scale than the cell's never narrows the σ", () => {
-    mcscl([5000, [21.9, 59.9, 22.1, 60.1]]);
+    mcscl([5000, [21.9, 59.9, 22.1, 60.1]], [12000, [21.9, 59.9, 22.1, 60.1]]);
+    const cell = readCellDirectory(dir, 0);
+    expect(scaleAreas(cell.features)).toHaveLength(0);
     expect(drawnOf("DEPARE").every((f) => f.topoSigma === 6 && f.scale === 12000)).toBe(true);
   });
 
-  test("an M_CSCL area is no chart feature", () => {
+  test("without the positional quality or a compilation scale no area is kept", () => {
     mcscl([80000, [22.009, 59.987, 22.016, 59.992]]);
-    expect(readCellDirectory(dir, 0).features.some((f) => f.objectClass === "M_CSCL")).toBe(false);
+    fs.rmSync(path.join(dir, "QUAPOS.geojson"));
+    expect(scaleAreas(readCellDirectory(dir, 0).features)).toHaveLength(0);
+    writeJson("QUAPOS.geojson", { type: "FeatureCollection", features: [] });
+    dsid({ DSID_DSNM: "FI5SYNTH.000", DSID_EDTN: "3", DSID_UPDN: "1" });
+    expect(scaleAreas(readCellDirectory(dir, 0).features)).toHaveLength(0);
+  });
+
+  test("an M_CSCL area gives no depth, coverage or quality feature", () => {
+    mcscl([80000, [22.009, 59.987, 22.016, 59.992]]);
+    const from = readCellDirectory(dir, 0).features.filter((f) => f.objectClass === "M_CSCL");
+    expect(from.map((f) => f.role)).toEqual(["scale"]);
   });
 });
 

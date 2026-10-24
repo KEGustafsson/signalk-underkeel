@@ -22,9 +22,7 @@ interface FeatureBase {
   /**
    * Compilation scale denominator of the source cell (DSPM_CSCL), when it
    * states one: nothing it draws is placed finer than 1 mm on that chart,
-   * so the index splits tiles no finer for it (plan §4.3). For what the
-   * drawing places and a record not surveyed, the smaller scale of an
-   * M_CSCL area it may meet, where the cell has one.
+   * so the index splits tiles no finer for it (plan §4.3).
    */
   scale?: number;
 }
@@ -90,10 +88,25 @@ export interface PositionFeature extends FeatureBase {
   posacc?: number;
 }
 
+/**
+ * An M_CSCL area: a part of the cell compiled from a smaller scale (CSCALE)
+ * than its DSPM_CSCL. What the drawing places there, and a record not
+ * surveyed, is placed no better than at that scale, so every leaf it reaches
+ * spreads its drawing by that scale's σ (plan §4.3). Only an area at a
+ * smaller scale than the cell's, in a cell whose positional quality is
+ * known, is kept: it never narrows a σ.
+ */
+export interface ScaleFeature extends FeatureBase {
+  role: "scale";
+  /** CSCALE: the compilation scale denominator in the area. */
+  scale: number;
+}
+
 export type ChartFeature =
   | DepthFeature
   | CoverageFeature
   | QualityFeature
   | SweptFeature
   | UnsurveyedFeature
-  | PositionFeature;
+  | PositionFeature
+  | ScaleFeature;

@@ -185,6 +185,12 @@ export interface LookaheadResult {
    * speed or with the position buffer capped. Absent when no tick was scored.
    */
   escapable?: boolean;
+  /**
+   * k_p · σ_pos exceeded the buffer cap this tick, so the footprints
+   * understate where the vessel can be: no acknowledgement or zone may lower
+   * the state (plan §4.8). Absent when no tick was scored.
+   */
+  capped?: boolean;
   horizon: number;
   footprints: FootprintResult[];
   worst?: WorstPoint;
@@ -496,6 +502,7 @@ export function evaluateLookahead(
     timeToShoal: verdict.tts,
     escapeHeading: escape,
     escapable,
+    capped: u.capped,
     horizon: times[times.length - 1] as number,
     footprints: fps,
     worst: worstOf(fps, u.chart, s, wl),

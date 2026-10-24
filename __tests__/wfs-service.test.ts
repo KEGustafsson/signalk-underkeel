@@ -196,6 +196,28 @@ describe("WFS box around the vessel", () => {
     ]);
   });
 
+  test("a handover that fails is retried after the error wait, although the box still holds", async () => {
+    const h = harness();
+    const hand = h.deps.onIndex;
+    let fail = false;
+    h.deps.onIndex = (i, changed) =>
+      fail ? Promise.reject(new Error("rebind failed")) : hand(i, changed);
+    h.t.pos = [22.08, 60.07];
+    await h.service.check();
+    const first = h.service.status().box?.bbox;
+    fail = true;
+    h.t.now += 120_000;
+    h.t.pos = [22.08 + 6 * KM_LON_60, 60.07];
+    await h.service.check();
+    expect(h.indexes).toHaveLength(1);
+    expect(h.service.status().lastError).toBe("rebind failed");
+    fail = false;
+    h.t.now += 300_000;
+    await h.service.check();
+    expect(h.indexes).toHaveLength(2);
+    expect(h.handed[1]).toEqual([first, h.service.status().box?.bbox]);
+  });
+
   test("stop aborts a download in flight without an error or a new index", async () => {
     const pending: WfsFetch = (_url, init) =>
       new Promise((_resolve, reject) =>
@@ -321,6 +343,51 @@ describe("WFS box around the vessel", () => {
     expect(again.service.savedCell()).toBeUndefined();
     expect(again.service.status().lastError).toMatch(/saved cell unreadable/);
     expect(again.errors).toEqual([expect.stringMatching(/saved cell unreadable/)]);
+    // The index loaded at start is in use and the vessel is still inside the box.
+    again.t.index = first.indexes[0];
+    again.t.pos = [22.08, 60.07];
+    await again.service.check();
+    expect(downloads(again.fetched)).toBe(1);
+    expect(again.service.status().lastError).toBeUndefined();
+    expect(again.service.savedCell()).toBe(path.join(TMP, "FI1WFS01"));
+    again.t.now += 120_000;
+    await again.service.check();
+    expect(downloads(again.fetched)).toBe(1);
+  });
+
+  test("a saved cell gone missing is downloaded again although the box still holds", async () => {
+    const first = harness();
+    first.t.pos = [22.08, 60.07];
+    await first.service.check();
+    fs.rmSync(path.join(TMP, "FI1WFS01"), { recursive: true });
+    const again = harness();
+    expect(again.service.savedCell()).toBeUndefined();
+    again.t.index = first.indexes[0];
+    again.t.pos = [22.08, 60.07];
+    await again.service.check();
+    expect(downloads(again.fetched)).toBe(1);
+  });
+
+  test("a saved cell gone missing is downloaded again when its handover failed", async () => {
+    const first = harness();
+    first.t.pos = [22.08, 60.07];
+    await first.service.check();
+    fs.rmSync(path.join(TMP, "FI1WFS01"), { recursive: true });
+    const again = harness();
+    const hand = again.deps.onIndex;
+    let fail = true;
+    again.deps.onIndex = (i, changed) =>
+      fail ? Promise.reject(new Error("rebind failed")) : hand(i, changed);
+    expect(again.service.savedCell()).toBeUndefined();
+    again.t.index = first.indexes[0];
+    again.t.pos = [22.08, 60.07];
+    await again.service.check();
+    expect(again.indexes).toHaveLength(0);
+    fail = false;
+    again.t.now += 300_000;
+    await again.service.check();
+    expect(downloads(again.fetched)).toBe(2);
+    expect(again.indexes).toHaveLength(1);
   });
 });
 
@@ -336,6 +403,35 @@ describe("box service and the index in use", () => {
   });
   const indexOf = (...cells: { name: string; source?: string }[]) =>
     ({ catalogue: { version: 1, cells } }) as unknown as ChartIndex;
+
+  test("a refresh starts before the no-coverage band inside the box edge comes in reach", async () => {
+    fs.writeFileSync(
+      path.join(TMP, "box.json"),
+      JSON.stringify({ ...savedBox(), durationMs: 600_000 })
+    );
+    const h = harness();
+    h.t.index = indexOf({ name: "FI5ENC01" });
+    h.t.motion = { sog: 3, cog: Math.PI / 2 };
+    // 5.4 km to the east edge: past SOG × 1.5 × 10 min (2.7 km) and the look-ahead (556 m)
+    // by 2.1 km, but tiles across the edge flag a footprint up to 1 km plus its buffer inside.
+    h.t.pos = project(POS, Math.PI / 2, 4600);
+    await h.service.check();
+    expect(h.indexes).toHaveLength(1);
+  });
+
+  test("a box too small to hold that band is not rebuilt every minute for a drifting vessel", async () => {
+    const box = { ...savedBox(), bbox: boxAround(POS, 2), radiusKm: 2, durationMs: 60_000 };
+    fs.writeFileSync(path.join(TMP, "box.json"), JSON.stringify(box));
+    const h = harness(okReply, { config: { url: "https://wfs.test/wfs", radiusKm: 2, catzoc: 3 } });
+    h.t.index = indexOf({ name: "FI5ENC01" });
+    h.t.motion = { sog: 0.1, cog: 0 };
+    h.t.pos = POS;
+    for (let i = 0; i < 5; i++) {
+      h.t.now += 120_000;
+      await h.service.check();
+    }
+    expect(h.indexes).toHaveLength(0);
+  });
 
   test("a saved box at the vessel is built again while no index is in use", async () => {
     // As after an upgrade from a whole build, or with the index directory deleted.
@@ -357,6 +453,21 @@ describe("box service and the index in use", () => {
     h.t.now += 120_000;
     await h.service.check();
     expect(h.indexes).toHaveLength(1);
+  });
+
+  test("in box mode an index the start plan recovers after the service is made is kept", async () => {
+    fs.writeFileSync(path.join(TMP, "box.json"), JSON.stringify(savedBox()));
+    const h = harness(okReply, { inBox: true });
+    // A power cut between a commit's two renames left no index directory until the start plan
+    // moved `<indexDir>.old-*` back, after the service was made.
+    const indexDir = path.join(TMP, "index");
+    fs.mkdirSync(indexDir);
+    const built = { version: 1, bbox: savedBox().bbox, sources: [] };
+    fs.writeFileSync(path.join(indexDir, "box.json"), JSON.stringify(built));
+    h.t.index = indexOf({ name: "FI5ENC01" }, { name: "FI1WFS01", source: WFS_SOURCE });
+    h.t.pos = POS;
+    await h.service.check();
+    expect(h.indexes).toHaveLength(0);
   });
 
   test("the cells are found and stamped by the refresh, after the download", async () => {
@@ -409,6 +520,30 @@ describe("box service and the index in use", () => {
     expect(h.built).toEqual([[ENC]]);
   });
 
+  test("an indexDir a commit would refuse is reported once and nothing is built for it", async () => {
+    const indexDir = path.join(TMP, "index");
+    fs.mkdirSync(indexDir);
+    fs.writeFileSync(path.join(indexDir, "notes.txt"), "");
+    const h = harness();
+    h.t.pos = POS;
+    await h.service.check();
+    for (let i = 0; i < 3; i++) {
+      h.t.now += 300_000;
+      await h.service.check();
+    }
+    expect(h.fetched).toEqual([]);
+    expect(h.built).toEqual([]);
+    expect(h.errors).toEqual([
+      expect.stringMatching(/^Traficom WFS depths: indexDir .* notes\.txt/)
+    ]);
+    expect(h.service.status().lastError).toMatch(/holds notes\.txt/);
+    // Set right, the box is built at the next retry.
+    fs.rmSync(path.join(indexDir, "notes.txt"));
+    h.t.now += 300_000;
+    await h.service.check();
+    expect(h.indexes).toHaveLength(1);
+  });
+
   test("a check that throws is reported, never left an unhandled rejection", async () => {
     const h = harness(okReply, {
       position: () => {
@@ -439,5 +574,25 @@ describe("box service and the index in use", () => {
     alone.t.pos = POS;
     await alone.service.check();
     expect(alone.built).toEqual([[path.join(TMP, "FI1WFS01")]]);
+  });
+
+  test("an empty cells directory keeps an index of ENC cells saved but not in use", async () => {
+    fs.rmSync(ENC);
+    const indexDir = path.join(TMP, "index");
+    fs.mkdirSync(indexDir);
+    const saved = { version: 1, cells: [{ name: "FI5ENC01", edition: 1, update: 0 }] };
+    fs.writeFileSync(path.join(indexDir, "cells.json"), JSON.stringify(saved));
+    // As when the saved index could not be read at start.
+    const none = harness();
+    none.t.pos = POS;
+    await none.service.check();
+    expect(none.built).toEqual([]);
+    expect(none.errors).toEqual([`Traficom WFS depths: no S-57 cell found in ${CHARTS}`]);
+    // As after an older version replaced it in memory with WFS depths alone.
+    const alone = harness();
+    alone.t.index = indexOf({ name: "FI1WFS01", source: WFS_SOURCE });
+    alone.t.pos = POS;
+    await alone.service.check();
+    expect(alone.built).toEqual([]);
   });
 });

@@ -5,13 +5,14 @@ import type { CellInfo } from "./ingest/cells";
 import { parseCatalogue } from "./ingest/cells";
 import type { CellScan } from "./ingest/cell-source";
 import { currentInfo, readCell, scanCellSources } from "./ingest/cell-source";
-import { WFS_SOURCE } from "./ingest/wfs";
+import { WFS_CELL_NAME, WFS_SOURCE } from "./ingest/wfs";
 import { readBox } from "./spatial/build-box";
 import type { BuildBox } from "./spatial/build-box";
 import type { BuildJob } from "./spatial/build-worker";
 import type { ChartIndex } from "./spatial/chart-index";
 import {
   buildChartIndex,
+  indexDirProblem,
   loadChartIndex,
   recoverChartIndex,
   saveChartIndex,
@@ -83,6 +84,33 @@ function exists(dir: string): boolean {
 /** The S-57 base cells (`.000` files) under `cellsDir`, in path order. */
 export function cellSources(cellsDir: string | undefined): string[] {
   return scanCellSources(cellsDir).sources;
+}
+
+/**
+ * Whether finding `found` in `cellsDir` means its drive is most likely unmounted rather than
+ * emptied: no S-57 cell is left, but `cells`, the catalogue of an index in use or saved, holds
+ * some. A mount point stays as an empty directory, and taking it at face value would replace
+ * an index of charted hazards with WFS depths alone, or with none.
+ */
+export function cellsMissing(
+  cellsDir: string | undefined,
+  found: readonly string[],
+  cells: readonly Pick<CellInfo, "source">[] | undefined
+): boolean {
+  return (
+    Boolean(cellsDir) &&
+    found.length === 0 &&
+    (cells?.some((c) => c.source !== WFS_SOURCE) ?? false)
+  );
+}
+
+/** The catalogue saved in `indexDir`, or undefined when there is none or it cannot be read. */
+export function savedCatalogue(indexDir: string): CellInfo[] | undefined {
+  try {
+    return savedCells(indexDir);
+  } catch {
+    return undefined;
+  }
 }
 
 function skippedNote(cellsDir: string | undefined, scan: CellScan): string[] {
@@ -181,6 +209,24 @@ function readSaved(indexDir: string): { cells?: CellInfo[]; error?: Error } {
   }
 }
 
+/**
+ * The cells directory's scan or, with an index saved, why the directory says nothing about
+ * that index's cells: it is gone, as an unmounted or moved drive leaves it, or it holds none
+ * of them while the saved index holds S-57 cells (`cellsMissing`).
+ */
+function scanCells(
+  cellsDir: string | undefined,
+  saved: readonly CellInfo[] | undefined
+): { scan: CellScan } | { away: string } {
+  if (saved && cellsDir && !fs.existsSync(cellsDir)) {
+    return { away: `${cellsDir} not found` };
+  }
+  const scan = scanCellSources(cellsDir);
+  return cellsMissing(cellsDir, scan.sources, saved)
+    ? { away: `no S-57 cell found in ${cellsDir ?? "cellsDir"}` }
+    : { scan };
+}
+
 function plan(
   cfg: PluginConfig,
   indexDir: string,
@@ -193,13 +239,13 @@ function plan(
     stale
       ? { load: { indexDir, built: false, reason: missingReason(cfg, indexDir, true) } }
       : savedPlan(indexDir, notes, unreadable, syncLoadBytes);
-  // An unmounted or moved cells directory says nothing about the saved index's cells.
-  if (saved && cfg.cellsDir && !fs.existsSync(cfg.cellsDir)) {
-    return fromSaved([`${cfg.cellsDir} not found; using the saved index`], (err) => ({
+  const found = scanCells(cfg.cellsDir, saved);
+  if ("away" in found) {
+    return fromSaved([`${found.away}; using the saved index`], (err) => ({
       load: failedLoad(indexDir, err)
     }));
   }
-  const scan = scanCellSources(cfg.cellsDir);
+  const { scan } = found;
   // Each cell is stamped once, for the saved catalogue and the saved box alike.
   let stamps: string[] | undefined;
   const encKeys = (): string[] => (stamps ??= scan.sources.map(sourceKey));
@@ -257,6 +303,9 @@ export function sourceKeys(dirs: readonly string[]): string[] {
   return dirs.map(sourceKey).sort();
 }
 
+/** The Traficom WFS cell's stamp among a box's sources. */
+const isWfsKey = (key: string): boolean => key.startsWith(`${WFS_CELL_NAME} edition `);
+
 const boxWaiting = (indexDir: string, notes: string[]): IndexPlan => ({
   load: withNotes({ indexDir, built: false, reason: BOX_WAITING_REASON }, notes)
 });
@@ -301,7 +350,10 @@ function boxPlan(
     return boxWaiting(indexDir, p.notes);
   }
   const sources = keys();
-  const sameCells = sources.join("\n") === box.sources.join("\n");
+  // A WFS cell left out of the start, torn or gone, is downloaded again by the box service;
+  // the saved index still holds its depths meanwhile.
+  const was = sources.some(isWfsKey) ? box.sources : box.sources.filter((k) => !isWfsKey(k));
+  const sameCells = sources.join("\n") === was.join("\n");
   const sameZoom = box.leafZoom === cfg.leafZoom;
   if (!p.mismatch && !cfg.rebuildIndex && sameCells && sameZoom) {
     return p.fromSaved(p.notes);
@@ -343,6 +395,11 @@ function buildPlan(
   if (dirs.length === 0) {
     const none = { indexDir, built: false, reason: `no cells in ${cfg.cellsDir ?? "cellsDir"}` };
     return { load: withNotes(none, notes) };
+  }
+  // The build would be refused only once it is done: minutes on a Pi 4.
+  const refused = indexDirProblem(indexDir);
+  if (refused !== undefined) {
+    return { load: failedLoad(indexDir, new Error(refused)) };
   }
   const build: BuildJob = { dirs, leafZoom: cfg.leafZoom, indexDir };
   return { build: box ? { ...build, box } : build, indexDir, notes };
