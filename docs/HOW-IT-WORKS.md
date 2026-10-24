@@ -651,7 +651,7 @@ each leg at the time the boat would be on it. The request fields are listed in t
 ```mermaid
 flowchart TD
   R[route] --> L[for each leg]
-  L --> C[corridor = leg ± cross-track limit 30 m<br/>+ position buffer 10 m;<br/>tiles beyond count by P × Φ(−g/σP)]
+  L --> C["corridor = leg ± cross-track limit 30 m<br/>+ position buffer 10 m;<br/>tiles beyond count by P × Φ(−g/σP)"]
   C --> W[lowest water level between<br/>arrival at the leg's start and end]
   W --> Q["highest P(UKC &lt; 0) in the corridor<br/>with squat at the leg's speed"]
   Q --> F{"corridor touches land, or<br/>P ≥ 5 × accepted P<br/>(at most 50 %, at least accepted P)?"}
@@ -777,7 +777,7 @@ chart, on the route from the Nauvo fairway west to Stenskär harbour at 7 kn, wi
 | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Layers → Charts → Plugin layers        | Under-keel look-ahead (on), Under-keel route check (on), Under-keel risk (off)                                                                              |
 | Widget grid                            | Under-keel status: state colour, minimum clearance, time to shoal and the reason                                                                            |
-| Toolbar button (boat icon), the widget | Under-keel details panel: state, water level, and a leg table per route on the chart                                                                        |
+| Toolbar button (boat icon), the widget | Under-keel details panel: state, water level, a leg table per route on the chart, and **Open setup**                                                        |
 | Hidden background page                 | refetches the envelope on each new revision (every 3 s without a Signal K stream) and checks the routes on the chart 1 s after each change and every minute |
 
 ![Freeboard: the look-ahead envelope ahead of the vessel and the status widget](images/how-it-works/freeboard-lookahead.jpg)
