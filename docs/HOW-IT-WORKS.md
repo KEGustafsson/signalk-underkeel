@@ -288,8 +288,8 @@ charted there. Its flags (no coverage, unassessed) count within 2 × σP. Unasse
 WFS water spreads no depth, since it never reads as `normal` anyway. The position σ comes from the GNSS (HDOP × 3 m, 5 m without HDOP) and
 is raised by the integrity check in section 7.
 
-Steps are at most 3 s apart; for a fast boat the step shrinks so neighbouring footprints still
-touch. At 5 kn (2.6 m/s) the horizon is 214 s. Past 120 s, the widest window a state is
+Within the 120 s warning window the steps are at most 3 s apart; for a fast boat the step
+shrinks so neighbouring footprints still touch. At 5 kn (2.6 m/s) the horizon is 214 s. Past 120 s, the widest window a state is
 raised in, only every k-th step is scored, the most that still leaves neighbouring footprints
 touching (every 3rd at 6 kn, every 20th at 1 kn). A tick scores at most 400 footprints: a long
 horizon at low speed spaces the footprints past 120 s wider still, up to where neighbouring
