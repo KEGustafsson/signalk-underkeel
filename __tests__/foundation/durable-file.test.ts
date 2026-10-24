@@ -150,10 +150,17 @@ describe("syncDirectory", () => {
     }
   );
 
-  test("a directory that cannot be opened is skipped", () => {
+  test("a directory the platform cannot open for a flush is skipped", () => {
     jest.spyOn(fs, "openSync").mockImplementation(() => {
       throw Object.assign(new Error("EISDIR: open"), { code: "EISDIR" });
     });
     expect(() => syncDirectory(dir)).not.toThrow();
+  });
+
+  test("a directory that fails to open with an I/O error is thrown", () => {
+    jest.spyOn(fs, "openSync").mockImplementation(() => {
+      throw Object.assign(new Error("EIO: open"), { code: "EIO" });
+    });
+    expect(() => syncDirectory(dir)).toThrow("EIO");
   });
 });

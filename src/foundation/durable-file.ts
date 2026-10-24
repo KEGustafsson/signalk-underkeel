@@ -43,7 +43,7 @@ export function appendFileDurable(file: string, data: string): void {
   }
 }
 
-/** fsync answers that mean the platform cannot flush a directory, not that a flush failed. */
+/** Answers to opening or flushing a directory that mean the platform cannot, not a failure. */
 const NO_DIRECTORY_SYNC: ReadonlySet<string> = new Set([
   "EINVAL",
   "ENOTSUP",
@@ -64,8 +64,11 @@ export function syncDirectory(dir: string): void {
   let fd: number;
   try {
     fd = fs.openSync(dir, "r");
-  } catch {
-    return;
+  } catch (err) {
+    if (NO_DIRECTORY_SYNC.has((err as NodeJS.ErrnoException).code ?? "")) {
+      return;
+    }
+    throw err;
   }
   try {
     fs.fsyncSync(fd);
