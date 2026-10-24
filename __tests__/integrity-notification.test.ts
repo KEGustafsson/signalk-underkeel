@@ -12,6 +12,12 @@ test("a drifting HDOP or divergence keeps the repeat key", () => {
   );
 });
 
+test("a drifting velocity difference keeps the repeat key", () => {
+  expect(key(["GNSS and water velocity differ by 3.2 m/s, more than a current"])).toBe(
+    key(["GNSS and water velocity differ by 3.4 m/s, more than a current"])
+  );
+});
+
 test("a change of fix quality is a new kind of reason", () => {
   expect(key(['GNSS fix quality "2D fix"'])).not.toBe(key(['GNSS fix quality "3D fix"']));
 });

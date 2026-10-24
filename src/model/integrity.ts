@@ -99,7 +99,10 @@ function vector(course: number, speed: number): [number, number] {
 export class IntegrityMonitor {
   private dr?: Dr;
   /** Learned current, east and north m/s. */
+  /** The current dead reckoning applies: the measured one, bounded at maxCurrent. */
   private current: [number, number] = [0, 0];
+  /** Ground velocity minus water velocity, low-passed, unbounded. */
+  private measured: [number, number] = [0, 0];
 
   constructor(private readonly opts: IntegrityOptions = DEFAULT_INTEGRITY) {}
 
@@ -165,6 +168,15 @@ export class IntegrityMonitor {
     // covers it. A diverged run is still not re-anchored, so a jump stays
     // flagged until σ_DR covers it.
     this.learnCurrent(nav, dt);
+    // Past the bound the drift is not taken as a current at all: a drag just above it would
+    // otherwise leave a residual that σ_DR outgrows, and the run would clear on the drag.
+    const drift = Math.hypot(...this.measured);
+    if (drift > this.opts.maxCurrent) {
+      return {
+        divergence,
+        reason: `GNSS and water velocity differ by ${drift.toFixed(1)} m/s, more than a current`
+      };
+    }
     if (divergence > this.opts.k * sigmaDr) {
       return {
         divergence,
@@ -189,8 +201,11 @@ export class IntegrityMonitor {
     const [ge, gn] = vector(nav.cog, nav.sog);
     const [we, wn] = vector(nav.heading as number, nav.stw as number);
     const a = Math.min(1, dt / this.opts.currentTau);
-    const e = this.current[0] + a * (ge - we - this.current[0]);
-    const n = this.current[1] + a * (gn - wn - this.current[1]);
+    const [e, n] = [
+      this.measured[0] + a * (ge - we - this.measured[0]),
+      this.measured[1] + a * (gn - wn - this.measured[1])
+    ];
+    this.measured = [e, n];
     const scale = Math.min(1, this.opts.maxCurrent / (Math.hypot(e, n) || 1));
     this.current = [e * scale, n * scale];
   }

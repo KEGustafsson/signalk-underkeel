@@ -25,7 +25,7 @@ export function integrityNotification(r: IntegrityResult): NotificationValue {
 }
 
 /** The measurements in an integrity reason that change with every fix; a fix quality does not. */
-const DRIFTING = /^(HDOP |GNSS and dead reckoning differ by )\d+(\.\d+)?/;
+const DRIFTING = /^(HDOP |GNSS and (?:dead reckoning|water velocity) differ by )\d+(\.\d+)?/;
 
 /**
  * The integrity notification and how it repeats: at once when its state or

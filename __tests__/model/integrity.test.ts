@@ -99,6 +99,14 @@ describe("position integrity", () => {
     expect(Math.hypot(...m.currentEstimate())).toBeCloseTo(DEFAULT_INTEGRITY.maxCurrent, 6);
   });
 
+  test("a drag just above the bound stays flagged, not cleared on its small residual", () => {
+    const out = run(new IntegrityMonitor(), passage(1800, 3, [3.2, 0]));
+    expect(out.slice(900).every((r) => !r.ok)).toBe(true);
+    expect(out[1800]?.reasons).toContain(
+      "GNSS and water velocity differ by 3.2 m/s, more than a current"
+    );
+  });
+
   test("a real stream under the bound is still learned and clears", () => {
     const out = run(new IntegrityMonitor(), passage(1800, 3, [0, 2.5]));
     expect(out.slice(900).every((r) => r.ok)).toBe(true);
