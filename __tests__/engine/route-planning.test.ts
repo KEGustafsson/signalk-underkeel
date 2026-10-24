@@ -332,13 +332,15 @@ describe("route repair", () => {
     };
     const kept = simplify(pts, passes, NOW, speed);
     expect(kept.length).toBeLessThan(pts.length);
-    // The route check chains whole-millisecond ETAs leg by leg; the chords must use the same.
-    const eta = new Map<LonLat, number>([[kept[0] as LonLat, NOW]]);
-    for (let i = 1; i < kept.length; i++) {
-      const a = kept[i - 1] as LonLat;
-      const t = (eta.get(a) as number) + (haversine(a, kept[i] as LonLat) / speed) * 1000;
-      eta.set(kept[i] as LonLat, Date.parse(new Date(t).toISOString()));
-    }
+    // Each chord departs when the route check of the kept path starts that leg.
+    const legs = checkRoute(
+      shoalIndex(),
+      input(kept, { speeds: kept.slice(1).map(() => speed) }),
+      NOW
+    ).legs;
+    const eta = new Map<LonLat, number>(
+      legs.map((leg, i) => [kept[i] as LonLat, Date.parse(leg.eta.start)])
+    );
     expect(calls.some((c) => c.departure > NOW)).toBe(true);
     for (const c of calls) {
       expect(c.departure).toBe(eta.get(c.from));
