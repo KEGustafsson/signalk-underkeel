@@ -1373,10 +1373,13 @@ anchor writes about one line per 10 minutes. Once `cells.ndjson` would hold more
 many lines as the larger of its cell count and 1 000, or after cells are dropped, it is
 rewritten with the current cells. The posteriors are bounded: once more than 10 000 cells could
 be dropped, the ones last sounded longest ago are dropped until 9 000 such cells remain, at the
-10 s save check. A cell is never dropped while it has an adjustment, while it waits for its
-chart block, or once it has read 1σ or more shallower than a chart prior it was judged against
-(`PROTECT_Z`; a shoal waiting for its samples or its second pass), even after the index box has
-moved away from it. Dropping a posterior never makes a query deeper: the adjustment is kept on
+10 s save check. A cell is never dropped while it has an adjustment or waits for its chart
+block. A cell that has read 1σ or more shallower than a chart prior it was judged against
+(`PROTECT_Z`) and has not yet had 5 samples over 2 passes is a shoal waiting for its evidence
+(`gathering`). Such cells are bounded apart from the others, by the same 10 000 and 9 000, so
+they are kept among ordinary cells even after the index box has moved away from them, and a
+steady error that marks every cell of a passage still cannot grow them without end. A cell
+with its evidence that is not a discrepancy is an ordinary cell. Dropping a posterior never makes a query deeper: the adjustment is kept on
 its own and only ever lowers the cell, and a dropped cell sounded again starts from the chart
 prior (invariant 5). The one cost is that a later, deeper chart edition is not compared with
 soundings that were dropped for agreeing with the chart. `GET /status` counts the dropped cells
@@ -1714,7 +1717,7 @@ and the invariant suites run at full depth in every run, the registry's included
   `vm.constants.DONT_CONTEXTIFY` context (Node 22.8 or later; on an older Node it is the stock
   environment). It throws if Jest stops building its context with one `vm.createContext` call,
   and `__tests__/test-environment.test.ts` checks that it is active. `jest-environment-node` is
-  a direct dev dependency. On an i5-8350U laptop the suite's 1086 tests take about 51 s and the
+  a direct dev dependency. On an i5-8350U laptop the suite's 1087 tests take about 51 s and the
   replay test about 3 s.
 - A test may make at most 20 000 `expect()` calls (`__tests__/helpers/assertion-budget.ts`),
   since each costs about 30 µs. Per-element checks inside property loops are collected and
@@ -1832,9 +1835,10 @@ it is distributed. Needed from the start:
    - The update treats each sample's error as its own. A sounding's σ is
      `0.1 + 0.01 · depth + σ_water level`, but the transducer offset, sound speed and water
      level errors are shared by a pass's samples. So the posterior σ shrinks as √N within a
-     pass. A steady 0.1 m forecast error then marks a cell protected after one pass, which
-     breaks the retention bound on a flat bottom at its charted depth. Over enough passes it
-     also raises a suspected-shoal note.
+     pass. A steady 0.1 m forecast error then marks every cell of a pass over a flat bottom at
+     its charted depth as a shoal waiting for evidence. The separate bound on such cells keeps
+     their number in check, but it then holds error rather than shoals. Over enough passes the
+     error also raises a suspected-shoal note.
    - A tight chart prior swamps the soundings. Against an 8 m ± 0.1 m chart, six readings at
      6 m move the posterior only to 7.56 m. That is what an adjustment would apply, although
      the soundings say 6 m.

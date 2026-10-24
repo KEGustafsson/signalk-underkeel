@@ -208,9 +208,11 @@ All notable changes to signalk-underkeel are documented here.
   10 minutes. A `livechart.json` that still holds soundings or cells loads, and they move to
   `soundings.ndjson` and `cells.ndjson` at the next save.
 - The living chart keeps at most 10 000 cells it may drop: past that, those sounded longest ago
-  are dropped until 9 000 remain. A cell is never dropped while it has an adjustment, while it
-  waits for its chart block, or once it has read 1σ or more shallower than the chart, and a
-  dropped cell sounded again starts from the chart. `GET /status` counts the dropped cells as
+  are dropped until 9 000 remain. A cell is never dropped while it has an adjustment or waits
+  for its chart block. A cell that has read 1σ or more shallower than the chart and has not yet
+  had 5 samples over 2 passes is capped on its own the same way, so a shoal waiting for its
+  second pass is not crowded out by ordinary cells, and a steady error that marks every cell of
+  a passage cannot grow them without end. A dropped cell sounded again starts from the chart. `GET /status` counts the dropped cells as
   `livechart.dropped`.
 - Living-chart notes are rewritten when the cell's adjusted depth drops a 5 cm step or its σ
   rises a 1 cm step, at most once per cell every 5 minutes (the latest values after that, and
@@ -298,7 +300,7 @@ All notable changes to signalk-underkeel are documented here.
   and are answered 304 when the browser holds them, still with `Cache-Control: no-cache`. A
   Freeboard reload fetched 56.2 kB of them and now 12.7 kB; a first load 57.5 kB and now
   36.3 kB, since the three pages share four scripts.
-- `npm test` runs its 1086 tests in about 51 s instead of about 4.5 minutes on a laptop, with
+- `npm test` runs its 1087 tests in about 51 s instead of about 4.5 minutes on a laptop, with
   every property test, the replay and the safety-invariant suites at full depth, also in the
   Signal K registry's sandboxed run. Jest's stock Node environment builds each test file's
   context from a proxy, so every lookup of `Math`, `Number` and typed arrays in the chart and

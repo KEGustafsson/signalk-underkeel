@@ -97,8 +97,8 @@ describe("route check benchmark", () => {
 /**
  * Repair work calibration, run on the built plugin (lib/) in a plain node
  * process: jest's module sandbox slows global lookups, and timed the same
- * compiled repair about 10× slower than node does. The review's adversarial
- * chart: 135k soundings at 3.2–5.2 m over 25 m water, 1500 small banks, and
+ * compiled repair about 10× slower than node does. The adversarial chart:
+ * 135k soundings at 3.2–5.2 m over 25 m water, 1500 small banks, and
  * a drying wall across the 47 km leg with a gap at 60.10–60.16; the 10 km
  * leg crosses the wall's southern end. Each leg is timed without a limit,
  * for the µs per unit, then with the default limits.

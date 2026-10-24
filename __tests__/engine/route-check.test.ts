@@ -185,7 +185,7 @@ describe("corridor route check on the synthetic chart", () => {
     expect(work).toBe(results.reduce((sum, r) => sum + r.visits + QUERY_WORK, 0));
   });
 
-  test("checking legs in order changes no field of the route check", () => {
+  test("checkRoute keeps its result for a three-point route", () => {
     // A golden copy of checkRoute's output for this route.
     const coords: LonLat[] = [
       [22.004, 60.012],
@@ -193,7 +193,7 @@ describe("corridor route check on the synthetic chart", () => {
       [22.02, 60.018]
     ];
     const r = checkRoute(index, input(coords, 3.6, { speeds: [2, 4] }), NOW);
-    expect(JSON.parse(JSON.stringify(r))).toEqual(BEFORE_LEGS_STEPS);
+    expect(JSON.parse(JSON.stringify(r))).toEqual(THREE_POINT_ROUTE_GOLDEN);
   });
 
   test("a long leg is checked along its whole length", () => {
@@ -473,8 +473,8 @@ describe("chart position uncertainty", () => {
   });
 });
 
-/** checkRoute of the three-point route in "checking legs in order changes no field". */
-const BEFORE_LEGS_STEPS = {
+/** checkRoute of the three-point route in "checkRoute keeps its result for a three-point route". */
+const THREE_POINT_ROUTE_GOLDEN = {
   checkedAt: "2026-10-18T07:00:00.000Z",
   charts: [{ cell: "FI5SYNTH", edition: 3, update: 1 }],
   waterLevelSource: "chart-datum",

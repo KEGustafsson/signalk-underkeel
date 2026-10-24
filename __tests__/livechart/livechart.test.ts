@@ -647,7 +647,7 @@ describe("safety invariant 5", () => {
           fs.rmSync(dir, { recursive: true, force: true });
         }
       ),
-      { numRuns: 25 }
+      { numRuns: 80 }
     );
   }, 60_000);
 });
