@@ -26,7 +26,7 @@ import {
 import type { NodeStore, NodeValues } from "./node-store";
 import { EMPTY, FLAGS, NO_DATA } from "./node-store";
 import type { Walk } from "./walk";
-import { certain, foldFlags, riskAt, take, takeStandIn } from "./walk";
+import { certain, foldFlags, REACH_FLAGS, riskAt, take, takeStandIn } from "./walk";
 import { chartReach, chartSigma, chartWeight, flagReach, MAX_CHART_SIGMA } from "./chart-position";
 
 /**
@@ -127,8 +127,7 @@ export function footprintGeom(ring: readonly LonLat[]): Geom {
  * at one carrying these would report a gap or an unassessed survey that
  * the footprint itself may not touch. Such tiles are always descended.
  */
-const PRECISE_FLAGS =
-  FLAGS.NO_COVERAGE | FLAGS.UNASSESSED | FLAGS.NO_DEPTH | FLAGS.NOT_FOR_NAVIGATION;
+const PRECISE_FLAGS = REACH_FLAGS;
 
 /** Below this, a split tile's risk bound is negligible and its children need not be visited. */
 export const RISK_STOP_BELOW = 1e-4;

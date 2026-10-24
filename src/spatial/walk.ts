@@ -70,11 +70,20 @@ export function fold(w: Walk, v: NodeValues, flags: number, z: number, x: number
   }
 }
 
-/** Folds the flags, σP and cell of a tile beyond the buffer, within its survey's flag reach. */
+/**
+ * The flags a tile beyond the buffer passes to the footprint within its survey's flag reach:
+ * a gap, an unassessed survey or advisory water nearby keeps it from reading as safe
+ * (invariant 4). A flag that describes a place, swept or dredged, holds only where its area
+ * is, and a split tile carries it for any child, so it is not taken from beyond the buffer.
+ */
+export const REACH_FLAGS =
+  FLAGS.NO_COVERAGE | FLAGS.UNASSESSED | FLAGS.NO_DEPTH | FLAGS.NOT_FOR_NAVIGATION;
+
+/** Folds the reach flags, σP and cell of a tile beyond the buffer, within its flag reach. */
 export function foldFlags(w: Walk, v: NodeValues, flags: number): void {
   const r = w.result;
   r.sigmaP = Math.max(r.sigmaP, v.sigmaP);
-  r.flags |= flags;
+  r.flags |= flags & REACH_FLAGS;
   if (v.cellRef >= 0) {
     w.cells.add(v.cellRef);
   }
