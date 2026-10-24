@@ -780,6 +780,36 @@ chart, on the route from the Nauvo fairway west to Stenskär harbour at 7 kn, wi
 | Toolbar button (boat icon), the widget | Under-keel details panel: state, water level, a leg table per route on the chart, and **Open setup**                                                        |
 | Hidden background page                 | refetches the envelope on each new revision (every 3 s without a Signal K stream) and checks the routes on the chart 1 s after each change and every minute |
 
+### Setting it up in Freeboard
+
+The plugin appears in Freeboard without any Freeboard setting. What can be set:
+
+- **Which layers draw.** Layers → Charts lists the plugin's three layers under **Plugin
+  layers**, above the charts, each with its own tick box and opacity.
+- **The chart under them.** These screenshots add the Traficom S-57 WMS as a chart: URL
+  `https://julkinen.traficom.fi/s57/wms?STYLES=style-id-245`, layer `cells`. Style
+  `style-id-245` draws the paper-chart symbols; without it the server draws its default style.
+- **The plugin's own settings.** **Open setup** at the bottom of the details panel.
+
+![Freeboard: the plugin layers in the chart list](images/how-it-works/freeboard-layers.jpg)
+
+_Layers → Charts: the look-ahead and the route check are on, the risk overlay is off, over the
+Traficom chart with paper-chart symbols._
+
+![Freeboard: Open setup at the bottom of the Under-keel details panel](images/how-it-works/freeboard-open-setup.jpg)
+
+_North of Stenskär on the 272° leading line, heading west at 7 kn with a 1.8 m draft. Here the
+depths come from the plugin's Traficom WFS feature, not from an ENC cell, so the state stays
+`alert`: water only the WFS covers is never `normal`. The details panel ends with **Open
+setup**._
+
+![Freeboard: the three setup steps in the details panel](images/how-it-works/freeboard-setup-steps.jpg)
+
+_**Open setup** loads the three steps into the same panel; the link at the top goes back to the
+details. The draft field is empty, so Signal K's `design.draft.maximum`, 1.8 m, applies._
+
+### What it shows
+
 ![Freeboard: the look-ahead envelope ahead of the vessel and the status widget](images/how-it-works/freeboard-lookahead.jpg)
 
 _Heading west at 7 kn, the envelope reaches the islet ahead and is coloured by state, here

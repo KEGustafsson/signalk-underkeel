@@ -231,7 +231,9 @@ Routes shown on the chart are checked 1 s after each edit and every minute; the 
 each result's age and marks it "out of date" after 3 minutes, when the chart draws its legs
 `unverified`. Stale status is shown as Unknown,
 never as the last green state. [How it works §13](docs/HOW-IT-WORKS.md#13-in-freeboard) has
-screenshots.
+screenshots, including the plugin layers in the chart list and the setup steps in the panel.
+
+![Freeboard: Open setup at the bottom of the Under-keel details panel](docs/images/how-it-works/freeboard-open-setup.jpg)
 
 ### In Signal K
 
