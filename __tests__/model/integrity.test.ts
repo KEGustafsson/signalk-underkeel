@@ -107,6 +107,15 @@ describe("position integrity", () => {
     );
   });
 
+  test("a drag barely above the bound is not cleared while the low-pass catches up", () => {
+    // At 3.01 m/s the low-passed difference stays under 3 m/s for about 685 s, and near 600 s
+    // the offset left behind falls inside k · σ_DR.
+    const out = run(new IntegrityMonitor(), passage(1800, 3, [3.01, 0]));
+    const first = out.findIndex((r) => !r.ok);
+    expect(first).toBeGreaterThan(0);
+    expect(out.slice(first).every((r) => !r.ok)).toBe(true);
+  });
+
   test("a real stream under the bound is still learned and clears", () => {
     const out = run(new IntegrityMonitor(), passage(1800, 3, [0, 2.5]));
     expect(out.slice(900).every((r) => r.ok)).toBe(true);
