@@ -77,7 +77,7 @@ export const SCHEMA = {
           enum: ["none", "manual", "signalk-tide", "fmi"],
           default: "none",
           description:
-            "none: chart datum with σ 0.3 m. On charts whose datum is not low water (Finnish VERDAT 3, 19, 26, N2000) the level is marked as a guess and the look-ahead is never normal; choose fmi there. manual: the height below; signalk-tide: environment.tide.heightNow, heightLow and timeLow; fmi: Finnish Meteorological Institute forecast and tide gauges (needs internet)"
+            "none: chart datum with σ 0.3 m. On charts whose datum is not low water (Finnish VERDAT 3, 19 and 26) the level is marked as a guess and the look-ahead is never normal; choose fmi there. manual: the height below; signalk-tide: environment.tide.heightNow, heightLow and timeLow; fmi: Finnish Meteorological Institute forecast and tide gauges (needs internet)"
         },
         height: { type: "number", title: "Manual height above chart datum (m)", default: 0 },
         sigma: {

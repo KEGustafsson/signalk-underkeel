@@ -93,8 +93,7 @@ function feed(
     cursor = reply;
     return reply;
   };
-  /** Every tile held is byte for byte the tile the server draws now. */
-  // One assertion per poll, not per tile (§7 Test runtime): no held tile is stale.
+  /** Every tile held is byte for byte the tile the server draws now, asserted once per poll. */
   const current = (step?: number) => {
     const stale = [...held]
       .filter(([k, copy]) => {

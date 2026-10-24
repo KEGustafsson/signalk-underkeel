@@ -241,7 +241,6 @@ describe("cell posterior and discrepancy", () => {
     svc.save();
     const deeper = buildPyramid(basin([22.0, 60.0, 22.1, 60.1], 10), { minZoom: 12, leafZoom: 18 });
     const reloaded = new LivechartService(deeper, CONFIG, file, failOnError);
-    // The saved adjustment applies at once; the cell is judged once the settler reads its prior.
     expect(minDepthOver(deeper, footprintGeom([SHOAL])).dMin).toBeLessThan(5.3);
     await reloaded.whenSettled();
     expect(reloaded.discrepancies()[0]).toMatchObject({ charted: 10 });

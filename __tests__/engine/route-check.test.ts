@@ -186,7 +186,7 @@ describe("corridor route check on the synthetic chart", () => {
   });
 
   test("checking legs in order changes no field of the route check", () => {
-    // checkRoute's output for this route before the leg loop moved into legsSteps.
+    // A golden copy of checkRoute's output for this route.
     const coords: LonLat[] = [
       [22.004, 60.012],
       [22.02, 60.01],

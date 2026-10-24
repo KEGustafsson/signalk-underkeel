@@ -9,7 +9,6 @@ export const QUERY_WORK = 32;
 /** Theta* line-of-sight samples per work unit (one sample about 60–90 ns). */
 export const LINE_SAMPLES_PER_UNIT = 5;
 
-/** Work of one query: its tile visits plus the fixed cost. */
 export function queryWork(r: { visits: number }): number {
   return r.visits + QUERY_WORK;
 }

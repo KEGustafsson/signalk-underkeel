@@ -261,7 +261,6 @@ class ThetaStar {
   }
 }
 
-/** The centre of cell `i`. */
 export function cellCentre(g: Grid, i: number): LonLat {
   return g.frame.toLonLat(
     g.x0 + ((i % g.nx) + 0.5) * g.cell,
