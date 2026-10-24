@@ -280,7 +280,7 @@ flowchart TD
   M -- no --> ONE[check only the hull<br/>at the current position]
   M -- yes --> S{SOG ≥ 0.5 kn?}
   S -- no --> ONE
-  S -- yes --> CONE[fan of five tracks from COG, SOG<br/>and rate of turn, for<br/>H = max 60 s, 555.6 m ÷ SOG]
+  S -- yes --> CONE[fan of five tracks from COG, SOG<br/>and rate of turn, for<br/>H = max 60 s, look-ahead distance ÷ SOG]
   ONE & CONE --> Q[for each step: one footprint<br/>around the five hulls; shallowest depth<br/>+ σ from the index, P per index tile,<br/>keep the highest]
   Q --> ST[state table and hysteresis,<br/>section 7]
   ST --> Z{inside an acknowledged<br/>passage or mooring zone?}
@@ -318,9 +318,11 @@ first to reach the warn or alert level or a coverage gap, the steps it skipped a
 to shoal and the time in the reason are those of the 3 s steps. The look-ahead distance is
 at most 5 NM (9260 m) and the minimum horizon at most 600 s.
 
-The horizon always reaches the configured look-ahead distance (555.6 m, 0.3 NM, with Balanced;
-below 18 kn), so slowing down does not shorten the envelope. The same distance takes longer, though: 154 s at 7 kn, 270 s at 4 kn. Warn and alarm
-count seconds to the shoal, so at lower speed they come closer to it.
+With fresh COG and SOG and SOG at least 0.5 kn, the horizon reaches the configured look-ahead
+distance (555.6 m, 0.3 NM, with Balanced; below 18 kn), so slowing down does not shorten the
+envelope. The same distance takes longer, though: 154 s at 7 kn, 270 s at 4 kn. Warn and alarm
+count seconds to the shoal, so at lower speed they come closer to it. Below 0.5 kn, or with a
+stale course, only the hull at the current position is checked.
 
 The look-ahead uses the higher of speed over ground and speed through water for squat, even
 when the course is stale. Heel counts only when a heel model is set under expert settings, from
