@@ -549,7 +549,8 @@ All notable changes to signalk-underkeel are documented here.
   kilometres within the hour, and the look-ahead was held at `warn` with no escape heading
   although GNSS was right. The current is learned during a divergence too, and the warning
   clears once it is learned, in about 2 minutes for 1 m/s. A position jump stays flagged as
-  before.
+  before. A difference above 3 m/s (`maxCurrent`) is never taken as a current, and a failed run
+  clears only once both the low-passed and the latest difference are within that bound.
 - A route leg whose ETA interval runs past the forecast, or whose far end lies beyond the
   forecast's 30 km reach, no longer drops a lower forecast level. With FMI fetched at −0.10 m and forecasting −0.60 m,
   such a leg was checked at −0.10 m. The leg is still degraded, `unverified` at best, but at the
