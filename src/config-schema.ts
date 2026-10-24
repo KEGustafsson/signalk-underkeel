@@ -18,7 +18,6 @@ const ADVISORY =
 
 /** Shown under each field whose empty value follows a preset. */
 const FOLLOWS_STYLE = "Empty follows the warning style.";
-const FOLLOWS_HULL = "Empty follows the hull.";
 
 const SOURCE_DESCRIPTION =
   "none: chart datum with σ 0.3 m. On charts whose datum is not low water (Finnish VERDAT 3, 19 and 26) the level is marked as a guess and the look-ahead is never normal; choose fmi there. manual: the height below; signalk-tide: environment.tide.heightNow, heightLow and timeLow; fmi: Finnish Meteorological Institute forecast and tide gauges (needs internet)";
@@ -50,25 +49,15 @@ const HEEL_TABLE = {
 const VESSEL_ESSENTIAL = {
   type: "object",
   title: "Boat",
+  description:
+    "Only the keel's lowest point counts. Squat (Cb·V²/100 m at V knots) and waves (0.4 × wave height, when Signal K has it) are added on top; heel gives no credit unless set under expert settings.",
   properties: {
     draft: {
       type: "number",
       title: "Draft (m)",
       description: "Leave empty to use Signal K design.draft.maximum."
     },
-    margin: { type: "number", title: "Safety margin under the keel (m)", default: 0 },
-    // The form fills an empty field with the first choice, so "none" comes first and is the
-    // default: a sailboat there would lift the keel with heel on every saved configuration.
-    hull: {
-      type: "string",
-      title: "Hull (sets squat and heel)",
-      default: "none",
-      oneOf: [
-        { const: "none", title: "Not set: squat Cb 0.4, heel ignored" },
-        { const: "sailboat", title: "Sailboat: keel rises when heeled; squat Cb 0.45" },
-        { const: "motorboat", title: "Motorboat: full draft when rolling; squat Cb 0.60" }
-      ]
-    }
+    margin: { type: "number", title: "Safety margin under the keel (m)", default: 0 }
   }
 };
 
@@ -78,17 +67,15 @@ const VESSEL_EXPERT = {
     length: { type: "number", title: "Length overall (m)" },
     beam: { type: "number", title: "Beam (m)" },
     draftSigma: { type: "number", title: "Draft uncertainty 1σ (m)", default: 0.05 },
-    blockCoefficient: {
-      type: "number",
-      title: "Block coefficient Cb (squat)",
-      description: FOLLOWS_HULL
-    },
+    blockCoefficient: { type: "number", title: "Block coefficient Cb (squat)", default: 0.4 },
     confined: { type: "boolean", title: "Double squat (narrow channels)", default: false },
     keel: {
       type: "string",
       title: "Heel effect on draft",
       enum: ["none", "fin", "table"],
-      description: `none: ignore heel; fin: draft·(cos φ − 1); table: heel° → draft change. ${FOLLOWS_HULL}`
+      default: "none",
+      description:
+        "none: the keel counts at full depth; fin: draft·(cos φ − 1) at the least roll of the last 10 s; table: heel° → draft change"
     },
     waveFactor: { type: "number", title: "Wave allowance factor c (W = c·Hs)", default: 0.4 }
   },

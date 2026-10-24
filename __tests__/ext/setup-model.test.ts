@@ -17,15 +17,15 @@ describe("setup edits", () => {
   // An emptied draft must reach the server as a removal, so Signal K's draft applies again.
   test("emptying a saved field removes it; emptying an unsaved one sends nothing", () => {
     expect(M.setEdit({}, saved, "vessel.draft", undefined)).toEqual({ vessel: { draft: null } });
-    expect(M.setEdit({}, saved, "vessel.hull", "")).toEqual({});
+    expect(M.setEdit({}, saved, "vessel.keel", "")).toEqual({});
     expect(M.current(saved, { vessel: { draft: null } }, "vessel.draft")).toBeUndefined();
     expect(M.current(saved, {}, "vessel.margin")).toBe(0.3);
   });
 
   test("leaves the patch it was given unchanged", () => {
-    const p = { vessel: { hull: "motorboat" } };
+    const p = { vessel: { margin: 0.2 } };
     M.setEdit(p, saved, "vessel.margin", 0.5);
-    expect(p).toEqual({ vessel: { hull: "motorboat" } });
+    expect(p).toEqual({ vessel: { margin: 0.2 } });
   });
 
   test("typed metres take a comma or a point; anything else is no number", () => {

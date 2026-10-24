@@ -5,8 +5,9 @@ import type { ApiReply } from "./api/routes";
 import type { PluginState } from "./api-wiring";
 import type { Migration } from "./config-migrate";
 import { CONFIG_VERSION } from "./config-migrate";
-import { HULL_PRESETS, WARNING_PRESETS } from "./config-presets";
+import { WARNING_PRESETS } from "./config-presets";
 import { SCHEMA } from "./config-schema";
+import { DEFAULT_DYNAMICS } from "./model/vessel";
 import { setupChecks, setupFacts, suggestedSource } from "./setup-checks";
 
 /**
@@ -67,7 +68,11 @@ export function settingsReply(app: Pick<ServerAPI, "getSelfPath">, s: PluginStat
       facts,
       suggestedSource: suggestedSource(facts.datums) ?? null,
       checks: setupChecks(s, facts),
-      presets: { warningStyles: WARNING_PRESETS, hulls: HULL_PRESETS },
+      presets: { warningStyles: WARNING_PRESETS },
+      defaults: {
+        blockCoefficient: DEFAULT_DYNAMICS.blockCoefficient,
+        waveFactor: DEFAULT_DYNAMICS.waveFactor
+      },
       schema: SCHEMA
     }
   };

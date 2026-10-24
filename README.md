@@ -130,26 +130,25 @@ named like a cell is listed in `GET /status` as skipped.
 
 There are two places to set the plugin up, and both write the same configuration:
 
-- **Open setup** at the bottom of Freeboard's _Under-keel details_ panel (toolbar button with
-  the boat icon), or `/plotterext/signalk-underkeel/setup.html` in a browser: three steps, boat,
-  water level and warnings, in the same panel with a link back to the details. Drag the keel,
-  the margin line and the sounder on a side view drawn for the chosen hull, or type the
-  numbers. The page shows the draft Signal K already states, the vertical datum of your charts
-  with the water-level source that fits it, and a setup check. **Save and restart** needs a
-  Signal K admin login.
+- **Open setup** at the bottom of Freeboard's _Under-keel details_ panel (toolbar button with the
+  boat icon), or `/plotterext/signalk-underkeel/setup.html` in a browser: three steps, boat, water
+  level and warnings, in the same panel with a link back to the details. Drag the keel, the margin
+  line and the sounder on a side view of the hull, or type the numbers. The page shows the draft
+  Signal K already states, the vertical datum of your charts with the water-level source that fits
+  it, and a setup check. **Save and restart** needs a Signal K admin login.
 - The plugin's page in the admin UI. It asks for the same essentials first; **Show expert
   settings** opens the rest, and an optional feature's fields appear once it is enabled. Admin
   UIs older than Signal K 2.32 show every field at once.
 
 ![The setup steps: boat, water level and warnings](docs/images/how-it-works/setup-panel.png)
 
-| Setting             | What it does                                                                                                                                                                                   |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ENC cells directory | where the `.000` cells are                                                                                                                                                                     |
-| Boat                | draft (empty uses Signal K `design.draft.maximum`); safety margin under the keel (0 m); hull, sailboat or motorboat, which sets heel and squat (below); not set means Cb 0.40 and heel ignored |
-| Water level         | source (`none`, `manual`, `signalk-tide`, `fmi`, see below); only the chosen source's fields are shown                                                                                         |
-| Warnings            | Early, Balanced or Late, in the table below                                                                                                                                                    |
-| Optional features   | living chart (own soundings), Traficom WFS depths, grounding detector; each off until enabled                                                                                                  |
+| Setting             | What it does                                                                                                                                                                 |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ENC cells directory | where the `.000` cells are                                                                                                                                                   |
+| Boat                | draft (empty uses Signal K `design.draft.maximum`) and safety margin under the keel (0 m); only the keel's lowest point counts, and squat and waves are added on top (below) |
+| Water level         | source (`none`, `manual`, `signalk-tide`, `fmi`, see below); only the chosen source's fields are shown                                                                       |
+| Warnings            | Early, Balanced or Late, in the table below                                                                                                                                  |
+| Optional features   | living chart (own soundings), Traficom WFS depths, grounding detector; each off until enabled                                                                                |
 
 | Warning style      | Looks ahead | Alert at | Warn at, within | Alarm at, within | Alarm on negative mean UKC |
 | ------------------ | ----------- | -------- | --------------- | ---------------- | -------------------------- |
@@ -159,19 +158,18 @@ There are two places to set the plugin up, and both write the same configuration
 
 Early is at least as cautious as Balanced in every column, and Balanced as Late.
 
-The hull sets two corrections to the draft. **Heel**: a boat leaning over lifts its keel, since
-the keel tip swings up and sideways; the draft shrinks by draft × (1 − cos heel), 13 cm for a
-2.2 m keel at 20°. The plugin takes the least roll of the last 10 s, so a boat rolling through
-upright gets no lift. **Squat**: a hull under way sits deeper in the water, by Cb × V² / 100 m
-at V knots (Barrass), where Cb is the block coefficient, how full the hull is below the water.
-A planing boat rises at planing speed, but its drive or propeller stays the deepest point and it
-squats most just before planing, so no lift is subtracted.
+The boat is its keel's lowest point, the draft, plus the safety margin. Two corrections that
+only add depth are applied on top. **Squat**: a hull under way sits deeper in the water, by
+Cb × V² / 100 m at V knots (Barrass), where Cb, the block coefficient, says how full the hull is
+below the water; at the default 0.40 that is 14 cm at 6 kn and nothing when stopped. A planing
+boat rises at planing speed, but its drive or propeller stays the deepest point and it squats
+most just before planing, so no lift is subtracted. **Waves**: 0.4 × the significant wave
+height, when Signal K has `environment.water.waves.significantHeight`.
 
-| Hull      | Heel                   | Squat at 6 kn |
-| --------- | ---------------------- | ------------- |
-| Sailboat  | keel rises when heeled | 16 cm         |
-| Motorboat | full draft kept        | 22 cm         |
-| Not set   | full draft kept        | 14 cm         |
+**Heel** gives no credit: a boat leaning over lifts its keel tip, but a tack, a bear-away or
+dropping the sails puts the keel back at full depth within the look-ahead, so the keel counts at
+full depth. Under expert settings, **Heel effect on draft** can credit a fin keel, draft ×
+(1 − cos heel) at the least roll of the last 10 s, or a table of heel to draft change.
 
 Expert settings, with their defaults:
 
@@ -187,8 +185,8 @@ Expert settings, with their defaults:
 
 The saved configuration carries a version, `configVersion`. At the first start after an update
 from a configuration without one, the plugin keeps a copy as `config-v1.json` in its data
-directory, removes the look-ahead and squat values the old admin form had filled in with their
-defaults, so the warning style and hull can set them, and saves the result. The plugin then
+directory, removes the look-ahead values the old admin form had filled in with their
+defaults, so the warning style can set them, and saves the result. The plugin then
 behaves exactly as before; a value that differed from its default stays and overrides the
 style.
 

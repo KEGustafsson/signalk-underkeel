@@ -4,7 +4,7 @@ import { CONFIG_VERSION, migrateConfig } from "../src/config-migrate";
 
 /**
  * Version 1 configurations carry every look-ahead and squat default the old
- * form filled in. Migration drops those so the warning style and hull can
+ * form filled in. Migration drops those so the warning style can
  * set them, and must not change what the plugin does with the configuration.
  */
 
@@ -40,9 +40,7 @@ describe("configuration migration", () => {
         "lookahead.certainWithin",
         "lookahead.distance",
         "lookahead.warnRisk",
-        "lookahead.warnWithin",
-        "vessel.blockCoefficient",
-        "vessel.keel"
+        "lookahead.warnWithin"
       ].sort()
     );
     expect(m.config.lookahead).toEqual({
@@ -94,12 +92,8 @@ describe("configuration migration", () => {
     expect(mismatches).toEqual([]);
   });
 
-  test("a configuration naming a style or hull keeps its values", () => {
-    const raw = {
-      warningStyle: "late",
-      lookahead: { warnRisk: 0.05 },
-      vessel: { hull: "motorboat", keel: "none" }
-    };
+  test("a configuration naming a warning style keeps its values", () => {
+    const raw = { warningStyle: "late", lookahead: { warnRisk: 0.05 } };
     expect(migrateConfig(raw).config).toMatchObject(raw);
   });
 

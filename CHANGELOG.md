@@ -7,24 +7,22 @@ All notable changes to signalk-underkeel are documented here.
 ### Added
 
 - Setup steps in Freeboard, opened with **Open setup** in the Under-keel details panel (also
-  `/plotterext/signalk-underkeel/setup.html`): the boat on a side view, drawn for the chosen
-  hull, whose keel, safety margin and sounder can be dragged, the water-level source with the
-  one fitting the charts' vertical datum marked, a warning style and the optional features,
-  with a setup check. It reads and saves through the admin-only `GET` and `POST /settings`; a
-  save is a patch checked against the schema, and the server's restart callback writes it and
-  restarts the plugin.
+  `/plotterext/signalk-underkeel/setup.html`): the boat on a side view whose keel, safety margin and
+  sounder can be dragged, with what the plugin adds on its own (squat, waves), the water-level
+  source with the one fitting the charts' vertical datum marked, a warning style and the optional
+  features, with a setup check. It reads and saves through the admin-only `GET` and
+  `POST /settings`; a save is a patch checked against the schema, and the server's restart
+  callback writes it and restarts the plugin.
 - Warning styles Early, Balanced and Late set the look-ahead thresholds, windows and distance;
-  Balanced is the earlier default. A hull choice, sailboat or motorboat, sets squat and heel.
-  An expert value overrides its field.
-- The admin form asks for the cells directory, draft, margin, hull, water-level source,
-  warning style and optional features; **Show expert settings** opens 29 more fields and a
+  Balanced is the earlier default. An expert value overrides its field.
+- The admin form asks for the cells directory, draft, margin, water-level source, warning style
+  and optional features; **Show expert settings** opens 29 more fields and a
   feature's fields appear once it is enabled. Its description lists the setup check, and the
   draft and water-level fields say what Signal K and the charts state. Admin UIs before Signal
   K 2.32 get every field at once.
 - The configuration is versioned (`configVersion: 2`). The first start after an update keeps
   the old configuration as `config-v1.json` in the plugin data directory and removes the
-  look-ahead and squat values the old form filled in with their defaults; the plugin behaves
-  as before.
+  look-ahead values the old form filled in with their defaults; the plugin behaves as before.
 - Depth areas and contours are placed by the chart's own drawing (0.5 mm at the cell's
   compilation scale, 6 m at 1:12 000), as land already was, instead of by the survey's CATZOC
   position accuracy; soundings and point dangers keep CATZOC. A record NOAA marks approximate

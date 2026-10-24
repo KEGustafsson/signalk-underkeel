@@ -1,3 +1,4 @@
+import { parseConfig } from "../src/config";
 import {
   adminSchema,
   flatten,
@@ -22,12 +23,11 @@ function fields(s: Schema, prefix = ""): string[] {
 }
 
 describe("admin form", () => {
-  test("shows ten fields until expert settings or a feature are switched on", () => {
+  test("shows nine fields until expert settings or a feature are switched on", () => {
     expect(fields(adminSchema() as Schema)).toEqual([
       "cellsDir",
       "vessel.draft",
       "vessel.margin",
-      "vessel.hull",
       "waterLevel.source",
       "warningStyle",
       "livechart.enabled",
@@ -40,7 +40,7 @@ describe("admin form", () => {
   test("the flat schema holds every setting once, without showExpert", () => {
     const all = fields(SCHEMA as Schema);
     expect(new Set(all).size).toBe(all.length);
-    expect(all).toHaveLength(56);
+    expect(all).toHaveLength(55);
     expect(all).not.toContain("showExpert");
     for (const f of [
       "vessel.heelTable",
@@ -63,10 +63,8 @@ describe("admin form", () => {
   });
 
   // The form fills a field's default into every save; a filled value would override the preset.
-  test("the fields a warning style or hull sets have no default", () => {
-    const flat = SCHEMA as Schema;
-    const lookahead = flat.properties?.lookahead?.properties ?? {};
-    const vessel = flat.properties?.vessel?.properties ?? {};
+  test("the fields a warning style sets have no default", () => {
+    const lookahead = (SCHEMA as Schema).properties?.lookahead?.properties ?? {};
     const preset = [
       lookahead.distance,
       lookahead.alertRisk,
@@ -74,20 +72,17 @@ describe("admin form", () => {
       lookahead.alarmRisk,
       lookahead.warnWithin,
       lookahead.alarmWithin,
-      lookahead.certainWithin,
-      vessel.blockCoefficient,
-      vessel.keel
+      lookahead.certainWithin
     ];
     expect(preset.map((f) => f && "default" in f)).toEqual(preset.map(() => false));
   });
 
-  test("the hull defaults to not set, the first choice, so a save picks no heel model", () => {
-    const hull = (SCHEMA as Schema).properties?.vessel?.properties?.hull as {
-      default: string;
-      oneOf: { const: string }[];
-    };
-    expect(hull.default).toBe("none");
-    expect(hull.oneOf[0]?.const).toBe("none");
+  // Safety: heel is the one term that lowers the draft, so it is off unless chosen.
+  test("heel gives no credit unless set: the keel counts at full depth", () => {
+    expect((SCHEMA as Schema).properties?.vessel?.properties?.keel).toMatchObject({
+      default: "none"
+    });
+    expect(parseConfig({}).dynamics.heel).toEqual({ kind: "none" });
   });
 
   test("the warning style is a radio choice defaulting to balanced", () => {

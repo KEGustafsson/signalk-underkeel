@@ -10,8 +10,8 @@ import type { DynamicsOptions, VesselModel } from "./model/vessel";
 import { DEFAULT_DYNAMICS } from "./model/vessel";
 import { LIMITS } from "./api/route-request";
 import { DEFAULT_WFS_URL, WFS_LIMITS } from "./ingest/wfs";
-import type { Hull, HullPreset, WarningStyle } from "./config-presets";
-import { HULL_PRESETS, hull, NO_HULL, WARNING_PRESETS, warningStyle } from "./config-presets";
+import type { WarningStyle } from "./config-presets";
+import { WARNING_PRESETS, warningStyle } from "./config-presets";
 
 export { SCHEMA } from "./config-schema";
 
@@ -37,8 +37,6 @@ export interface PluginConfig {
   boxRadiusKm: number;
   /** Sets the look-ahead fields the configuration leaves empty. */
   warningStyle: WarningStyle;
-  /** Sets squat and heel where the configuration leaves them empty; undefined when not chosen. */
-  hull?: Hull;
   vessel: Partial<VesselModel>;
   dynamics: DynamicsOptions;
   waterLevel: WaterLevelConfig;
@@ -107,12 +105,12 @@ function degrees(v: unknown, fallback: number, min: number, max: number): number
   return Number.isNaN(d) ? fallback : d * DEG;
 }
 
-function heelModel(v: Record<string, unknown>, preset: HullPreset): HeelModel {
-  const keel = v.keel === "none" || v.keel === "fin" || v.keel === "table" ? v.keel : preset.keel;
-  if (keel === "fin") {
+/** Heel gives no credit unless the configuration sets a heel model: the keel counts at full depth. */
+function heelModel(v: Record<string, unknown>): HeelModel {
+  if (v.keel === "fin") {
     return { kind: "fin" };
   }
-  if (keel === "table" && Array.isArray(v.heelTable)) {
+  if (v.keel === "table" && Array.isArray(v.heelTable)) {
     const points = v.heelTable
       .map(record)
       .filter((p) => typeof p.heel === "number" && typeof p.delta === "number")
@@ -124,12 +122,10 @@ function heelModel(v: Record<string, unknown>, preset: HullPreset): HeelModel {
 
 function parseDynamics(v: Record<string, unknown>): DynamicsOptions {
   const d = DEFAULT_DYNAMICS;
-  const chosen = hull(v.hull);
-  const h = chosen ? HULL_PRESETS[chosen] : NO_HULL;
   return {
-    blockCoefficient: num(v.blockCoefficient, h.blockCoefficient, 0, 1),
+    blockCoefficient: num(v.blockCoefficient, d.blockCoefficient, 0, 1),
     confined: v.confined === true,
-    heel: heelModel(v, h),
+    heel: heelModel(v),
     waveFactor: num(v.waveFactor, d.waveFactor, 0, 2),
     draftSigma: num(v.draftSigma, d.draftSigma, 0, 5),
     margin: num(v.margin, d.margin, 0, 10)
@@ -255,7 +251,6 @@ export function parseConfig(raw: unknown): PluginConfig {
     leafZoom: Math.round(num(r.leafZoom, 20, 14, 22)),
     boxRadiusKm: boxRadius(r.boxRadiusKm),
     warningStyle: style,
-    hull: hull(v.hull),
     vessel: {
       draft: optionalPositive(v.draft),
       length: optionalPositive(v.length),

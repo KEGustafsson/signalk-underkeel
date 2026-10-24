@@ -10,9 +10,9 @@ type Raw = Record<string, unknown>;
 
 /**
  * Values the version 1 form filled into every saved configuration as
- * defaults. Version 2 leaves these fields empty so the warning style and the
- * hull set them; a saved value equal to its version 1 default was the form's
- * default, not the user's choice, and is dropped.
+ * defaults. Version 2 leaves these fields empty so the warning style sets
+ * them; a saved value equal to its version 1 default was the form's default,
+ * not the user's choice, and is dropped.
  */
 const V1_FILLED = {
   lookahead: {
@@ -23,8 +23,7 @@ const V1_FILLED = {
     warnWithin: 120,
     alarmWithin: 60,
     certainWithin: 30
-  },
-  vessel: { blockCoefficient: 0.4, keel: "none" }
+  }
 } as const;
 
 function record(v: unknown): Raw {
@@ -50,12 +49,9 @@ function withoutFilled(group: string, raw: Raw, filled: Raw, dropped: string[]):
 
 function v1ToV2(c: Raw, dropped: string[]): Raw {
   const out = { ...c };
-  // A configuration that already names a warning style or hull was written for version 2.
+  // A configuration that already names a warning style was written for version 2.
   if (c.warningStyle === undefined && "lookahead" in c) {
     out.lookahead = withoutFilled("lookahead", record(c.lookahead), V1_FILLED.lookahead, dropped);
-  }
-  if (record(c.vessel).hull === undefined && "vessel" in c) {
-    out.vessel = withoutFilled("vessel", record(c.vessel), V1_FILLED.vessel, dropped);
   }
   return out;
 }

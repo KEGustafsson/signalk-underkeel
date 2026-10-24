@@ -1,13 +1,12 @@
 import { parseConfig } from "../src/config";
 import type { WarningPreset } from "../src/config-presets";
-import { HULL_PRESETS, HULLS, WARNING_PRESETS } from "../src/config-presets";
+import { WARNING_PRESETS } from "../src/config-presets";
 import { DEFAULT_LOOKAHEAD } from "../src/engine/lookahead";
-import { DEFAULT_DYNAMICS } from "../src/model/vessel";
 
 /**
- * The warning style and the hull set the expert fields the configuration
- * leaves empty. Balanced and no hull are the earlier defaults; an expert
- * value overrides its preset field alone.
+ * The warning style sets the look-ahead fields the configuration leaves
+ * empty. Balanced is the earlier default; an expert value overrides its
+ * field alone.
  */
 
 describe("warning style", () => {
@@ -61,41 +60,5 @@ describe("warning style", () => {
   test("an expert value overrides its field and the others follow the style", () => {
     const l = parseConfig({ warningStyle: "late", lookahead: { warnRisk: 0.04 } }).lookahead;
     expect(l.thresholds).toEqual({ alert: 0.02, warn: 0.04, alarm: 0.3 });
-  });
-});
-
-describe("hull", () => {
-  test("not set, unknown or 'none' keeps squat Cb 0.4 and ignores heel", () => {
-    for (const hull of [undefined, "none", "raft"]) {
-      const c = parseConfig({ vessel: { hull } });
-      expect(c.dynamics).toEqual(DEFAULT_DYNAMICS);
-      expect(c.hull).toBeUndefined();
-    }
-  });
-
-  test.each(HULLS)("%s sets the block coefficient and the heel model", (hull) => {
-    const c = parseConfig({ vessel: { hull } });
-    expect(c.hull).toBe(hull);
-    expect(c.dynamics.blockCoefficient).toBe(HULL_PRESETS[hull].blockCoefficient);
-    expect(c.dynamics.heel).toEqual({ kind: HULL_PRESETS[hull].keel });
-  });
-
-  test("a sailboat's keel rises with heel; a motorboat keeps its full draft and squats more", () => {
-    expect(HULL_PRESETS).toEqual({
-      sailboat: { blockCoefficient: 0.45, keel: "fin" },
-      motorboat: { blockCoefficient: 0.6, keel: "none" }
-    });
-  });
-
-  // Each choice squats at least as much as the version 1 default, Cb 0.40.
-  test("no hull squats less than not setting one", () => {
-    expect(HULLS.map((h) => HULL_PRESETS[h].blockCoefficient >= 0.4)).toEqual(
-      HULLS.map(() => true)
-    );
-  });
-
-  test("expert block coefficient and keel override the hull", () => {
-    const c = parseConfig({ vessel: { hull: "sailboat", blockCoefficient: 0.7, keel: "none" } });
-    expect(c.dynamics).toMatchObject({ blockCoefficient: 0.7, heel: { kind: "none" } });
   });
 });

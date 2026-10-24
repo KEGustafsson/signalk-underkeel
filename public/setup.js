@@ -119,58 +119,39 @@ function label(x, y, t, attrs) {
   return text(x, y, t, { stroke: "var(--panel)", "stroke-width": 3, "paint-order": "stroke", ...attrs });
 }
 
-/** The hull body from the deck down to `bottom`, the stern on the left; a transom when `flat`. */
-function hullBody(bottom, flat) {
-  const stern = flat ? `L44 ${bottom} L40 ${VIEW.deck}` : `Q52 ${bottom - 6} 40 ${VIEW.deck}`;
-  return h("svg:path", {
-    d: `M40 ${VIEW.deck} L340 ${VIEW.deck} Q336 ${bottom - 18} 300 ${bottom} L92 ${bottom} ${stern} Z`,
-    fill: "var(--page)",
-    stroke: "var(--ink)",
-    "stroke-width": 2
-  });
-}
-
 /**
- * The underwater shape of each hull choice, its deepest point at `keelY`:
- * where the draft handle sits. Sailboats carry a mast, motorboats a
- * windscreen or wheelhouse. Without a draft the keel is drawn as an outline.
+ * A plain hull and keel, the stern on the left. Only the keel's lowest point
+ * counts, at `keelY`, where the draft handle sits; without a draft the keel
+ * is drawn as an outline.
  */
-function hullShape(hull, keelY, known) {
-  const solid = { fill: known ? "var(--ink)" : "none", stroke: "var(--ink)", "stroke-dasharray": known ? null : "4 3" };
+function hullShape(keelY, known) {
   const hb = VIEW.hullBottom;
-  const mast = h("svg:line", { x1: 168, y1: 8, x2: 168, y2: VIEW.deck, stroke: "var(--ink)", "stroke-width": 2 });
-  const rudder = (x, bottom) => h("svg:path", { d: `M${x - 4} ${hb - 4} L${x + 6} ${hb - 4} L${x + 4} ${bottom} L${x - 4} ${bottom} Z`, ...solid });
-  if (hull === "motorboat") {
-    const bottom = Math.max(hb, VIEW.water + (keelY - VIEW.water) * 0.7);
-    return {
-      keelX: 96,
-      parts: [
-        hullBody(bottom, false),
-        h("svg:rect", { x: 170, y: 22, width: 80, height: VIEW.deck - 22, fill: "var(--page)", stroke: "var(--ink)", "stroke-width": 2 }),
-        h("svg:path", { d: `M84 ${bottom} L170 ${bottom} L104 ${keelY} L88 ${keelY} Z`, ...solid }),
-        rudder(66, keelY - 4)
-      ]
-    };
-  }
-  const fin = h("svg:path", { d: `M173 ${hb} L209 ${hb} L203 ${keelY} L179 ${keelY} Z`, ...solid });
-  // A sailboat's keel carries a bulb; with no hull chosen the fin is drawn plain.
-  const bulb = hull === "sailboat" ? h("svg:ellipse", { cx: 191, cy: keelY - 5, rx: 24, ry: 5, ...solid }) : null;
-  return { keelX: 191, parts: [mast, hullBody(hb, false), fin, bulb, rudder(70, hb + (keelY - hb) * 0.5)] };
+  return [
+    h("svg:path", {
+      d: `M40 ${VIEW.deck} L340 ${VIEW.deck} Q336 ${hb - 18} 300 ${hb} L92 ${hb} Q52 ${hb - 6} 40 ${VIEW.deck} Z`,
+      fill: "var(--page)",
+      stroke: "var(--ink)",
+      "stroke-width": 2
+    }),
+    h("svg:path", {
+      d: `M173 ${hb} L209 ${hb} L203 ${keelY} L179 ${keelY} Z`,
+      fill: known ? "var(--ink)" : "none",
+      stroke: "var(--ink)",
+      "stroke-dasharray": known ? null : "4 3"
+    })
+  ];
 }
-
-const HULL_NAMES = { sailboat: "sailboat", motorboat: "motorboat" };
 
 function boatSvg() {
   const b = boatValues();
   const g = geometry(b);
-  const hull = val("vessel.hull");
-  const shape = hullShape(hull, g.keelY, b.draft !== undefined);
+  const keelX = 191;
   const svg = h(
     "svg:svg",
     {
       viewBox: `0 0 ${VIEW.w} ${VIEW.h}`,
       role: "img",
-      "aria-label": `Side view of a ${HULL_NAMES[hull] ?? "boat"}: draft ${b.draft ?? "not set"} m, margin ${b.margin} m`
+      "aria-label": `Side view: draft ${b.draft ?? "not set"} m, margin ${b.margin} m`
     },
     h("svg:rect", { x: 0, y: 0, width: VIEW.w, height: VIEW.h, fill: "var(--panel)" }),
     h("svg:rect", { x: 0, y: VIEW.water, width: VIEW.w, height: VIEW.h - VIEW.water, fill: "var(--water)" }),
@@ -179,7 +160,7 @@ function boatSvg() {
       fill: "var(--bed)"
     }),
     h("svg:line", { x1: 0, y1: VIEW.water, x2: VIEW.w, y2: VIEW.water, stroke: "var(--accent)", "stroke-width": 1.5 }),
-    shape.parts,
+    hullShape(g.keelY, b.draft !== undefined),
     label(8, VIEW.water + 14, "waterline", { fill: "var(--accent)" }),
     h("svg:circle", { cx: VIEW.gnssX, cy: 36, r: 4, fill: "var(--ink)" }),
     text(VIEW.gnssX + 8, 34, "GNSS"),
@@ -193,7 +174,7 @@ function boatSvg() {
     label(112, g.marginY + 16, `+ margin ${b.margin.toFixed(2)} m`, { fill: "var(--margin-ink)", "font-weight": 600 })
   );
   svg.append(
-    handle("handle", shape.keelX, g.keelY, "var(--ink)", "Draft", (b.draft ?? 1.5).toFixed(2), (d) => setDraft((b.draft ?? 1.5) + d)),
+    handle("handle", keelX, g.keelY, "var(--ink)", "Draft", (b.draft ?? 1.5).toFixed(2), (d) => setDraft((b.draft ?? 1.5) + d)),
     handle("handle", 300, g.marginY, "var(--margin)", "Safety margin", b.margin.toFixed(2), (d) => setMargin(b.margin + d))
   );
   if (b.sounder) {
@@ -284,6 +265,7 @@ function redrawBoat() {
   if (draft && document.activeElement !== draft) {
     draft.value = val("vessel.draft") ?? "";
   }
+  document.getElementById("draft-hint")?.replaceWith(draftHint());
   const margin = document.getElementById("margin");
   if (margin && document.activeElement !== margin) {
     margin.value = b.margin;
@@ -314,45 +296,56 @@ function numberField(id, label, path, placeholder, hint) {
   );
 }
 
-const HULL_TEXT = {
-  sailboat: ["Sailboat", "keel rises when heeled"],
-  motorboat: ["Motorboat", "full draft when rolling"]
-};
+/** What the plugin adds to the draft by itself, in words, from the configured or default factors. */
+function addedOnTop() {
+  const d = s.data.defaults;
+  const cb = val("vessel.blockCoefficient") ?? d.blockCoefficient;
+  const waves = val("vessel.waveFactor") ?? d.waveFactor;
+  const keel = val("vessel.keel") ?? "none";
+  // Squat in words: S = Cb·V²/100 m at V knots, here at the reference speed.
+  const squat = Math.round(cb * REFERENCE_KNOTS ** 2);
+  return h(
+    "div",
+    { class: "facts" },
+    h("b", { style: "color:var(--ink)" }, "Added on top, automatically"),
+    h("div", {}, `Squat: sits ${squat} cm deeper at ${REFERENCE_KNOTS} kn, 0 when stopped`),
+    h("div", {}, `Waves: ${waves} × wave height, when Signal K has it`),
+    h(
+      "div",
+      {},
+      keel === "none"
+        ? "No credit for heel: the keel always counts at full depth"
+        : `Heel credit on (${keel}, set under expert settings)`
+    )
+  );
+}
+
+/** Where the draft comes from: Signal K while the field is empty, else the value set here. */
+function draftHint() {
+  const signalk = facts().signalk.draft;
+  const fromSignalK = val("vessel.draft") === undefined && signalk !== undefined;
+  const text = fromSignalK
+    ? `using Signal K design.draft.maximum ${signalk} m`
+    : signalk !== undefined
+      ? `Signal K says ${signalk} m; empty uses it`
+      : "not in Signal K: set it here";
+  return h("span", { class: fromSignalK ? "hint ok" : "hint", id: "draft-hint" }, text);
+}
 
 function boatStep() {
   const f = facts();
   const signalk = f.signalk.draft;
-  const own = val("vessel.draft");
-  const draftHint =
-    own === undefined && signalk !== undefined
-      ? h("span", { class: "hint ok" }, `using Signal K design.draft.maximum ${signalk} m`)
-      : h("span", { class: "hint" }, signalk !== undefined ? `Signal K says ${signalk} m; empty uses it` : "not in Signal K: set it here");
-  const hull = val("vessel.hull");
-  const presets = s.data.presets.hulls;
   return [
     h("h2", {}, "Your boat"),
-    h("p", { class: "lead" }, "Drag the keel, the margin line or the sounder, or type the numbers."),
+    h("p", { class: "lead" }, "Only the lowest point counts. Drag the keel bottom, the margin line or the sounder, or type the numbers."),
     drawing(),
     h(
       "div",
       { class: "grid2" },
-      numberField("draft", "Draft", "vessel.draft", signalk ?? "", draftHint),
+      numberField("draft", "Draft", "vessel.draft", signalk ?? "", draftHint()),
       numberField("margin", "Safety margin", "vessel.margin", "0", h("span", { class: "hint" }, "extra water you want kept"))
     ),
-    h("div", { class: "field", style: "margin-top:12px" }, h("label", {}, "Hull")),
-    h(
-      "div",
-      { class: "choice", role: "group", "aria-label": "Hull" },
-      Object.entries(HULL_TEXT).map(([id, [title, heel]]) =>
-        h(
-          "button",
-          { type: "button", "aria-pressed": hull === id, onclick: () => edit("vessel.hull", hull === id ? "none" : id) },
-          title,
-          // Squat in words: S = Cb·V²/100 m at V knots, here at the reference speed.
-          h("small", {}, `${heel} · sits ${Math.round(presets[id].blockCoefficient * REFERENCE_KNOTS ** 2)} cm deeper at ${REFERENCE_KNOTS} kn`)
-        )
-      )
-    ),
+    addedOnTop(),
     h(
       "div",
       { class: "facts" },

@@ -774,14 +774,12 @@ Heel uses the range of absolute roll over the last 10 s: a fin keel takes the le
 table its largest change over the range. Roll above 60° or stale is no roll, which gives a fin
 keel no lift and a table its largest change.
 
-**Hull presets (configuration v2).** The configuration names a hull instead of asking for Cb
-and a heel model, since those are the two things the model reads of it: sailboat (Cb 0.45, fin
-heel) or motorboat (Cb 0.60, no heel). Any keel whose deepest point is on the centreline rises
-with heel, fin or long, so one sailboat choice covers both, with the long keel's higher Cb. A
-motorboat takes the displacement hull's Cb, more squat than a planing hull's. Not set is Cb 0.40
-and no heel, the version 1 defaults, and is the form's default and first choice, since the
-admin form fills an empty choice with the first one and a sailboat there would lift every
-saved keel with heel. An expert `blockCoefficient` or `keel` overrides the hull.
+Decision (configuration v2, safety invariant 2): the boat is its keel's lowest point. Squat and
+the wave allowance only add depth and stay automatic. Heel is the one term that lowers the
+draft, and its credit assumes the boat stays heeled across the look-ahead, which a tack, a
+bear-away or dropped sails ends; so `keel` defaults to `none`, the version 1 default, and the
+fin and table models are expert settings. No hull choice is asked: without heel it would only
+pick Cb, a few centimetres of squat at yacht speeds.
 
 ### 4.7 Risk model (core math)
 
@@ -1589,8 +1587,8 @@ reach (§4.5).
 
 **Decision (configuration v2): the essentials first, presets for the rest.** The version 1
 form showed 54 fields at once. Version 2 asks for the cells directory, draft, safety margin,
-hull, water-level source, warning style and the three optional features; the other fields
-follow the hull and the warning style, or keep their defaults, and are edited under **Show
+water-level source, warning style and the three optional features; the other fields follow
+the warning style or keep their defaults, and are edited under **Show
 expert settings**.
 
 - **One schema.** `adminSchema()` in `src/config-schema.ts` is written by hand with
@@ -1603,11 +1601,11 @@ expert settings**.
   charts' datums to the water-level source; a failure there leaves the hints out, never the
   form, since the server's error schema would be saved over the configuration.
 - **No default on a preset field.** The admin form writes every default into the saved
-  configuration, where it would override the preset. The style's and hull's fields have none.
+  configuration, where it would override the preset. The style's fields have none.
 - **Versioned configuration.** `configVersion` is saved outside the schema, which the form
   keeps as extra data. `migrateConfig()` runs one step per version at start; version 1 to 2
-  drops the look-ahead and squat values equal to the version 1 form defaults, unless the
-  configuration already names a style or hull. Over generated version 1 configurations the
+  drops the look-ahead values equal to the version 1 form defaults, unless the configuration
+  already names a style. Over generated version 1 configurations the
   parsed options are identical before and after (`__tests__/config-migrate.test.ts`). The
   first migration keeps the original as `config-v1.json` in the plugin data directory and
   saves the result with `savePluginOptions`, which writes without a restart; a backup that

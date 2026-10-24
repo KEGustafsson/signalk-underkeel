@@ -1,11 +1,9 @@
 import { DEFAULT_LOOKAHEAD } from "./engine/lookahead";
-import { DEFAULT_DYNAMICS } from "./model/vessel";
 
 /**
- * The two choices that stand in for groups of expert settings: a warning
- * style for the look-ahead thresholds, windows and distance, and a hull type
- * for squat and heel. An expert value set in the configuration overrides
- * the preset's value for that field alone.
+ * The warning style stands in for the look-ahead thresholds, windows and
+ * distance. An expert value set in the configuration overrides the style's
+ * value for that field alone.
  */
 
 export const WARNING_STYLES = ["early", "balanced", "late"] as const;
@@ -60,37 +58,6 @@ export const WARNING_PRESETS: Record<WarningStyle, WarningPreset> = {
   }
 };
 
-export const HULLS = ["sailboat", "motorboat"] as const;
-export type Hull = (typeof HULLS)[number];
-
-export interface HullPreset {
-  blockCoefficient: number;
-  /** The heel model as configured: fin lifts the keel with heel, none ignores heel. */
-  keel: "none" | "fin";
-}
-
-/**
- * The model reads two things of a hull: squat Cb and whether heel lifts the
- * keel. Any keel whose deepest point is on the centreline rises with heel,
- * fin or long, and Cb 0.45 is the higher of the two keels'. A motorboat takes
- * the displacement hull's Cb 0.60, more squat than a planing hull, and its
- * heel is ignored, which keeps the full draft.
- */
-export const HULL_PRESETS: Record<Hull, HullPreset> = {
-  sailboat: { blockCoefficient: 0.45, keel: "fin" },
-  motorboat: { blockCoefficient: 0.6, keel: "none" }
-};
-
-/** Squat and heel with no hull chosen: the earlier defaults. */
-export const NO_HULL: HullPreset = {
-  blockCoefficient: DEFAULT_DYNAMICS.blockCoefficient,
-  keel: "none"
-};
-
 export function warningStyle(v: unknown): WarningStyle {
   return WARNING_STYLES.find((s) => s === v) ?? "balanced";
-}
-
-export function hull(v: unknown): Hull | undefined {
-  return HULLS.find((h) => h === v);
 }

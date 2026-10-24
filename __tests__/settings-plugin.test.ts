@@ -89,7 +89,7 @@ describe("settings in the running plugin", () => {
     try {
       const reply = await r.post("/v1/settings", {
         warningStyle: "early",
-        vessel: { hull: "motorboat" }
+        vessel: { margin: 0.2 }
       });
       expect(reply.code).toBe(202);
       await new Promise((resolve) => setImmediate(resolve));
@@ -99,7 +99,7 @@ describe("settings in the running plugin", () => {
           cellsDir: CELLS,
           leafZoom: 18,
           warningStyle: "early",
-          vessel: { hull: "motorboat" }
+          vessel: { margin: 0.2 }
         }
       ]);
     } finally {
