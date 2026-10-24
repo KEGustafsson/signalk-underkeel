@@ -96,7 +96,6 @@ test("a slow tick still clears the heading, and a fast search ends the note", ()
   escape.after("warn", SLOW_TICK_MS + 1);
   expect(published).toEqual([1.5, null]);
   expect(escape.skipped).toMatch(/^escape search skipped: a tick took \d+ ms$/);
-  // A slow search keeps its heading; the next fast one clears its note.
   now = 1000 + ESCAPE_EVERY_MS;
   searchMs = SLOW_TICK_MS + 1;
   escape.after("warn", 5);
