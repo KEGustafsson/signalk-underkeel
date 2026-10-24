@@ -282,9 +282,10 @@ const sameBbox = (a: Bbox | undefined, b: Bbox | undefined): boolean =>
 export class WfsService {
   private box?: WfsBox;
   /**
-   * Whether the index saved in `indexDir` was built in `box`. A whole build, another
-   * `indexDir` or a crash between the two saves leaves them apart. Found at the first check,
-   * after the start plan has recovered a crash-left index or built one.
+   * Whether the index saved in `indexDir` was built in `box` and, when this run built it,
+   * handed over. A whole build, another `indexDir` or a crash between the two saves leaves
+   * them apart. Found at the first check, after the start plan has recovered a crash-left
+   * index or built one.
    */
   private indexed?: boolean;
   /** The box of the last index this service handed over in this run. */
@@ -490,12 +491,8 @@ export class WfsService {
       };
       fs.writeFileSync(path.join(this.deps.dir, "box.json"), JSON.stringify(box));
       this.box = box;
-      this.indexed = true;
-      this.cellLost = false;
       this.lastError = undefined;
-      const changed = this.handed && [this.handed, bbox];
-      this.handed = bbox;
-      await this.deps.onIndex(index, changed);
+      await this.handOver(index, bbox);
     } catch (err) {
       if (controller.signal.aborted) {
         return;
@@ -505,6 +502,19 @@ export class WfsService {
     } finally {
       this.busy = false;
     }
+  }
+
+  /**
+   * Puts the index of `bbox` in use. The box stays due until it is, so a failed handover
+   * is tried again.
+   */
+  private async handOver(index: ChartIndex, bbox: Bbox): Promise<void> {
+    const changed = this.handed && [this.handed, bbox];
+    this.indexed = false;
+    await this.deps.onIndex(index, changed);
+    this.indexed = true;
+    this.cellLost = false;
+    this.handed = bbox;
   }
 
   private readBox(): WfsBox | undefined {

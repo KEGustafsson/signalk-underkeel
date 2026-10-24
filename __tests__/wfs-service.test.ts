@@ -196,6 +196,28 @@ describe("WFS box around the vessel", () => {
     ]);
   });
 
+  test("a handover that fails is retried after the error wait, although the box still holds", async () => {
+    const h = harness();
+    const hand = h.deps.onIndex;
+    let fail = false;
+    h.deps.onIndex = (i, changed) =>
+      fail ? Promise.reject(new Error("rebind failed")) : hand(i, changed);
+    h.t.pos = [22.08, 60.07];
+    await h.service.check();
+    const first = h.service.status().box?.bbox;
+    fail = true;
+    h.t.now += 120_000;
+    h.t.pos = [22.08 + 6 * KM_LON_60, 60.07];
+    await h.service.check();
+    expect(h.indexes).toHaveLength(1);
+    expect(h.service.status().lastError).toBe("rebind failed");
+    fail = false;
+    h.t.now += 300_000;
+    await h.service.check();
+    expect(h.indexes).toHaveLength(2);
+    expect(h.handed[1]).toEqual([first, h.service.status().box?.bbox]);
+  });
+
   test("stop aborts a download in flight without an error or a new index", async () => {
     const pending: WfsFetch = (_url, init) =>
       new Promise((_resolve, reject) =>
@@ -344,6 +366,28 @@ describe("WFS box around the vessel", () => {
     again.t.pos = [22.08, 60.07];
     await again.service.check();
     expect(downloads(again.fetched)).toBe(1);
+  });
+
+  test("a saved cell gone missing is downloaded again when its handover failed", async () => {
+    const first = harness();
+    first.t.pos = [22.08, 60.07];
+    await first.service.check();
+    fs.rmSync(path.join(TMP, "FI1WFS01"), { recursive: true });
+    const again = harness();
+    const hand = again.deps.onIndex;
+    let fail = true;
+    again.deps.onIndex = (i, changed) =>
+      fail ? Promise.reject(new Error("rebind failed")) : hand(i, changed);
+    expect(again.service.savedCell()).toBeUndefined();
+    again.t.index = first.indexes[0];
+    again.t.pos = [22.08, 60.07];
+    await again.service.check();
+    expect(again.indexes).toHaveLength(0);
+    fail = false;
+    again.t.now += 300_000;
+    await again.service.check();
+    expect(downloads(again.fetched)).toBe(2);
+    expect(again.indexes).toHaveLength(1);
   });
 });
 
