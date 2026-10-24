@@ -29,7 +29,8 @@ All notable changes to signalk-underkeel are documented here.
   cell while the saved index holds S-57 cells, as an unmounted drive leaves it, keeps the saved
   index at start and the index in use at a refresh, instead of rebuilding from Traficom WFS
   depths alone or dropping the index. A torn or missing saved WFS cell is left out of the start
-  and downloaded again at the first check, and the saved box index stays in use meanwhile.
+  and downloaded again at the first check, and the saved box index stays in use meanwhile. A
+  box whose index could not be put in use is built and handed over again after 5 minutes.
   `GET /status` reports the box under `chartBox`. `boxRadiusKm: 0` indexes every cell; a radius
   under 2 km is raised to 2.
 - `indexDir` is owned by the plugin: a directory holding anything but an index is refused
@@ -673,7 +674,8 @@ All notable changes to signalk-underkeel are documented here.
   search the heading it found is kept and the next search waits the full 3 s. A search always
   slower than 250 ms ran every 2 s, and later had its heading cleared a tick after finding it, so
   the plotter showed the escape heading for 1 s in every 4; the plugin status now says the
-  searches are slow until a fast one runs.
+  searches are slow until a fast one runs. A slow search just before the danger passed no
+  longer holds back the first search when it returns.
 - `notifications.navigation.positionIntegrity` is sent at once when its state or kind of reason
   changes, and at most every 30 s while only its divergence or HDOP numbers drift. A lasting
   warning went out again, with sound, about once a second.
@@ -692,7 +694,8 @@ All notable changes to signalk-underkeel are documented here.
   `chartBox.lastError`), the 5xx replies of the REST routes and UKC tiles, and every
   notification message pass through one sanitizer: it shows a POSIX, Windows (`C:\`, `C:/`) or
   UNC path as `<path>`, keeps URLs, numbers and an S-57 cell file's name (`<path>/US5MA22M.000`),
-  and turns the text after `failed:` into `failed (see the server log)`. With no index,
+  and turns the text after `failed:` into `failed (see the server log)`. A path holding a space
+  or an apostrophe (`/home/O'Reilly/…`), quoted or not, is hidden whole. With no index,
   "UKC monitoring off: no cells in /srv/charts" went out on
   `notifications.navigation.underKeel` as written, and the 503 of `/query` and the route
   requests repeated the index reason, such as a `scandir` error naming the charts mount. Why a

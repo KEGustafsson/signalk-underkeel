@@ -299,7 +299,8 @@ between 0 and 2 km is raised to 2.
    too small to hold the band can at best be kept around the vessel, so the band counts only
    up to half the radius (the look-ahead's reach counts in full); past that the half-radius
    rule decides, and a drifting vessel does not rebuild a 2 km box every minute. Checks run
-   every 10 s, at most once a minute and 5 minutes after a failed download. The new box is
+   every 10 s, at most once a minute and 5 minutes after a failed download or handover; a box
+   whose index could not be put in use stays due. The new box is
    centred SOG × the last time ahead along COG, at most 0.8 × the radius, so the vessel is near
    its centre when it is handed over; at
    25 kn with 10-minute rebuilds the half-radius rule alone handed a box over with the vessel
@@ -1051,7 +1052,9 @@ and raw errors off the wire. `GET /status` reports no index directory. Its reaso
 and every notification message go through one sanitizer, `publicReason`
 (`src/foundation/public-text.ts`): the text after `failed:` becomes "failed (see the server
 log)", where the plugin error already holds it, and each absolute POSIX, Windows (`C:\`, `C:/`)
-or UNC path becomes `<path>`, keeping an S-57 cell file's name (`<path>/US5MA22M.000`). URLs,
+or UNC path becomes `<path>`, keeping an S-57 cell file's name (`<path>/US5MA22M.000`). A
+quoted path ends only at a quote followed by the end or a space whose next word holds no path
+separator, so a name holding an apostrophe or a space is hidden whole. URLs,
 relative paths, cell names and numbers are kept, and why a saved index could not be read stays
 in the index reason with its paths hidden, since that reason is the only place it is reported.
 A 4xx reply describes the request and goes out as it is. The plugin status and the server log
