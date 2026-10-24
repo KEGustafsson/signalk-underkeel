@@ -99,6 +99,19 @@ describe("living chart on an index read block by block", () => {
     expect(shoalDepth(store)).toBeLessThan(7);
   });
 
+  test("a cell over a block refused for good stays unsettled, never judged on stand-ins", async () => {
+    const store = cold();
+    const cache = cacheOf(store);
+    const [mx, my] = toMercator(...SHOAL);
+    const { x, y } = tileAt(cache?.blockZoom ?? 13, mx, my);
+    const key = x * 2 ** (cache?.blockZoom ?? 13) + y;
+    cache?.failed.set(key, "pyramid file is corrupt");
+    const svc = service(store);
+    sound(svc, 6, 6);
+    await svc.whenSettled();
+    expect(svc.status()).toMatchObject({ unsettled: 1, discrepancies: 0 });
+  });
+
   test("cells restored at start wait for their block, then are judged against it", async () => {
     // Four soundings: not yet a discrepancy, and saved so.
     const first = service(whole);

@@ -17,7 +17,8 @@ interface Cell {
 /**
  * The block of a store read block by block whose stand-ins the chart prior of cell (z, x, y)
  * would read now: the one holding the cell, while it is not loaded. undefined when the prior
- * reads the chart itself, or the block is refused for good and will never give it more.
+ * reads the chart itself. A block refused for good stays so, and its cells stay unsettled
+ * rather than be judged against chart data that was never read.
  */
 export function unloadedBlock(
   store: NodeStore,
