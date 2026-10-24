@@ -13,7 +13,8 @@
     "docs/images/how-it-works/route-check.jpg",
     "docs/images/how-it-works/freeboard-panel.jpg",
     "docs/images/how-it-works/config.png",
-    "docs/images/how-it-works/setup-panel.png"
+    "docs/images/how-it-works/setup-panel.png",
+    "docs/images/how-it-works/freeboard-open-setup.jpg"
   ],
   "keywords": [
     "signalk-node-server-plugin",
