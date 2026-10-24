@@ -46,6 +46,16 @@ describe("public reason", () => {
     expect(publicReason(raw)).toBe(shown);
   });
 
+  test.each([
+    ["open '/srv/Alice Smith/private/notes.txt'", "open '<path>'"],
+    ['open "C:\\Users\\Alice Smith\\box.json"', 'open "<path>"'],
+    ["no cells in C:\\Users\\Alice Smith\\charts", "no cells in <path>"],
+    ["no cells in /srv/Alice Smith/charts.", "no cells in <path>."],
+    ["read '/srv/A B/ENC_ROOT/US5MA22M/US5MA22M.000'", "read '<path>/US5MA22M.000'"]
+  ])("a path with spaces is hidden whole: %s", (raw, shown) => {
+    expect(publicReason(raw)).toBe(shown);
+  });
+
   test("an S-57 cell file keeps its name, its directory does not", () => {
     expect(publicReason("cell /srv/charts/ENC_ROOT/US5MA22M/US5MA22M.000: bad record")).toBe(
       "cell <path>/US5MA22M.000: bad record"
