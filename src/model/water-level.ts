@@ -1,4 +1,5 @@
 import type { LonLat } from "../foundation/geo";
+import { haversine } from "../foundation/geo";
 import type { DatumUse, LevelSeries } from "../ingest/datum";
 import type { WaterLevel } from "./uncertainty";
 
@@ -23,6 +24,15 @@ export interface ProviderHealth {
   message?: string;
 }
 
+/**
+ * Where a provider's levelAt answers: the same value at every position within
+ * `metres` of `centre`, undefined beyond.
+ */
+export interface LevelReach {
+  readonly centre: LonLat;
+  readonly metres: number;
+}
+
 export interface WaterLevelProvider {
   readonly id: string;
   /**
@@ -37,6 +47,12 @@ export interface WaterLevelProvider {
    * an interval minimum is sampled there as well as on a fixed step.
    */
   knots?(start: number, end: number): number[];
+  /**
+   * Present only for a provider whose answer depends on position: levelAt
+   * must be the same at every position within the reach and undefined
+   * beyond it. Absent means levelAt ignores position.
+   */
+  reach?(): LevelReach | undefined;
 }
 
 /** With no usable water level the engine works at chart datum with this σ. */
@@ -151,6 +167,21 @@ function unusable(p: WaterLevelProvider, now: number): string | undefined {
   return undefined;
 }
 
+/** Why `p` has no level at `position` and `t`: past its reach, or no value for the time. */
+function noValue(
+  p: WaterLevelProvider,
+  position: LonLat | undefined,
+  t: number,
+  series?: LevelSeries
+): string {
+  const from = `water level from ${p.id}`;
+  const reach = position && p.reach?.();
+  if (reach && haversine(position, reach.centre) > reach.metres) {
+    return `${from}: more than ${reach.metres / 1000} km from where its forecast was fetched`;
+  }
+  return `${from}: no ${series === undefined ? "" : `${series} `}value for ${iso(t)}`;
+}
+
 /** The level at `t`, or why there is none. */
 function sampleAt(
   p: WaterLevelProvider,
@@ -160,7 +191,7 @@ function sampleAt(
 ): WaterLevel | string {
   if (p.reference === "chart") {
     const s = p.levelAt(position, t, "mw");
-    return s ? { ...s } : `water level from ${p.id}: no value for ${iso(t)}`;
+    return s ? { ...s } : noValue(p, position, t);
   }
   // Cells on different datums share one level: take the lowest and the
   // widest σ, which per invariant 2 can only raise P(UKC < 0).
@@ -169,7 +200,7 @@ function sampleAt(
   for (const use of uses) {
     const s = p.levelAt(position, t, use.series);
     if (!s) {
-      return `water level from ${p.id}: no ${use.series} value for ${iso(t)}`;
+      return noValue(p, position, t, use.series);
     }
     if (!use.known) {
       unknown.push(...use.cells);
@@ -211,16 +242,22 @@ const LOW_WATER_DATUMS = new Set([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
 /**
  * Chart datum, as the level with no source. Where a cell states a datum that
  * is not low water (mean water in the Baltic, high water, local) the water
- * is often well below it, so the level is degraded with those datums named
- * rather than applied as if measured. A cell that states none, in practice
- * the advisory Traficom WFS cell, is taken at chart datum as before.
+ * is often well below it, so the level is degraded rather than applied as if
+ * measured. The reason names those datums and the source to set: fmi when
+ * one of them is mapped to an FMI series, else signalk-tide or manual. It
+ * never suggests adding a datum mapping, and holds no colon, since
+ * describe() adds one before its explanation. A cell that states none, in
+ * practice the advisory Traficom WFS cell, is taken at chart datum as before.
  */
 function noSource(uses: readonly DatumUse[]): WaterLevel {
   const other = new Set<number>();
+  let fmi = false;
   for (const use of uses) {
     for (const verdat of [use.verdat, ...(use.datumAreas ?? [])]) {
       if (verdat !== undefined && !LOW_WATER_DATUMS.has(verdat)) {
         other.add(verdat);
+        // A known use has no datum areas: this is its own datum, mapped to an FMI series.
+        fmi ||= use.known;
       }
     }
   }
@@ -228,15 +265,19 @@ function noSource(uses: readonly DatumUse[]): WaterLevel {
     return CHART_DATUM;
   }
   const datums = [...other].map((v) => `VERDAT ${v}`).join(", ");
+  const fix = fmi
+    ? "fmi in Finnish waters, or to signalk-tide or manual"
+    : "signalk-tide or manual";
   return {
     ...CHART_DATUM,
-    degraded: `no water-level source: chart datum assumed, which is not low water (${datums})`
+    degraded: `no water-level source, and chart datum is not low water (${datums}); set Water level source to ${fix}`
   };
 }
 
 /**
  * The level to apply at time `t`. No provider means chart datum, degraded
- * where a cell states a datum that is not low water; a provider that is unhealthy,
+ * where a cell states a datum that is not low water, with a reason naming
+ * those datums and the source to set; a provider that is unhealthy,
  * stale for more than 30 minutes or without a value for `t` falls back to
  * chart datum, or its last level when lower, with σ 0.3 m and a `degraded`
  * reason, never silently.

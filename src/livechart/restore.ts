@@ -2,18 +2,20 @@ import { tileKey } from "../foundation/geo";
 import type { NodeStore } from "../spatial/node-store";
 import type { Posteriors } from "./posterior";
 import { unloadedBlock } from "./chart-blocks";
-import { chartPrior, noPrior, rebasePrior } from "./posterior";
+import { chartPrior, noPrior, rebasePrior, withPeak } from "./posterior";
 import { isCell, isNodeValues, listOf, mergeAdjustments, tilesAt } from "./saved-state";
 
-/** Restoring a saved `livechart.json` onto the current index. */
+/** Restoring a saved `cells.ndjson` and `livechart.json` onto the current index. */
 
 /**
  * Restores the cells at the current living-chart zoom and returns how many were malformed.
  * Cells at another zoom are keyed at that zoom and dropped; their adjustments are mapped.
- * The index may have been rebuilt since the save, so each cell is moved onto the current
- * chart's prior and cell reference; a saved cellRef indexes the catalogue it was saved with.
- * A cell whose block is not loaded is left unsettled with noPrior() until the block loads: its
- * prior would read stand-ins, and reading them here would start a load of every such block.
+ * The index may have been rebuilt since the save, so every cell waits, unsettled with
+ * noPrior(), for the settler to move it onto the current chart's prior and cell reference in
+ * slices; a saved cellRef indexes the catalogue it was saved with. Start-up thus reads no chart
+ * prior per cell, which for a long history blocked a Raspberry Pi for seconds, and starts no
+ * load of a block. A cell's peakZ is first raised against the prior it was saved with, so a
+ * cell saved before peakZ existed keeps the evidence it held then.
  */
 export function restoreCells(cells: unknown[], store: NodeStore, posteriors: Posteriors): number {
   const z = store.adjustZoom;
@@ -25,12 +27,8 @@ export function restoreCells(cells: unknown[], store: NodeStore, posteriors: Pos
       // An uncharted cell's NaN prior is saved as null.
       const chartDepth = typeof c.chartDepth === "number" ? c.chartDepth : NaN;
       const key = tileKey(c.z, c.x, c.y);
-      const ready = unloadedBlock(store, c.z, c.x, c.y) === undefined;
-      const prior = ready ? chartPrior(store, c.z, c.x, c.y) : noPrior(c.cellRef);
-      posteriors.cells.set(key, rebasePrior({ ...c, chartDepth }, prior));
-      if (!ready) {
-        posteriors.unsettled.add(key);
-      }
+      posteriors.cells.set(key, rebasePrior(withPeak({ ...c, chartDepth }), noPrior()));
+      posteriors.unsettled.add(key);
     }
   }
   return malformed;

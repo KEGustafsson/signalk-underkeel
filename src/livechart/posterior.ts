@@ -25,6 +25,12 @@ export interface CellPosterior {
   /** Visits separated by more than PASS_GAP_MS. */
   passes: number;
   lastAt: number;
+  /**
+   * The most σ the posterior has read shallower than a charted prior, (chartDepth − mean)/σ,
+   * from its first sample on; never lowered, and absent while it never had one. It survives a
+   * rebase onto a chart that does not chart the cell, as after the index box moves away.
+   */
+  peakZ?: number;
 }
 
 /** Samples further apart in time than this belong to different passes. */
@@ -119,9 +125,79 @@ export class Posteriors {
       c.passes += 1;
     }
     c.lastAt = Math.max(c.lastAt, s.at);
+    const peak = shoalZ(c);
+    if (peak > (c.peakZ ?? -Infinity)) {
+      c.peakZ = peak;
+    }
     return c;
   }
+
+  /**
+   * Bounds the cells kept (plan §4.13) and returns how many it dropped. A cell with an
+   * adjustment or waiting for its chart block is never dropped. Shoals still gathering their
+   * evidence (`gathering`) and the other cells are bounded apart: once more than `max` of one
+   * kind could be dropped, those last sounded longest ago go until `low` remain. So a shoal
+   * keeps its evidence among ordinary cells, and a steady error that marks every cell of a
+   * passage still cannot grow them without end. A dropped cell sounded again starts from the
+   * chart.
+   */
+  prune(max: number, low: number): number {
+    if (this.cells.size <= max) {
+      return 0;
+    }
+    const plain: [number, number][] = [];
+    const shoals: [number, number][] = [];
+    for (const [key, c] of this.cells) {
+      if (!this.store.adjustments.has(key) && !this.unsettled.has(key)) {
+        (gathering(c) ? shoals : plain).push([c.lastAt, key]);
+      }
+    }
+    return this.dropOldest(plain, max, low) + this.dropOldest(shoals, max, low);
+  }
+
+  /** Past `max`, drops the oldest-sounded of `kind` ([lastAt, key]) until `low` remain. */
+  private dropOldest(kind: [number, number][], max: number, low: number): number {
+    if (kind.length <= max) {
+      return 0;
+    }
+    kind.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    const drop = kind.length - low;
+    for (const [, key] of kind.slice(0, drop)) {
+      this.cells.delete(key);
+    }
+    return drop;
+  }
 }
+
+/** A cell that has read this many σ shallower than a charted prior is marked as a shoal. */
+export const PROTECT_Z = 1;
+
+/** How many σ the posterior reads shallower than its prior; -Infinity without a charted one. */
+export function shoalZ(c: CellPosterior): number {
+  return Number.isFinite(c.chartDepth) && c.samples > 0
+    ? (c.chartDepth - c.mean) / c.sigma
+    : -Infinity;
+}
+
+/** `c` with its peakZ raised to its shoalZ() when that is higher. */
+export function withPeak(c: CellPosterior): CellPosterior {
+  const z = shoalZ(c);
+  return z > (c.peakZ ?? -Infinity) ? { ...c, peakZ: z } : c;
+}
+
+/** The cell has read PROTECT_Z or more shallower than a charted prior, at some time. */
+export const isProtectedMark = (c?: CellPosterior): boolean => (c?.peakZ ?? -Infinity) >= PROTECT_Z;
+
+/**
+ * A shoal waiting for its evidence: it has read PROTECT_Z or more shallower than a charted prior
+ * and has not yet had MIN_SAMPLES samples over MIN_PASSES passes to be judged with.
+ */
+export const gathering = (c: CellPosterior): boolean =>
+  isProtectedMark(c) && (c.samples < MIN_SAMPLES || c.passes < MIN_PASSES);
+
+/** A rebase marked the cell protected: its line must be saved so the mark survives a cut. */
+export const raisedMark = (before: CellPosterior | undefined, after: CellPosterior): boolean =>
+  !isProtectedMark(before) && isProtectedMark(after);
 
 /**
  * Moves a posterior onto another chart prior, for a saved cell meeting a rebuilt index:
@@ -151,24 +227,26 @@ export function rebasePrior(
     cellRef: prior.cellRef
   };
   if (!(evidenceP > 0)) {
-    return { ...rebased, mean: newP > 0 ? prior.depth : c.mean, sigma: prior.sigma };
+    return withPeak({ ...rebased, mean: newP > 0 ? prior.depth : c.mean, sigma: prior.sigma });
   }
   const prec = evidenceP + newP;
-  return {
+  return withPeak({
     ...rebased,
     mean: (evidenceW + (newP > 0 ? prior.depth * newP : 0)) / prec,
     sigma: Math.sqrt(1 / prec)
-  };
+  });
 }
 
 /**
  * The prior of a cell whose chart cannot be read yet: none, so the soundings stand alone and
- * the cell is not judged until it is rebased onto its chart.
+ * the cell is not judged until it is rebased onto its chart. Its cell reference is -1, no
+ * cell: a reference kept from another index would name whatever cell that number has in the
+ * current catalogue, in query results and explanations.
  */
-export const noPrior = (cellRef: number): { depth: number; sigma: number; cellRef: number } => ({
+export const noPrior = (): { depth: number; sigma: number; cellRef: number } => ({
   depth: NaN,
   sigma: NO_PRIOR_SIGMA,
-  cellRef
+  cellRef: -1
 });
 
 /** Trigger (plan §4.13): at least this many samples over at least this many passes. */

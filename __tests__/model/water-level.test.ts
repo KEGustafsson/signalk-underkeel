@@ -79,21 +79,52 @@ describe("water-level resolution", () => {
     expect(CHART_DATUM.sigma).toBe(CHART_DATUM_SIGMA);
   });
 
-  test("no provider on a datum that is not low water is degraded and names it", () => {
+  test("no provider on a datum that is not low water is degraded and names it and the source to set", () => {
     // Finnish cells on mean water: the Baltic is often 0.3-0.8 m below it.
     const uses = datumUses([cell("LAT", 23), cell("FI", 3), cell("FI2", 26)]);
     expect(resolveWaterLevel(undefined, uses, undefined, NOW, NOW)).toEqual({
       ...CHART_DATUM,
       degraded:
-        "no water-level source: chart datum assumed, which is not low water (VERDAT 3, VERDAT 26)"
+        "no water-level source, and chart datum is not low water (VERDAT 3, VERDAT 26); set Water level source to fmi in Finnish waters, or to signalk-tide or manual"
     });
+    // Datum areas on another VERDAT leave the cell unmapped, so FMI is not offered.
     const mixed = datumUses([{ ...cell("MIX", 12), datumAreas: [3] }]);
     expect(resolveWaterLevel(undefined, mixed, undefined, NOW, NOW).degraded).toMatch(
-      /\(VERDAT 3\)$/
+      /\(VERDAT 3\); set Water level source to signalk-tide or manual$/
     );
     const leg = lowestWaterLevel(undefined, uses, undefined, NOW, NOW + HOUR, NOW);
     expect(leg).toMatchObject({ h: 0, sigma: CHART_DATUM_SIGMA });
     expect(leg.degraded).toMatch(/no water-level source/);
+  });
+
+  test("with no provider a datum no FMI series maps to is told to use signalk-tide or manual", () => {
+    const high = resolveWaterLevel(undefined, datumUses([cell("HW", 16)]), undefined, NOW, NOW);
+    expect(high.degraded).toMatch(
+      /\(VERDAT 16\); set Water level source to signalk-tide or manual$/
+    );
+    expect(high.degraded).not.toMatch(/fmi/);
+  });
+
+  test("with no provider a user's FMI mapping of a datum offers fmi for it", () => {
+    const mapped = resolveWaterLevel(undefined, n2000, undefined, NOW, NOW);
+    expect(mapped.degraded).toContain("set Water level source to fmi in Finnish waters");
+    const unmapped = datumUses([cell("N", 24)]);
+    expect(resolveWaterLevel(undefined, unmapped, undefined, NOW, NOW).degraded).toMatch(
+      /set Water level source to signalk-tide or manual$/
+    );
+  });
+
+  test("the no-source reason holds no colon, so a notification message has only describe()'s", () => {
+    for (const uses of [
+      datumUses([cell("FI", 3), cell("FI2", 26)]),
+      datumUses([cell("HW", 16)]),
+      datumUses([{ ...cell("MIX", 12), datumAreas: [3] }]),
+      n2000
+    ]) {
+      const reason = resolveWaterLevel(undefined, uses, undefined, NOW, NOW).degraded;
+      expect(reason).toMatch(/^no water-level source/);
+      expect(reason).not.toMatch(/:/);
+    }
   });
 
   test("a manual height is applied as set", () => {

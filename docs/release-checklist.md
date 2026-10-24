@@ -26,3 +26,9 @@ Before `npm publish`, date the version's changelog heading (`## [0.1.0] - 2026-1
 
 Before a release, also run the **SignalK Plugin CI** workflow manually with
 "Run armv7 (Cerbo GX) tests via QEMU" ticked; the automatic runs skip armv7.
+
+Before a release that changes route repair, the pyramid or the corridor check, run
+`npm run build` and then `npm run bench` on a Raspberry Pi 4. The route repair work benchmark
+times the built plugin in plain node and prints the worst µs per work unit times `maxWork`. If
+that is over 1.5 s, lower `maxWork` and `maxRequestWork` in `DEFAULT_REPAIR`
+(`src/engine/route-repair.ts`) together, in the same ratio.

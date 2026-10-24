@@ -1,6 +1,7 @@
 import type { LonLat } from "../foundation/geo";
 import { EARTH_RADIUS, wrapLon } from "../foundation/geo";
 import type { Steps } from "./route-check";
+import { LINE_SAMPLES_PER_UNIT } from "./work";
 
 /** The grid and the Theta* search route repair runs on it (plan §4.11). */
 
@@ -98,11 +99,37 @@ class Heap {
   }
 }
 
-/** Mean cost along a straight segment, sampled every half cell; Infinity if it crosses a block. */
-function lineCost(g: Grid, i: number, j: number, costOf: (i: number) => number): number {
+/** The search's share of a repair's work budget (work.ts). */
+export interface SearchWork {
+  add(units: number): void;
+  /** True once the search may do no more work. */
+  stopped(): boolean;
+}
+
+/**
+ * Whether the line from the leg's own end, `from` in the start cell or `to`
+ * in the goal cell, to the centre of `cell` passes near that end. The ends
+ * can lie anywhere in their cells, so the cells' own costs do not stand for
+ * the lines that leave or reach them there.
+ */
+export type EndCheck = (end: "from" | "to", cell: number) => boolean;
+
+/**
+ * Mean cost along a straight segment, sampled every half cell; Infinity if
+ * it crosses a block. Its samples count as work in full before sampling,
+ * so the count does not depend on which cell blocks first.
+ */
+function lineCost(
+  g: Grid,
+  i: number,
+  j: number,
+  costOf: (i: number) => number,
+  work?: SearchWork
+): number {
   const [ax, ay] = [i % g.nx, Math.floor(i / g.nx)];
   const [bx, by] = [j % g.nx, Math.floor(j / g.nx)];
   const steps = Math.max(1, Math.ceil(2 * Math.hypot(bx - ax, by - ay)));
+  work?.add((steps + 1) / LINE_SAMPLES_PER_UNIT);
   let sum = 0;
   for (let k = 0; k <= steps; k++) {
     const x = Math.round(ax + ((bx - ax) * k) / steps);
@@ -129,11 +156,14 @@ class ThetaStar {
   private readonly parent: Int32Array;
   private readonly closed: Uint8Array;
   private readonly open = new Heap();
+  private start = -1;
 
   constructor(
     private readonly grid: Grid,
     private readonly costOf: (i: number) => number,
-    private readonly goal: number
+    private readonly goal: number,
+    private readonly work?: SearchWork,
+    private readonly ends?: EndCheck
   ) {
     const n = grid.nx * grid.ny;
     this.g = new Float64Array(n).fill(Infinity);
@@ -166,10 +196,21 @@ class ThetaStar {
     return out;
   }
 
+  /** lineCost, Infinity for a line out of the start or into the goal that `ends` refuses. */
+  private line(i: number, j: number): number {
+    if (
+      this.ends &&
+      ((i === this.start && !this.ends("from", j)) || (j === this.goal && !this.ends("to", i)))
+    ) {
+      return Infinity;
+    }
+    return lineCost(this.grid, i, j, this.costOf, this.work);
+  }
+
   private relax(s: number, t: number): void {
     const p = this.parent[s] as number;
-    const viaParent = (this.g[p] as number) + lineCost(this.grid, p, t, this.costOf);
-    const direct = (this.g[s] as number) + lineCost(this.grid, s, t, this.costOf);
+    const viaParent = (this.g[p] as number) + this.line(p, t);
+    const direct = (this.g[s] as number) + this.line(s, t);
     const [best, via] = viaParent <= direct ? [viaParent, p] : [direct, s];
     if (best < (this.g[t] as number)) {
       this.g[t] = best;
@@ -179,16 +220,20 @@ class ThetaStar {
   }
 
   /**
-   * Cells from start to goal, or undefined when the goal cannot be reached;
-   * it yields every EXPANSIONS_PER_STEP expanded cells.
+   * Cells from start to goal, or undefined when the goal cannot be reached
+   * or the work runs out; it yields every EXPANSIONS_PER_STEP expanded cells.
    */
   *search(start: number): Steps<number[] | undefined> {
+    this.start = start;
     this.g[start] = 0;
     this.parent[start] = start;
     this.open.push(start, this.h(start));
     let expanded = 0;
     while (this.open.size > 0) {
       const s = this.open.pop();
+      if (this.work?.stopped()) {
+        return undefined;
+      }
       if (s === this.goal) {
         break;
       }
@@ -216,6 +261,13 @@ class ThetaStar {
   }
 }
 
+export function cellCentre(g: Grid, i: number): LonLat {
+  return g.frame.toLonLat(
+    g.x0 + ((i % g.nx) + 0.5) * g.cell,
+    g.y0 + (Math.floor(i / g.nx) + 0.5) * g.cell
+  );
+}
+
 /** The cell `p` lies in, clamped to the grid. */
 export function cellOf(g: Grid, p: LonLat): number {
   const [x, y] = g.frame.toXY(p);
@@ -224,27 +276,28 @@ export function cellOf(g: Grid, p: LonLat): number {
   return cy * g.nx + cx;
 }
 
-/** The path from `from` to `to` through the grid's open cells, or undefined when there is none. */
+/**
+ * The path from `from` to `to` through the grid's open cells, or undefined
+ * when there is none or `work` stops the search first. With `ends`, its
+ * first and last lines are the ones `ends` passed.
+ */
 export function* thetaStar(
   g: Grid,
   from: LonLat,
   to: LonLat,
-  costOf: (i: number) => number
+  costOf: (i: number) => number,
+  work?: SearchWork,
+  ends?: EndCheck
 ): Steps<LonLat[] | undefined> {
   const start = cellOf(g, from);
   const goal = cellOf(g, to);
   if (costOf(start) === Infinity || costOf(goal) === Infinity) {
     return undefined;
   }
-  const cells = yield* new ThetaStar(g, costOf, goal).search(start);
+  const cells = yield* new ThetaStar(g, costOf, goal, work, ends).search(start);
   if (!cells) {
     return undefined;
   }
-  const centre = (i: number): LonLat =>
-    g.frame.toLonLat(
-      g.x0 + ((i % g.nx) + 0.5) * g.cell,
-      g.y0 + (Math.floor(i / g.nx) + 0.5) * g.cell
-    );
   // The leg's own endpoints replace the start and goal cell centres.
-  return [from, ...cells.slice(1, -1).map(centre), to];
+  return [from, ...cells.slice(1, -1).map((i) => cellCentre(g, i)), to];
 }

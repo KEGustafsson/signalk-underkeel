@@ -1,6 +1,9 @@
+import fc from "fast-check";
 import { parseConfig } from "../src/config";
 import type { LonLat } from "../src/foundation/geo";
+import { haversine, tileAt, toMercator } from "../src/foundation/geo";
 import type { FetchLike } from "../src/model/fmi";
+import { levelOver, tileCorners } from "../src/model/level-regimes";
 import type { ChartIndex } from "../src/spatial/chart-index";
 import { WaterLevelService } from "../src/water-level-service";
 
@@ -12,16 +15,37 @@ const index = {
   catalogue: { cells: [{ name: "A", edition: 1, update: 0, band: 5, soundingDatum: 26 }] }
 } as unknown as ChartIndex;
 
-/** An hourly FMI forecast of 20 cm above mean water from 2 h before NOW for 72 h. */
-function forecastXml(): string {
+/** An hourly FMI forecast of `cm` above mean water from 2 h before NOW for 72 h. */
+function forecastXml(cm = 20): string {
   const rows: string[] = [];
   for (let k = -2; k <= 72; k++) {
     const t = new Date(NOW + k * HOUR).toISOString();
     rows.push(
-      `<BsWfs:BsWfsElement><BsWfs:Time>${t}</BsWfs:Time><BsWfs:ParameterName>SeaLevel</BsWfs:ParameterName><BsWfs:ParameterValue>20</BsWfs:ParameterValue></BsWfs:BsWfsElement>`
+      `<BsWfs:BsWfsElement><BsWfs:Time>${t}</BsWfs:Time><BsWfs:ParameterName>SeaLevel</BsWfs:ParameterName><BsWfs:ParameterValue>${cm}</BsWfs:ParameterValue></BsWfs:BsWfsElement>`
     );
   }
   return `<wfs:FeatureCollection>${rows.join("")}</wfs:FeatureCollection>`;
+}
+
+const KEMI: LonLat = [24.52, 65.67];
+const VAASA: LonLat = [21.57, 63.08];
+
+/** An FMI source whose forecast, +0.62 m, was fetched at Kemi at NOW (or none was). */
+async function fmiAtKemi(fetched = true): Promise<WaterLevelService> {
+  const fetch: FetchLike = (url) =>
+    Promise.resolve({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve(url.includes("forecast") ? forecastXml(62) : "<x/>")
+    });
+  const s = new WaterLevelService(parseConfig({ waterLevel: { source: "fmi" } }), index, fetch);
+  if (fetched) {
+    s.refresh(KEMI, NOW);
+    for (let i = 0; i < 5; i++) {
+      await new Promise((r) => setImmediate(r));
+    }
+  }
+  return s;
 }
 
 /**
@@ -93,6 +117,7 @@ describe("water-level service", () => {
     expect(none.waterLevel.source).toBe("none");
     const mean = new WaterLevelService(none, index, noFetch);
     expect(mean.now(HELSINKI, NOW).degraded).toMatch(/VERDAT 26/);
+    expect(mean.status(HELSINKI, NOW).applied.degraded).toMatch(/set Water level source to fmi/);
     expect(mean.over(NOW, NOW + HOUR, [HELSINKI], NOW).degraded).toMatch(/VERDAT 26/);
     const low = {
       catalogue: { cells: [{ name: "B", edition: 1, update: 0, band: 5, soundingDatum: 23 }] }
@@ -111,5 +136,82 @@ describe("water-level service", () => {
   test("a failed FMI refetch is retried before the held forecast goes stale", async () => {
     expect(await degradedSeconds(600, 3600, (request) => request === 1)).toEqual([]);
     expect(await degradedSeconds(1800, 3600, (request) => request === 1)).toEqual([]);
+  });
+});
+
+describe("water level over areas", () => {
+  test("a source without a reach gives one level everywhere", () => {
+    const s = new WaterLevelService(
+      parseConfig({ waterLevel: { source: "manual", height: 0.4, sigma: 0.05 } }),
+      index,
+      noFetch
+    );
+    expect(s.regimes(NOW)).toEqual({ inside: { h: 0.4, sigma: 0.05, source: "manual" } });
+  });
+
+  test("FMI before its first forecast, or stale, gives one fallback everywhere", async () => {
+    const before = (await fmiAtKemi(false)).regimes(NOW);
+    expect(before.inside.degraded).toMatch(/no forecast fetched yet/);
+    expect(before.beyond).toBeUndefined();
+    const stale = (await fmiAtKemi()).regimes(NOW + 31 * 60000);
+    expect(stale.inside.degraded).toBe("water level from fmi is 31 min old");
+    expect(stale.beyond).toBeUndefined();
+  });
+
+  test("a fresh FMI forecast holds within 30 km of Kemi, and beyond it the level a leg would get", async () => {
+    const s = await fmiAtKemi();
+    const r = s.regimes(NOW);
+    expect(r.inside).toEqual(s.now(KEMI, NOW));
+    expect(r.inside).toMatchObject({ h: 0.62, source: "fmi:forecast" });
+    expect(r.inside.degraded).toBeUndefined();
+    expect(r.beyond?.reach).toEqual({ centre: KEMI, metres: 30000 });
+    expect(r.beyond?.level).toEqual(s.over(NOW, NOW, [KEMI, VAASA], NOW));
+    expect(r.beyond?.level.degraded).toMatch(/fmi/);
+    expect(r.beyond?.level.h).toBeLessThanOrEqual(r.inside.h);
+  });
+
+  test("beyond the forecast's reach the reason names the distance, not a missing time", async () => {
+    const s = await fmiAtKemi();
+    expect(s.now(VAASA, NOW).degraded).toBe(
+      "water level from fmi: more than 30 km from where its forecast was fetched"
+    );
+    expect(s.regimes(NOW).beyond?.level.degraded).toBe(
+      "water level from fmi: more than 30 km from where its forecast was fetched"
+    );
+  });
+
+  test("a tile or point never gets more water or a narrower σ than the level at its own positions", async () => {
+    // Invariant 2: the level over an area is no wetter than any position in it would get.
+    const s = await fmiAtKemi();
+    const r = s.regimes(NOW);
+    const near = fc.tuple(
+      fc.double({ min: KEMI[0] - 1, max: KEMI[0] + 1, noNaN: true }),
+      fc.double({ min: KEMI[1] - 0.5, max: KEMI[1] + 0.5, noNaN: true })
+    );
+    fc.assert(
+      fc.property(fc.integer({ min: 11, max: 16 }), near, (z, p) => {
+        const [mx, my] = toMercator(p[0], p[1]);
+        const t = tileAt(z, mx, my);
+        const corners = tileCorners(z, t.x, t.y);
+        const lvl = levelOver(r, corners);
+        const o = s.over(NOW, NOW, corners, NOW);
+        expect(lvl.h).toBeLessThanOrEqual(o.h);
+        expect(lvl.sigma).toBeGreaterThanOrEqual(o.sigma);
+        if (o.degraded !== undefined) {
+          expect(lvl.degraded).toBeDefined();
+        }
+        if (corners.every((c) => haversine(c, KEMI) <= 30000)) {
+          expect(lvl).toEqual(o);
+        }
+        const at = levelOver(r, [p]);
+        const own = s.now(p, NOW);
+        expect(at.h).toBeLessThanOrEqual(own.h);
+        expect(at.sigma).toBeGreaterThanOrEqual(own.sigma);
+        if (own.degraded !== undefined) {
+          expect(at.degraded).toBeDefined();
+        }
+      }),
+      { numRuns: 300 }
+    );
   });
 });

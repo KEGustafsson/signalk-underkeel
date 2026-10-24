@@ -123,3 +123,157 @@ describe("UKC tile change list", () => {
     ]);
   });
 });
+
+/** Tiles drawn at the level beyond a source's reach (plan §4.5). */
+describe("UKC tile change list with a level source's reach", () => {
+  const store = fakeStore();
+  /** Tiles x < 3 lie inside the reach `reach`; with "moved", tiles x < 2 do. */
+  const inputs = (threshold: number, beyondThreshold: number, reach = "a", key = "k|b") => ({
+    store,
+    key,
+    threshold,
+    beyond: {
+      threshold: beyondThreshold,
+      reach,
+      within: (_z: number, x: number) => x < (reach === "moved" ? 2 : 3)
+    }
+  });
+  const served = (list: UkcTileChanges) => {
+    for (const x of [1, 2, 3, 4]) {
+      list.serve(14, x, 1, { lo: 1.5, hi: 2.5 }, x < 3);
+    }
+  };
+
+  test("each tile is listed when the threshold of its own level leaves its range", () => {
+    const list = new UkcTileChanges();
+    list.observe(inputs(2, 2));
+    served(list);
+    const start = list.since(undefined);
+    list.observe(inputs(2, 3));
+    const beyond = list.since(start);
+    expect(beyond.tiles).toEqual([
+      [14, 3, 1],
+      [14, 4, 1]
+    ]);
+    list.observe(inputs(3, 3));
+    expect(list.since(beyond).tiles).toEqual([
+      [14, 1, 1],
+      [14, 2, 1]
+    ]);
+  });
+
+  test("a moved reach lists exactly the tiles it carries across its edge", () => {
+    const list = new UkcTileChanges();
+    list.observe(inputs(2, 2));
+    served(list);
+    const start = list.since(undefined);
+    list.observe(inputs(2, 2, "moved"));
+    expect(list.since(start)).toMatchObject({ all: false, tiles: [[14, 2, 1]] });
+  });
+
+  test("the reach string identifies the geometry: unchanged, no tile is reclassified", () => {
+    const list = new UkcTileChanges();
+    list.observe(inputs(2, 2));
+    served(list);
+    const start = list.since(undefined);
+    list.observe({ ...inputs(2, 2), beyond: { ...inputs(2, 2).beyond, within: () => false } });
+    expect(list.since(start)).toMatchObject({ all: false, tiles: [] });
+  });
+
+  test("the beyond level appearing changes the key and refreshes every tile", () => {
+    const list = new UkcTileChanges();
+    list.observe({ store, key: "0.3|false|-|0.01|0.05", threshold: 2 });
+    list.serve(14, 1, 1, { lo: 1, hi: 3 });
+    const start = list.since(undefined);
+    list.observe(inputs(2, 2, "a", "0.3|false|0.4|true|0.01|0.05"));
+    expect(list.since(start)).toMatchObject({ all: true });
+  });
+
+  test("a tile served at the other level than the copy held is listed", () => {
+    const list = new UkcTileChanges();
+    list.observe(inputs(2, 2));
+    list.serve(14, 2, 1, { lo: 1.5, hi: 2.5 }, true);
+    const start = list.since(undefined);
+    list.serve(14, 2, 1, { lo: 1.5, hi: 2.5 }, false);
+    const after = list.since(start);
+    expect(after.tiles).toEqual([[14, 2, 1]]);
+    // The new copy alone is held now: the threshold inside the reach no longer lists it.
+    list.observe(inputs(9, 2));
+    expect(list.since(after).tiles).toEqual([]);
+  });
+});
+
+describe("UKC tile change list and block loads", () => {
+  /** A store read block by block: `load` marks a z13 block loaded at the next revision. */
+  function blockStore() {
+    const changed = new Map<string, number>();
+    let revision = 0;
+    const store = {
+      adjustments: new AdjustmentMap(),
+      adjustZoom: 18,
+      count: 0,
+      minZoom: 12,
+      entries: () => [],
+      surveySigma: () => 0,
+      topoSigma: () => 0,
+      get loadRevision() {
+        return revision;
+      },
+      blocksChangedSince: (rev: number) =>
+        [...changed]
+          .filter(([, at]) => at > rev)
+          .map(([k]) => {
+            const [x, y] = k.split("/").map(Number) as [number, number];
+            return { z: 13, x, y };
+          })
+    } as unknown as NodeStore;
+    const load = (x: number, y: number) => changed.set(`${x}/${y}`, ++revision);
+    return { store, load };
+  }
+
+  test("a tile is listed for a block that changed after it was drawn, not for one its drawing loaded", () => {
+    const { store, load } = blockStore();
+    const list = new UkcTileChanges();
+    const observe = () => list.observe({ store, key: "k", threshold: 2 });
+    observe();
+    // z14 (20, 20) lies in z13 block (10, 10); (40, 40) lies far from it.
+    list.serve(14, 40, 40, { lo: 0, hi: 5 });
+    const start = list.since(undefined);
+    observe();
+    load(10, 10); // read on the spot while (20, 20) was drawn
+    list.serve(14, 20, 20, { lo: 0, hi: 5 });
+    observe();
+    expect(list.since(start).tiles).toEqual([]);
+    load(10, 10); // dropped later
+    observe();
+    expect(list.since(start).tiles).toEqual([[14, 20, 20]]);
+  });
+
+  test("a tile drawn before a neighbour's drawing loaded a block it reaches is listed", () => {
+    const { store, load } = blockStore();
+    const list = new UkcTileChanges();
+    const observe = () => list.observe({ store, key: "k", threshold: 2 });
+    observe();
+    list.serve(14, 20, 20, { lo: 0, hi: 5 });
+    const start = list.since(undefined);
+    observe();
+    load(10, 10); // read while (21, 21), in the same block, was drawn
+    list.serve(14, 21, 21, { lo: 0, hi: 5 });
+    observe();
+    expect(list.since(start).tiles).toEqual([[14, 20, 20]]);
+  });
+
+  test("a second copy drawn after a block loaded keeps the tile listable for the first", () => {
+    const { store, load } = blockStore();
+    const list = new UkcTileChanges();
+    const observe = () => list.observe({ store, key: "k", threshold: 2 });
+    observe();
+    list.serve(14, 20, 20, { lo: 0, hi: 5 });
+    const start = list.since(undefined);
+    observe();
+    load(10, 10); // the second drawing read the block the first copy drew stand-ins for
+    list.serve(14, 20, 20, { lo: 0, hi: 5 });
+    observe();
+    expect(list.since(start).tiles).toEqual([[14, 20, 20]]);
+  });
+});

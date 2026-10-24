@@ -14,9 +14,10 @@ const SLICE = 1000;
 
 const nextTurn = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
-/** A cell rebased onto a new prior, and its sample count then. */
+/** A cell rebased onto a new prior, and its sample count and last sounding then. */
 export interface Rebased {
   samples: number;
+  lastAt: number;
   c: CellPosterior;
 }
 
@@ -33,6 +34,7 @@ export async function rebaseOnto(
   const rebase = (c: CellPosterior) =>
     done.set(tileKey(c.z, c.x, c.y), {
       samples: c.samples,
+      lastAt: c.lastAt,
       c: rebasePrior(c, chartPrior(store, c.z, c.x, c.y))
     });
   await withBlocksLoaded(store, cells, rebase, { slice: SLICE, pause });
@@ -47,19 +49,35 @@ export async function rebaseOnto(
  */
 export class PriorSettler {
   private run?: Promise<void>;
+  private pending = false;
   private stopped = false;
 
   constructor(
     private readonly posteriors: Posteriors,
     private readonly current: () => NodeStore,
-    /** A cell settled: its posterior if it has one, and whether the cell or adjustment changed. */
-    private readonly settled: (c: CellPosterior | undefined, changed: boolean) => void,
+    /**
+     * A cell settled: its posterior if it has one, whether its adjustment took a new cell
+     * reference, and the posterior before.
+     */
+    private readonly settled: (
+      c: CellPosterior | undefined,
+      adjustmentMoved: boolean,
+      before: CellPosterior | undefined
+    ) => void,
     private readonly error: (message: string) => void
   ) {}
 
-  /** Starts a run unless one is under way or no cell waits. */
+  /**
+   * Starts a run unless no cell waits. One asked for during a run follows it, since the run
+   * settles only the cells waiting when it began; cells it could not settle are not retried
+   * on their own, so a block refused for good is not read again and again.
+   */
   soon(): void {
-    if (this.run || this.stopped || this.posteriors.unsettled.size === 0) {
+    if (this.run) {
+      this.pending = true;
+      return;
+    }
+    if (this.stopped || this.posteriors.unsettled.size === 0) {
       return;
     }
     const store = this.current();
@@ -67,8 +85,10 @@ export class PriorSettler {
       .catch((err: Error) => this.error(`living chart priors: ${err.message}`))
       .finally(() => {
         this.run = undefined;
-        // A rebind ended the run: the cells it left are settled on the new index.
-        if (this.current() !== store) {
+        // A rebind ended the run, or a cell came to wait while it ran.
+        const again = this.pending || this.current() !== store;
+        this.pending = false;
+        if (again) {
           this.soon();
         }
       });
@@ -78,12 +98,21 @@ export class PriorSettler {
     this.stopped = true;
   }
 
-  /** Resolves when the run under way, if any, has ended. */
-  done(): Promise<void> {
-    return this.run ?? Promise.resolve();
+  /** Resolves once no run is under way, the one a run's end starts included. */
+  async done(): Promise<void> {
+    // A run never rejects; one asked for during it starts before it resolves.
+    while (this.run) {
+      await this.run;
+    }
   }
 
   private async settle(store: NodeStore): Promise<void> {
+    const live = () => !this.stopped && this.current() === store;
+    // Never in the turn that asked: a start, a rebind or a sounding reads no chart prior.
+    await nextTurn();
+    if (!live()) {
+      return;
+    }
     const z = store.adjustZoom;
     const n = 2 ** z;
     const cells = [...this.posteriors.unsettled].map((key) => ({
@@ -97,7 +126,6 @@ export class PriorSettler {
         this.settleCell(store, c.key, c.x, c.y);
       }
     };
-    const live = () => !this.stopped && this.current() === store;
     await withBlocksLoaded(store, cells, settle, { slice: SLICE, pause: nextTurn, live });
   }
 
@@ -114,6 +142,6 @@ export class PriorSettler {
     if (a && a.cellRef !== cellRef) {
       store.adjustments.set(key, { ...a, cellRef });
     }
-    this.settled(c, c !== old || (a !== undefined && a.cellRef !== cellRef));
+    this.settled(c, a !== undefined && a.cellRef !== cellRef, old);
   }
 }

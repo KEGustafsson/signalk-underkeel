@@ -1,7 +1,7 @@
 import type { LonLat } from "../foundation/geo";
 import { haversine } from "../foundation/geo";
 import type { LevelSeries } from "../ingest/datum";
-import type { LevelSample, ProviderHealth, WaterLevelProvider } from "./water-level";
+import type { LevelReach, LevelSample, ProviderHealth, WaterLevelProvider } from "./water-level";
 
 /**
  * Finnish Meteorological Institute open data (plan §4.5): the sea-level
@@ -75,8 +75,8 @@ const MAX_STATION_KM = 60;
 const MAX_OBSERVATION_AGE_MS = 60 * 60 * 1000;
 /** The observation's offset from the forecast decays with this time constant. */
 const BLEND_TAU_MS = 6 * 3600 * 1000;
-/** A forecast fetched further away than this is not used for a position. */
-const MAX_FORECAST_KM = 30;
+/** A forecast fetched further away than this (metres) is not used for a position. */
+export const FORECAST_REACH_METRES = 30000;
 const REQUEST_TIMEOUT_MS = 15000;
 
 type Series = [t: number, h: number][];
@@ -250,7 +250,7 @@ export class FmiProvider implements WaterLevelProvider {
 
   levelAt(position: LonLat | undefined, t: number, series: LevelSeries): LevelSample | undefined {
     const fc = this.forecast;
-    if (!fc || (position && haversine(position, fc.position) / 1000 > MAX_FORECAST_KM)) {
+    if (!fc || (position && haversine(position, fc.position) > FORECAST_REACH_METRES)) {
       return undefined;
     }
     const s = fc.series[series];
@@ -284,6 +284,14 @@ export class FmiProvider implements WaterLevelProvider {
       Math.hypot(FMI_SIGMA.forecast, FMI_SIGMA.perLeadHour * (lead / 3600000))
     );
     return { h: forecastNow, sigma, source: "fmi:forecast" };
+  }
+
+  /**
+   * Where levelAt answers: nothing in it depends on position but the
+   * distance to the point the forecast was fetched for.
+   */
+  reach(): LevelReach | undefined {
+    return this.forecast && { centre: this.forecast.position, metres: FORECAST_REACH_METRES };
   }
 
   /** The forecast points in [start, end], where the interpolated level turns. */

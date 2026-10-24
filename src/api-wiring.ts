@@ -38,13 +38,6 @@ export interface PluginState {
 
 const NOT_STARTED: ApiReply = { status: 503, body: { errors: ["plugin not started"] } };
 
-/** The level where a query is: beyond FMI's reach that is the fallback, as for route legs. */
-const queryLevel =
-  (clock: Clock, s: PluginState): QueryServiceDeps["waterLevel"] =>
-  (at) =>
-    (at ? s.monitor?.waterLevelOver(clock.now(), clock.now(), at) : s.monitor?.waterLevel()) ??
-    CHART_DATUM;
-
 export function apiFor(
   app: Pick<ServerAPI, "resourcesApi" | "error">,
   clock: Clock,
@@ -57,7 +50,7 @@ export function apiFor(
     indexReason: s.load?.reason ?? "plugin not started",
     config: s.config ?? parseConfig({}),
     vessel: () => s.monitor?.vessel(),
-    waterLevel: queryLevel(clock, s),
+    levelRegimes: () => s.monitor?.levelRegimes() ?? { inside: CHART_DATUM },
     waveHeight: () => s.monitor?.nav.waveHeight?.value,
     tileChanges,
     tileCache

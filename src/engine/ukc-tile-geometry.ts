@@ -423,7 +423,14 @@ export class UkcTileCache {
       }
     }
     const adjusted = adjustmentsIn(store, z, x, y);
+    const before = store.loadRevision;
     const geometry = tileGeometry(store, z, x, y);
+    if (store.loadRevision !== before) {
+      // The walk read small blocks on the spot: this tile saw them loaded, while tiles cached
+      // before it over the same blocks saw their stand-ins.
+      this.dropOver(store, store.blocksChangedSince(before));
+      this.loads = store.loadRevision;
+    }
     this.keep(key, {
       geometry,
       adjusted,

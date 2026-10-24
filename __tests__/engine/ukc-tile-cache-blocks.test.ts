@@ -43,6 +43,18 @@ test.each([12, 13, 14])(
   }
 );
 
+test("a tile whose walk reads its blocks on the spot is kept, not walked again", () => {
+  const pyramid = pyramidFromBuffer(file, { budgetBytes: Infinity, syncBytes: Infinity });
+  const [mx, my] = toMercator(22.004, FAIRWAY_LAT);
+  const { x, y } = tileAt(14, mx, my);
+  const tiles = new UkcTileCache();
+  const before = pyramid.loadRevision;
+  const first = tiles.geometry(pyramid, 14, x, y);
+  expect(pyramid.loadRevision).toBeGreaterThan(before);
+  expect(tiles.geometry(pyramid, 14, x, y)).toBe(first);
+  expect(first).toEqual(tileGeometry(pyramid, 14, x, y));
+});
+
 /** How far the tile at the fairway is from a block beyond the store's widest chart reach. */
 function beyondReach(pyramid: NodeStore, key: number, x: number, y: number): number {
   const n = 2 ** FINE.blockZoom;

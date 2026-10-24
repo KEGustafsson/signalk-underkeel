@@ -1,5 +1,6 @@
 import fs from "fs";
 import { appendFileDurable, writeFileDurable } from "../foundation/durable-file";
+import { ndjson, readNdjson } from "./ndjson";
 import { isSounding } from "./saved-state";
 import type { Sounding } from "./soundings";
 
@@ -9,9 +10,6 @@ import type { Sounding } from "./soundings";
  * accepted since the last one; once the file would hold more than twice `max` lines it is
  * rewritten with the newest `max`. Rewriting all of them every minute was 3.2 MB per save.
  */
-
-const lines = (samples: readonly Sounding[]): string =>
-  samples.map((s) => JSON.stringify(s)).join("\n") + "\n";
 
 export interface LogRead {
   samples: Sounding[];
@@ -50,10 +48,10 @@ export class SampleLog {
     const tmp = `${this.file}.tmp-${process.pid}`;
     try {
       if (this.rewrite || this.lines + this.unsaved > 2 * this.max) {
-        writeFileDurable(this.file, lines(this.samples), tmp);
+        writeFileDurable(this.file, ndjson(this.samples), tmp);
         this.lines = this.samples.length;
       } else {
-        appendFileDurable(this.file, lines(this.samples.slice(-this.unsaved)));
+        appendFileDurable(this.file, ndjson(this.samples.slice(-this.unsaved)));
         this.lines += this.unsaved;
       }
     } catch (err) {
@@ -68,39 +66,12 @@ export class SampleLog {
 
   /** Reads the file when there is one; throws when it cannot be read. */
   read(): LogRead | undefined {
-    if (!fs.existsSync(this.file)) {
+    const read = readNdjson(this.file, (v) => (isSounding(v) ? v : undefined));
+    if (!read) {
       return undefined;
     }
-    const parts = fs.readFileSync(this.file, "utf8").split("\n");
-    // "" when the file ends with a newline, as every complete append does.
-    const tail = parts.pop() ?? "";
-    const read: LogRead = { samples: [], malformed: 0, torn: false };
-    for (const line of parts) {
-      const s = parse(line);
-      if (s) {
-        read.samples.push(s);
-      } else {
-        read.malformed++;
-      }
-    }
-    if (tail !== "") {
-      const s = parse(tail);
-      read.torn = !s;
-      if (s) {
-        read.samples.push(s);
-      }
-      this.rewrite = true;
-    }
-    this.lines = parts.length;
-    return read;
-  }
-}
-
-function parse(line: string): Sounding | undefined {
-  try {
-    const v: unknown = JSON.parse(line);
-    return isSounding(v) ? v : undefined;
-  } catch {
-    return undefined;
+    this.lines = read.lines;
+    this.rewrite ||= read.partial;
+    return { samples: read.items, malformed: read.malformed, torn: read.torn };
   }
 }

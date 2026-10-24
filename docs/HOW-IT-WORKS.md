@@ -157,11 +157,13 @@ flowchart TD
   it by its survey's position uncertainty like a depth area (section 5). One in unassessed
   water, which spreads nothing, is burned into a disc of radius 2 × σP of the unassessed survey,
   1 km.
-- Each tile also keeps what it spreads by its chart position: its survey's σP, the σ of its
-  land and shoreline objects' own positions, and the shallowest depth its survey places. Land
-  and shoreline are placed by the cell's compilation scale (1 mm on the chart, so 6 m at
-  1:12 000), not by CATZOC; on an edge or node whose QUAPOS, read from GDAL's primitive
-  layers, says it is not surveyed they keep the survey's σP.
+- Each tile also keeps what it spreads by its chart position: its survey's σP with the
+  shallowest depth the survey places (soundings and point dangers), and the σ of the chart's
+  drawing with the shallowest depth it places (land, shoreline and depth areas). The drawing
+  is placed by the cell's compilation scale (1 mm on the chart, so 6 m at 1:12 000), or by an
+  `M_CSCL` area's smaller scale where one reaches the tile, not by CATZOC; on an edge or node
+  whose QUAPOS, read from GDAL's primitive layers, says it is not surveyed it is read as four
+  times less accurate (24 m at 1:12 000).
 - A leaf zoom of 20 makes the smallest tile about 19 m across at 60° N. The Nauvo box built
   158,784 tiles.
 - Each stored tile also carries flags: `NO_COVERAGE`, `UNASSESSED` (no survey quality, or
@@ -188,10 +190,18 @@ and keeps a running estimate of the depth in each cell of the index, about 76 m 
 Own soundings only ever make the chart shallower. Deeper readings never raise a charted depth,
 so a faulty transducer cannot switch off a hazard. The shallower cells survive a change of the
 index's leaf zoom: each new cell takes the shallowest depth of the old cells it holds. The
-cells are saved to `livechart.json` every 10 minutes, and within 10 s of a cell being marked
-shallower; the soundings are appended to `soundings.ndjson` every minute. A state file that
-does not load whole is renamed to `livechart.json.bad-<time>` (or `soundings.ndjson.bad-<time>`)
-and reported, so it is never saved over. The accepted soundings can be exported as
+shallower cells are saved to `livechart.json` within 10 s of being marked. Each cell's estimate
+is appended to `cells.ndjson` every 10 minutes, but only for the cells sounded since the last
+save, and the soundings are appended to `soundings.ndjson` every minute. The estimates are
+capped: once more than 10 000 cells could be dropped, those sounded longest ago go first, down
+to 9 000. A cell marked shallower, or one still waiting for its chart to be read, is never
+dropped. A cell that has read 1σ shallower than the chart but has not yet had 5 samples over
+2 passes is a shoal waiting for its evidence: such cells are capped on their own the same way,
+so they are not crowded out by ordinary ones. At start the shallower cells apply at
+once, and the estimates are checked against the chart in the background; meanwhile
+`GET /livechart/discrepancies` marks a cell whose chart is not read yet `pending: true`. A file
+that does not load whole is renamed to `<name>.bad-<time>` and reported, so it is never saved
+over. The accepted soundings can be exported as
 IHO crowd-sourced bathymetry (CSB) GeoJSON from `GET /livechart/csb.geojson`; nothing is
 uploaded anywhere.
 
@@ -438,14 +448,17 @@ maximum rate of turn (3°/s by default) and scored with the same spread as the l
 five tracks: course ± 5° and rate of turn ± 0.1°/s. The first heading that stays clear over the
 whole horizon wins; if none does, the one with the most time before shoal water. The footprint
 at the vessel is the same on every heading and is not counted. When no heading does better
-than holding course, or none stays clear past the first step, the escape heading is null: there
-is no heading to recommend. The result is published as `navigation.underKeel.escapeHeading`.
-It is searched at most every 3 s and held in between, once the second's other values are out.
-A state held by hysteresis publishes the latest search's heading, or null once the look-ahead
-itself reads `normal`, never the heading found when the state was raised. After a tick or a
-search that takes over 250 ms (slow hardware or a long horizon), the next search is skipped, the
-heading is null and the plugin status says why until a search runs again, at the earliest 3 s
-after the skip. The plugin only publishes it; it never steers.
+than holding a steady course, or none stays clear past the first step, the escape heading is
+null: there is no heading to recommend. If you are turning toward a shoal and simply stopping
+the turn clears it, the escape heading is your current heading. The result is published as
+`navigation.underKeel.escapeHeading`. It is searched at most every 3 s and held in between,
+once the second's other values are out. A state held by hysteresis publishes the latest
+search's heading, or null once the look-ahead itself reads `normal`, never the heading found
+when the state was raised. After a tick that takes over 250 ms (slow hardware or a long
+horizon), the next search is skipped, the heading is null and the plugin status says why until
+a search runs again, at the earliest 3 s after the skip. A search that takes over 250 ms keeps
+the heading it found, the next search waits 3 s from the tick after it, and the plugin status
+says the searches are slow until one is fast again. The plugin only publishes it; it never steers.
 
 ### Position integrity
 
@@ -479,14 +492,15 @@ Later, while the footprint is inside that area, the heading inside the sector, t
 no more than 5 cm lower and the draft no deeper, `warn` and `alarm` are published as `alert`
 with the reason "acknowledged passage". They are never published as `normal`. A negative mean
 UKC within 30 s is never suppressed: an acknowledgement covers an uncertain chart, not a charted
-depth shallower than the keel. Nor is the `warn` raised when the position uncertainty outgrows
-the 500 m buffer (above): an acknowledgement covers an uncertain chart, not an untrusted
-position. While the water level is a fallback (a stale or missing feed) no acknowledgement
-applies and `POST /acks` answers 409: whatever its value, the fallback is a guess, not a
-measured level to compare with the acknowledged one. `GET /acks` lists them; `POST` and
-`DELETE /acks/:id` need read-write access. `POST` needs `Content-Type: application/json` (415
-otherwise), takes a polygon of at most 64 vertices, and answers 409 once 100 acknowledgements
-are live; expired ones are dropped from `acks.json` at the next add or delete.
+depth shallower than the keel. Nor is any `warn` or `alarm` while the position uncertainty
+outgrows the 500 m buffer (above), whether the chart or the uncertainty raised it: an
+acknowledgement covers an uncertain chart, not an untrusted position. While the water level is
+a fallback (a stale or missing feed) no acknowledgement applies and `POST /acks` answers 409:
+whatever its value, the fallback is a guess, not a measured level to compare with the acknowledged
+one. `GET /acks` lists them; `POST` and `DELETE /acks/:id` need read-write access. `POST` needs
+`Content-Type: application/json` (415 otherwise), takes a polygon of at most 64 vertices, and
+answers 409 once 100 acknowledgements are live; expired ones are dropped from `acks.json` at the
+next add or delete.
 
 Mooring zones work the same way without a heading or water-level condition. They are Signal K
 regions named in the settings, for example the home berth; inside one, `warn` and `alarm` are
@@ -509,12 +523,12 @@ It holds until SOG stays above 0.5 m/s for 10 s.
 
 ## 8. Water level
 
-| Source         | What it reads                                                                                                                         | σ                                                         |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| `none`         | chart datum (0 m); degraded on a chart whose datum is not low water, below                                                            | 0.3 m                                                     |
-| `manual`       | the height you enter above chart datum                                                                                                | the σ you enter                                           |
-| `signalk-tide` | `environment.tide.heightNow`; from 5 min after the reading the lower of it and `heightLow`, until 6 h past `timeLow` (or the reading) | the σ you enter                                           |
-| `fmi`          | Finnish Meteorological Institute sea-level forecast, anchored to the nearest gauge                                                    | grows with lead time and gauge distance, plus the datum σ |
+| Source         | What it reads                                                                                                                                                   | σ                                                         |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| `none`         | chart datum (0 m); a guess (at least `alert`, legs at best `unverified`) on a chart whose datum is not low water, and the reason names the source to set, below | 0.3 m                                                     |
+| `manual`       | the height you enter above chart datum                                                                                                                          | the σ you enter                                           |
+| `signalk-tide` | `environment.tide.heightNow`; from 5 min after the reading the lower of it and `heightLow`, until 6 h past `timeLow` (or the reading)                           | the σ you enter                                           |
+| `fmi`          | Finnish Meteorological Institute sea-level forecast, anchored to the nearest gauge                                                                              | grows with lead time and gauge distance, plus the datum σ |
 
 ```mermaid
 flowchart TD
@@ -527,10 +541,12 @@ flowchart TD
 With `none`, chart datum stands in for the level only on charts referred to a low-water datum
 (LAT, MLLW and the like), where the tide seldom leaves less water than charted. On a chart whose
 `VERDAT` is mean water (3, 19 and 26, as on the Finnish ENCs), high water or a local datum, the
-Baltic is often 0.3–0.8 m below chart datum, so the level is degraded with the reason "no
-water-level source: chart datum assumed, which is not low water (VERDAT n)" and treated as a
-fallback, as above, until a source is configured. Acknowledged passages and own soundings are
-not used then either.
+Baltic is often 0.3–0.8 m below chart datum, so the level is degraded and treated as a
+fallback, as above, until a source is configured. The reason names the datums and the source
+to set, for example "no water-level source, and chart datum is not low water (VERDAT 3,
+VERDAT 26); set Water level source to fmi in Finnish waters, or to signalk-tide or manual";
+`fmi` is named only when one of those datums maps to an FMI series. No source is chosen
+automatically. Acknowledged passages and own soundings are not used then either.
 
 FMI reports above theoretical mean water and above N2000. Each cell's S-57 vertical datum
 (`VERDAT`) is mapped to one of them: codes 3, 19 and 26 map to mean water by default, cells on
@@ -541,6 +557,12 @@ matched as unknown too, with those codes listed as `datumAreas`. The plugin fetc
 when the held forecast is 25 minutes old until a fetch succeeds; the 1 Hz loop never waits on
 the network.
 
+The forecast holds within 30 km of the point it was fetched for. The look-ahead and
+`navigation.underKeel.waterLevel` use it at the vessel. A route leg, a UKC tile or a
+`POST /query` area takes the level where it is: a tile with every corner within 30 km of the
+forecast point is drawn at the forecast, and any other tile at the lower of the forecast and
+the fallback, marked degraded, with nothing `clear`.
+
 `GET /plugins/signalk-underkeel/v1/status` shows the source, the level applied, the source's
 health and the datum mapping per cell.
 
@@ -549,8 +571,8 @@ health and the datum mapping per cell.
 ![UKC overlay for draft 2.2 m at +0.2 m water level](images/how-it-works/ukc-overlay.jpg)
 
 `GET /plugins/signalk-underkeel/v1/tiles/ukc/{z}/{x}/{y}.pbf` serves vector tiles from zoom 11,
-one layer `ukc`, every index cell classed for the current draft and water level at zero speed
-(no squat):
+one layer `ukc`, every index cell classed for the current draft and the water level valid at
+that tile (section 8) at zero speed (no squat):
 
 | Class        | Colour | Rule                                                             |
 | ------------ | ------ | ---------------------------------------------------------------- |
@@ -574,9 +596,10 @@ looks grey-tan.
 
 A tile's classes stay the same while the threshold depth moves within a range: each cell
 changes class only where its P crosses the alert or warn level. The plugin records that range
-for every tile it serves, and `GET /tiles/ukc/changes` lists the tiles whose range the current
-water level, draft and wave allowance have left, in which an own sounding changed a cell, or
-near a block of the index that was read in or dropped since the tile was drawn.
+for every tile it serves, and `GET /tiles/ukc/changes` lists the tiles whose range the water
+level at that tile, the draft and the wave allowance have left, that a moved FMI forecast point
+carries across its 30 km reach, in which an own sounding changed a cell, or near a block of the
+index that was read in or dropped since the tile was drawn.
 The background runtime asks every 15 s and after each 1 cm water-level move, and Freeboard
 fetches only the tiles listed. With the tide rising 2 mm/s that is 2 tile fetches a minute in
 a z14 view instead of 108. The cells of each tile and the reach of their neighbours are kept
@@ -649,7 +672,8 @@ and hazard, the explanation, and the response lists the cell editions used.
 `marginal`, it searches for a path around the shoal:
 
 1. A grid of cells is laid around the leg, reaching half the leg's length beyond it on every
-   side, and at least 300 m. A cell is blocked when its corridor would fail, or when it touches
+   side, and at least 300 m and twice the corridor's half-width; each cell is at least half the
+   corridor's half-width. A cell is blocked when its corridor would fail, or when it touches
    water the plugin cannot check: no coverage, unassessed survey or no depth. A repair never
    routes through unchecked water.
 2. The cheapest any-angle path through the open cells is found. Water with a higher grounding
@@ -660,10 +684,14 @@ and hazard, the explanation, and the response lists the cell editions used.
 The answer lists the waypoints to insert into each failing leg and the legs they make, checked
 like any route. Legs are repaired in order, each checked at the time the detours before it bring
 the boat there, and the answer also holds the whole route with every waypoint inserted, checked
-again, so a leg a detour makes late shows its status at the new time. It never moves an existing point. When no path is found, the leg says why and
-gets no waypoints. One request repairs a bounded number of legs, and any further ones are
-listed as not searched; the limits are in [plan §4.11](DEVELOPMENT-PLAN.md). A plotter shows
-the answer as a suggestion; the skipper decides whether to use it.
+again, so a leg a detour makes late shows its status at the new time. It never moves an
+existing point. When no path is found, the leg says why and gets no waypoints. Each leg's search
+and checks have a fixed amount of work, counted in chart tiles read rather than in time, so the
+same request gives the same answer on any machine. A leg that needs more is refused with no
+waypoints and a reason that names where to add a waypoint to split it. One request repairs a
+bounded number of legs within a bounded total of work, and any further ones are listed as not
+searched; the limits are in [plan §4.11](DEVELOPMENT-PLAN.md). A plotter shows the answer as a
+suggestion; the skipper decides whether to use it.
 
 ### Choosing when to leave
 
@@ -683,9 +711,9 @@ planner.
 
 The query endpoint answers the same question for one point or area at the water level there,
 using the draft in the request when one is given and the configured vessel draft otherwise: the class, P(UKC < 0), the deciding hazard, the explanation and the same sentence
-as the notification. With FMI, a point or area more than 30 km from the forecast point gets
-the fallback level, as a route leg does, and is never `clear`. A plotter can use it for a cursor
-readout.
+as the notification. With FMI, a point or area that reaches, with its buffer, more than 30 km
+from the forecast point gets the lower of the forecast and the fallback level, as a route leg
+does, and is never `clear`. A plotter can use it for a cursor readout.
 
 ## 12. Traficom WFS depths (optional)
 
@@ -706,7 +734,9 @@ flowchart TD
 - **Box:** radius 10 km by default (2–25 km). With the default, a new box is fetched once the
   vessel is 5 km from the centre, or earlier at speed: once the edge ahead is closer than 1.5
   times the distance the vessel covered during the last download and rebuild, plus the
-  look-ahead distance. The new box is centred where the vessel will be when it is ready, at
+  look-ahead distance and the band inside the edge where the look-ahead can read no coverage
+  (the 500 m position buffer cap plus 1.86 km of chart position reach, counted up to half the
+  radius). The new box is centred where the vessel will be when it is ready, at
   most 8 km ahead, so a slow Raspberry Pi at planing speed is not left at the old box's edge.
 - **Priority:** the WFS cell is usage band 1, so any ENC cell wins where both cover.
 - **Land:** the WFS has no land objects. Water that no depth area reaches is land, so a gap in

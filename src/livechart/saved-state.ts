@@ -4,7 +4,7 @@ import type { CellPosterior } from "./posterior";
 import type { Sounding } from "./soundings";
 
 /**
- * Checks for the entries of a saved `livechart.json`, moving its adjustments
+ * Checks for the entries of a saved `livechart.json` and `cells.ndjson`, moving its adjustments
  * onto another living-chart zoom, and setting aside a file that did not load.
  */
 
@@ -31,7 +31,11 @@ const CELL_NUMBERS = [
 
 export function isCell(v: unknown): v is CellPosterior {
   return (
-    isRecord(v) && allFinite(v, CELL_NUMBERS) && Number.isInteger(v.x) && Number.isInteger(v.y)
+    isRecord(v) &&
+    allFinite(v, CELL_NUMBERS) &&
+    Number.isInteger(v.x) &&
+    Number.isInteger(v.y) &&
+    (v.peakZ === undefined || Number.isFinite(v.peakZ))
   );
 }
 

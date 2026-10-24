@@ -18,8 +18,11 @@ export class NoteSchedule {
   private readonly written = new Map<number, { at: number; steps: string }>();
   private readonly waiting = new Map<number, string>();
 
-  /** `write` writes the note for living-chart cell `key` with its current values. */
-  constructor(private readonly write: (key: number) => void) {}
+  /**
+   * `write` writes the note for living-chart cell `key` with its current values, or returns
+   * false when it cannot yet, as for a cell waiting for its chart block; the note then waits.
+   */
+  constructor(private readonly write: (key: number) => boolean) {}
 
   /** Cell `key`'s adjustment changed to `v`. */
   changed(key: number, v: NodeValues, now: number): void {
@@ -45,8 +48,11 @@ export class NoteSchedule {
   }
 
   private writeNow(key: number, s: string, now: number): void {
+    if (!this.write(key)) {
+      this.waiting.set(key, s);
+      return;
+    }
     this.waiting.delete(key);
     this.written.set(key, { at: now, steps: s });
-    this.write(key);
   }
 }

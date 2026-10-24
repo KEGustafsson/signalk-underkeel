@@ -34,6 +34,11 @@ export interface Discrepancy {
   samples: number;
   passes: number;
   lastSeen: string;
+  /**
+   * Set while the cell waits for its chart block, as after a start: its chart is not read yet,
+   * so `charted` is null though the chart may chart it. The adjustment applies meanwhile.
+   */
+  pending?: true;
 }
 
 export function discrepancyOf(c: CellPosterior): Discrepancy {

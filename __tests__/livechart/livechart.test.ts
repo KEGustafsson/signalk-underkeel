@@ -15,7 +15,7 @@ import {
 } from "../../src/livechart/posterior";
 import type { RawSounding, SoundingSource } from "../../src/livechart/soundings";
 import { reduce } from "../../src/livechart/soundings";
-import { haversine, project } from "../../src/foundation/geo";
+import { haversine, project, tileKey } from "../../src/foundation/geo";
 import type { LonLat } from "../../src/foundation/geo";
 import { FLAGS } from "../../src/spatial/node-store";
 import { footprintGeom, minDepthOver } from "../../src/spatial/pyramid";
@@ -229,7 +229,7 @@ describe("cell posterior and discrepancy", () => {
     expect(alone.mean).toBeCloseTo(w.reduce((s, x) => s + x.depth / x.sigma ** 2, 0) / p, 9);
   });
 
-  test("a saved state loaded onto a rebuilt chart is judged against that chart", () => {
+  test("a saved state loaded onto a rebuilt chart is judged against that chart", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-livechart-"));
     const file = path.join(dir, "livechart.json");
     const svc = new LivechartService(store(), CONFIG, file, failOnError);
@@ -241,13 +241,15 @@ describe("cell posterior and discrepancy", () => {
     svc.save();
     const deeper = buildPyramid(basin([22.0, 60.0, 22.1, 60.1], 10), { minZoom: 12, leafZoom: 18 });
     const reloaded = new LivechartService(deeper, CONFIG, file, failOnError);
+    expect(minDepthOver(deeper, footprintGeom([SHOAL])).dMin).toBeLessThan(5.3);
+    await reloaded.whenSettled();
     expect(reloaded.discrepancies()[0]).toMatchObject({ charted: 10 });
     // The saved adjustment keeps its depth: nothing gets deeper on a reload.
     expect(minDepthOver(deeper, footprintGeom([SHOAL])).dMin).toBeLessThan(5.3);
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  test("soundings that agreed with the old chart lower a deeper rebuilt chart on load", () => {
+  test("soundings that agreed with the old chart lower a deeper rebuilt chart on load", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-livechart-"));
     const file = path.join(dir, "livechart.json");
     const svc = new LivechartService(store(), CONFIG, file, failOnError);
@@ -261,12 +263,52 @@ describe("cell posterior and discrepancy", () => {
     svc.save();
     const deeper = buildPyramid(basin([22.0, 60.0, 22.1, 60.1], 10), { minZoom: 12, leafZoom: 18 });
     const reloaded = new LivechartService(deeper, CONFIG, file, failOnError);
+    await reloaded.whenSettled();
     expect(reloaded.discrepancies()[0]).toMatchObject({ charted: 10 });
     expect(minDepthOver(deeper, footprintGeom([SHOAL])).dMin).toBeLessThan(8.3);
     // The adjustment made on load is saved without a new sounding.
     reloaded.save();
     const saved = JSON.parse(fs.readFileSync(file, "utf8")) as { adjustments: unknown[] };
     expect(saved.adjustments).toHaveLength(1);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("a start reads no chart prior: adjustments apply at once, cells settle after", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-livechart-"));
+    const file = path.join(dir, "livechart.json");
+    const svc = new LivechartService(store(), CONFIG, file, failOnError);
+    for (const start of [T0, T0 + 15 * 60_000]) {
+      for (let k = 0; k < 3; k++) {
+        svc.onSounding(raw(5.2, start + k * 1000));
+      }
+    }
+    // 49 more cells, one reading each, on a grid south-west of the shoal, 111 m apart.
+    for (let i = 0; i < 49; i++) {
+      const position: LonLat = [22.02 + 0.002 * (i % 7), 60.02 + 0.001 * Math.floor(i / 7)];
+      svc.onSounding(raw(8.2, T0 + 40 * 60_000 + i * 1000, { position }));
+    }
+    svc.save();
+    const saved = fs
+      .readFileSync(path.join(dir, "cells.ndjson"), "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l) as CellPosterior);
+    expect(new Set(saved.map((c) => `${c.x}/${c.y}`)).size).toBe(50);
+
+    const deeper = buildPyramid(basin([22.0, 60.0, 22.1, 60.1], 10), { minZoom: 12, leafZoom: 18 });
+    const reloaded = new LivechartService(deeper, CONFIG, file, failOnError);
+    expect(reloaded.status()).toMatchObject({ cells: 50, unsettled: 50, discrepancies: 1 });
+    expect(minDepthOver(deeper, footprintGeom([SHOAL])).dMin).toBeLessThan(5.3);
+    await reloaded.whenSettled();
+    expect(reloaded.status()).toMatchObject({ unsettled: 0 });
+    const cells = (reloaded as unknown as { posteriors: Posteriors }).posteriors.cells;
+    for (const c of saved) {
+      const expected = rebasePrior(c, chartPrior(deeper, c.z, c.x, c.y));
+      const got = cells.get(tileKey(c.z, c.x, c.y));
+      expect(got?.mean).toBeCloseTo(expected.mean, 9);
+      expect(got?.sigma).toBeCloseTo(expected.sigma, 9);
+      expect(got?.chartDepth).toBe(10);
+    }
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
@@ -289,33 +331,54 @@ describe("cell posterior and discrepancy", () => {
     expect(minDepthOver(charted, footprintGeom([SHOAL])).dMin).toBeLessThan(8.3);
   });
 
-  test("a cell reference saved with another index is replaced by the current chart's", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-livechart-"));
-    const file = path.join(dir, "livechart.json");
-    const svc = new LivechartService(store(), CONFIG, file, failOnError);
-    for (const start of [T0, T0 + 15 * 60_000]) {
-      for (let k = 0; k < 3; k++) {
-        svc.onSounding(raw(5.2, start + k * 1000));
+  test.each([
+    ["cells.ndjson", false],
+    ["a version-1 livechart.json holding the cells", true]
+  ])(
+    "a cell reference saved with another index in %s is replaced by the current chart's",
+    async (_name, v1) => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-livechart-"));
+      const file = path.join(dir, "livechart.json");
+      const cellsFile = path.join(dir, "cells.ndjson");
+      const svc = new LivechartService(store(), CONFIG, file, failOnError);
+      for (const start of [T0, T0 + 15 * 60_000]) {
+        for (let k = 0; k < 3; k++) {
+          svc.onSounding(raw(5.2, start + k * 1000));
+        }
       }
+      svc.save();
+      // As if saved against a catalogue that numbered its cells differently.
+      const saved = JSON.parse(fs.readFileSync(file, "utf8")) as {
+        cells?: { cellRef: number }[];
+        adjustments: [number, { cellRef: number }][];
+      };
+      const cells = fs
+        .readFileSync(cellsFile, "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => ({ ...(JSON.parse(l) as object), cellRef: 99 }));
+      saved.adjustments.forEach(([, v]) => (v.cellRef = 99));
+      if (v1) {
+        saved.cells = cells;
+        fs.rmSync(cellsFile);
+      } else {
+        fs.writeFileSync(cellsFile, cells.map((c) => JSON.stringify(c) + "\n").join(""));
+      }
+      fs.writeFileSync(file, JSON.stringify(saved));
+      const fresh = store();
+      const reloaded = new LivechartService(fresh, CONFIG, file, failOnError);
+      const adjustment = () => [...fresh.adjustments][0] as [number, { cellRef: number }];
+      // Until the cell is settled it names no cell, never the other catalogue's 99.
+      expect(adjustment()[1].cellRef).toBe(-1);
+      await reloaded.whenSettled();
+      const [key, v] = adjustment();
+      const n = 2 ** fresh.adjustZoom;
+      const current = chartPrior(fresh, fresh.adjustZoom, Math.floor(key / n), key % n).cellRef;
+      expect(v.cellRef).not.toBe(99);
+      expect(v.cellRef).toBe(current);
+      fs.rmSync(dir, { recursive: true, force: true });
     }
-    svc.save();
-    // As if saved against a catalogue that numbered its cells differently.
-    const saved = JSON.parse(fs.readFileSync(file, "utf8")) as {
-      cells: { cellRef: number }[];
-      adjustments: [number, { cellRef: number }][];
-    };
-    saved.cells.forEach((c) => (c.cellRef = 99));
-    saved.adjustments.forEach(([, v]) => (v.cellRef = 99));
-    fs.writeFileSync(file, JSON.stringify(saved));
-    const fresh = store();
-    new LivechartService(fresh, CONFIG, file, failOnError);
-    const [key, v] = [...fresh.adjustments][0] as [number, { cellRef: number }];
-    const n = 2 ** fresh.adjustZoom;
-    const current = chartPrior(fresh, fresh.adjustZoom, Math.floor(key / n), key % n).cellRef;
-    expect(v.cellRef).not.toBe(99);
-    expect(v.cellRef).toBe(current);
-    fs.rmSync(dir, { recursive: true, force: true });
-  });
+  );
 
   test("the chart prior ignores adjustments, so a cell is compared with the chart alone", () => {
     const pyramid = store();
@@ -532,4 +595,59 @@ describe("safety invariant 5", () => {
       { numRuns: 80 }
     );
   });
+
+  test("dropping cells, moving the index box and a reload never make any query deeper", async () => {
+    const away = () =>
+      buildPyramid(basin([23.0, 61.0, 23.1, 61.1], 8), { minZoom: 12, leafZoom: 18 });
+    await fc.assert(
+      fc.asyncProperty(
+        fc.array(
+          fc.oneof(
+            fc.tuple(fraction, fraction, uniform(0.5, 25), fc.integer({ min: 1, max: 1200 })),
+            fc.constant("away" as const),
+            fc.constant("back" as const)
+          ),
+          { maxLength: 50 }
+        ),
+        fc.array(fc.tuple(fraction, fraction), { minLength: 1, maxLength: 8 }),
+        async (steps, probes) => {
+          const dir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-livechart-"));
+          const file = path.join(dir, "livechart.json");
+          const at = (u: number, v: number): LonLat => [22.04 + u * 0.02, 60.04 + v * 0.01];
+          const geoms = probes.map(([u, v]) => footprintGeom([at(u, v)]));
+          const probe = (s: ReturnType<typeof store>) =>
+            geoms.map((g) => minDepthOver(s, g, { bufferMetres: 20 }).dMin);
+          const before = probe(store());
+          const t = { now: T0 };
+          const deps = { ...failOnError, now: () => t.now, maxCells: 5 };
+          let current = store();
+          const svc = new LivechartService(current, { ...CONFIG, writeNotes: false }, file, deps);
+          for (const s of steps) {
+            if (s === "away") {
+              svc.rebind(away());
+            } else if (s === "back") {
+              current = store();
+              svc.rebind(current);
+            } else {
+              const [u, v, d, dt] = s;
+              t.now += dt * 1000;
+              svc.onSounding(raw(d, t.now, { position: at(u, v) }));
+              svc.flush();
+            }
+          }
+          current = store();
+          svc.rebind(current);
+          probe(current).forEach((d, i) => expect(d).toBeLessThanOrEqual(before[i] as number));
+          svc.stop();
+          const fresh = store();
+          const reloaded = new LivechartService(fresh, CONFIG, file, deps);
+          probe(fresh).forEach((d, i) => expect(d).toBeLessThanOrEqual(before[i] as number));
+          await reloaded.whenSettled();
+          probe(fresh).forEach((d, i) => expect(d).toBeLessThanOrEqual(before[i] as number));
+          fs.rmSync(dir, { recursive: true, force: true });
+        }
+      ),
+      { numRuns: 80 }
+    );
+  }, 60_000);
 });

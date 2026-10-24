@@ -7,27 +7,28 @@ import type { PluginConfig } from "./config";
 import type { RequestQueue } from "./route-service";
 import { queryUkc } from "./engine/query";
 import type { UkcTileCache } from "./engine/ukc-tile-geometry";
-import type { UkcTileInput } from "./engine/ukc-tiles";
-import type { LonLat } from "./foundation/geo";
+import type { UkcRect, UkcTileInput } from "./engine/ukc-tiles";
 import { ukcTileWithRange } from "./engine/ukc-tiles";
+import type { AreaLevels } from "./model/level-regimes";
+import { levelOver, ringCorners, tileCorners, withinReach } from "./model/level-regimes";
 import type { WaterLevel } from "./model/uncertainty";
 import { sigmaExtra, thresholdDepth } from "./model/uncertainty";
 import type { VesselModel } from "./model/vessel";
 import { FALLBACK_HULL, vesselTerms } from "./model/vessel";
 import type { ChartIndex } from "./spatial/chart-index";
 
-/** `POST /query` and `GET /tiles/ukc/{z}/{x}/{y}.pbf` for the current vessel and water level. */
+/**
+ * `POST /query` and `GET /tiles/ukc/{z}/{x}/{y}.pbf` for the current vessel
+ * and the water level where each tile or polygon is.
+ */
 
 export interface QueryServiceDeps {
   index: ChartIndex | undefined;
   indexReason: string | undefined;
   config: PluginConfig;
   vessel(): VesselModel | undefined;
-  /**
-   * The level applied now; with `at`, the lowest at those positions, and a
-   * fallback where the source does not reach one of them (plan §4.5).
-   */
-  waterLevel(at?: readonly LonLat[]): WaterLevel;
+  /** The level where each area is (plan §4.5): tiles and /query never take the vessel's level. */
+  levelRegimes(): AreaLevels;
   waveHeight(): number | undefined;
   /** Which served tiles changed, for `GET /tiles/ukc/changes`. */
   tileChanges?: UkcTileChanges;
@@ -79,7 +80,7 @@ export async function query(
         terms,
         // At the ring, not the vessel: a forecast for the vessel's sea area adds water
         // that may not be there a few tens of kilometres away.
-        waterLevel: deps.waterLevel(req.ring),
+        waterLevel: levelOver(deps.levelRegimes(), ringCorners(req.ring, req.bufferMetres ?? 0)),
         thresholds: deps.config.lookahead.thresholds
       })
     })
@@ -104,21 +105,9 @@ export function ukcTileReply(z: number, x: number, y: number, deps: QueryService
   if (z < UKC_MIN_ZOOM) {
     return { status: 200, contentType: MVT_TYPE, body: encodeMvt("ukc", []) };
   }
-  const { input, inputs } = tileInput(vessel, deps);
-  deps.tileChanges?.observe(inputs);
-  const { rects, range } = ukcTileWithRange(
-    inputs.store,
-    z,
-    x,
-    y,
-    MVT_EXTENT,
-    input,
-    deps.tileCache
-  );
-  deps.tileChanges?.serve(z, x, y, range);
   // One feature per class, and per class raised by a nearby cell's chart position or flags.
   const byClass = new Map<string, [number, number][][]>();
-  for (const r of rects) {
+  for (const r of drawTile(z, x, y, vessel, deps)) {
     const key = r.reach ? `${r.class}|reach` : r.class;
     const rings = byClass.get(key) ?? [];
     rings.push([
@@ -138,6 +127,30 @@ export function ukcTileReply(z: number, x: number, y: number, deps: QueryService
     return { rings, properties };
   });
   return { status: 200, contentType: MVT_TYPE, body: encodeMvt("ukc", features) };
+}
+
+/** The tile's cells at the water level where the tile is, recorded in the change list. */
+function drawTile(
+  z: number,
+  x: number,
+  y: number,
+  vessel: VesselModel,
+  deps: QueryServiceDeps
+): UkcRect[] {
+  const t = tileInput(vessel, deps);
+  deps.tileChanges?.observe(t.inputs);
+  const inside = t.inputs.beyond?.within(z, x, y) ?? true;
+  const { rects, range } = ukcTileWithRange(
+    t.inputs.store,
+    z,
+    x,
+    y,
+    MVT_EXTENT,
+    inside || !t.beyond ? t.inside : t.beyond,
+    deps.tileCache
+  );
+  deps.tileChanges?.serve(z, x, y, range, inside);
+  return rects;
 }
 
 /**
@@ -167,37 +180,50 @@ export function ukcTileChangesReply(
   return { status: 200, body: changes.since(cursor) };
 }
 
+/** The tile inputs at the level inside the source's reach and, when it has one, beyond it. */
 function tileInput(
   vessel: VesselModel,
   deps: QueryServiceDeps
-): { input: UkcTileInput; inputs: TileInputs } {
-  const wl = deps.waterLevel();
+): { inside: UkcTileInput; beyond?: UkcTileInput; inputs: TileInputs } {
+  const levels = deps.levelRegimes();
   const terms = vesselTerms(
     vessel,
     { speed: 0, waveHeight: deps.waveHeight() },
     deps.config.dynamics
   );
   const { thresholds } = deps.config.lookahead;
-  const exact = sigmaExtra(terms, wl);
-  const input: UkcTileInput = {
-    threshold: thresholdDepth(terms, wl),
-    // A forecast's sigma grows with lead time and a wave reading moves each second; at full
-    // precision every poll would refresh every tile. Rounded up, P rises above the threshold
-    // and stays at least 1/2 past it, so no cell reads safer while the warn level is at most
-    // 1/2; above that a wider sigma could lower a P past the threshold below it.
-    sigmaExtra: thresholds.warn <= 0.5 ? Math.ceil(exact * 100) / 100 : exact,
-    thresholds,
-    degraded: wl.degraded !== undefined
+  const inputFor = (wl: WaterLevel): UkcTileInput => {
+    const exact = sigmaExtra(terms, wl);
+    return {
+      threshold: thresholdDepth(terms, wl),
+      // A forecast's sigma grows with lead time and a wave reading moves each second; at full
+      // precision every poll would refresh every tile. Rounded up, P rises above the threshold
+      // and stays at least 1/2 past it, so no cell reads safer while the warn level is at most
+      // 1/2; above that a wider sigma could lower a P past the threshold below it.
+      sigmaExtra: thresholds.warn <= 0.5 ? Math.ceil(exact * 100) / 100 : exact,
+      thresholds,
+      degraded: wl.degraded !== undefined
+    };
   };
-  const { alert, warn } = input.thresholds;
-  return {
-    input,
-    inputs: {
-      store: (deps.index as ChartIndex).pyramid,
-      key: `${input.sigmaExtra}|${alert}|${warn}|${input.degraded}`,
-      threshold: input.threshold
-    }
+  const inside = inputFor(levels.inside);
+  const far = levels.beyond;
+  const beyond = far && inputFor(far.level);
+  const part = (i: UkcTileInput): string => `${i.sigmaExtra}|${i.degraded}`;
+  const { alert, warn } = thresholds;
+  const inputs: TileInputs = {
+    store: (deps.index as ChartIndex).pyramid,
+    key: `${part(inside)}|${beyond ? part(beyond) : "-"}|${alert}|${warn}`,
+    threshold: inside.threshold
   };
+  if (far && beyond) {
+    const { centre, metres } = far.reach;
+    inputs.beyond = {
+      threshold: beyond.threshold,
+      reach: `${centre[0]},${centre[1]},${metres}`,
+      within: (z, x, y) => withinReach(far.reach, tileCorners(z, x, y))
+    };
+  }
+  return beyond ? { inside, beyond, inputs } : { inside, inputs };
 }
 
 function inTile(v: number, z: number): boolean {
