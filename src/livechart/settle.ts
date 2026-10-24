@@ -56,12 +56,12 @@ export class PriorSettler {
     private readonly posteriors: Posteriors,
     private readonly current: () => NodeStore,
     /**
-     * A cell settled: its posterior if it has one, whether the cell or adjustment changed, and
-     * the posterior before.
+     * A cell settled: its posterior if it has one, whether its adjustment took a new cell
+     * reference, and the posterior before.
      */
     private readonly settled: (
       c: CellPosterior | undefined,
-      changed: boolean,
+      adjustmentMoved: boolean,
       before: CellPosterior | undefined
     ) => void,
     private readonly error: (message: string) => void
@@ -139,6 +139,6 @@ export class PriorSettler {
     if (a && a.cellRef !== cellRef) {
       store.adjustments.set(key, { ...a, cellRef });
     }
-    this.settled(c, c !== old || (a !== undefined && a.cellRef !== cellRef), old);
+    this.settled(c, a !== undefined && a.cellRef !== cellRef, old);
   }
 }

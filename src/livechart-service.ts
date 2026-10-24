@@ -106,10 +106,11 @@ export class LivechartService {
    */
   private settled(
     c: CellPosterior | undefined,
-    changed: boolean,
+    adjustmentMoved: boolean,
     before: CellPosterior | undefined
   ): void {
-    if (changed) {
+    // The cells are saved as they were sounded and moved onto the chart again at each start.
+    if (adjustmentMoved) {
       this.files.stateChanged();
     }
     if (!c) {
@@ -327,7 +328,6 @@ export class LivechartService {
       cells: this.posteriors.cells.size,
       // Cells waiting for their chart block to load to be judged against it.
       unsettled: this.posteriors.unsettled.size,
-      // Cells dropped by the retention bound since start.
       dropped: this.dropped,
       discrepancies: this.store.adjustments.size
     };

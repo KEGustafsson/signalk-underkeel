@@ -391,6 +391,19 @@ describe("cells.ndjson", () => {
     }
   });
 
+  test("settling restored cells without adjustments does not rewrite livechart.json", async () => {
+    twoCells();
+    const h = service();
+    await h.svc.whenSettled();
+    const rename = jest.spyOn(fs, "renameSync");
+    try {
+      h.svc.save();
+      expect(rename).not.toHaveBeenCalled();
+    } finally {
+      rename.mockRestore();
+    }
+  });
+
   test("a version-1 livechart.json holding the cells loads them, and they move at the first save", async () => {
     const before = twoCells();
     toVersion1();
@@ -400,7 +413,6 @@ describe("cells.ndjson", () => {
     const rename = jest.spyOn(fs, "renameSync");
     try {
       h.svc.save();
-      // cells.ndjson whole first, then livechart.json without the cells.
       expect(rename.mock.calls.map(([, to]) => to)).toEqual([cellLog, file]);
     } finally {
       rename.mockRestore();
