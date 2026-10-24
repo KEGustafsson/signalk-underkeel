@@ -169,7 +169,7 @@ export class Posteriors {
   }
 }
 
-/** A cell that has read this many σ shallower than a charted prior is never dropped. */
+/** A cell that has read this many σ shallower than a charted prior is marked as a shoal. */
 export const PROTECT_Z = 1;
 
 /** How many σ the posterior reads shallower than its prior; -Infinity without a charted one. */
