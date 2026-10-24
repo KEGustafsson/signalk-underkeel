@@ -109,8 +109,10 @@ export function scoreSchedule(
         }
       }
       // A turning boat's hull also covers ground inside the arc that no step reaches: only a
-      // plan step sets the time, as when every step is scored.
-      return before === undefined || holds(score(f.t, false)) ? f.t : undefined;
+      // plan step sets the time, as when every step is scored. A footprint within one step of
+      // the one before is that plan step alone, already scored.
+      const single = before === undefined || f.t - before.t <= step + 1e-9;
+      return single || holds(score(f.t, false)) ? f.t : undefined;
     }
   };
 }
