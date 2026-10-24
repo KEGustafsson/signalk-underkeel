@@ -1,6 +1,7 @@
 import type { Path, ServerAPI } from "@signalk/server-api";
 import type { GroundingCheck } from "./engine/grounding-detect";
 import type { UnderKeelNotification } from "./engine/notify";
+import { NOTIFY_REFRESH_MS } from "./engine/notify";
 import type { IntegrityResult } from "./model/integrity";
 
 /** Notification values the plugin publishes beside the look-ahead's own. */
@@ -21,6 +22,26 @@ export function integrityNotification(r: IntegrityResult): NotificationValue {
       : `Position integrity degraded: ${r.reasons.join("; ")}`,
     data: { sigmaPos: r.sigmaPos, divergence: r.divergence }
   };
+}
+
+/** The measurements in an integrity reason that change with every fix; a fix quality does not. */
+const DRIFTING = /^(HDOP |GNSS and (?:dead reckoning|water velocity) differ by )\d+(\.\d+)?/;
+
+/**
+ * The integrity notification and how it repeats: at once when its state or
+ * kind of reason changes, while the divergence and HDOP in the message,
+ * which change with every fix, go out at most every NOTIFY_REFRESH_MS.
+ */
+export function integrityUpdate(
+  r: IntegrityResult,
+  now: number
+): { value: NotificationValue; repeat: Repeat } {
+  const value = integrityNotification(r);
+  const kind = r.ok
+    ? value.message.replace(/\d+(\.\d+)?/g, "#")
+    : r.reasons.map((reason) => reason.replace(DRIFTING, "$1#")).join("; ");
+  const key = `${value.state}|${kind}`;
+  return { value, repeat: { key, refreshMs: NOTIFY_REFRESH_MS, now } };
 }
 
 export function groundingNotification(g: GroundingCheck): NotificationValue {

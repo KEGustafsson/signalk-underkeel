@@ -47,8 +47,9 @@ export const MAX_BODY_BYTES = 256 * 1024;
 class BodyError extends Error {}
 
 /**
- * The parsed JSON body. Signal K normally runs express.json() before plugin
- * routes; when it has not, the raw stream is read here with a size cap.
+ * The parsed JSON body. Signal K runs express.json() before plugin routes,
+ * and it leaves `{}` for a body of any other type; only without it is the
+ * raw stream read here, with a size cap.
  */
 export function readJsonBody(req: Request): Promise<unknown> {
   if (req.body !== undefined && typeof req.body === "object") {
@@ -108,6 +109,44 @@ function fail(res: Response, err: unknown, log: (message: string) => void): void
   }
 }
 
+/**
+ * Whether the request declares a JSON body. express.json() turns a form or
+ * a body with no Content-Type into `{}`, which a write route would take as a
+ * request with every field left to its default.
+ */
+function isJson(req: Request): boolean {
+  const [type = ""] = String(req.headers?.["content-type"] ?? "").split(";");
+  return /^application\/([\w.+-]+\+)?json$/.test(type.trim().toLowerCase());
+}
+
+/** An absolute file path, Unix or Windows, after the start, a space, a quote or a bracket. */
+const FILE_PATH = /(^|[\s'"(])(?:[A-Za-z]:)?[\\/][^\s'"`;,()]+/g;
+
+/**
+ * A server-side error reason as it may go on the wire: the text of a
+ * nested error, which may name anything, gives way to "see the server
+ * log", and file paths are hidden. The full reason stays in the plugin
+ * status and the server log.
+ */
+export function publicReason(reason: string): string {
+  return reason
+    .replace(/\bfailed: [^;]*/g, "failed (see the server log)")
+    .replace(/could not be read \([^)]*\)/g, "could not be read")
+    .replace(FILE_PATH, "$1<path>");
+}
+
+/** A 5xx reply's error reasons, with internals kept off the wire. */
+function publicBody(status: number, body: unknown): unknown {
+  const errors = (body as { errors?: unknown } | null)?.errors;
+  if (status < 500 || !Array.isArray(errors)) {
+    return body;
+  }
+  return {
+    ...(body as object),
+    errors: errors.map((e) => (typeof e === "string" ? publicReason(e) : e))
+  };
+}
+
 function send(res: Response, reply: ApiReply): void {
   for (const [name, value] of Object.entries(reply.headers ?? {})) {
     res.setHeader(name, value);
@@ -115,14 +154,14 @@ function send(res: Response, reply: ApiReply): void {
   if (reply.body === undefined) {
     res.status(reply.status).end();
   } else {
-    res.status(reply.status).json(reply.body);
+    res.status(reply.status).json(publicBody(reply.status, reply.body));
   }
 }
 
 /**
  * REST routes, base `/plugins/signalk-underkeel/v1` (plan §4.10). Reads
  * are open to readonly users; adding or deleting an acknowledgement needs
- * readwrite. `GET
+ * readwrite, and adding one a JSON body, so a cross-site form cannot. `GET
  * /envelope?rev=N` answers 304 when the client already holds rev N, so
  * clients can poll on the `envelopeRev` delta without refetching.
  */
@@ -177,7 +216,7 @@ export function registerRoutes(
       const body = gzip ? gzipSync(reply.body) : Buffer.from(reply.body);
       res.status(reply.status).type(reply.contentType).send(body);
     } else {
-      res.status(reply.status).json(reply.body);
+      res.status(reply.status).json(publicBody(reply.status, reply.body));
     }
   });
   r.get(`${API_BASE}/tiles/ukc/changes`, (req: Request, res: Response) =>
@@ -195,6 +234,10 @@ export function registerRoutes(
   );
   const w = readwrite(router);
   w.post(`${API_BASE}/acks`, (req: Request, res: Response) => {
+    if (!isJson(req)) {
+      res.status(415).json({ errors: ["Content-Type must be application/json"] });
+      return;
+    }
     readJsonBody(req)
       .then((body) => send(res, api.addAck(body)))
       .catch((err: unknown) => fail(res, err, log));

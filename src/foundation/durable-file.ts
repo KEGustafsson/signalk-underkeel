@@ -43,20 +43,40 @@ export function appendFileDurable(file: string, data: string): void {
   }
 }
 
+/** Answers to opening or flushing a directory that mean the platform cannot, not a failure. */
+const NO_DIRECTORY_SYNC: ReadonlySet<string> = new Set([
+  "EINVAL",
+  "ENOTSUP",
+  "EOPNOTSUPP",
+  "EPERM",
+  "EACCES",
+  "EISDIR",
+  "EBADF"
+]);
+
 /**
- * Errors are ignored: the file is already in place, and Windows cannot open a directory to
- * sync it.
+ * Flushes `dir`'s entries. A platform that cannot open or flush a directory (Windows, some
+ * network and FUSE filesystems) is skipped: the entry stays where the rename put it, only
+ * its durability is not confirmed. A flush that fails, as with EIO, is thrown, so a caller
+ * does not go on as if the entries were on the disk.
  */
-function syncDirectory(dir: string): void {
-  let fd: number | undefined;
+export function syncDirectory(dir: string): void {
+  let fd: number;
   try {
     fd = fs.openSync(dir, "r");
-    fs.fsyncSync(fd);
-  } catch {
-    // The entry stays where the rename put it; only its durability is not confirmed.
-  } finally {
-    if (fd !== undefined) {
-      fs.closeSync(fd);
+  } catch (err) {
+    if (NO_DIRECTORY_SYNC.has((err as NodeJS.ErrnoException).code ?? "")) {
+      return;
     }
+    throw err;
+  }
+  try {
+    fs.fsyncSync(fd);
+  } catch (err) {
+    if (!NO_DIRECTORY_SYNC.has((err as NodeJS.ErrnoException).code ?? "")) {
+      throw err;
+    }
+  } finally {
+    fs.closeSync(fd);
   }
 }

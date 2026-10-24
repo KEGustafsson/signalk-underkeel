@@ -72,6 +72,12 @@
     return coords.length < 2 ? null : { type: "LineString", coordinates: coords };
   }
 
+  /**
+   * The runtime re-checks every visible route each minute: three missed
+   * re-checks make a result out of date, on the panel and on the chart.
+   */
+  const ROUTE_MAX_AGE_MS = 180000;
+
   /** One line feature per checked leg, coloured by its status in the style. */
   function legFeatures(routeId, legs) {
     return (legs || []).map(function (leg) {
@@ -160,6 +166,22 @@
     }
     const worst = worstStatus(r.legs);
     return { text: worst, cls: worst };
+  }
+
+  /**
+   * The chart's features for a route result: as legFeatures, but every leg
+   * of a result older than `maxAgeMs` is unverified, as on the panel: the
+   * water level or draft may have changed since its check.
+   */
+  function overlayLegs(routeId, r, now, maxAgeMs) {
+    const at = Date.parse(r.receivedAt);
+    const old = !isFinite(at) || now - at > maxAgeMs;
+    return legFeatures(routeId, r.legs).map(function (f) {
+      if (old) {
+        f.properties.status = "unverified";
+      }
+      return f;
+    });
   }
 
   function checkedAgo(iso, now) {
@@ -333,6 +355,10 @@
       end: function (key) {
         running.delete(key);
         return again.delete(key);
+      },
+      /** Drops a remembered start, so the run in progress is not followed by another. */
+      forget: function (key) {
+        again.delete(key);
       }
     };
   }
@@ -351,7 +377,9 @@
     reason: reason,
     widgetView: widgetView,
     routeLine: routeLine,
+    ROUTE_MAX_AGE_MS: ROUTE_MAX_AGE_MS,
     legFeatures: legFeatures,
+    overlayLegs: overlayLegs,
     worstStatus: worstStatus,
     routeEntries: routeEntries,
     compactResult: compactResult,

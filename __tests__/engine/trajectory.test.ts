@@ -1,6 +1,7 @@
 import fc from "fast-check";
 import { convexHull, footprintRing } from "../../src/engine/footprint";
-import { escapeTrack, fanMembers, trackAt } from "../../src/engine/trajectory";
+import type { Track } from "../../src/engine/trajectory";
+import { escapeMembers, escapeTrack, fanMembers, trackAt } from "../../src/engine/trajectory";
 import type { LonLat } from "../../src/foundation/geo";
 import { haversine, localScale, offset, offsetBy, project } from "../../src/foundation/geo";
 import { DEFAULT_GNSS_SIGMA, gnssSigma, UERE } from "../../src/model/position";
@@ -71,6 +72,47 @@ describe("CTRV tracks", () => {
   test("an escape track turns at the maximum rate until the new heading", () => {
     expect(escapeTrack(1, 3, -0.5, 0.05)).toEqual({ course: 1, sog: 3, rot: -0.05, turnFor: 10 });
     expect(escapeTrack(1, 3, 0, 0.05)).toEqual({ course: 1, sog: 3, rot: 0, turnFor: 0 });
+  });
+
+  test("an escape track from an older fix runs straight until now, then turns", () => {
+    const track = escapeTrack(0, 2, 30 * DEG, 3 * DEG, 5);
+    const at5 = trackAt(ORIGIN, track, 5);
+    expect(haversine(at5.position, project(ORIGIN, 0, 10))).toBeLessThan(0.01);
+    expect(at5.course).toBe(0);
+    expect(trackAt(ORIGIN, track, 10).course).toBeCloseTo(15 * DEG, 12);
+    const at15 = trackAt(ORIGIN, track, 15);
+    expect(at15.course).toBeCloseTo(30 * DEG, 12);
+    // Its spread members turn after it too, the spread itself from the fix.
+    const spread = escapeMembers(0, 2, 30 * DEG, 3 * DEG, { cog: 0, rot: 0.1 * DEG }, 60, 5)[1];
+    expect(trackAt(ORIGIN, spread as Track, 5).course).toBeCloseTo(0.5 * DEG, 12);
+    expect(trackAt(ORIGIN, spread as Track, 15).course).toBeCloseTo(31.5 * DEG, 12);
+  });
+
+  test("an escape heading's fan lays the ROT and COG spread over its turn", () => {
+    const sigma = { cog: 0.1, rot: 0.002 };
+    const members = escapeMembers(1, 3, 0.5, 0.05, sigma, 60);
+    expect(members.map((m) => [m.course, m.rot, m.turnFor, m.spread?.rot ?? 0])).toEqual([
+      [1, 0.05, 10, 0],
+      [1, 0.05, 10, 0.002],
+      [1, 0.05, 10, -0.002],
+      [1.1, 0.05, 10, 0],
+      [0.9, 0.05, 10, 0]
+    ]);
+    // The spread runs on through the 10 s turn for its own 60 s.
+    expect(trackAt(ORIGIN, members[2] as Track, 5).course).toBeCloseTo(1 + 0.048 * 5, 12);
+    expect(trackAt(ORIGIN, members[1] as Track, 30).course).toBeCloseTo(1.5 + 0.002 * 30, 12);
+    expect(trackAt(ORIGIN, members[1] as Track, 200).course).toBeCloseTo(1.5 + 0.002 * 60, 12);
+    // Holding course, it is the look-ahead's own fan without a rate of turn.
+    const hold = escapeMembers(1, 3, 0, 0.05, sigma, 60);
+    const fan = fanMembers(1, 3, 0, sigma, 60);
+    for (const t of [0, 30, 60, 200]) {
+      hold.forEach((track, i) => {
+        const a = trackAt(ORIGIN, track, t);
+        const b = trackAt(ORIGIN, fan[i] as Track, t);
+        expect(haversine(a.position, b.position)).toBeLessThan(1e-6);
+        expect(a.course).toBeCloseTo(b.course, 12);
+      });
+    }
   });
 });
 

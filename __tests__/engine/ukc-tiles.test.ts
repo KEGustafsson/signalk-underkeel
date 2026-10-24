@@ -3,6 +3,7 @@ import { tileAt, tileKey, tileRect, toMercator, fromMercator } from "../../src/f
 import type { Thresholds } from "../../src/engine/lookahead";
 import { DEFAULT_LOOKAHEAD } from "../../src/engine/lookahead";
 import type { UkcTileInput } from "../../src/engine/ukc-tiles";
+import { EDGE_MARGIN, SLOTS } from "../../src/engine/ukc-tile-geometry";
 import { classify, ukcTile, ukcTileWithRange } from "../../src/engine/ukc-tiles";
 import { FLAGS, NO_DATA } from "../../src/spatial/node-store";
 import { footprintGeom, minDepthOver } from "../../src/spatial/pyramid";
@@ -10,6 +11,7 @@ import { buildPyramid } from "../../src/spatial/pyramid-build";
 import type { TileCell } from "../../src/spatial/tile-walk";
 import { cellsInTile } from "../../src/spatial/tile-walk";
 import { fixtureIndex, ROCK } from "../helpers/fixture-index";
+import { referenceUkcTile } from "../helpers/reference-ukc-tiles";
 import { area, basin, coverage, quality } from "../helpers/synthetic";
 import { uniform as evenly } from "../helpers/arbitraries";
 import type { Catzoc } from "../../src/ingest/features";
@@ -320,5 +322,59 @@ describe("the threshold range of a tile", () => {
       lo: -Infinity,
       hi: Infinity
     });
+  });
+});
+
+describe("a tile beside a coarse leaf", () => {
+  // A uniform CATZOC B basin over 3 × 3 z10 tiles stays one z10 leaf, except
+  // the tile east of the centre, split down to its leaves by 4 m banks just
+  // past its west edge: the coarse leaf and the 15 m leaves around the banks
+  // reach a z20 tile at the edge as sources of one kind.
+  const [mx, my] = toMercator(22.0, 60.0);
+  const home = tileAt(10, mx, my);
+  const r = tileRect(10, home.x, home.y);
+  const size = r.maxX - r.minX;
+  const [w, s] = fromMercator(r.minX - size, r.minY - size);
+  const [e, n] = fromMercator(r.maxX + 2 * size, r.maxY + size);
+  const box = [w + 1e-6, s + 1e-6, e - 1e-6, n - 1e-6] as const;
+  const mid = (r.minY + r.maxY) / 2;
+  const banks = Array.from({ length: 13 }, (_, i) => {
+    const [a, b] = fromMercator(r.maxX + 40 + (i % 2) * 30, mid + (i - 6) * 45);
+    const [c, d] = fromMercator(r.maxX + 55 + (i % 2) * 30, mid + (i - 6) * 45 + 12);
+    return area([a, b, c, d], 4);
+  });
+  const store = buildPyramid([coverage(box), quality(box, 3), area(box, 15), ...banks], {
+    minZoom: 10,
+    leafZoom: 20
+  });
+
+  test("is drawn as the brute force from a grid bounded by the tile's reach", () => {
+    const t = { z: 20, ...tileAt(20, r.maxX + 1, mid) };
+    // Cut to the tile's reach; whole, the z10 leaf alone is 2^16 slots a side.
+    const limit = (SLOTS + 2 * (EDGE_MARGIN + 2) + 2) ** 2;
+    let largest = 0;
+    const Real = globalThis.Uint8Array;
+    class Counted extends Real {
+      constructor(...args: unknown[]) {
+        const bytes = typeof args[0] === "number" ? args[0] : 0;
+        if (bytes > limit) {
+          throw new RangeError(`a grid of ${bytes} bytes`);
+        }
+        largest = Math.max(largest, bytes);
+        super(...(args as [number]));
+      }
+    }
+    for (const threshold of [2, 3.6, 4.2, 14]) {
+      globalThis.Uint8Array = Counted as unknown as Uint8ArrayConstructor;
+      let got;
+      try {
+        got = ukcTile(store, t.z, t.x, t.y, EXTENT, input(threshold));
+      } finally {
+        globalThis.Uint8Array = Real;
+      }
+      expect(got).toEqual(referenceUkcTile(store, t.z, t.x, t.y, EXTENT, input(threshold)));
+    }
+    expect(largest).toBeGreaterThan(SLOTS * SLOTS);
+    expect(largest).toBeLessThanOrEqual(limit);
   });
 });

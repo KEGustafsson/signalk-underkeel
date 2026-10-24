@@ -22,7 +22,7 @@ import { PENDING_REASONS } from "./index-loader";
 import { WFS_NOTICE } from "./ingest/wfs";
 import type { WaterLevelStatus } from "./water-level-service";
 import { WaterLevelService } from "./water-level-service";
-import { ChangeNotifier, groundingNotification, integrityNotification } from "./notifications";
+import { ChangeNotifier, groundingNotification, integrityUpdate } from "./notifications";
 import { asNumber, INPUT_PATHS, NavInputs, sampleTime, selfValue } from "./nav-inputs";
 import type { Deferral } from "./escape-search";
 import { EscapeSearch } from "./escape-search";
@@ -203,18 +203,20 @@ export class Monitor {
   /**
    * Acknowledged passages and mooring zones act on the published state,
    * after hysteresis: they change the state, not P, so hysteresis would
-   * otherwise never let an acknowledged warn go.
+   * otherwise never let an acknowledged warn go. Only acknowledgements hold
+   * for a heading; a boat at rest with no heading or COG is still in a zone.
    */
   private suppressed(r: LookaheadResult): LookaheadResult {
     const vessel = this.vessel();
     const heading = this.heading();
-    if (!vessel || heading === undefined) {
+    if (!vessel) {
       return r;
     }
     return suppress(r, {
-      acks: this.acks?.list(this.clock.now()) ?? [],
+      acks: heading === undefined ? [] : (this.acks?.list(this.clock.now()) ?? []),
       zones: this.zones,
-      heading,
+      // With no acknowledgements to match, the heading is never read.
+      heading: heading ?? 0,
       waterLevel: this.waterLevel(),
       draft: vessel.draft,
       now: this.clock.now(),
@@ -366,8 +368,9 @@ export class Monitor {
       ...raw,
       escapeHeading: this.escape.headingFor(raw.state, escapable)
     });
-    // A held state keeps its last heading, which is a guess too once the tick is not escapable.
-    const next = this.suppressed(escapable ? held : { ...held, escapeHeading: null });
+    // Hysteresis publishes this tick's heading, never a held one; headingFor gives null when
+    // the tick is not escapable.
+    const next = this.suppressed(held);
     if (next.state !== this.last.state) {
       this.since = this.clock.now();
     }
@@ -391,7 +394,8 @@ export class Monitor {
     );
     this.notify(r);
     if (this.integrityResult) {
-      this.notifier.send(PATHS.positionIntegrity, integrityNotification(this.integrityResult));
+      const integrity = integrityUpdate(this.integrityResult, this.clock.now());
+      this.notifier.send(PATHS.positionIntegrity, integrity.value, integrity.repeat);
     }
     this.checkGrounding(r);
     this.escape.after(raw.state, this.clock.now() - t0, escapable);

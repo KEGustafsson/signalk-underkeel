@@ -120,9 +120,12 @@ describe("coarse steps beyond the warn window", () => {
   /**
    * With no warn window every footprint is a plan step, as the engine scored
    * before coarse steps; only the state table differs, which these tests
-   * leave out.
+   * leave out. They look 350 m ahead, where a horizon of plan steps fits in
+   * MAX_FOOTPRINTS down to 0.3 m/s: farther, only the coarse tick would
+   * keep the plan step inside the windows.
    */
-  const fine = { ...opts, warnWithin: Infinity };
+  const near = { ...opts, distance: 350 };
+  const fine = { ...near, warnWithin: Infinity };
 
   const navArb = fc.record({
     x: uniform(0.2, 0.8),
@@ -146,7 +149,7 @@ describe("coarse steps beyond the warn window", () => {
   test("every tile a plan-step footprint reaches beyond the window, a coarse one reaches", () => {
     fc.assert(
       fc.property(navArb, (n) => {
-        const coarse = evaluateLookahead(navOf(n), ctx(KEEL), index, NOW, opts);
+        const coarse = evaluateLookahead(navOf(n), ctx(KEEL), index, NOW, near);
         const dense = evaluateLookahead(navOf(n), ctx(KEEL), index, NOW, fine);
         // From the first coarse footprint, the first on the grid at or past the window: the dense
         // steps after it lie between it and the next coarse one.
@@ -174,7 +177,10 @@ describe("coarse steps beyond the warn window", () => {
           [{ x: 0.53954, y: 0.72002, cog: 0, sog: 1.32432, rot: -0.029976 }],
           // From CI: a rock just past a plan step's buffer and within the coarse one's read its
           // float32 survey depth there, 1 ulp shallower than its depth within, and a higher P.
-          [{ x: 0.79328, y: 0.4943, cog: 2.3147254671649597, sog: 0.3, rot: 0.020586 }]
+          [{ x: 0.79328, y: 0.4943, cog: 2.3147254671649597, sog: 0.3, rot: 0.020586 }],
+          // From CI: a turning boat whose coarse hull reached a rock inside its arc at 225 s that
+          // no plan step reaches before 708 s.
+          [{ x: 0.68126, y: 0.2, cog: 6.268733980973073, sog: 0.3, rot: 0.016596 }]
         ]
       }
     );
@@ -188,9 +194,9 @@ describe("coarse steps beyond the warn window", () => {
       NOW,
       opts
     );
-    // 1200 s horizon in 400 steps of 3.0075 s; beyond 120 s every 21st, as (12 + 20) / 0.5 = 64 s.
+    // 1200 s horizon in 3 s steps; beyond 120 s every 21st, as (12 + 20) / 0.5 = 64 s.
     expect(r.horizon).toBe(1200);
-    const step = 1200 / 399;
+    const step = 3;
     const gaps = r.footprints.slice(1).map((f, i) => f.t - (r.footprints[i] as FootprintResult).t);
     expect(gaps.slice(0, 40).every((g) => Math.abs(g - step) < 1e-9)).toBe(true);
     expect(gaps.slice(40, -1).every((g) => Math.abs(g - 21 * step) < 1e-9)).toBe(true);

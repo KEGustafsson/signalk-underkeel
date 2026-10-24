@@ -188,6 +188,28 @@ describe("tick publishing", () => {
   });
 });
 
+test("a position-integrity warning whose numbers drift is refreshed at most every 30 s", () => {
+  const r = rig(false);
+  const still = (at: number, hdop: number): Delta => {
+    const d = navDelta(22.003, 60.0125, 0, at);
+    for (const u of d.updates) {
+      u.values.push({ path: "navigation.gnss.horizontalDilution" as never, value: hdop });
+    }
+    return d;
+  };
+  const ticks = 20;
+  for (let i = 0; i < ticks; i++) {
+    r.tick(still(T0 + (i + 1) * 1000, 6 + i / 10));
+  }
+  const warns = values(r.deltas).filter(
+    (v) =>
+      v.path === "notifications.navigation.positionIntegrity" &&
+      (v.value as { state: string }).state === "warn"
+  );
+  expect(warns[0]?.value).toMatchObject({ message: expect.stringMatching(/HDOP 6\.0/) });
+  expect(warns.length).toBeLessThanOrEqual(Math.ceil((ticks * 1000) / NOTIFY_REFRESH_MS));
+});
+
 describe("escape search after the tick", () => {
   test("runs once the tick's result is out and publishes its heading", () => {
     const r = rig(true);
@@ -212,8 +234,14 @@ describe("escape search after the tick", () => {
     expect(r.deferred.length).toBe(0);
     expect(r.statuses.at(-1)).toMatch(/escape search skipped: a tick took \d+ ms/);
     r.lookupMs = 0;
-    r.tick(approach(37, T0 + 5000));
-    r.tick(approach(36, T0 + 6000));
+    // The skip holds until the next search is due, ESCAPE_EVERY_MS after it.
+    r.tick(approach(37, T0 + 4000));
+    expect(r.deferred.length).toBe(0);
+    expect(r.statuses.at(-1)).toMatch(/skipped/);
+    for (let s = 36; s > 30 && r.deferred.length === 0; s--) {
+      r.tick(approach(s, T0 + (41 - s) * 1000));
+    }
+    expect(r.deferred.length).toBe(1);
     expect(r.statuses.at(-1)).not.toMatch(/skipped/);
   });
 
@@ -308,5 +336,40 @@ describe("index status", () => {
     r.tick(navDelta(22.003, 60.0125, 0, T0 + 2000));
     expect(r.statuses.at(-1)).toMatch(/^Monitoring: /);
     expect(r.errors).toEqual([]);
+  });
+});
+
+describe("mooring zones", () => {
+  /** At rest 30 m short of the rock, with no heading and a null COG. */
+  const berth = (at: number): Delta => {
+    const d = navDelta(ROCK[0] - 30 / M_PER_DEG_LON, ROCK[1], 0, at);
+    for (const u of d.updates) {
+      u.values = u.values
+        .filter((v) => v.path !== "navigation.headingTrue")
+        .map((v) => (v.path === "navigation.courseOverGroundTrue" ? { ...v, value: null } : v));
+    }
+    return d;
+  };
+  const zone = {
+    name: "berth",
+    polygon: [
+      [ROCK[0] - 0.01, ROCK[1] - 0.01],
+      [ROCK[0] + 0.01, ROCK[1] - 0.01],
+      [ROCK[0] + 0.01, ROCK[1] + 0.01],
+      [ROCK[0] - 0.01, ROCK[1] + 0.01]
+    ] as [number, number][],
+    holes: []
+  };
+
+  test("suppress a warning without a heading or COG", () => {
+    const outside = rig(false);
+    outside.tick(berth(T0 + 1000));
+    expect(outside.monitor.heading()).toBeUndefined();
+    expect(["warn", "alarm"]).toContain(outside.monitor.last.state);
+    const inside = rig(false);
+    inside.monitor.setZones([zone]);
+    inside.tick(berth(T0 + 1000));
+    expect(inside.monitor.last.state).toBe("alert");
+    expect(inside.monitor.last.reason).toMatch(/^in mooring zone berth: /);
   });
 });

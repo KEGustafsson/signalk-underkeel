@@ -1,4 +1,4 @@
-import type { NavState } from "../../src/engine/lookahead";
+import type { FootprintResult, NavState } from "../../src/engine/lookahead";
 import {
   DEFAULT_LOOKAHEAD,
   MAX_FOOTPRINTS,
@@ -7,6 +7,7 @@ import {
   navState
 } from "../../src/engine/lookahead";
 import { Hysteresis } from "../../src/engine/hysteresis";
+import { haversine } from "../../src/foundation/geo";
 import type { VesselModel } from "../../src/model/vessel";
 import type { ChartIndex } from "../../src/spatial/chart-index";
 import { HazardIndex } from "../../src/spatial/hazards";
@@ -230,6 +231,32 @@ describe("probabilistic look-ahead on the synthetic chart", () => {
     expect(r.clearance).toBeNull();
   });
 
+  test("footprints start where the vessel is now, not at an older fix", () => {
+    // A fix 5 s old at 3 m/s is 15 m behind the vessel.
+    const aged = evaluateLookahead(
+      nav(westOfRock(40) - 15 / M_PER_DEG_LON, FAIRWAY_LAT, EAST, 3, 5),
+      { ...ctx(DEEP_KEEL), escape: true },
+      index,
+      NOW
+    );
+    const now = evaluateLookahead(
+      nav(westOfRock(40), FAIRWAY_LAT),
+      { ...ctx(DEEP_KEEL), escape: true },
+      index,
+      NOW
+    );
+    expect(aged.footprints.map((f) => f.t)).toEqual(now.footprints.map((f) => f.t));
+    aged.footprints.forEach((f, i) => {
+      expect(haversine(f.center, (now.footprints[i] as FootprintResult).center)).toBeLessThan(0.1);
+    });
+    // Speed error since the fix lengthens the aged footprints: the shoal comes no later.
+    expect(aged.state).toBe(now.state);
+    expect(aged.timeToShoal as number).toBeLessThanOrEqual(now.timeToShoal as number);
+    // The escape turns from where the vessel is now, not from the fix.
+    expect(now.escapeHeading).not.toBeNull();
+    expect(aged.escapeHeading).toBe(now.escapeHeading);
+  });
+
   test("the horizon follows max(minHorizon, distance / SOG)", () => {
     const slow = evaluateLookahead(nav(22.003, FAIRWAY_LAT, EAST, 2), ctx(DEEP_KEEL), index, NOW);
     expect(slow.horizon).toBeCloseTo(DEFAULT_LOOKAHEAD.distance / 2, 6);
@@ -341,6 +368,31 @@ describe("probabilistic look-ahead on the synthetic chart", () => {
     expect(cut.horizon).toBeLessThan((5 * 1852) / 0.3);
   });
 
+  test("a long look-ahead keeps the plan step inside the alarm and warn windows", () => {
+    const rock: ChartIndex = {
+      catalogue: { version: 1, cells: [] },
+      pyramid: buildPyramid([...basin([22.0, 60.0, 22.04, 60.02], 10), point(22.02, 60.01, 1)], {
+        minZoom: 12,
+        leafZoom: 18
+      }),
+      hazards: new HazardIndex([])
+    };
+    const opts = { ...DEFAULT_LOOKAHEAD, distance: 5 * 1852 };
+    // 70 m short of the rock at 0.3 m/s: alarm within 60 s. A 5 NM horizon in 400 equal steps
+    // scored 0 s and then 77 s, and read it as a warn 77 s ahead.
+    const r = evaluateLookahead(
+      nav(22.02 - 70 / M_PER_DEG_LON, 60.01, EAST, 0.3),
+      ctx(DEEP_KEEL),
+      rock,
+      NOW,
+      opts
+    );
+    const within = r.footprints.filter((f) => f.t <= opts.warnWithin).map((f) => f.t);
+    expect(within).toEqual(Array.from({ length: 41 }, (_, i) => i * opts.step));
+    expect(r.state).toBe("alarm");
+    expect(r.timeToShoal as number).toBeLessThan(opts.alarmWithin);
+  });
+
   test("squat uses the faster of SOG and STW, even with COG stale", () => {
     const squatOf = (n: NavState) =>
       evaluateLookahead(n, ctx(DEEP_KEEL), index, NOW).worst?.explanation.squat;
@@ -374,6 +426,43 @@ describe("probabilistic look-ahead on the synthetic chart", () => {
         expect(Math.abs(r.escapeHeading - EAST)).toBeGreaterThanOrEqual((5 * Math.PI) / 180 - 1e-9);
       }
     }
+  });
+
+  test("a rock only the fan's spread reaches never yields hold course as the escape", () => {
+    const rock: ChartIndex = {
+      catalogue: { version: 1, cells: [] },
+      pyramid: buildPyramid([...basin([22.0, 60.0, 22.04, 60.02], 10), point(22.02, 60.01, 1)], {
+        minZoom: 12,
+        leafZoom: 18
+      }),
+      hazards: new HazardIndex([])
+    };
+    // The rock is `ahead` m along the course and `off` m to port: a straight track passes it
+    // clear, the COG + σ member does not. Scored on its track alone, holding course came out as
+    // the escape in every state.
+    const at = (ahead: number, off: number) =>
+      evaluateLookahead(
+        nav(22.02 - ahead / M_PER_DEG_LON, 60.01 - off / 111320),
+        { ...ctx(DEEP_KEEL), escape: true },
+        rock,
+        NOW
+      );
+    for (const [ahead, off, state] of [
+      [300, 30, "warn"],
+      [400, 50, "warn"],
+      [200, 30, "alarm"]
+    ] as const) {
+      const r = at(ahead, off);
+      expect(r.state).toBe(state);
+      // A turn to starboard, away from the rock.
+      const turn = (r.escapeHeading as number) - EAST;
+      expect(turn).toBeGreaterThanOrEqual((5 * Math.PI) / 180 - 1e-9);
+      expect(turn).toBeLessThanOrEqual(Math.PI / 2 + 1e-9);
+    }
+    // Held course stays clear of warn: no heading does better, so there is nothing to dodge to.
+    const alert = at(300, 50);
+    expect(alert.state).toBe("alert");
+    expect(alert.escapeHeading).toBeNull();
   });
 
   test("an escape heading never counts water off the chart as clear", () => {

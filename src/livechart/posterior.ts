@@ -2,6 +2,7 @@ import { tileAt, tileKey, tileRect, toMercator } from "../foundation/geo";
 import type { NodeStore, NodeValues } from "../spatial/node-store";
 import { FLAGS } from "../spatial/node-store";
 import { minDepthOver } from "../spatial/pyramid";
+import { unloadedBlock } from "./chart-blocks";
 import type { Sounding } from "./soundings";
 
 /**
@@ -63,6 +64,12 @@ export function chartPrior(
 
 export class Posteriors {
   readonly cells = new Map<number, CellPosterior>();
+  /**
+   * Keys of the cells, and of adjustments without one, whose prior or cell reference was read
+   * while their block was not loaded (plan §4.13), to be moved onto the loaded chart. Until
+   * then a cell holds the stand-ins' prior, never deeper than the chart, or noPrior().
+   */
+  readonly unsettled: Set<number> = new Set<number>();
 
   constructor(private store: NodeStore) {}
 
@@ -84,6 +91,10 @@ export class Posteriors {
     let c = this.cells.get(key);
     if (!c) {
       const prior = chartPrior(this.store, z, x, y);
+      // Read after the prior: a small block is read on the spot by the query that reaches it.
+      if (unloadedBlock(this.store, z, x, y) !== undefined) {
+        this.unsettled.add(key);
+      }
       const mean = Number.isNaN(prior.depth) ? s.depth : prior.depth;
       c = {
         z,
@@ -149,6 +160,16 @@ export function rebasePrior(
     sigma: Math.sqrt(1 / prec)
   };
 }
+
+/**
+ * The prior of a cell whose chart cannot be read yet: none, so the soundings stand alone and
+ * the cell is not judged until it is rebased onto its chart.
+ */
+export const noPrior = (cellRef: number): { depth: number; sigma: number; cellRef: number } => ({
+  depth: NaN,
+  sigma: NO_PRIOR_SIGMA,
+  cellRef
+});
 
 /** Trigger (plan §4.13): at least this many samples over at least this many passes. */
 export const MIN_SAMPLES = 5;

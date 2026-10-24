@@ -11,6 +11,7 @@ import {
   adjustmentFor,
   chartPrior,
   isDiscrepancy,
+  noPrior,
   Posteriors,
   rebasePrior
 } from "./livechart/posterior";
@@ -23,6 +24,9 @@ import {
   savedZoom
 } from "./livechart/saved-state";
 import { cellRefAt, restoreAdjustments, restoreCells } from "./livechart/restore";
+import { unloadedBlock } from "./livechart/chart-blocks";
+import type { Rebased } from "./livechart/settle";
+import { PriorSettler, rebaseOnto } from "./livechart/settle";
 import { SampleLog } from "./livechart/sample-log";
 import type { RawSounding, Sounding, SoundingSource } from "./livechart/soundings";
 import { reduce } from "./livechart/soundings";
@@ -66,21 +70,14 @@ export const SAVE_CHECK_MS = 10_000;
 const SAMPLES_EVERY_MS = 60_000;
 const STATE_EVERY_MS = 10 * 60_000;
 
-/** Cells rebased per slice of prepareRebind(): 1 000 chart priors take about 11 ms on x86. */
-const REBIND_SLICE = 1000;
-
-/** A cell rebased onto a new prior, and its sample count then. */
-interface Rebased {
-  samples: number;
-  c: CellPosterior;
-}
-
 interface Saved {
   version: 1;
   /** The living-chart zoom the cells and adjustment keys are at. */
   zoom: number;
   cells: CellPosterior[];
   adjustments: [number, NodeValues][];
+  /** Soundings of an older version's file that the log does not hold yet. */
+  samples?: Sounding[];
 }
 
 export class LivechartService {
@@ -97,7 +94,13 @@ export class LivechartService {
   accepted = 0;
   /** Set when a state file that did not load whole could not be moved aside: never overwrite it. */
   private keepFile = false;
+  /**
+   * Soundings an older version's `livechart.json` held and the log does not: written back
+   * with the state until a log save holds them, so a failed one never loses them.
+   */
+  private legacy: Sounding[] = [];
   private readonly notes = new NoteSchedule((key) => this.writeNote(key));
+  private readonly settler: PriorSettler;
 
   constructor(
     private store: NodeStore,
@@ -106,9 +109,21 @@ export class LivechartService {
     private readonly deps: LivechartDeps
   ) {
     this.posteriors = new Posteriors(store);
+    this.settler = new PriorSettler(
+      this.posteriors,
+      () => this.store,
+      (c, changed) => {
+        this.dirty ||= changed;
+        if (c && isDiscrepancy(c)) {
+          this.adjust(c);
+        }
+      },
+      deps.error
+    );
     this.log = new SampleLog(path.join(path.dirname(file), "soundings.ndjson"), MAX_SAMPLES);
     this.samplesAt = this.stateAt = this.now();
     this.load();
+    this.settler.soon();
   }
 
   /**
@@ -124,23 +139,17 @@ export class LivechartService {
    * true are rebased in slices with `pause` after each, and the returned function, run
    * once the caller swaps the index in, moves the living chart over. A cell `affected`
    * leaves out keeps its prior, which the caller vouches is unchanged (invariant 5); a cell
-   * that got a sounding meanwhile is rebased again then.
+   * that got a sounding meanwhile is rebased again then. Each block a cell's prior reads is
+   * waited for, as chartPrior() would read its stand-ins.
    */
   async prepareRebind(
     store: NodeStore,
     affected: (c: CellPosterior) => boolean,
     pause: () => Promise<void>
   ): Promise<() => void> {
-    const done = new Map<number, Rebased>();
-    let n = 0;
-    for (const [key, c] of [...this.posteriors.cells]) {
-      if (affected(c)) {
-        done.set(key, { samples: c.samples, c: rebasePrior(c, chartPrior(store, c.z, c.x, c.y)) });
-        if (++n % REBIND_SLICE === 0) {
-          await pause();
-        }
-      }
-    }
+    const cells = [...this.posteriors.cells.values()].filter(affected);
+    // A cell whose block could not be read is left to applyRebind().
+    const done = await rebaseOnto(store, cells, pause);
     await pause();
     return () => this.applyRebind(store, affected, done);
   }
@@ -150,25 +159,46 @@ export class LivechartService {
     affected: (c: CellPosterior) => boolean,
     done: Map<number, Rebased>
   ): void {
+    const unsettled = this.posteriors.unsettled;
     for (const [key, c] of this.posteriors.cells) {
       const d = done.get(key);
       if (d && d.samples === c.samples) {
         this.posteriors.cells.set(key, d.c);
-      } else if (affected(c)) {
+        unsettled.delete(key);
+      } else if (affected(c) && unloadedBlock(store, c.z, c.x, c.y) === undefined) {
         this.posteriors.cells.set(key, rebasePrior(c, chartPrior(store, c.z, c.x, c.y)));
+        unsettled.delete(key);
+      } else if (affected(c)) {
+        // Not judged until the settler finds the block loaded.
+        this.posteriors.cells.set(key, rebasePrior(c, noPrior(c.cellRef)));
+        unsettled.add(key);
       }
     }
     const z = this.store.adjustZoom;
     for (const [key, v] of this.store.adjustments) {
+      if (!this.posteriors.cells.has(key)) {
+        unsettled.delete(key);
+      }
       store.adjustments.set(key, { ...v, cellRef: cellRefAt(store, this.posteriors, z, key) });
     }
     this.store = store;
     this.posteriors.rebind(store);
+    this.judge();
+    this.settler.soon();
+  }
+
+  /** Adjusts every cell that is a discrepancy; adjust() only lowers. */
+  private judge(): void {
     for (const c of this.posteriors.cells.values()) {
       if (isDiscrepancy(c)) {
         this.adjust(c);
       }
     }
+  }
+
+  /** Resolves when the run settling cells, if one is under way, has ended. */
+  whenSettled(): Promise<void> {
+    return this.settler.done();
   }
 
   get path(): string {
@@ -186,6 +216,9 @@ export class LivechartService {
     this.dirty = true;
     this.log.add(r.sounding);
     const c = this.posteriors.add(r.sounding);
+    // An unsettled cell is judged against the prior it holds, the stand-ins' (never deeper than
+    // the chart's) or none, and against the chart's once the settler has read it.
+    this.settler.soon();
     if (isDiscrepancy(c)) {
       this.adjust(c);
     }
@@ -229,6 +262,7 @@ export class LivechartService {
   stop(): void {
     this.stopTimer?.();
     this.stopTimer = undefined;
+    this.settler.stop();
     this.notes.flush(this.now(), true);
     this.save();
   }
@@ -237,10 +271,11 @@ export class LivechartService {
   flush(): void {
     const now = this.now();
     this.notes.flush(now);
+    this.settler.soon();
     // A state file that could not be set aside is never written, so it never brings the log forward.
     const state =
       !this.keepFile && this.dirty && (this.adjusted || now - this.stateAt >= STATE_EVERY_MS);
-    // Soundings first: the state file may still hold soundings only the log will keep.
+    // Soundings first: the state file keeps an older version's soundings until the log does.
     if (state || now - this.samplesAt >= SAMPLES_EVERY_MS) {
       this.saveSamples(now);
     }
@@ -270,6 +305,8 @@ export class LivechartService {
       accepted: this.accepted,
       rejected: Object.fromEntries(this.rejected),
       cells: this.posteriors.cells.size,
+      // Cells waiting for their chart block to load to be judged against it.
+      unsettled: this.posteriors.unsettled.size,
       discrepancies: this.store.adjustments.size
     };
   }
@@ -290,6 +327,9 @@ export class LivechartService {
     try {
       fs.mkdirSync(path.dirname(this.log.file), { recursive: true });
       this.log.save();
+      if (!this.log.keep) {
+        this.legacy = [];
+      }
     } catch (err) {
       this.deps.error(`${this.log.file} not saved: ${(err as Error).message}`);
     }
@@ -306,7 +346,8 @@ export class LivechartService {
       version: 1,
       zoom: this.store.adjustZoom,
       cells: [...this.posteriors.cells.values()],
-      adjustments: [...this.store.adjustments]
+      adjustments: [...this.store.adjustments],
+      ...(this.legacy.length > 0 ? { samples: this.legacy } : {})
     };
     const tmp = `${this.file}.tmp-${process.pid}`;
     try {
@@ -350,12 +391,8 @@ export class LivechartService {
       restoreCells(cells, this.store, this.posteriors) +
       restoreAdjustments(saved.adjustments, from, this.store, this.posteriors) +
       samples.filter((v) => !isSounding(v)).length;
-    // Against a rebuilt chart a cell may qualify that did not before; adjust() only lowers.
-    for (const c of this.posteriors.cells.values()) {
-      if (isDiscrepancy(c)) {
-        this.adjust(c);
-      }
-    }
+    // Against a rebuilt chart a cell may qualify that did not before.
+    this.judge();
     // What did load is written to a new file at the next save; the old one is set aside.
     this.dirty ||= malformed > 0 || from !== z || samples.length > 0;
     if (malformed > 0) {
@@ -389,7 +426,8 @@ export class LivechartService {
     }
     const logged = read?.samples ?? [];
     const first = logged[0]?.at ?? Infinity;
-    log.samples = [...legacy.filter((s) => s.at < first), ...logged].slice(-MAX_SAMPLES);
+    this.legacy = legacy.filter((s) => s.at < first);
+    log.samples = [...this.legacy, ...logged].slice(-MAX_SAMPLES);
     log.rewrite ||= legacy.length > 0;
   }
   /** The saved state file as a version-1 record, or undefined with the reason reported. */

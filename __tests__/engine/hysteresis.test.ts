@@ -67,8 +67,27 @@ describe("state hysteresis", () => {
       state: "alarm",
       reason: "shoal ahead in 20 s",
       clearance: 3,
-      escapeHeading: 1
+      escapeHeading: null
     });
+  });
+
+  test("a held state never republishes the escape heading it was taken with", () => {
+    const h = new Hysteresis(TH);
+    run(h, [raw("normal", 0), raw("alarm", 0.5), { ...raw("alarm", 0.5), escapeHeading: 0.8 }]);
+    // Below alarm the search found no better heading, or was skipped after a slow tick.
+    expect(h.next({ ...raw("warn", 0.1), escapeHeading: null })).toMatchObject({
+      state: "alarm",
+      escapeHeading: null
+    });
+    expect(h.next({ ...raw("warn", 0.1), escapeHeading: 2 })).toMatchObject({
+      state: "alarm",
+      escapeHeading: 2
+    });
+    // An alert held by P between 0.8 × alert and alert never lowers: no heading all along.
+    const alert = new Hysteresis(TH);
+    run(alert, [raw("alert", 0.02), raw("alert", 0.02)]);
+    const held = Array.from({ length: 10 }, () => alert.next(raw("normal", 0.009)));
+    expect(held.every((r) => r.state === "alert" && r.escapeHeading === null)).toBe(true);
   });
 
   test("unknown and off pass through at once; after them a held state lowers as usual", () => {

@@ -1,14 +1,20 @@
 import { randomBytes } from "crypto";
 import type { ThresholdRange } from "../engine/ukc-tiles";
+import type { Rect } from "../foundation/geo";
+import { rectGap, tileRect } from "../foundation/geo";
+import { chartReach, chartSigma } from "../spatial/chart-position";
 import type { NodeStore, NodeValues } from "../spatial/node-store";
+import { mercatorBuffer } from "../spatial/pyramid";
 
 /**
  * Which served UKC tiles a plotter should fetch again (`GET
  * /tiles/ukc/changes`). A tile's classes hold over a range of the threshold
  * depth (ukcTileWithRange); a tile is listed once the threshold leaves the
- * range of a copy served, or an own sounding changes a cell in it. Any other
- * input (σ, risk levels, a fallback water level, the index) changing lists
- * every tile. Clients hold a cursor: the server's epoch and a revision.
+ * range of a copy served, an own sounding changes a cell in it, or a block
+ * within its chart reach loads or is dropped (a tile drawn while it was out
+ * read its stand-ins). Any other input (σ, risk levels, a fallback water
+ * level, the index) changing lists every tile. Clients hold a cursor: the
+ * server's epoch and a revision.
  */
 
 /** What a tile is drawn from besides its address and the threshold. */
@@ -46,6 +52,8 @@ export class UkcTileChanges {
   private adjustments = new Map<number, NodeValues>();
   /** `store.adjustments.revision` when `adjustments` was copied. */
   private revision = 0;
+  /** `store.loadRevision` at the last observe. */
+  private loads = 0;
   private readonly served = new Map<string, Served>();
   /** Listed tiles and the revision they were listed at, oldest first. */
   private readonly changed = new Map<string, number>();
@@ -66,15 +74,18 @@ export class UkcTileChanges {
       this.key = now.key;
       this.adjustments = new Map(now.store.adjustments);
       this.revision = now.store.adjustments.revision;
+      this.loads = now.store.loadRevision;
       this.served.clear();
       this.changed.clear();
       return;
     }
     const moved = this.movedAdjustments(now.store);
+    const near = this.changedBlocks(now.store);
     const out = [...this.served].filter(
       ([, s]) =>
         !(now.threshold >= s.range.lo && now.threshold <= s.range.hi) ||
-        moved.some((a) => holds(s, now.store.adjustZoom, a))
+        moved.some((a) => holds(s, now.store.adjustZoom, a)) ||
+        near(s)
     );
     if (out.length > 0) {
       this.rev++;
@@ -127,6 +138,27 @@ export class UkcTileChanges {
       this.changed.delete(oldest);
       this.floor = Math.max(this.floor, at);
     }
+  }
+
+  /**
+   * Whether a served tile lies within chart reach of a block loaded or dropped
+   * since the last call, as UkcTileCache drops its geometry.
+   */
+  private changedBlocks(store: NodeStore): (s: Served) => boolean {
+    if (store.loadRevision === this.loads) {
+      return () => false;
+    }
+    const blocks: Rect[] = store.blocksChangedSince(this.loads).map((b) => tileRect(b.z, b.x, b.y));
+    this.loads = store.loadRevision;
+    if (blocks.length === 0) {
+      return () => false;
+    }
+    const ground = chartReach(chartSigma(store).max);
+    return (s) => {
+      const tile = tileRect(s.z, s.x, s.y);
+      const reach = mercatorBuffer(tile, ground);
+      return blocks.some((b) => rectGap(tile, b) <= reach);
+    };
   }
 
   /** Living-chart cells whose values changed since the last call, as tileKeys. */

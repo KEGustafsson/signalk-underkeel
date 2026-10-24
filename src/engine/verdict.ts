@@ -20,8 +20,10 @@ export interface Refine {
   /**
    * The first second footprint i's condition holds: its own t, or a skipped
    * step before it when it is a coarse footprint beyond the warn window.
+   * Undefined when it holds on a coarse footprint's hull but on none of the
+   * plan steps it stands for.
    */
-  firstTime(i: number, holds: (f: FootprintResult) => boolean): number;
+  firstTime(i: number, holds: (f: FootprintResult) => boolean): number | undefined;
   /** Footprint i with every tile in reach read, for its coverage. */
   complete(i: number): FootprintResult;
 }
@@ -51,8 +53,9 @@ export function classify(
   const first = (holds: (f: FootprintResult) => boolean, full = false) => {
     for (let i = 0; i < fps.length; i++) {
       const f = full ? refine.complete(i) : (fps[i] as FootprintResult);
-      if (holds(f)) {
-        return { f, t: refine.firstTime(i, holds) };
+      const t = holds(f) ? refine.firstTime(i, holds) : undefined;
+      if (t !== undefined) {
+        return { f, t };
       }
     }
     return undefined;

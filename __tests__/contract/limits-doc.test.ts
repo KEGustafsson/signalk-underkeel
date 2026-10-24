@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { ACK_LIMITS } from "../../src/api/ack-request";
 import { QUERY_LIMITS } from "../../src/api/query-request";
 
 /**
@@ -21,4 +22,10 @@ test.each([
   ["vertices × area", `vertices × that widened box ≤ ${QUERY_LIMITS.maxVertexKm2} km²`]
 ])("the README's query row for %s matches QUERY_LIMITS", (_name, text) => {
   expect(queryRows.some((row) => row.includes(text))).toBe(true);
+});
+
+test("the README's acknowledgement polygon row matches ACK_LIMITS", () => {
+  const row = README.split("\n").find((line) => line.includes("`polygon` of `POST /acks`"));
+  const max = ACK_LIMITS.maxPoints;
+  expect(row).toContain(`4..${max + 1} positions (${max} vertices)`);
 });

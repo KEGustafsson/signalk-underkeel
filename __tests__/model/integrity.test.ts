@@ -77,6 +77,78 @@ describe("position integrity", () => {
     expect(out.every((r) => r.ok)).toBe(true);
   });
 
+  test("a current met at once is flagged, then learned, and the check passes again", () => {
+    // Underway in a 1.5 m/s cross stream from the first fix: the offset
+    // outruns k · σ_DR before the current is learned.
+    const m = new IntegrityMonitor();
+    const out = run(m, passage(1800, 3, [0, 1.5]));
+    expect(out.some((r) => !r.ok)).toBe(true);
+    expect(out.slice(600).every((r) => r.ok)).toBe(true);
+    expect(Math.max(...out.map((r) => r.sigmaPos))).toBeLessThan(250);
+    const [e, n] = m.currentEstimate();
+    expect(e).toBeCloseTo(0, 1);
+    expect(n).toBeCloseTo(1.5, 1);
+  });
+
+  test("a drag faster than the fastest current learned is never explained away", () => {
+    // GNSS position and velocity dragged 4 m/s east beyond the water track: no
+    // independent reference tells it from a current, so only the bound flags it.
+    const m = new IntegrityMonitor();
+    const out = run(m, passage(1800, 3, [4, 0]));
+    expect(out.slice(900).every((r) => !r.ok)).toBe(true);
+    expect(Math.hypot(...m.currentEstimate())).toBeCloseTo(DEFAULT_INTEGRITY.maxCurrent, 6);
+  });
+
+  test("a drag just above the bound stays flagged, not cleared on its small residual", () => {
+    const out = run(new IntegrityMonitor(), passage(1800, 3, [3.2, 0]));
+    expect(out.slice(900).every((r) => !r.ok)).toBe(true);
+    expect(out[1800]?.reasons).toContain(
+      "GNSS and water velocity differ by 3.2 m/s, more than a current"
+    );
+  });
+
+  test("a drag barely above the bound is not cleared while the low-pass catches up", () => {
+    // At 3.01 m/s the low-passed difference stays under 3 m/s for about 685 s, and near 600 s
+    // the offset left behind falls inside k · σ_DR.
+    const out = run(new IntegrityMonitor(), passage(1800, 3, [3.01, 0]));
+    const first = out.findIndex((r) => !r.ok);
+    expect(first).toBeGreaterThan(0);
+    expect(out.slice(first).every((r) => !r.ok)).toBe(true);
+  });
+
+  test("a real stream under the bound is still learned and clears", () => {
+    const out = run(new IntegrityMonitor(), passage(1800, 3, [0, 2.5]));
+    expect(out.slice(900).every((r) => r.ok)).toBe(true);
+  });
+
+  test("a stream entered mid-passage clears once it is learned", () => {
+    // 600 s in still water, then a 1 m/s stream setting south.
+    let position = START;
+    const steps = Array.from({ length: 1801 }, (_, t) => {
+      const gn = t > 600 ? -1 : 0;
+      const sog = Math.hypot(3, gn);
+      const cog = Math.atan2(3, gn);
+      if (t > 0) {
+        position = project(position, cog, sog);
+      }
+      const inputs: IntegrityInputs = {
+        position,
+        heading: EAST,
+        stw: 3,
+        cog,
+        sog,
+        rot: 0,
+        hdop: 1
+      };
+      return { t: T0 + t * 1000, inputs };
+    });
+    const out = run(new IntegrityMonitor(), steps);
+    expect(out.slice(0, 601).every((r) => r.ok)).toBe(true);
+    expect(out.slice(601, 700).some((r) => !r.ok)).toBe(true);
+    expect(out.slice(1200).every((r) => r.ok)).toBe(true);
+    expect(Math.max(...out.map((r) => r.sigmaPos))).toBeLessThan(150);
+  });
+
   test("a poor fix or a high HDOP inflates σ_pos and is reported", () => {
     const dr = run(
       new IntegrityMonitor(),

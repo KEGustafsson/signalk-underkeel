@@ -10,7 +10,12 @@ import type { Parsed } from "./route-request";
 export const ACK_LIMITS = {
   minSector: 1,
   maxSector: 90,
-  maxTtl: 30 * 86400
+  maxTtl: 30 * 86400,
+  /**
+   * Vertices of an acknowledged polygon. Every warn and alarm tick tests the footprint against
+   * each live acknowledgement (at most 100), so a ring is held to what a drawn area needs.
+   */
+  maxPoints: 64
 } as const;
 
 export interface AckRequest {
@@ -34,7 +39,12 @@ function parseAckPolygon(g: unknown, errors: string[]): LonLat[] | undefined {
     errors.push("polygon must be a GeoJSON Polygon");
     return undefined;
   }
-  return parsePolygon(geom.coordinates as unknown[], errors);
+  const ring = parsePolygon(geom.coordinates as unknown[], errors);
+  if (ring && ring.length > ACK_LIMITS.maxPoints) {
+    errors.push(`polygon must have at most ${ACK_LIMITS.maxPoints} vertices`);
+    return undefined;
+  }
+  return ring;
 }
 
 export function parseAckRequest(body: unknown): Parsed<AckRequest> {

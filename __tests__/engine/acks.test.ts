@@ -2,6 +2,7 @@ import type { Ack, SuppressionContext } from "../../src/engine/acks";
 import { ACK_LEVEL_TOLERANCE, suppress } from "../../src/engine/acks";
 import type { FootprintResult, LookaheadResult } from "../../src/engine/lookahead";
 import { DEFAULT_LOOKAHEAD } from "../../src/engine/lookahead";
+import { uncertainPosition } from "../../src/engine/verdict";
 import type { LonLat } from "../../src/foundation/geo";
 
 const NOW = Date.parse("2026-10-18T07:00:00Z");
@@ -120,6 +121,20 @@ describe("acknowledged passages", () => {
   test("a negative mean UKC within the certain window is never suppressed", () => {
     const certain = result("alarm", [fp(0, box(22.001, 60.002, 22.0012, 60.0021), 0.6, -0.2)]);
     expect(suppress(certain, ctx()).state).toBe("alarm");
+  });
+
+  test("a warn raised by the capped position buffer is never suppressed", () => {
+    // The chart alone gives alert; the capped buffer raises it to warn. The rings lie in the
+    // passage and the zone, but the vessel may be well outside them.
+    const chart = { state: "alert" as const, reason: "shoal risk ahead in 30 s", tts: null };
+    const raised = uncertainPosition(chart, 150, "HDOP 12");
+    const capped = { ...WARN, state: raised.state, reason: raised.reason };
+    const zones = [{ name: "home berth", polygon: PASSAGE, holes: [] }];
+    expect(suppress(capped, ctx())).toEqual(capped);
+    expect(suppress(capped, ctx({ acks: [], zones }))).toEqual(capped);
+    // A warn or alarm the chart gave is still covered while the buffer is capped.
+    const fromChart = uncertainPosition({ state: "warn", reason: WARN.reason, tts: 40 }, 150);
+    expect(suppress({ ...WARN, reason: fromChart.reason }, ctx()).state).toBe("alert");
   });
 
   test("normal and alert pass unchanged, and nothing becomes normal", () => {

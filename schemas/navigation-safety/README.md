@@ -42,7 +42,7 @@ signalk-underkeel's limits of that kind:
 | `geometry` of `POST /query`                 | Polygon: 4..500 positions, no holes, bounding box ≤ 50 km across  |
 | `geometry` of `POST /query`                 | bounding box widened by the buffer ≤ 25 km²                       |
 | `geometry` of `POST /query`                 | vertices × that widened box ≤ 150 km² (a Point counts as 1)       |
-| `polygon` of `POST /acks`                   | 4..500 positions, closed, no holes, ≤ 50 km across                |
+| `polygon` of `POST /acks`                   | 4..65 positions (64 vertices), closed, no holes, ≤ 50 km across   |
 | every position                              | longitude within ±180°, latitude within ±85°                      |
 
 The package is private until the contract is accepted upstream (plan §8, M6).

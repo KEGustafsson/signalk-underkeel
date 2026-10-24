@@ -1,4 +1,5 @@
 import type { LonLat } from "../foundation/geo";
+import { haversine } from "../foundation/geo";
 import { sigmaExtra, thresholdDepth } from "../model/uncertainty";
 import { vesselTerms } from "../model/vessel";
 import type { ChartIndex } from "../spatial/chart-index";
@@ -8,7 +9,7 @@ import { DEFAULT_BUILD } from "../spatial/pyramid-build";
 import type { LegResult, RouteCheckInput, Steps } from "./route-check";
 import { checkLeg, checkRoute, checkRouteYielding, drain, UNCHECKED } from "./route-check";
 import type { Grid } from "./route-repair-search";
-import { frameAt, thetaStar } from "./route-repair-search";
+import { cellOf, frameAt, thetaStar } from "./route-repair-search";
 
 /**
  * Route repair (plan §4.11): for a leg that fails, Theta* over a local cost
@@ -76,22 +77,32 @@ function* repairSteps(
   const risk = { threshold: thresholdDepth(terms, wl), sigmaExtra: sigmaExtra(terms, wl) };
   const corridor = input.xteLimit + input.planningBuffer;
   const grid = gridFor(leg.from, leg.to, corridor, opts);
+  const score = (at: LonLat, bufferMetres: number): number => {
+    const r = minDepthOver(index.pyramid, footprintGeom([at]), {
+      bufferMetres,
+      chartPosition: true,
+      risk
+    });
+    const unchecked = (r.flags & UNCHECKED) !== 0;
+    return unchecked || r.maxRisk >= input.probability
+      ? Infinity
+      : 1 + (opts.alpha * r.maxRisk) / input.probability;
+  };
+  // The path starts and ends on the leg's own ends, so their cells are scored there with the
+  // corridor alone: around the cell centre, grown by half a cell, a shoal hundreds of metres
+  // from a waypoint on a long leg's coarse grid would block the whole search. The final check
+  // still holds the path to the corridor.
+  for (const end of [leg.from, leg.to]) {
+    const i = cellOf(grid, end);
+    grid.cost[i] = Math.max(grid.known[i] ? (grid.cost[i] as number) : 0, score(end, corridor));
+    grid.known[i] = 1;
+  }
   const costOf = (i: number): number => {
     if (!grid.known[i]) {
       grid.known[i] = 1;
       const cx = grid.x0 + ((i % grid.nx) + 0.5) * grid.cell;
       const cy = grid.y0 + (Math.floor(i / grid.nx) + 0.5) * grid.cell;
-      const at = footprintGeom([grid.frame.toLonLat(cx, cy)]);
-      const r = minDepthOver(index.pyramid, at, {
-        bufferMetres: corridor + grid.cell / 2,
-        chartPosition: true,
-        risk
-      });
-      const unchecked = (r.flags & UNCHECKED) !== 0;
-      grid.cost[i] =
-        unchecked || r.maxRisk >= input.probability
-          ? Infinity
-          : 1 + (opts.alpha * r.maxRisk) / input.probability;
+      grid.cost[i] = score(grid.frame.toLonLat(cx, cy), corridor + grid.cell / 2);
     }
     return grid.cost[i] as number;
   };
@@ -104,19 +115,20 @@ function* repairSteps(
       reason: "no passable path in the search window"
     };
   }
-  const check = (points: LonLat[]): LegResult[] =>
+  const start = Date.parse(leg.eta.start);
+  const check = (points: LonLat[], departure: number): LegResult[] =>
     checkRoute(
       index,
-      {
-        ...input,
-        coordinates: points,
-        departure: Date.parse(leg.eta.start),
-        speeds: points.slice(1).map(() => speed)
-      },
-      Date.parse(leg.eta.start)
+      { ...input, coordinates: points, departure, speeds: points.slice(1).map(() => speed) },
+      start
     ).legs;
-  const points = yield* simplifySteps(path, (pts) => check(pts).every((l) => l.status === "ok"));
-  const legs = check(points);
+  const points = yield* simplifySteps(
+    path,
+    (pts, departure) => check(pts, departure).every((l) => l.status === "ok"),
+    start,
+    speed
+  );
+  const legs = check(points, start);
   const ok = legs.every((l) => l.status === "ok");
   return {
     index: leg.index,
@@ -160,23 +172,48 @@ function offLine(p: LonLat, a: LonLat, b: LonLat): number {
 }
 
 /**
+ * The time the boat reaches the end of `points` leaving the first at `t`, ms;
+ * truncated to the millisecond at every point, as the route check's ISO times are.
+ */
+function arrival(points: LonLat[], t: number, speed: number): number {
+  for (let i = 1; i < points.length; i++) {
+    t = Math.trunc(t + (haversine(points[i - 1] as LonLat, points[i] as LonLat) / speed) * 1000);
+  }
+  return t;
+}
+
+/**
  * Douglas–Peucker with a veto: a span becomes its chord when `passes`
  * accepts the chord, else it splits at the point farthest from the chord.
- * Simplification can therefore never make a leg fail.
+ * Each chord is checked from the time the boat reaches its start along the
+ * path kept before it, leaving at `start` at `speed`, the times the final
+ * check of the whole path uses. Simplification can therefore never make a
+ * leg fail.
  */
-export function simplify(points: LonLat[], passes: (pts: LonLat[]) => boolean): LonLat[] {
-  return drain(simplifySteps(points, passes));
+export function simplify(
+  points: LonLat[],
+  passes: (pts: LonLat[], departure: number) => boolean,
+  start = 0,
+  speed = 1
+): LonLat[] {
+  return drain(simplifySteps(points, passes, start, speed));
 }
 
 /** `simplify` that yields after each call of `passes`, a route check. */
-function simplifySteps(points: LonLat[], passes: (pts: LonLat[]) => boolean): Steps<LonLat[]> {
-  function* keep(lo: number, hi: number): Steps<LonLat[]> {
+function simplifySteps(
+  points: LonLat[],
+  passes: (pts: LonLat[], departure: number) => boolean,
+  start: number,
+  speed: number
+): Steps<LonLat[]> {
+  /** The kept points from `lo` to `hi`, the boat reaching `lo` at `t`. */
+  function* keep(lo: number, hi: number, t: number): Steps<LonLat[]> {
     const a = points[lo] as LonLat;
     const b = points[hi] as LonLat;
     if (hi - lo < 2) {
       return [a, b];
     }
-    const chord = passes([a, b]);
+    const chord = passes([a, b], t);
     yield;
     if (chord) {
       return [a, b];
@@ -190,10 +227,11 @@ function simplifySteps(points: LonLat[], passes: (pts: LonLat[]) => boolean): St
         far = i;
       }
     }
-    const head = yield* keep(lo, far);
-    return [...head.slice(0, -1), ...(yield* keep(far, hi))];
+    const head = yield* keep(lo, far, t);
+    const tail = yield* keep(far, hi, arrival(head, t, speed));
+    return [...head.slice(0, -1), ...tail];
   }
-  return keep(0, points.length - 1);
+  return keep(0, points.length - 1, start);
 }
 
 export interface RouteRepair {

@@ -1,8 +1,11 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
+import type { AckServiceDeps } from "../src/ack-service";
+import { addAck, MAX_ACKS } from "../src/ack-service";
 import { AckStore } from "../src/ack-store";
 import type { Ack } from "../src/engine/acks";
+import type { WaterLevel } from "../src/model/uncertainty";
 import { loadZones, zonesFromRegion } from "../src/zones";
 
 const NOW = Date.parse("2026-10-18T07:00:00Z");
@@ -49,6 +52,51 @@ describe("acknowledgement store", () => {
     expect(again.remove("a1")).toBe(false);
     expect(new AckStore(file).list(NOW)).toEqual([]);
     expect(fs.readdirSync(dir)).toEqual(["acks.json"]);
+  });
+
+  test("expired entries are dropped from the file on the next write", () => {
+    const file = path.join(dir, "acks.json");
+    const store = new AckStore(file);
+    store.add({ ...ACK, id: "old", expires: new Date(NOW + 1000).toISOString() }, NOW);
+    store.add(ACK, NOW + 2000);
+    const saved = () => (JSON.parse(fs.readFileSync(file, "utf8")) as Ack[]).map((a) => a.id);
+    expect(saved()).toEqual(["a1"]);
+    store.add({ ...ACK, id: "old", expires: new Date(NOW + 1000).toISOString() }, NOW);
+    expect(store.remove("old", NOW + 2000)).toBe(false);
+    expect(store.remove("a1", NOW + 2000)).toBe(true);
+    expect(saved()).toEqual([]);
+  });
+
+  test("a new acknowledgement past MAX_ACKS unexpired ones is refused", () => {
+    const store = new AckStore(path.join(dir, "acks.json"));
+    const square = [
+      [22, 60],
+      [22.01, 60],
+      [22.01, 60.01],
+      [22, 60.01],
+      [22, 60]
+    ];
+    let now = NOW;
+    const deps: AckServiceDeps = {
+      store,
+      current: () => undefined,
+      heading: () => 1,
+      waterLevel: (): WaterLevel => ({ h: 0, sigma: 0.1, source: "manual" }),
+      draft: () => 1.8,
+      now: () => now,
+      error: () => undefined
+    };
+    const post = (ttl?: number) =>
+      addAck({ polygon: { type: "Polygon", coordinates: [square] }, ttl }, deps).status;
+    for (let i = 0; i < MAX_ACKS - 1; i++) {
+      expect(post()).toBe(201);
+    }
+    expect(post(60)).toBe(201);
+    expect(post()).toBe(409);
+    // Once one lapses there is room again.
+    now += 61_000;
+    expect(post()).toBe(201);
+    expect(store.list(now)).toHaveLength(MAX_ACKS);
   });
 
   test("malformed entries are dropped and counted; an unreadable file starts empty with a reason", () => {
@@ -103,6 +151,22 @@ describe("mooring zones from Signal K regions", () => {
     expect(() =>
       zonesFromRegion("r4", {
         feature: { geometry: { type: "Polygon", coordinates: [square, [[22, 60]]] } }
+      })
+    ).toThrow(/no valid Polygon/);
+  });
+
+  test("a ring that is not closed is rejected, not cut short by a vertex", () => {
+    // A square notched in to its centre: dropping the last point would fill the notch.
+    const notched = [
+      [22, 60],
+      [22.02, 60],
+      [22.02, 60.02],
+      [22, 60.02],
+      [22.01, 60.01]
+    ];
+    expect(() =>
+      zonesFromRegion("r5", {
+        feature: { geometry: { type: "Polygon", coordinates: [notched] } }
       })
     ).toThrow(/no valid Polygon/);
   });

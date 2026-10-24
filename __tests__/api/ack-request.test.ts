@@ -21,6 +21,18 @@ describe("POST /acks polygon", () => {
     expect(r.ok && r.value.polygon).toEqual(SQUARE.slice(0, -1));
   });
 
+  test("a ring of more than 64 vertices is refused; 64 is kept", () => {
+    const ring = (n: number) => {
+      const pts = Array.from({ length: n }, (_, i) => {
+        const a = (2 * Math.PI * i) / n;
+        return [22.005 + 0.004 * Math.cos(a), 60.005 + 0.002 * Math.sin(a)];
+      });
+      return [...pts, pts[0] as number[]];
+    };
+    expect(errors(polygon(ring(64)))).toEqual([]);
+    expect(errors(polygon(ring(65)))).toEqual(["polygon must have at most 64 vertices"]);
+  });
+
   test("an unclosed ring, a hole, a ±180° crossing and a whole-world box are refused", () => {
     expect(errors(polygon(SQUARE.slice(0, -1).concat([[22.0, 60.005]])))).toEqual([
       "polygon outer ring must be closed"

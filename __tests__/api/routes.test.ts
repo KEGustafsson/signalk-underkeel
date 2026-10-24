@@ -1,6 +1,6 @@
 import { gunzipSync } from "zlib";
 import type { ApiProvider } from "../../src/api/routes";
-import { registerRoutes } from "../../src/api/routes";
+import { publicReason, registerRoutes } from "../../src/api/routes";
 import { fakeRouter } from "../helpers/plugin-harness";
 
 /** How the REST layer turns handler failures into replies. */
@@ -18,6 +18,93 @@ describe("route errors", () => {
     }
     expect(logged).toHaveLength(3);
     expect(logged[0]).toMatch(/EACCES: open '\/srv\/signalk\/plugin-config-data\/x\.json'/);
+  });
+});
+
+describe("acknowledgement content type", () => {
+  // express.json() leaves `{}` for any other type: the request would become a default ack.
+  const setup = () => {
+    const bodies: unknown[] = [];
+    const api = {
+      addAck: (body: unknown) => {
+        bodies.push(body);
+        return { status: 201, body: { id: "a" } };
+      }
+    } as unknown as ApiProvider;
+    const { router, post } = fakeRouter();
+    registerRoutes(router as never, api);
+    return { bodies, post };
+  };
+
+  test.each([
+    [{}],
+    [{ "content-type": "text/plain" }],
+    [{ "content-type": "multipart/form-data" }]
+  ])("POST /acks with headers %p is refused 415 and adds nothing", async (headers) => {
+    const { bodies, post } = setup();
+    expect(await post("/v1/acks", {}, headers)).toEqual({
+      code: 415,
+      body: { errors: ["Content-Type must be application/json"] }
+    });
+    expect(bodies).toEqual([]);
+  });
+
+  test.each([["application/json"], ["Application/JSON; charset=utf-8"], ["application/geo+json"]])(
+    "POST /acks with Content-Type %s is taken",
+    async (type) => {
+      const { bodies, post } = setup();
+      expect((await post("/v1/acks", { ttl: 600 }, { "content-type": type })).code).toBe(201);
+      expect(bodies).toEqual([{ ttl: 600 }]);
+    }
+  );
+});
+
+describe("server error reasons on the wire", () => {
+  test("file paths and nested error text stay off the wire", () => {
+    expect(
+      publicReason(
+        "chart index failed: ENOENT: no such file or directory, scandir '/media/usb/ENC'"
+      )
+    ).toBe("chart index failed (see the server log)");
+    expect(publicReason("no cells in /srv/charts; C:\\charts not found")).toBe(
+      "no cells in <path>; <path> not found"
+    );
+    expect(
+      publicReason("rebuilt the index: the saved one could not be read (bad header in /x/y.bin)")
+    ).toBe("rebuilt the index: the saved one could not be read");
+    for (const plain of [
+      "no chart index loaded",
+      "busy: 5 requests are waiting; try again shortly"
+    ]) {
+      expect(publicReason(plain)).toBe(plain);
+    }
+  });
+
+  test("a 503 from a POST route or a tile carries the reason without its paths", async () => {
+    const reason = "no cells in /srv/charts";
+    const unavailable = () => Promise.resolve({ status: 503, body: { errors: [reason] } });
+    const api = {
+      query: unavailable,
+      ukcTile: () => ({ status: 503, contentType: "application/json", body: { errors: [reason] } })
+    } as unknown as ApiProvider;
+    const { router, call, post } = fakeRouter();
+    registerRoutes(router as never, api);
+    const wire = { errors: ["no cells in <path>"] };
+    expect(await post("/v1/query", {})).toEqual({ code: 503, body: wire });
+    const tile = call("/v1/tiles/ukc/:z/:x/:file", {}, { z: "16", x: "0", file: "0.pbf" });
+    expect(tile).toMatchObject({ code: 503, body: wire });
+  });
+
+  test("a 4xx reply is the client's and goes out as it is", async () => {
+    const api = {
+      query: () => Promise.resolve({ status: 400, body: { errors: ["geometry: /bad"] } })
+    } as unknown as ApiProvider;
+    const { router, post } = fakeRouter();
+    registerRoutes(router as never, api);
+    expect(await post("/v1/query", {})).toEqual({
+      code: 400,
+      body: { errors: ["geometry: /bad"] }
+    });
   });
 });
 

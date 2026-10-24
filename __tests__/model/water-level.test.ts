@@ -72,9 +72,28 @@ describe("chart datum mapping", () => {
 describe("water-level resolution", () => {
   const n2000 = datumUses([cell("N", 24)], [{ verdat: 24, series: "n2000", sigma: 0.02 }]);
 
-  test("no provider is chart datum with σ 0.3 m and no fallback reason", () => {
+  test("no provider on low-water datums is chart datum with σ 0.3 m and no fallback reason", () => {
     expect(resolveWaterLevel(undefined, [], undefined, NOW, NOW)).toEqual(CHART_DATUM);
+    const low = datumUses([cell("LAT", 23), cell("MLLW", 12), cell("WFS")]);
+    expect(resolveWaterLevel(undefined, low, undefined, NOW, NOW)).toEqual(CHART_DATUM);
     expect(CHART_DATUM.sigma).toBe(CHART_DATUM_SIGMA);
+  });
+
+  test("no provider on a datum that is not low water is degraded and names it", () => {
+    // Finnish cells on mean water: the Baltic is often 0.3-0.8 m below it.
+    const uses = datumUses([cell("LAT", 23), cell("FI", 3), cell("FI2", 26)]);
+    expect(resolveWaterLevel(undefined, uses, undefined, NOW, NOW)).toEqual({
+      ...CHART_DATUM,
+      degraded:
+        "no water-level source: chart datum assumed, which is not low water (VERDAT 3, VERDAT 26)"
+    });
+    const mixed = datumUses([{ ...cell("MIX", 12), datumAreas: [3] }]);
+    expect(resolveWaterLevel(undefined, mixed, undefined, NOW, NOW).degraded).toMatch(
+      /\(VERDAT 3\)$/
+    );
+    const leg = lowestWaterLevel(undefined, uses, undefined, NOW, NOW + HOUR, NOW);
+    expect(leg).toMatchObject({ h: 0, sigma: CHART_DATUM_SIGMA });
+    expect(leg.degraded).toMatch(/no water-level source/);
   });
 
   test("a manual height is applied as set", () => {
@@ -166,6 +185,22 @@ describe("water-level resolution", () => {
     expect(wl.degraded).toBeUndefined();
     const past = lowestWaterLevel(seriesProvider(NOW), n2000, undefined, NOW, NOW + 50 * HOUR, NOW);
     expect(past.degraded).toBeDefined();
+  });
+
+  test("a fallback inside an interval keeps the lower level found before it", () => {
+    // The forecast reaches -4.2 m at 48 h and ends; the fallback is chart datum.
+    const wl = lowestWaterLevel(
+      seriesProvider(NOW),
+      n2000,
+      undefined,
+      NOW + 40 * HOUR,
+      NOW + 50 * HOUR,
+      NOW
+    );
+    expect(wl.h).toBeCloseTo(-4.2, 9);
+    expect(wl.sigma).toBe(CHART_DATUM_SIGMA);
+    expect(wl.source).toBe("fallback");
+    expect(wl.degraded).toMatch(/no n2000 value/);
   });
 });
 

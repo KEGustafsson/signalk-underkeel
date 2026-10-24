@@ -213,7 +213,14 @@ describe("query", () => {
           }
         }
       ),
-      { numRuns: 150 }
+      {
+        numRuns: 150,
+        examples: [
+          // From CI: a swept area beyond the buffer, inside a block not loaded, gave a clear
+          // answer the SWEPT flag the loaded walk does not take from beyond the buffer.
+          [[21.998, 60.021916399999995], 0.0019216, 2.6209, 0, 0]
+        ]
+      }
     );
   });
 

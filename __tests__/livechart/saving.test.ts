@@ -189,6 +189,77 @@ describe("living-chart save schedule", () => {
     expect(again.errors).toEqual([]);
   });
 
+  test("an older version's soundings stay in the state file while the log cannot hold them", () => {
+    const sample = (at: number) => ({
+      at,
+      belowSurface: 5,
+      depth: 4.8,
+      sigma: 0.2,
+      position: [22, 60]
+    });
+    const legacy = [sample(T0), sample(T0 + 1000)];
+    fs.writeFileSync(
+      file,
+      JSON.stringify({ version: 1, zoom: 18, cells: [], adjustments: [], samples: legacy })
+    );
+    // A malformed log that cannot be moved aside is never written.
+    fs.writeFileSync(log, "not json\n");
+    const rename = jest.spyOn(fs, "renameSync").mockImplementation(() => {
+      throw new Error("read-only");
+    });
+    let h: ReturnType<typeof service>;
+    try {
+      h = service();
+    } finally {
+      rename.mockRestore();
+    }
+    h.svc.onSounding(raw(6, T0 + 2000));
+    h.svc.save();
+    expect(fs.readFileSync(log, "utf8")).toBe("not json\n");
+    expect(saved().samples).toEqual(legacy);
+    // Once the log can be set aside, the next start still has them and moves them into it.
+    const again = service();
+    expect((again.svc.csb() as { features: unknown[] }).features).toHaveLength(2);
+    again.svc.save();
+    expect(logLines()).toHaveLength(2);
+    expect(saved().samples).toBeUndefined();
+  });
+
+  test("an older version's soundings stay in the state file until a failed log save succeeds", () => {
+    const sample = (at: number) => ({
+      at,
+      belowSurface: 5,
+      depth: 4.8,
+      sigma: 0.2,
+      position: [22, 60]
+    });
+    const legacy = [sample(T0), sample(T0 + 1000)];
+    fs.writeFileSync(
+      file,
+      JSON.stringify({ version: 1, zoom: 18, cells: [], adjustments: [], samples: legacy })
+    );
+    const h = service();
+    const open = fs.openSync;
+    const full = jest.spyOn(fs, "openSync").mockImplementation((p, ...rest) => {
+      if (String(p).startsWith(`${log}.tmp`)) {
+        throw Object.assign(new Error("no space left on device"), { code: "ENOSPC" });
+      }
+      return open(p, ...rest);
+    });
+    try {
+      h.svc.save();
+    } finally {
+      full.mockRestore();
+    }
+    expect(h.errors.join()).toMatch(/soundings\.ndjson not saved: no space left/);
+    expect(fs.existsSync(log)).toBe(false);
+    expect(saved().samples).toEqual(legacy);
+    h.svc.onSounding(raw(6, T0 + 2000));
+    h.svc.save();
+    expect(logLines()).toHaveLength(3);
+    expect(saved().samples).toBeUndefined();
+  });
+
   test("a sample log twice the kept length is compacted to the newest samples", () => {
     const h = service();
     for (let k = 0; k < 2 * MAX_SAMPLES; k++) {

@@ -233,12 +233,18 @@ async function publish() {
   const routeCheck = Object.fromEntries([...results].map(([id, r]) => [id, UKC.compactResult(r)]));
   const state = JSON.stringify(routeCheck);
   if (state !== publishedState) {
-    await client.state.set({ routeCheck }, "extension");
-    publishedState = state;
+    try {
+      await client.state.set({ routeCheck }, "extension");
+      publishedState = state;
+    } catch (err) {
+      console.warn("under-keel route state", err);
+    }
   }
+  // An old result's legs turn unverified, as its panel badge says out of date.
+  const now = Date.now();
   const legs = {
     type: "FeatureCollection",
-    features: [...results].flatMap(([id, r]) => UKC.legFeatures(id, r.legs))
+    features: [...results].flatMap(([id, r]) => UKC.overlayLegs(id, r, now, UKC.ROUTE_MAX_AGE_MS))
   };
   const json = JSON.stringify(legs);
   if (json !== publishedLegs) {
@@ -350,6 +356,9 @@ async function checkAll() {
   }
   try {
     const { routes } = await client.call("route.list");
+    // A route no longer listed keeps no legs on the chart, whichever check left them there.
+    const listed = new Set(routes.map((r) => r.routeId));
+    [...results.keys()].filter((id) => !listed.has(id)).forEach((id) => results.delete(id));
     routes.forEach((r) => clearTimeout(timers.get(r.routeId)));
     for (const r of routes) {
       await check(r.routeId);
@@ -380,63 +389,81 @@ function onRestart() {
 // The host persists extension state across sessions: results from an earlier one are not current.
 await publish();
 
+// A host call that fails here must not stop the look-ahead below from starting.
 if (has("routes")) {
-  await client.subscribe(["route.**"], (name, params) => {
-    if (name === "route.hidden") {
-      clearTimeout(timers.get(params.routeId));
-      nextSeq(params.routeId);
-      results.delete(params.routeId);
-      publishSoon();
-    } else if (params && params.routeId) {
-      // The old legs describe the old geometry: drop them until the check comes back.
-      nextSeq(params.routeId);
-      const prev = results.get(params.routeId);
-      results.set(params.routeId, {
-        name: prev && prev.name,
-        rev: prev && prev.rev,
-        legs: [],
-        error: "checking the edited route"
-      });
-      publishSoon();
-      schedule(params.routeId);
-    }
-  });
-  await client.subscribe(["ukc.checkRoutes"], () => void checkAll());
+  try {
+    await client.subscribe(["route.**"], (name, params) => {
+      if (name === "route.hidden") {
+        clearTimeout(timers.get(params.routeId));
+        // An edit during the running check must not bring the route back after it.
+        checking.forget(params.routeId);
+        nextSeq(params.routeId);
+        results.delete(params.routeId);
+        publishSoon();
+      } else if (params && params.routeId) {
+        // The old legs describe the old geometry: drop them until the check comes back.
+        nextSeq(params.routeId);
+        const prev = results.get(params.routeId);
+        results.set(params.routeId, {
+          name: prev && prev.name,
+          rev: prev && prev.rev,
+          legs: [],
+          error: "checking the edited route"
+        });
+        publishSoon();
+        schedule(params.routeId);
+      }
+    });
+    await client.subscribe(["ukc.checkRoutes"], () => void checkAll());
+  } catch (err) {
+    console.warn("under-keel route events", err);
+  }
   void checkAll();
+  // A hidden page checks nothing, so its results age, and their legs turn unverified.
   setInterval(() => {
+    publishSoon();
     if (!document.hidden) {
       void checkAll();
     }
   }, RECHECK_MS);
 }
 
+/** Without the Signal K stream, or when subscribing to it fails, the envelope is polled. */
+let streaming = false;
 if (has("signalk.stream")) {
-  await client.signalk.subscribe(Object.keys(onPath), (ev) => {
-    const left = fresh(ev.path, ev.timestamp, Date.now());
-    if (left > 0) {
-      onPath[ev.path](ev.value, left);
-    }
-  });
-} else {
+  try {
+    await client.signalk.subscribe(Object.keys(onPath), (ev) => {
+      const left = fresh(ev.path, ev.timestamp, Date.now());
+      if (left > 0) {
+        onPath[ev.path](ev.value, left);
+      }
+    });
+    streaming = true;
+  } catch (err) {
+    console.warn("under-keel Signal K stream", err);
+  }
+}
+if (!streaming) {
   setInterval(() => void refreshEnvelope(), POLL_MS);
   void refreshEnvelope();
 }
 
 /**
  * A hidden page fetches nothing. Back on screen, the envelope shown is
- * withdrawn until a current one arrives, and tiles and routes are asked for
- * at once.
+ * withdrawn until a current one arrives, route legs too old to trust turn
+ * unverified, and tiles and routes are asked for at once.
  */
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
     return;
   }
   clearEnvelope();
-  if (!has("signalk.stream") || (!isDown(engineState) && Date.now() < revFreshUntil)) {
+  if (!streaming || (!isDown(engineState) && Date.now() < revFreshUntil)) {
     void refreshEnvelope();
   }
   void pollTiles();
   if (has("routes")) {
+    void publish();
     void checkAll();
   }
 });

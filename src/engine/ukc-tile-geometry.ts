@@ -129,6 +129,9 @@ type Reach = Pick<
   "sourceKind" | "sourceSigma" | "sourceScale" | "sourceRect" | "flagKind" | "flagMask"
 >;
 
+/** West, north, east and south edges in slots. */
+type Box = [number, number, number, number];
+
 /** A source as gathered: kind, σ, slots per ground metre, and west, north, east, south in slots. */
 interface Gathered {
   k: number;
@@ -172,6 +175,13 @@ function joined(list: Gathered[], axis: 0 | 1): Gathered[] {
 }
 
 /**
+ * Slots past the tile's edges that `edges` looks at, at most: CATZOC C's
+ * reach at z18 near 60° N, so its grid stays within a few megabytes at any
+ * zoom.
+ */
+export const EDGE_MARGIN = 16 * SLOTS;
+
+/**
  * The sources of each kind, σ and scale that touch the edge of their
  * union: one whose ring of slots all round is covered by others of its group
  * is left out. A slot outside the union is nearer an edge source than it,
@@ -193,40 +203,67 @@ function edges(list: Gathered[]): Gathered[] {
   }
   const out: Gathered[] = [];
   for (const group of groups.values()) {
-    if (group.length < 9) {
-      out.push(...group);
-      continue;
-    }
-    const box = group.map((g) => g.r.map(Math.round) as [number, number, number, number]);
-    const x0 = Math.min(...box.map((b) => b[0])) - 1;
-    const y0 = Math.min(...box.map((b) => b[1])) - 1;
-    const w = Math.max(...box.map((b) => b[2])) + 1 - x0;
-    const h = Math.max(...box.map((b) => b[3])) + 1 - y0;
-    const held = new Uint8Array(w * h);
-    for (const [a, b, c, d] of box) {
-      for (let j = b; j < d; j++) {
-        held.fill(1, (j - y0) * w + (a - x0), (j - y0) * w + (c - x0));
-      }
-    }
-    const inner = ([a, b, c, d]: [number, number, number, number]): boolean => {
-      for (let j = b - 1; j <= d; j++) {
-        const row = (j - y0) * w - x0;
-        const side = j === b - 1 || j === d;
-        for (let i = a - 1; i <= c; i += side ? 1 : c - a + 1) {
-          if (held[row + i] !== 1) {
-            return false;
-          }
-        }
-      }
-      return true;
-    };
-    group.forEach((g, n) => {
-      if (!inner(box[n] as [number, number, number, number])) {
-        out.push(g);
-      }
-    });
+    out.push(...(group.length < 9 ? group : edgesOf(group)));
   }
   return out;
+}
+
+/**
+ * The edge sources of one group. Only slots within its reach of the tile, or
+ * EDGE_MARGIN, are tested: a coarse leaf among fine ones is cut to them
+ * rather than held whole, and a source whose ring leaves them is kept, which
+ * never lowers a slot.
+ */
+function edgesOf(group: Gathered[]): Gathered[] {
+  const { sigma, scale } = group[0] as Gathered;
+  const margin = Math.ceil(Math.min(chartReach(sigma) * scale, EDGE_MARGIN)) + 1;
+  const lo = -margin;
+  const hi = SLOTS + margin;
+  const box = group.map((g) => g.r.map(Math.round) as Box);
+  const cut = box
+    .map(([a, b, c, d]): Box => [
+      Math.max(a, lo),
+      Math.max(b, lo),
+      Math.min(c, hi),
+      Math.min(d, hi)
+    ])
+    .filter(([a, b, c, d]) => a < c && b < d);
+  if (cut.length === 0) {
+    return group;
+  }
+  // One pass: spreading a group of many sources into Math.min/max can pass the argument limit.
+  let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
+  for (const [a, b, c, d] of cut) {
+    x0 = Math.min(x0, a - 1);
+    y0 = Math.min(y0, b - 1);
+    x1 = Math.max(x1, c + 1);
+    y1 = Math.max(y1, d + 1);
+  }
+  const w = x1 - x0;
+  const h = y1 - y0;
+  const held = new Uint8Array(w * h);
+  for (const [a, b, c, d] of cut) {
+    for (let j = b; j < d; j++) {
+      held.fill(1, (j - y0) * w + (a - x0), (j - y0) * w + (c - x0));
+    }
+  }
+  const inner = ([a, b, c, d]: Box): boolean => {
+    // A ring past the grid reaches slots it does not hold: kept.
+    if (a - 1 < x0 || b - 1 < y0 || c >= x0 + w || d >= y0 + h) {
+      return false;
+    }
+    for (let j = b - 1; j <= d; j++) {
+      const row = (j - y0) * w - x0;
+      const side = j === b - 1 || j === d;
+      for (let i = a - 1; i <= c; i += side ? 1 : c - a + 1) {
+        if (held[row + i] !== 1) {
+          return false;
+        }
+      }
+    }
+    return true;
+  };
+  return group.filter((_, n) => !inner(box[n] as Box));
 }
 
 function reachOf(store: NodeStore, z: number, x: number, y: number, kinds: Kinds): Reach {

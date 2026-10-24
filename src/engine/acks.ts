@@ -7,7 +7,8 @@ import type { LookaheadResult, Thresholds } from "./lookahead";
  * warn and alarm are published as `alert` with the reason; they are never
  * `normal`. A negative mean UKC within `certainWithin` is never suppressed:
  * an acknowledgement covers an uncertain chart, not a charted depth
- * shallower than the keel.
+ * shallower than the keel. Nor does it cover an untrusted position: a warn
+ * raised only because the position buffer is capped is never suppressed.
  */
 
 export interface Ack {
@@ -213,9 +214,28 @@ function certain(result: LookaheadResult, certainWithin: number): boolean {
   return result.footprints.some((f) => f.t <= certainWithin && f.mean !== null && f.mean < 0);
 }
 
+/**
+ * How `uncertainPosition` starts the reason of a warn it raises. It leaves a
+ * warn or alarm from the chart as it is, so only a warn from the capped
+ * position buffer starts so.
+ */
+const POSITION_WARN = "position uncertainty ";
+
+/**
+ * A warn the capped position buffer raised: the buffer understates where the
+ * vessel can be, so the rings an acknowledgement or zone is tested on do too.
+ */
+function positionWarn(result: LookaheadResult): boolean {
+  return result.state === "warn" && result.reason.startsWith(POSITION_WARN);
+}
+
 /** The result to publish once acknowledgements and mooring zones are applied. */
 export function suppress(result: LookaheadResult, ctx: SuppressionContext): LookaheadResult {
-  if ((result.state !== "warn" && result.state !== "alarm") || certain(result, ctx.certainWithin)) {
+  if (
+    (result.state !== "warn" && result.state !== "alarm") ||
+    certain(result, ctx.certainWithin) ||
+    positionWarn(result)
+  ) {
     return result;
   }
   const rings = riskyRings(result, ctx.thresholds);

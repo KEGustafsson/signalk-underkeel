@@ -88,6 +88,22 @@ describe("water-level service", () => {
     expect(s.record("environment.tide.timeLow", new Date(NOW).toISOString(), NOW)).toBe(true);
   });
 
+  test("with no source the level is degraded on a mean-water chart, not on a low-water one", () => {
+    const none = parseConfig({});
+    expect(none.waterLevel.source).toBe("none");
+    const mean = new WaterLevelService(none, index, noFetch);
+    expect(mean.now(HELSINKI, NOW).degraded).toMatch(/VERDAT 26/);
+    expect(mean.over(NOW, NOW + HOUR, [HELSINKI], NOW).degraded).toMatch(/VERDAT 26/);
+    const low = {
+      catalogue: { cells: [{ name: "B", edition: 1, update: 0, band: 5, soundingDatum: 23 }] }
+    } as unknown as ChartIndex;
+    mean.setIndex(low);
+    expect(mean.now(HELSINKI, NOW).degraded).toBeUndefined();
+    expect(new WaterLevelService(none, undefined, noFetch).now(HELSINKI, NOW).degraded).toBe(
+      undefined
+    );
+  });
+
   test("with a 30-minute FMI interval the level never goes stale between fetches", async () => {
     expect(await degradedSeconds(1800, 2 * 3600, () => false)).toEqual([]);
   });

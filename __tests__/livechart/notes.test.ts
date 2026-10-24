@@ -32,11 +32,11 @@ function raw(depth: number, at: number): RawSounding {
 
 function service() {
   const t = { now: T0 };
-  const notes: { at: number; name: string }[] = [];
+  const notes: { at: number; name: string; description: string }[] = [];
   const store = buildPyramid(basin([22.0, 60.0, 22.1, 60.1], 8), { minZoom: 12, leafZoom: 18 });
   const svc = new LivechartService(store, CONFIG, path.join(dir, "livechart.json"), {
     setNote: (_id, body) => {
-      notes.push({ at: t.now, name: String(body.name) });
+      notes.push({ at: t.now, name: String(body.name), description: String(body.description) });
       return Promise.resolve();
     },
     error: (m) => {
@@ -95,6 +95,22 @@ describe("living-chart notes", () => {
     expect(h.notes).toHaveLength(1);
     h.svc.stop();
     expect(h.notes).toHaveLength(2);
+  });
+
+  test("a cell rebased onto a chart that does not chart it is shown as not charted", () => {
+    const h = service();
+    h.passes((k) => 5.2 - 0.1 * k, 20);
+    expect(h.notes).toHaveLength(1);
+    // The next index charts somewhere else: the cell's prior is NaN, its adjustment stays.
+    h.svc.rebind(buildPyramid(basin([23.0, 61.0, 23.1, 61.1], 8), { minZoom: 12, leafZoom: 18 }));
+    const [d] = h.svc.discrepancies();
+    expect(d?.charted).toBeNull();
+    // The note waiting for its 5 minutes is written on stop, without a NaN in it.
+    h.svc.stop();
+    expect(h.notes).toHaveLength(2);
+    expect(h.notes[1]?.name).toMatch(/^Suspected shoal [\d.]+ m \(not charted\)$/);
+    expect(h.notes[1]?.description).toMatch(/where the chart in use gives no depth/);
+    expect(h.notes[1]?.description).not.toMatch(/NaN/);
   });
 
   test("a lower adjustment that stays inside the same 5 cm does not rewrite the note", () => {
