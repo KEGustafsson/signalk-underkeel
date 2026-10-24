@@ -29,10 +29,7 @@ test("a cell that comes to wait during a run is settled when the run ends", asyn
   );
   posteriors.unsettled.add(1);
   settler.soon();
-  for (let i = 0; i < 10 && posteriors.unsettled.size > 0; i++) {
-    await settler.done();
-    await new Promise((r) => setImmediate(r));
-  }
+  await settler.done();
   expect(posteriors.unsettled.size).toBe(0);
   expect(settled).toHaveLength(2);
 });

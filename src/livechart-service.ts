@@ -207,7 +207,7 @@ export class LivechartService {
     }
   }
 
-  /** Resolves when the run settling cells, if one is under way, has ended. */
+  /** Resolves once no run settling cells is under way. */
   whenSettled(): Promise<void> {
     return this.settler.done();
   }

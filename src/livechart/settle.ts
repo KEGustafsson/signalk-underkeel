@@ -98,9 +98,12 @@ export class PriorSettler {
     this.stopped = true;
   }
 
-  /** Resolves when the run under way, if any, has ended. */
-  done(): Promise<void> {
-    return this.run ?? Promise.resolve();
+  /** Resolves once no run is under way, the one a run's end starts included. */
+  async done(): Promise<void> {
+    // A run never rejects; one asked for during it starts before it resolves.
+    while (this.run) {
+      await this.run;
+    }
   }
 
   private async settle(store: NodeStore): Promise<void> {
