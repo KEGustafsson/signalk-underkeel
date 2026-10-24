@@ -37,11 +37,10 @@ under-keel clearance (UKC) falls below zero, written P(UKC < 0), and sets a stat
 | `unknown` | no draft, no or stale position, stale course or speed, or non-finite input       | `alert`: "UKC monitoring degraded" |
 | `off`     | no chart index, or the plugin is stopped                                         | `alert`, or `normal` when stopped  |
 
-The thresholds and time windows come from the warning style (Settings). A state rises after 2 s at its level and falls
-after 5 s below 80 % of its threshold, so a footprint grazing a shoal edge does not toggle the
-alarm.
-Every notification carries the reason and the terms behind the number: the deciding depth,
-its uncertainty, the water level, squat, heel and waves.
+The thresholds and time windows come from the warning style (Settings). A state rises after 2 s at
+its level and falls after 5 s below 80 % of its threshold, so a footprint grazing a shoal edge does
+not toggle the alarm. Every notification carries the reason and the terms behind the number: the
+deciding depth, its uncertainty, the water level, squat, heel and waves.
 
 Besides the look-ahead the plugin:
 
@@ -131,17 +130,18 @@ named like a cell is listed in `GET /status` as skipped.
 
 There are two places to set the plugin up, and both write the same configuration:
 
-- **Under-keel setup** in Freeboard (toolbar button with the tune icon), or
-  `/plotterext/signalk-underkeel/setup.html` in a browser: three steps, boat, water level and
-  warnings. Drag the keel, the margin line and the sounder on a side view of the hull, or type
-  the numbers. The page shows the draft Signal K already states, the vertical datum of your
-  charts with the water-level source that fits it, and a setup check. **Save and restart**
-  needs a Signal K admin login.
+- **Open setup** at the bottom of Freeboard's _Under-keel details_ panel (toolbar button with
+  the boat icon), or `/plotterext/signalk-underkeel/setup.html` in a browser: three steps, boat,
+  water level and warnings, in the same panel with a link back to the details. Drag the keel,
+  the margin line and the sounder on a side view drawn for the chosen hull, or type the
+  numbers. The page shows the draft Signal K already states, the vertical datum of your charts
+  with the water-level source that fits it, and a setup check. **Save and restart** needs a
+  Signal K admin login.
 - The plugin's page in the admin UI. It asks for the same essentials first; **Show expert
   settings** opens the rest, and an optional feature's fields appear once it is enabled. Admin
   UIs older than Signal K 2.32 show every field at once.
 
-![The setup panel: boat, water level and warnings](docs/images/how-it-works/setup-panel.png)
+![The setup steps: boat, water level and warnings](docs/images/how-it-works/setup-panel.png)
 
 | Setting             | What it does                                                                                                                                                                                                                                                                                                   |
 | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -208,12 +208,11 @@ reason, and route legs are `unverified`.
 The plugin registers a `plotterExtensions` resource, so a Freeboard-SK build with the Plotter
 Extensions API shows it without any change to Freeboard:
 
-| Where in Freeboard              | What the plugin adds                                                             |
-| ------------------------------- | -------------------------------------------------------------------------------- |
-| Layers → Charts → Plugin layers | Under-keel look-ahead (on), Under-keel route check (on), Under-keel risk (off)   |
-| Widget grid                     | Under-keel status: state colour, minimum clearance, time to shoal and the reason |
-| Toolbar button (boat icon)      | details panel: state, water level and source, and a leg table per route          |
-| Toolbar button (tune icon)      | setup panel: boat, water level and warning style (Settings)                      |
+| Where in Freeboard              | What the plugin adds                                                                                                                       |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Layers → Charts → Plugin layers | Under-keel look-ahead (on), Under-keel route check (on), Under-keel risk (off)                                                             |
+| Widget grid                     | Under-keel status: state colour, minimum clearance, time to shoal and the reason                                                           |
+| Toolbar button (boat icon)      | details panel: state, water level and source, a leg table per route, and **Open setup** for boat, water level and warning style (Settings) |
 
 Routes shown on the chart are checked 1 s after each edit and every minute; the panel shows
 each result's age and marks it "out of date" after 3 minutes, when the chart draws its legs
@@ -393,9 +392,9 @@ Rebuild and restart the server after each change.
 
 ## REST API
 
-Base path `/plugins/signalk-underkeel/v1`. Reads are open to readonly users; adding and
-deleting acknowledgements needs a readwrite user, and the settings routes an admin. Errors are `{ "errors": [string, …] }`; a
-5xx error names no file path and no nested error text, which the server log keeps.
+Base path `/plugins/signalk-underkeel/v1`. Reads are open to readonly users; adding and deleting
+acknowledgements needs a readwrite user, and the settings routes an admin. Errors are `{ "errors":
+[string, …] }`; a 5xx error names no file path and no nested error text, which the server log keeps.
 
 | Route                                         | Purpose                                                                                                                                                                                                                                                                                              |
 | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

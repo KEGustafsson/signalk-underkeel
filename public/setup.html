@@ -21,6 +21,8 @@
       }
       * { box-sizing: border-box; }
       body { margin: 0; font: 14px/1.4 system-ui, sans-serif; color: var(--ink); background: var(--page); }
+      .back { padding: 10px 16px 0; font-size: 14px; }
+      .back a { display: inline-flex; align-items: center; min-height: 44px; }
       .progress { display: flex; gap: 6px; padding: 12px 16px 0; }
       .progress span { flex: 1; height: 4px; border-radius: 2px; background: var(--line); }
       .progress span.on { background: var(--accent); }
@@ -85,6 +87,7 @@
     <script type="module" src="setup.js"></script>
   </head>
   <body>
+    <nav id="back" class="back" hidden><a href="panel.html">← Under-keel details</a></nav>
     <div class="progress" aria-hidden="true"><span></span><span></span><span></span></div>
     <div class="steps"><span>1 Boat</span><span>2 Water level</span><span>3 Warnings</span></div>
     <main id="step"><p class="lead">Loading the settings…</p></main>

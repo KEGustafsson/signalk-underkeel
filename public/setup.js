@@ -114,16 +114,86 @@ function text(x, y, t, attrs) {
   return h("svg:text", { x, y, "font-size": 11, fill: "var(--ink)", ...attrs }, t);
 }
 
+/** Text drawn over the hull, with a halo so it reads on any part of the drawing. */
+function label(x, y, t, attrs) {
+  return text(x, y, t, { stroke: "var(--panel)", "stroke-width": 3, "paint-order": "stroke", ...attrs });
+}
+
+/** The hull body from the deck down to `bottom`, the stern on the left; a transom when `flat`. */
+function hullBody(bottom, flat) {
+  const stern = flat ? `L44 ${bottom} L40 ${VIEW.deck}` : `Q52 ${bottom - 6} 40 ${VIEW.deck}`;
+  return h("svg:path", {
+    d: `M40 ${VIEW.deck} L340 ${VIEW.deck} Q336 ${bottom - 18} 300 ${bottom} L92 ${bottom} ${stern} Z`,
+    fill: "var(--page)",
+    stroke: "var(--ink)",
+    "stroke-width": 2
+  });
+}
+
+/**
+ * The underwater shape of each hull choice, its deepest point at `keelY`:
+ * where the draft handle sits. Sailboats carry a mast, motorboats a
+ * windscreen or wheelhouse. Without a draft the keel is drawn as an outline.
+ */
+function hullShape(hull, keelY, known) {
+  const solid = { fill: known ? "var(--ink)" : "none", stroke: "var(--ink)", "stroke-dasharray": known ? null : "4 3" };
+  const hb = VIEW.hullBottom;
+  const mast = h("svg:line", { x1: 168, y1: 8, x2: 168, y2: VIEW.deck, stroke: "var(--ink)", "stroke-width": 2 });
+  const rudder = (x, bottom) => h("svg:path", { d: `M${x - 4} ${hb - 4} L${x + 6} ${hb - 4} L${x + 4} ${bottom} L${x - 4} ${bottom} Z`, ...solid });
+  if (hull === "longKeel") {
+    return {
+      keelX: 190,
+      parts: [mast, hullBody(hb, false), h("svg:path", { d: `M100 ${hb} L265 ${hb} L240 ${keelY} L104 ${keelY} Z`, ...solid })]
+    };
+  }
+  if (hull === "planing") {
+    const bottom = Math.max(VIEW.water + 8, VIEW.water + (keelY - VIEW.water) * 0.45);
+    return {
+      keelX: 58,
+      parts: [
+        hullBody(bottom, true),
+        h("svg:path", { d: `M196 ${VIEW.deck} L214 26 L252 26 L262 ${VIEW.deck}`, fill: "none", stroke: "var(--ink)", "stroke-width": 2 }),
+        h("svg:path", { d: `M53 ${bottom} L63 ${bottom} L62 ${keelY - 10} L54 ${keelY - 10} Z`, ...solid }),
+        h("svg:ellipse", { cx: 58, cy: keelY - 5, rx: 4, ry: 5, ...solid })
+      ]
+    };
+  }
+  if (hull === "displacement") {
+    const bottom = Math.max(hb, VIEW.water + (keelY - VIEW.water) * 0.7);
+    return {
+      keelX: 96,
+      parts: [
+        hullBody(bottom, false),
+        h("svg:rect", { x: 170, y: 22, width: 80, height: VIEW.deck - 22, fill: "var(--page)", stroke: "var(--ink)", "stroke-width": 2 }),
+        h("svg:path", { d: `M84 ${bottom} L170 ${bottom} L104 ${keelY} L88 ${keelY} Z`, ...solid }),
+        rudder(66, keelY - 4)
+      ]
+    };
+  }
+  const fin = h("svg:path", { d: `M173 ${hb} L209 ${hb} L203 ${keelY} L179 ${keelY} Z`, ...solid });
+  // A fin keel carries a bulb; with no hull chosen the fin is drawn plain.
+  const bulb = hull === "finKeel" ? h("svg:ellipse", { cx: 191, cy: keelY - 5, rx: 24, ry: 5, ...solid }) : null;
+  return { keelX: 191, parts: [mast, hullBody(hb, false), fin, bulb, rudder(70, hb + (keelY - hb) * 0.5)] };
+}
+
+const HULL_NAMES = {
+  finKeel: "fin-keel sailboat",
+  longKeel: "long-keel sailboat",
+  planing: "planing motorboat",
+  displacement: "displacement motorboat"
+};
+
 function boatSvg() {
   const b = boatValues();
   const g = geometry(b);
-  const keelX = 191;
+  const hull = val("vessel.hull");
+  const shape = hullShape(hull, g.keelY, b.draft !== undefined);
   const svg = h(
     "svg:svg",
     {
       viewBox: `0 0 ${VIEW.w} ${VIEW.h}`,
       role: "img",
-      "aria-label": `Side view: draft ${b.draft ?? "not set"} m, margin ${b.margin} m`
+      "aria-label": `Side view of a ${HULL_NAMES[hull] ?? "boat"}: draft ${b.draft ?? "not set"} m, margin ${b.margin} m`
     },
     h("svg:rect", { x: 0, y: 0, width: VIEW.w, height: VIEW.h, fill: "var(--panel)" }),
     h("svg:rect", { x: 0, y: VIEW.water, width: VIEW.w, height: VIEW.h - VIEW.water, fill: "var(--water)" }),
@@ -132,40 +202,28 @@ function boatSvg() {
       fill: "var(--bed)"
     }),
     h("svg:line", { x1: 0, y1: VIEW.water, x2: VIEW.w, y2: VIEW.water, stroke: "var(--accent)", "stroke-width": 1.5 }),
-    text(8, VIEW.water + 14, "waterline", { fill: "var(--accent)" }),
-    h("svg:line", { x1: 168, y1: 8, x2: 168, y2: VIEW.deck, stroke: "var(--ink)", "stroke-width": 2 }),
+    shape.parts,
+    label(8, VIEW.water + 14, "waterline", { fill: "var(--accent)" }),
     h("svg:circle", { cx: VIEW.gnssX, cy: 36, r: 4, fill: "var(--ink)" }),
     text(VIEW.gnssX + 8, 34, "GNSS"),
     text(318, 30, "bow →", { fill: "var(--muted)" }),
-    h("svg:path", {
-      d: `M40 ${VIEW.deck} L340 ${VIEW.deck} Q336 70 312 ${VIEW.hullBottom} L92 ${VIEW.hullBottom} Q52 86 40 ${VIEW.deck} Z`,
-      fill: "var(--page)",
-      stroke: "var(--ink)",
-      "stroke-width": 2
-    }),
-    h("svg:path", {
-      d: `M${keelX - 18} ${VIEW.hullBottom} L${keelX + 18} ${VIEW.hullBottom} L${keelX + 12} ${g.keelY} L${keelX - 12} ${g.keelY} Z`,
-      fill: b.draft === undefined ? "none" : "var(--ink)",
-      stroke: "var(--ink)",
-      "stroke-dasharray": b.draft === undefined ? "4 3" : null
-    }),
     h("svg:line", { x1: 280, y1: VIEW.water, x2: 280, y2: g.keelY, stroke: "var(--ink)" }),
-    text(288, (VIEW.water + g.keelY) / 2 + 4, b.draft === undefined ? "Draft not set" : `Draft ${b.draft.toFixed(2)} m`, {
+    label(288, (VIEW.water + g.keelY) / 2 + 4, b.draft === undefined ? "Draft not set" : `Draft ${b.draft.toFixed(2)} m`, {
       "font-size": 13,
       "font-weight": 600
     }),
-    h("svg:line", { x1: 110, y1: g.marginY, x2: 300, y2: g.marginY, stroke: "var(--margin)", "stroke-width": 2, "stroke-dasharray": "6 4" }),
-    text(112, g.marginY + 16, `+ margin ${b.margin.toFixed(2)} m`, { fill: "var(--margin-ink)", "font-weight": 600 })
+    h("svg:line", { x1: 40, y1: g.marginY, x2: 300, y2: g.marginY, stroke: "var(--margin)", "stroke-width": 2, "stroke-dasharray": "6 4" }),
+    label(112, g.marginY + 16, `+ margin ${b.margin.toFixed(2)} m`, { fill: "var(--margin-ink)", "font-weight": 600 })
   );
   svg.append(
-    handle("handle", keelX, g.keelY, "var(--ink)", "Draft", (b.draft ?? 1.5).toFixed(2), (d) => setDraft((b.draft ?? 1.5) + d)),
+    handle("handle", shape.keelX, g.keelY, "var(--ink)", "Draft", (b.draft ?? 1.5).toFixed(2), (d) => setDraft((b.draft ?? 1.5) + d)),
     handle("handle", 300, g.marginY, "var(--margin)", "Safety margin", b.margin.toFixed(2), (d) => setMargin(b.margin + d))
   );
   if (b.sounder) {
     svg.append(
       h("svg:line", { x1: g.sounderX, y1: 40, x2: VIEW.gnssX, y2: 40, stroke: "var(--accent)", "stroke-dasharray": "3 3" }),
-      text(16, 122, `sounder ${b.transducerDepth.toFixed(2)} m down`, { fill: "var(--accent)" }),
-      text(16, 136, `${Math.abs(b.forward).toFixed(2)} m ${b.forward >= 0 ? "forward of" : "aft of"} GNSS`, { fill: "var(--accent)" }),
+      label(8, 16, `sounder ${b.transducerDepth.toFixed(2)} m down`, { fill: "var(--accent)" }),
+      label(8, 30, `${Math.abs(b.forward).toFixed(2)} m ${b.forward >= 0 ? "forward of" : "aft of"} GNSS`, { fill: "var(--accent)" }),
       handle("handle free", g.sounderX, g.sounderY, "var(--accent)", "Sounder depth and position", b.transducerDepth.toFixed(2), (d, key) =>
         key === "ArrowUp" || key === "ArrowDown" ? setSounder(b.transducerDepth + d, b.forward) : setSounder(b.transducerDepth, b.forward + d)
       )
@@ -571,4 +629,6 @@ async function load() {
   }
 }
 
+// Opened from the details panel, the page offers the way back to it.
+document.getElementById("back").hidden = new URLSearchParams(location.search).get("from") !== "details";
 await load();

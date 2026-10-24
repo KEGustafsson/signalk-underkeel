@@ -81,12 +81,13 @@ look-ahead, a corridor around each leg for a route check, or a map tile for the 
 
 ![Plugin configuration in the Signal K admin UI](images/how-it-works/config.png)
 
-The setup panel, opened from Freeboard's toolbar, asks for the same essentials in three steps:
+The setup steps, opened with **Open setup** in Freeboard's Under-keel details panel, ask for the
+same essentials in three steps:
 the boat on a side view whose keel, margin line and sounder can be dragged, the water-level
 source with the one that fits the charts' datum marked, and a warning style. The admin page
 asks for them first too and shows the rest under **Show expert settings**.
 
-![The setup panel: boat, water level and warnings](images/how-it-works/setup-panel.png)
+![The setup steps: boat, water level and warnings](images/how-it-works/setup-panel.png)
 
 The plugin reads unencrypted S-57 cells as delivered, each `.000` with its updates, with GDAL
 compiled to WebAssembly; **ENC cells directory** points at the folder that holds them, such as

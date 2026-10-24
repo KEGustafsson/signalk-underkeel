@@ -6,12 +6,13 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Added
 
-- A setup panel in Freeboard (toolbar button, tune icon; also
-  `/plotterext/signalk-underkeel/setup.html`): the boat on a side view whose keel, safety margin
-  and sounder can be dragged, the water-level source with the one fitting the charts' vertical
-  datum marked, a warning style and the optional features, with a setup check. It reads and
-  saves through the admin-only `GET` and `POST /settings`; a save is a patch checked against
-  the schema, and the server's restart callback writes it and restarts the plugin.
+- Setup steps in Freeboard, opened with **Open setup** in the Under-keel details panel (also
+  `/plotterext/signalk-underkeel/setup.html`): the boat on a side view, drawn for the chosen
+  hull, whose keel, safety margin and sounder can be dragged, the water-level source with the
+  one fitting the charts' vertical datum marked, a warning style and the optional features,
+  with a setup check. It reads and saves through the admin-only `GET` and `POST /settings`; a
+  save is a patch checked against the schema, and the server's restart callback writes it and
+  restarts the plugin.
 - Warning styles Early, Balanced and Late set the look-ahead thresholds, windows and distance;
   Balanced is the earlier default. A hull choice (fin keel, long keel, planing or displacement
   motorboat) sets squat and heel. An expert value overrides its field.
