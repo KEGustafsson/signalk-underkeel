@@ -69,7 +69,7 @@ export class Posteriors {
    * while their block was not loaded (plan §4.13), to be moved onto the loaded chart. Until
    * then a cell holds the stand-ins' prior, never deeper than the chart, or noPrior().
    */
-  readonly unsettled = new Set<number>();
+  readonly unsettled: Set<number> = new Set<number>();
 
   constructor(private store: NodeStore) {}
 
@@ -165,7 +165,11 @@ export function rebasePrior(
  * The prior of a cell whose chart cannot be read yet: none, so the soundings stand alone and
  * the cell is not judged until it is rebased onto its chart.
  */
-export const noPrior = (cellRef: number) => ({ depth: NaN, sigma: NO_PRIOR_SIGMA, cellRef });
+export const noPrior = (cellRef: number): { depth: number; sigma: number; cellRef: number } => ({
+  depth: NaN,
+  sigma: NO_PRIOR_SIGMA,
+  cellRef
+});
 
 /** Trigger (plan §4.13): at least this many samples over at least this many passes. */
 export const MIN_SAMPLES = 5;
