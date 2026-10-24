@@ -31,7 +31,6 @@ export class EscapeSearch {
   private at = -Infinity;
   /** How long the last search took, until the tick after it reads it, ms. */
   private slowMs = 0;
-  /** The last search was slower than SLOW_TICK_MS. */
   private searchSlow = false;
   private pending?: unknown;
   /** Bumped to void a search queued before it; a deferral may have no cancel. */
@@ -56,11 +55,7 @@ export class EscapeSearch {
   /** After a tick whose engine state was `state` and which took `tickMs`. */
   after(state: UnderKeelState, tickMs: number, escapable = true): void {
     if (idle(state, escapable)) {
-      this.heading = null;
-      this.at = -Infinity;
-      this.skipped = undefined;
-      this.searchSlow = false;
-      this.drop();
+      this.reset();
       return;
     }
     const now = this.clock.now();
@@ -114,6 +109,16 @@ export class EscapeSearch {
 
   stop(): void {
     this.stopped = true;
+    this.drop();
+  }
+
+  /** Once the danger has passed: no heading, no queued search, and the next one runs at once. */
+  private reset(): void {
+    this.heading = null;
+    this.at = -Infinity;
+    this.skipped = undefined;
+    this.slowMs = 0;
+    this.searchSlow = false;
     this.drop();
   }
 

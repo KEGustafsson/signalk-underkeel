@@ -72,8 +72,6 @@ test("a search that is always slow runs no more often than every ESCAPE_EVERY_MS
   }
   expect(searches).toBeGreaterThan(1);
   expect(searches).toBeLessThanOrEqual(Math.ceil((ticks * 1000) / ESCAPE_EVERY_MS));
-  // The heading each search found is held until the next, and the status says the searches
-  // are slow on every tick, without flipping back as each one starts.
   expect(published).toEqual(Array.from({ length: searches }, () => 1.5));
   expect(escape.heading).toBe(1.5);
   expect(escape.headingFor("warn")).toBe(1.5);
@@ -112,4 +110,26 @@ test("a slow tick still clears the heading, and a fast search ends the note", ()
   }
   expect(escape.skipped).toBeUndefined();
   expect(published).toEqual([1.5, null, 1.5, 1.5]);
+});
+
+test("a slow search before the danger passed does not hold back the first one after it", () => {
+  let now = 0;
+  let searchMs = SLOW_TICK_MS + 50;
+  let searches = 0;
+  const escape = new EscapeSearch(
+    { now: () => now },
+    () => {
+      searches++;
+      now += searchMs;
+      return 1.5;
+    },
+    () => undefined
+  );
+  escape.after("warn", 5);
+  escape.after("normal", 5);
+  searchMs = 0;
+  now += 1000;
+  escape.after("warn", 5);
+  expect(searches).toBe(2);
+  expect(escape.headingFor("warn")).toBe(1.5);
 });
