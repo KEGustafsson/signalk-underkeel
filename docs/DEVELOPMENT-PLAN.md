@@ -958,8 +958,10 @@ suppressing.
   minutes rather than for good, and so is a GNSS velocity bias, since without an independent
   reference it reads as a current; a jump stays flagged until σ_DR covers it. The learned current
   is bounded at 3 m/s (5.8 kn, `maxCurrent`): a drag or bias faster than that is never explained
-  away and stays flagged, and in a stream faster than that the check stays failed, the safe way. A fix whose
-  `methodQuality` is not a satellite fix sets σ_pos ≥ 50 m. Without speed through water the
+  away and stays flagged, and in a stream faster than that the check stays failed, the safe way.
+  The low-pass lags a drag just above the bound (3.01 m/s reads under 3 m/s for about 11
+  minutes), so a failed run clears only once the latest unfiltered difference is within the
+  bound too. A fix whose `methodQuality` is not a satellite fix sets σ_pos ≥ 50 m. Without speed through water the
   check reports itself unavailable in the notification and in `/status`.
 - Hysteresis applies between `normal`, `alert`, `warn` and `alarm`. `unknown` and `off` pass
   through at once, so stale input is never held as an earlier state. The risk state before
