@@ -37,7 +37,8 @@ under-keel clearance (UKC) falls below zero, written P(UKC < 0), and sets a stat
 | `unknown` | no draft, no or stale position, stale course or speed, or non-finite input       | `alert`: "UKC monitoring degraded" |
 | `off`     | no chart index, or the plugin is stopped                                         | `alert`, or `normal` when stopped  |
 
-The thresholds and time windows come from the warning style (Settings). A state rises after 2 s at
+The percentages and times in the table are the Balanced warning style; Early and Late use other
+values (Settings), and an expert value overrides its own. A state rises after 2 s at
 its level and falls after 5 s below 80 % of its threshold, so a footprint grazing a shoal edge does
 not toggle the alarm. Every notification carries the reason and the terms behind the number: the
 deciding depth, its uncertainty, the water level, squat, heel and waves.
@@ -405,8 +406,9 @@ Rebuild and restart the server after each change.
 ## REST API
 
 Base path `/plugins/signalk-underkeel/v1`. Reads are open to readonly users; adding and deleting
-acknowledgements needs a readwrite user, and the settings routes an admin. Errors are `{ "errors":
-[string, …] }`; a 5xx error names no file path and no nested error text, which the server log keeps.
+acknowledgements needs a readwrite user, and the settings routes an admin. Errors are
+`{ "errors": [string, …] }`; a 5xx error names no file path and no nested error text, which the
+server log keeps.
 
 | Route                                         | Purpose                                                                                                                                                                                                                                                                                              |
 | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

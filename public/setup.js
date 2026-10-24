@@ -296,7 +296,6 @@ function numberField(id, label, path, placeholder, hint) {
   );
 }
 
-/** What the plugin adds to the draft by itself, in words, from the configured or default factors. */
 function addedOnTop() {
   const d = s.data.defaults;
   const cb = val("vessel.blockCoefficient") ?? d.blockCoefficient;
@@ -324,11 +323,14 @@ function addedOnTop() {
 function draftHint() {
   const signalk = facts().signalk.draft;
   const fromSignalK = val("vessel.draft") === undefined && signalk !== undefined;
+  const own = val("vessel.draft") !== undefined;
   const text = fromSignalK
     ? `using Signal K design.draft.maximum ${signalk} m`
     : signalk !== undefined
       ? `Signal K says ${signalk} m; empty uses it`
-      : "not in Signal K: set it here";
+      : own
+        ? "set here; Signal K states none"
+        : "not in Signal K: set it here";
   return h("span", { class: fromSignalK ? "hint ok" : "hint", id: "draft-hint" }, text);
 }
 

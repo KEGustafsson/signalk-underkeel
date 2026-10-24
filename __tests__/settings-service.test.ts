@@ -69,6 +69,28 @@ describe("settings patch", () => {
     ]);
   });
 
+  // A value the schema's range or item types refuse would be saved and then ignored by the parser.
+  test("numbers outside the schema's range and array items of the wrong shape are named", () => {
+    expect(
+      patchErrors(
+        {
+          wfs: { radiusKm: 26 },
+          leafZoom: 13,
+          mooringZones: ["home", 123],
+          waterLevel: { datums: [{ verdat: 3, series: "msl" }, "x"] },
+          vessel: { heelTable: [{ heel: 20, delta: -0.1 }] }
+        },
+        SCHEMA
+      )
+    ).toEqual([
+      "wfs.radiusKm must be at most 25",
+      "leafZoom must be at least 14",
+      "mooringZones[1] must be a string",
+      "waterLevel.datums[0].series must be one of mw, n2000",
+      "waterLevel.datums[1] must be an object"
+    ]);
+  });
+
   test("objects merge field by field, null removes a field, arrays are replaced", () => {
     const base = { vessel: { draft: 2, margin: 0.3 }, mooringZones: ["a", "b"], cellsDir: "/c" };
     expect(applyPatch(base, { vessel: { draft: null, keel: "fin" }, mooringZones: ["c"] })).toEqual(

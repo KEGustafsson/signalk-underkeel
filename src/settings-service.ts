@@ -88,20 +88,57 @@ function allowed(schema: Raw): unknown[] | undefined {
     : undefined;
 }
 
-function fieldError(where: string, value: unknown, schema: Raw): string | undefined {
-  const type = schema.type;
-  const ok =
-    (type === "number" && typeof value === "number" && Number.isFinite(value)) ||
-    (type === "string" && typeof value === "string") ||
-    (type === "boolean" && typeof value === "boolean") ||
-    (type === "array" && Array.isArray(value));
-  if (!ok) {
-    return `${where} must be a ${String(type)}`;
+function isType(value: unknown, type: unknown): boolean {
+  switch (type) {
+    case "number":
+      return typeof value === "number" && Number.isFinite(value);
+    case "string":
+      return typeof value === "string";
+    case "boolean":
+      return typeof value === "boolean";
+    case "array":
+      return Array.isArray(value);
+    default:
+      return false;
+  }
+}
+
+/** A number outside the schema's minimum or maximum, as an error. */
+function rangeError(where: string, value: unknown, schema: Raw): string | undefined {
+  if (typeof value !== "number") {
+    return undefined;
+  }
+  if (typeof schema.minimum === "number" && value < schema.minimum) {
+    return `${where} must be at least ${schema.minimum}`;
+  }
+  if (typeof schema.maximum === "number" && value > schema.maximum) {
+    return `${where} must be at most ${schema.maximum}`;
+  }
+  return undefined;
+}
+
+/** Errors of one value against its field's schema: type, choice, range and each array item. */
+function valueErrors(where: string, value: unknown, schema: Raw): string[] {
+  if (schema.type === "object") {
+    return isObject(value)
+      ? patchErrors(value, schema, `${where}.`)
+      : [`${where} must be an object`];
+  }
+  if (!isType(value, schema.type)) {
+    return [`${where} must be a ${String(schema.type)}`];
   }
   const values = allowed(schema);
-  return values && !values.includes(value)
-    ? `${where} must be one of ${values.join(", ")}`
-    : undefined;
+  if (values && !values.includes(value)) {
+    return [`${where} must be one of ${values.join(", ")}`];
+  }
+  const range = rangeError(where, value, schema);
+  if (range) {
+    return [range];
+  }
+  const items = schema.items;
+  return Array.isArray(value) && isObject(items)
+    ? value.flatMap((item, i) => valueErrors(`${where}[${i}]`, item, items))
+    : [];
 }
 
 /** Errors of a patch against `schema`'s fields; null deletes a field and is always allowed. */
@@ -113,16 +150,7 @@ export function patchErrors(patch: Raw, schema: Raw, prefix = ""): string[] {
     if (!isObject(field)) {
       return [`${where} is not a setting`];
     }
-    if (value === null) {
-      return [];
-    }
-    if (field.type === "object") {
-      return isObject(value)
-        ? patchErrors(value, field, `${where}.`)
-        : [`${where} must be an object`];
-    }
-    const error = fieldError(where, value, field);
-    return error ? [error] : [];
+    return value === null ? [] : valueErrors(where, value, field);
   });
 }
 
