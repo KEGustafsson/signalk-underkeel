@@ -318,7 +318,7 @@ first to reach the warn or alert level or a coverage gap, the steps it skipped a
 to shoal and the time in the reason are those of the 3 s steps. The look-ahead distance is
 at most 5 NM (9260 m) and the minimum horizon at most 600 s.
 
-The horizon always reaches the style's look-ahead distance (555.6 m, 0.3 NM, with Balanced;
+The horizon always reaches the configured look-ahead distance (555.6 m, 0.3 NM, with Balanced;
 below 18 kn), so slowing down does not shorten the envelope. The same distance takes longer, though: 154 s at 7 kn, 270 s at 4 kn. Warn and alarm
 count seconds to the shoal, so at lower speed they come closer to it.
 

@@ -542,7 +542,7 @@ async function save() {
     message(`Not saved: ${err && err.message ? err.message : String(err)}`);
   }
   if (sent) {
-    setTimeout(() => void load(patch), 4000);
+    setTimeout(() => void readBack(patch), 4000);
   } else {
     s.saving = false;
     renderNav();
@@ -586,29 +586,62 @@ function blocked(text, link) {
   document.getElementById("nav").replaceChildren();
 }
 
-async function load(sent) {
+async function fetchSettings() {
+  const res = await fetch(`${M.API}/settings`, { credentials: "same-origin", signal: AbortSignal.timeout(8000) });
+  return { status: res.status, data: res.ok ? await res.json() : null };
+}
+
+function show(data, sent) {
   s.saving = false;
+  s.data = data;
+  s.patch = M.unsaved(s.patch, s.data.values);
+  render();
+  if (sent) {
+    const left = Object.keys(M.unsaved(sent, s.data.values)).length > 0;
+    message(left ? "Not all changes were saved yet. Check the server log, then save again." : "Saved.", !left);
+  }
+}
+
+async function load() {
   try {
-    const res = await fetch(`${M.API}/settings`, { credentials: "same-origin", signal: AbortSignal.timeout(8000) });
-    if (res.status === 401 || res.status === 403) {
+    const r = await fetchSettings();
+    if (r.status === 401 || r.status === 403) {
       blocked("Log in to Signal K as an administrator to see and change the under-keel settings.", "/admin/");
       return;
     }
-    if (!res.ok) {
-      blocked(`The plugin did not answer (HTTP ${res.status}). Is it enabled?`, ADMIN_PAGE);
+    if (!r.data) {
+      blocked(`The plugin did not answer (HTTP ${r.status}). Is it enabled?`, ADMIN_PAGE);
       return;
     }
-    s.data = await res.json();
-    s.patch = M.unsaved(s.patch, s.data.values);
-    render();
-    if (sent) {
-      const left = Object.keys(M.unsaved(sent, s.data.values)).length > 0;
-      message(left ? "Not all changes were saved yet. Check the server log, then save again." : "Saved.", !left);
-    }
+    show(r.data);
   } catch (err) {
     blocked(`The plugin did not answer: ${err && err.message ? err.message : String(err)}`, ADMIN_PAGE);
     console.warn("under-keel setup", err);
   }
+}
+
+// After a save the plugin is restarting, so a failed read-back is retried and
+// never replaces the form: the edits stay until the settings hold them.
+async function readBack(sent, tries = 5) {
+  let failure;
+  try {
+    const r = await fetchSettings();
+    if (r.data) {
+      show(r.data, sent);
+      return;
+    }
+    failure = `HTTP ${r.status}`;
+  } catch (err) {
+    failure = err && err.message ? err.message : String(err);
+  }
+  if (tries > 1) {
+    message(`Waiting for the plugin to restart (${failure})…`, true);
+    setTimeout(() => void readBack(sent, tries - 1), 3000);
+    return;
+  }
+  s.saving = false;
+  renderNav();
+  message(`Settings not read back (${failure}). Your changes are kept: save again or reload the page.`);
 }
 
 // Opened from the details panel, the page offers the way back to it.
