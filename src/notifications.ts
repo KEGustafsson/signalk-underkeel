@@ -24,6 +24,9 @@ export function integrityNotification(r: IntegrityResult): NotificationValue {
   };
 }
 
+/** The measurements in an integrity reason that change with every fix; a fix quality does not. */
+const DRIFTING = /^(HDOP |GNSS and dead reckoning differ by )\d+(\.\d+)?/;
+
 /**
  * The integrity notification and how it repeats: at once when its state or
  * kind of reason changes, while the divergence and HDOP in the message,
@@ -34,7 +37,10 @@ export function integrityUpdate(
   now: number
 ): { value: NotificationValue; repeat: Repeat } {
   const value = integrityNotification(r);
-  const key = `${value.state}|${value.message.replace(/\d+(\.\d+)?/g, "#")}`;
+  const kind = r.ok
+    ? value.message.replace(/\d+(\.\d+)?/g, "#")
+    : r.reasons.map((reason) => reason.replace(DRIFTING, "$1#")).join("; ");
+  const key = `${value.state}|${kind}`;
   return { value, repeat: { key, refreshMs: NOTIFY_REFRESH_MS, now } };
 }
 
