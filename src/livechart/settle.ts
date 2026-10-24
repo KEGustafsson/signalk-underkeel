@@ -49,6 +49,7 @@ export async function rebaseOnto(
  */
 export class PriorSettler {
   private run?: Promise<void>;
+  private pending = false;
   private stopped = false;
 
   constructor(
@@ -66,9 +67,17 @@ export class PriorSettler {
     private readonly error: (message: string) => void
   ) {}
 
-  /** Starts a run unless one is under way or no cell waits. */
+  /**
+   * Starts a run unless no cell waits. One asked for during a run follows it, since the run
+   * settles only the cells waiting when it began; cells it could not settle are not retried
+   * on their own, so a block refused for good is not read again and again.
+   */
   soon(): void {
-    if (this.run || this.stopped || this.posteriors.unsettled.size === 0) {
+    if (this.run) {
+      this.pending = true;
+      return;
+    }
+    if (this.stopped || this.posteriors.unsettled.size === 0) {
       return;
     }
     const store = this.current();
@@ -76,8 +85,10 @@ export class PriorSettler {
       .catch((err: Error) => this.error(`living chart priors: ${err.message}`))
       .finally(() => {
         this.run = undefined;
-        // A rebind ended the run: the cells it left are settled on the new index.
-        if (this.current() !== store) {
+        // A rebind ended the run, or a cell came to wait while it ran.
+        const again = this.pending || this.current() !== store;
+        this.pending = false;
+        if (again) {
           this.soon();
         }
       });
