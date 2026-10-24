@@ -786,9 +786,9 @@ The plugin appears in Freeboard without any Freeboard setting. What can be set:
 
 - **Which layers draw.** Layers → Charts lists the plugin's three layers under **Plugin
   layers**, above the charts, each with its own tick box and opacity.
-- **The chart under them.** These screenshots add the Traficom S-57 WMS as a chart: URL
-  `https://julkinen.traficom.fi/s57/wms?STYLES=style-id-245`, layer `cells`. Style
-  `style-id-245` draws the paper-chart symbols; without it the server draws its default style.
+- **The chart under them.** These screenshots add the Traficom S-57 WMS of section 1 as a
+  chart, with the server's paper-chart symbol style (`STYLES=style-id-245` when written);
+  without a style the server draws its default one.
 - **The plugin's own settings.** **Open setup** at the bottom of the details panel.
 
 ![Freeboard: the plugin layers in the chart list](images/how-it-works/freeboard-layers.jpg)
