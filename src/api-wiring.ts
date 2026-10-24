@@ -20,6 +20,7 @@ import { departureWindowReply, routeCheck, routeRepair } from "./route-service";
 import { statusReport } from "./status-report";
 import type { LivechartService } from "./livechart-service";
 import type { WfsService } from "./wfs-service";
+import { saveSettings, settingsReply } from "./settings-service";
 
 /** The REST handlers bound to the plugin's current state (plan §4.10). */
 
@@ -34,12 +35,22 @@ export interface PluginState {
   stopped: EngineStatus;
   /** The heavy REST work, aborted when the plugin stops. */
   requests: RequestQueue;
+  /** The saved configuration as started, migrated to the current version. */
+  options?: Record<string, unknown>;
+  /** The server's callback that saves a configuration and restarts the plugin with it. */
+  restart?: (config: object) => void;
 }
 
 const NOT_STARTED: ApiReply = { status: 503, body: { errors: ["plugin not started"] } };
 
+function livechartReply(s: PluginState, body: (l: LivechartService) => unknown): ApiReply {
+  return s.livechart
+    ? { status: 200, body: body(s.livechart) }
+    : { status: 404, body: { errors: ["living chart is off"] } };
+}
+
 export function apiFor(
-  app: Pick<ServerAPI, "resourcesApi" | "error">,
+  app: Pick<ServerAPI, "resourcesApi" | "error" | "getSelfPath">,
   clock: Clock,
   s: PluginState
 ): ApiProvider {
@@ -107,13 +118,9 @@ export function apiFor(
     acks: () => withAcks(listAcks),
     addAck: (body) => withAcks((deps) => addAck(body, deps)),
     deleteAck: (id) => withAcks((deps) => deleteAck(id, deps)),
-    discrepancies: () =>
-      s.livechart
-        ? { status: 200, body: s.livechart.discrepancies() }
-        : { status: 404, body: { errors: ["living chart is off"] } },
-    csb: () =>
-      s.livechart
-        ? { status: 200, body: s.livechart.csb() }
-        : { status: 404, body: { errors: ["living chart is off"] } }
+    discrepancies: () => livechartReply(s, (l) => l.discrepancies()),
+    csb: () => livechartReply(s, (l) => l.csb()),
+    settings: () => settingsReply(app, s),
+    saveSettings: (body) => saveSettings(body, s)
   };
 }

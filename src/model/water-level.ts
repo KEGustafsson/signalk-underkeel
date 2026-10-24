@@ -239,6 +239,10 @@ function iso(t: number): string {
  */
 const LOW_WATER_DATUMS = new Set([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 22, 23, 27]);
 
+export function isLowWaterDatum(verdat: number): boolean {
+  return LOW_WATER_DATUMS.has(verdat);
+}
+
 /**
  * Chart datum, as the level with no source. Where a cell states a datum that
  * is not low water (mean water in the Baltic, high water, local) the water

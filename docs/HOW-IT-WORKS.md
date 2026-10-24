@@ -81,10 +81,17 @@ look-ahead, a corridor around each leg for a route check, or a map tile for the 
 
 ![Plugin configuration in the Signal K admin UI](images/how-it-works/config.png)
 
+The setup panel, opened from Freeboard's toolbar, asks for the same essentials in three steps:
+the boat on a side view whose keel, margin line and sounder can be dragged, the water-level
+source with the one that fits the charts' datum marked, and a warning style. The admin page
+asks for them first too and shows the rest under **Show expert settings**.
+
+![The setup panel: boat, water level and warnings](images/how-it-works/setup-panel.png)
+
 The plugin reads unencrypted S-57 cells as delivered, each `.000` with its updates, with GDAL
 compiled to WebAssembly; **ENC cells directory** points at the folder that holds them, such as
 an exchange set's `ENC_ROOT` (the [README](../README.md#prepare-the-charts) has the details).
-The draft comes from **Vessel**, or else from Signal K `design.draft.maximum`; length and beam fall back to `design.length.overall` and
+The draft comes from **Boat**, or else from Signal K `design.draft.maximum`; length and beam fall back to `design.length.overall` and
 `design.beam`. Without a draft the engine stays `unknown`. The water level comes from the
 source picked under **Water level** (section 8).
 
@@ -368,7 +375,9 @@ the highest P; in clear water that can be a large tile whose centre lies off the
 The escape heading published at the same points is 255° in `alert`, 245° in `warn` and 220° in
 `alarm`: a turn to port that passes south of the island, growing as the island gets closer.
 
-The thresholds and time windows are set under **Look-ahead**:
+The thresholds and time windows come from the warning style, Early, Balanced or Late (the
+[README](../README.md#settings) has the table); the values above are Balanced. Under **Show
+expert settings**, **Look-ahead** overrides any of them:
 
 ![Look-ahead and route check settings](images/how-it-works/config-lookahead.png)
 

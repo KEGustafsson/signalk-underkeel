@@ -37,7 +37,7 @@ under-keel clearance (UKC) falls below zero, written P(UKC < 0), and sets a stat
 | `unknown` | no draft, no or stale position, stale course or speed, or non-finite input       | `alert`: "UKC monitoring degraded" |
 | `off`     | no chart index, or the plugin is stopped                                         | `alert`, or `normal` when stopped  |
 
-The thresholds and time windows are settings. A state rises after 2 s at its level and falls
+The thresholds and time windows come from the warning style (Settings). A state rises after 2 s at its level and falls
 after 5 s below 80 % of its threshold, so a footprint grazing a shoal edge does not toggle the
 alarm.
 Every notification carries the reason and the terms behind the number: the deciding depth,
@@ -129,19 +129,54 @@ named like a cell is listed in `GET /status` as skipped.
 
 ## Settings
 
-All settings are in the plugin's page in the admin UI. The defaults suit a small yacht.
+There are two places to set the plugin up, and both write the same configuration:
 
-| Group               | Main settings and defaults                                                                                                                                                                                                                              |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Chart index         | cells directory, index directory, rebuild at start, index leaf zoom (20), box around the vessel (10 km)                                                                                                                                                 |
-| Vessel              | draft, length, beam (fallback: Signal K `design.*`); draft σ (0.05 m); extra margin under the keel (0 m); block coefficient for squat (0.4); double squat in narrow channels; heel effect (none, fin keel or a table); wave allowance factor (0.4 × Hs) |
-| Water level         | source (`none`, `manual`, `signalk-tide`, `fmi`); manual height and σ; FMI refresh (600 s); chart-datum mappings for FMI                                                                                                                                |
-| Look-ahead          | distance (555.6 m = 0.3 NM); minimum horizon (60 s); position buffer (10 m, 2σ); fan spread (COG 5°, rate of turn 0.1°/s); alert, warn and alarm probabilities (1 %, 5 %, 20 %); warn and alarm windows (120 s, 60 s)                                   |
-| Route check         | planning speed (2.5 m/s), cross-track limit (30 m), accepted P(UKC < 0) (1 %)                                                                                                                                                                           |
-| Living chart        | off; depth path and transducer offsets; Signal K notes for suspected shoals; CSB export metadata                                                                                                                                                        |
-| Mooring zones       | Signal K region ids                                                                                                                                                                                                                                     |
-| Grounding detector  | off; optional acceleration path; deceleration threshold (2 m/s²)                                                                                                                                                                                        |
-| Traficom WFS depths | off; assumed survey quality (B); box half-width (10 km)                                                                                                                                                                                                 |
+- **Under-keel setup** in Freeboard (toolbar button with the tune icon), or
+  `/plotterext/signalk-underkeel/setup.html` in a browser: three steps, boat, water level and
+  warnings. Drag the keel, the margin line and the sounder on a side view of the hull, or type
+  the numbers. The page shows the draft Signal K already states, the vertical datum of your
+  charts with the water-level source that fits it, and a setup check. **Save and restart**
+  needs a Signal K admin login.
+- The plugin's page in the admin UI. It asks for the same essentials first; **Show expert
+  settings** opens the rest, and an optional feature's fields appear once it is enabled. Admin
+  UIs older than Signal K 2.32 show every field at once.
+
+![The setup panel: boat, water level and warnings](docs/images/how-it-works/setup-panel.png)
+
+| Setting             | What it does                                                                                                                                                                                                                                                                                                   |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ENC cells directory | where the `.000` cells are                                                                                                                                                                                                                                                                                     |
+| Boat                | draft (empty uses Signal K `design.draft.maximum`); safety margin under the keel (0 m); hull, which sets squat and heel: fin keel (Cb 0.40, heel lifts the keel), long keel (0.45), planing motorboat (0.40) or displacement motorboat (0.60), the last three ignoring heel; not set means Cb 0.40 and no heel |
+| Water level         | source (`none`, `manual`, `signalk-tide`, `fmi`, see below); only the chosen source's fields are shown                                                                                                                                                                                                         |
+| Warnings            | Early, Balanced or Late, in the table below                                                                                                                                                                                                                                                                    |
+| Optional features   | living chart (own soundings), Traficom WFS depths, grounding detector; each off until enabled                                                                                                                                                                                                                  |
+
+| Warning style      | Looks ahead | Alert at | Warn at, within | Alarm at, within | Alarm on negative mean UKC |
+| ------------------ | ----------- | -------- | --------------- | ---------------- | -------------------------- |
+| Early              | 0.5 NM      | 0.5 %    | 2 %, 180 s      | 10 %, 90 s       | within 30 s                |
+| Balanced (default) | 0.3 NM      | 1 %      | 5 %, 120 s      | 20 %, 60 s       | within 30 s                |
+| Late               | 0.2 NM      | 2 %      | 10 %, 90 s      | 30 %, 45 s       | within 30 s                |
+
+Early is at least as cautious as Balanced in every column, and Balanced as Late.
+
+Expert settings, with their defaults:
+
+| Group        | Settings                                                                                                                                                                                                                  |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Chart index  | index directory, rebuild at start, index leaf zoom (20), box around the vessel (10 km)                                                                                                                                    |
+| Boat         | length, beam (fallback: Signal K `design.*`); draft σ (0.05 m); block coefficient and heel effect (none, fin keel or a table), which override the hull; double squat in narrow channels; wave allowance factor (0.4 × Hs) |
+| Look-ahead   | minimum horizon (60 s); position buffer (10 m, 2σ); fan spread (COG 5°, rate of turn 0.1°/s); and the distance, probabilities and windows of the warning style, each overriding the style when set                        |
+| Water level  | manual height and σ; FMI refresh (600 s); chart-datum mappings for FMI                                                                                                                                                    |
+| Route check  | planning speed (2.5 m/s), cross-track limit (30 m), accepted P(UKC < 0) (1 %)                                                                                                                                             |
+| Living chart | depth path and transducer offsets; Signal K notes for suspected shoals; CSB export metadata                                                                                                                               |
+| Other        | mooring zones (Signal K region ids); grounding detector acceleration path and threshold (2 m/s²); Traficom WFS survey quality (B) and box half-width (10 km)                                                              |
+
+The saved configuration carries a version, `configVersion`. At the first start after an update
+from a configuration without one, the plugin keeps a copy as `config-v1.json` in its data
+directory, removes the look-ahead and squat values the old admin form had filled in with their
+defaults, so the warning style and hull can set them, and saves the result. The plugin then
+behaves exactly as before; a value that differed from its default stays and overrides the
+style.
 
 ## Water level
 
@@ -178,6 +213,7 @@ Extensions API shows it without any change to Freeboard:
 | Layers → Charts → Plugin layers | Under-keel look-ahead (on), Under-keel route check (on), Under-keel risk (off)   |
 | Widget grid                     | Under-keel status: state colour, minimum clearance, time to shoal and the reason |
 | Toolbar button (boat icon)      | details panel: state, water level and source, and a leg table per route          |
+| Toolbar button (tune icon)      | setup panel: boat, water level and warning style (Settings)                      |
 
 Routes shown on the chart are checked 1 s after each edit and every minute; the panel shows
 each result's age and marks it "out of date" after 3 minutes, when the chart draws its legs
@@ -261,7 +297,7 @@ them whole.
 
 | Reason shown                                                  | Cause and fix                                                          |
 | ------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `vessel draft not configured`                                 | set **Draft** under Vessel, or `design.draft.maximum` in Signal K      |
+| `vessel draft not configured`                                 | set **Draft** under Boat, or `design.draft.maximum` in Signal K        |
 | `position stale`                                              | no recent `navigation.position`; check the GNSS source                 |
 | `course or speed stale: only the current position is checked` | no recent COG or SOG                                                   |
 | `no chart index loaded`                                       | set the cells directory; an index error is shown as the plugin's error |
@@ -358,24 +394,25 @@ Rebuild and restart the server after each change.
 ## REST API
 
 Base path `/plugins/signalk-underkeel/v1`. Reads are open to readonly users; adding and
-deleting acknowledgements needs a readwrite user. Errors are `{ "errors": [string, …] }`; a
+deleting acknowledgements needs a readwrite user, and the settings routes an admin. Errors are `{ "errors": [string, …] }`; a
 5xx error names no file path and no nested error text, which the server log keeps.
 
-| Route                                         | Purpose                                                                                                                                                                                                                                 |
-| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /status`                                 | engine state, index and cell editions, look-ahead summary, water-level health, datum mapping                                                                                                                                            |
-| `GET /status?summary`                         | the same without the per-cell lists (`index.cells`, `waterLevel.datums`), for frequent polls                                                                                                                                            |
-| `GET /envelope?rev=`                          | the look-ahead as GeoJSON; 304 when the client already has that revision                                                                                                                                                                |
-| `POST /route-check`                           | each leg `ok`, `marginal`, `fail` or `unverified`, with P(UKC < 0), explanation and cell editions                                                                                                                                       |
-| `POST /route-repair`                          | waypoints to insert around failing legs, and the whole route re-checked with them                                                                                                                                                       |
-| `POST /departure-window`                      | departure intervals within `horizon` in which every leg is `ok`                                                                                                                                                                         |
-| `POST /query`                                 | class, P(UKC < 0), deciding hazard and explanation for a Point or Polygon                                                                                                                                                               |
-| `GET /acks`, `POST /acks`, `DELETE /acks/:id` | acknowledged passages; `POST` needs `Content-Type: application/json` or another `+json` type (415 otherwise) and a polygon of at most 64 vertices, and answers 409 while the water level is a fallback or 100 acknowledgements are live |
-| `GET /livechart/discrepancies`                | living-chart cells shallower than charted; `pending: true` while a cell's chart is not read yet                                                                                                                                         |
-| `GET /livechart/csb.geojson`                  | own soundings in the IHO CSB format                                                                                                                                                                                                     |
-| `GET /tiles/ukc/{z}/{x}/{y}.pbf`              | Mapbox vector tiles from zoom 11, one `ukc` layer, `Cache-Control: no-cache`, gzipped on request                                                                                                                                        |
-| `GET /tiles/ukc/changes?epoch=&rev=`          | the tiles served since that cursor whose classes changed, or `all`; a new cursor                                                                                                                                                        |
-| `GET /ukc-style.json`                         | a MapLibre style for the tiles                                                                                                                                                                                                          |
+| Route                                         | Purpose                                                                                                                                                                                                                                                                                              |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /status`                                 | engine state, index and cell editions, look-ahead summary, water-level health, datum mapping                                                                                                                                                                                                         |
+| `GET /status?summary`                         | the same without the per-cell lists (`index.cells`, `waterLevel.datums`), for frequent polls                                                                                                                                                                                                         |
+| `GET /envelope?rev=`                          | the look-ahead as GeoJSON; 304 when the client already has that revision                                                                                                                                                                                                                             |
+| `POST /route-check`                           | each leg `ok`, `marginal`, `fail` or `unverified`, with P(UKC < 0), explanation and cell editions                                                                                                                                                                                                    |
+| `POST /route-repair`                          | waypoints to insert around failing legs, and the whole route re-checked with them                                                                                                                                                                                                                    |
+| `POST /departure-window`                      | departure intervals within `horizon` in which every leg is `ok`                                                                                                                                                                                                                                      |
+| `POST /query`                                 | class, P(UKC < 0), deciding hazard and explanation for a Point or Polygon                                                                                                                                                                                                                            |
+| `GET /acks`, `POST /acks`, `DELETE /acks/:id` | acknowledged passages; `POST` needs `Content-Type: application/json` or another `+json` type (415 otherwise) and a polygon of at most 64 vertices, and answers 409 while the water level is a fallback or 100 acknowledgements are live                                                              |
+| `GET /livechart/discrepancies`                | living-chart cells shallower than charted; `pending: true` while a cell's chart is not read yet                                                                                                                                                                                                      |
+| `GET /livechart/csb.geojson`                  | own soundings in the IHO CSB format                                                                                                                                                                                                                                                                  |
+| `GET /tiles/ukc/{z}/{x}/{y}.pbf`              | Mapbox vector tiles from zoom 11, one `ukc` layer, `Cache-Control: no-cache`, gzipped on request                                                                                                                                                                                                     |
+| `GET /settings`, `POST /settings`             | admin only: the configuration, what the plugin sees (`design.*`, depth paths, chart datums) and the setup check; `POST` takes a patch (`null` removes a field) with `Content-Type: application/json`, checks it against the schema (400 naming each bad field) and restarts the plugin with it (202) |
+| `GET /tiles/ukc/changes?epoch=&rev=`          | the tiles served since that cursor whose classes changed, or `all`; a new cursor                                                                                                                                                                                                                     |
+| `GET /ukc-style.json`                         | a MapLibre style for the tiles                                                                                                                                                                                                                                                                       |
 
 A route-check body carries `route` (a GeoJSON LineString) or `routeRef`
 (`/resources/routes/<id>`), and optionally `departure` (ISO 8601), `speed` (m/s: one value,

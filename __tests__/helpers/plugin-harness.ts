@@ -78,6 +78,7 @@ export function fakeApp(dataDir: string, self: Record<string, unknown> = {}) {
   const errors: string[] = [];
   const statuses: string[] = [];
   const providers: unknown[] = [];
+  const savedOptions: object[] = [];
   const subscriptions: { match: RegExp; cb: (d: Delta) => void }[] = [];
   let unsubscribed = 0;
   const subscribed: string[] = [];
@@ -89,6 +90,10 @@ export function fakeApp(dataDir: string, self: Record<string, unknown> = {}) {
     getDataDirPath: () => dataDir,
     getSelfPath: (p: string) => self[p],
     registerResourceProvider: (p: unknown) => providers.push(p),
+    savePluginOptions: (c: object, cb: (err: Error | null) => void) => {
+      savedOptions.push(c);
+      cb(null);
+    },
     subscriptionmanager: {
       subscribe: (
         cmd: { subscribe: { path: string }[] },
@@ -113,6 +118,7 @@ export function fakeApp(dataDir: string, self: Record<string, unknown> = {}) {
     errors,
     statuses,
     providers,
+    savedOptions,
     send: (d: Delta) => subscriptions.forEach((s) => deliver(d, s.match, s.cb)),
     subscribed,
     unsubscribed: () => unsubscribed

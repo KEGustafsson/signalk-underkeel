@@ -68,8 +68,8 @@ module.exports = [
     }
   },
   // ── Extension pages ─────────────────────────────────────────────────────
-  // The pages are ES modules in the browser; ukc-shared.js is a plain script
-  // the pages load with <script> and the tests require().
+  // The pages are ES modules in the browser; ukc-shared.js and setup-model.js
+  // are plain scripts the pages load with <script> and the tests require().
   {
     files: ["public/**/*.js"],
     languageOptions: {
@@ -77,7 +77,7 @@ module.exports = [
     }
   },
   {
-    files: ["public/ukc-shared.js"],
+    files: ["public/ukc-shared.js", "public/setup-model.js"],
     languageOptions: {
       sourceType: "script",
       globals: { ...globals.commonjs }

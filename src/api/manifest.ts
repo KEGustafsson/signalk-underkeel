@@ -5,8 +5,9 @@ import { API_BASE } from "./routes";
  * Plotter Extensions manifest contribution (plan §4.14, §5). The plotter UI
  * is declared here rather than built into a plotter: the UKC tile overlay,
  * the look-ahead envelope and route-check legs as data overlays a
- * background runtime keeps current, a status widget, a details panel and a
- * toolbar button. Their pages are served from ASSET_BASE (see assets.ts).
+ * background runtime keeps current, a status widget, and the details and
+ * setup panels with a toolbar button each. Their pages are served from
+ * ASSET_BASE (see assets.ts).
  */
 
 export const PLUGIN_ID = "signalk-underkeel";
@@ -114,7 +115,7 @@ export function ukcStyle(): Record<string, unknown> {
   };
 }
 
-/** The pages a host shows: a background runtime, a status widget, a details panel and its button. */
+/** The pages a host shows: a background runtime, a status widget, two panels and their buttons. */
 const UI: Pick<Manifest, "background" | "widgets" | "panels" | "buttons"> = {
   background: [
     {
@@ -141,6 +142,13 @@ const UI: Pick<Manifest, "background" | "widgets" | "panels" | "buttons"> = {
       type: "iframe",
       url: `${ASSET_BASE}/panel.html`,
       lifecycle: "onOpen"
+    },
+    {
+      id: "setup",
+      title: "Under-keel setup",
+      type: "iframe",
+      url: `${ASSET_BASE}/setup.html`,
+      lifecycle: "onOpen"
     }
   ],
   buttons: [
@@ -150,6 +158,13 @@ const UI: Pick<Manifest, "background" | "widgets" | "panels" | "buttons"> = {
       slot: "mapToolbar",
       icon: "sailing",
       action: { type: "togglePanel", panel: "details" }
+    },
+    {
+      id: "open-setup",
+      title: "Under-keel setup",
+      slot: "mapToolbar",
+      icon: "tune",
+      action: { type: "togglePanel", panel: "setup" }
     }
   ]
 };
