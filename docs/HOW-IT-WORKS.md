@@ -194,8 +194,10 @@ shallower cells are saved to `livechart.json` within 10 s of being marked. Each 
 is appended to `cells.ndjson` every 10 minutes, but only for the cells sounded since the last
 save, and the soundings are appended to `soundings.ndjson` every minute. The estimates are
 capped: once more than 10 000 cells could be dropped, those sounded longest ago go first, down
-to 9 000. A cell marked shallower, one still waiting for its chart to be read, or one that has
-ever read 1σ shallower than the chart is never dropped. At start the shallower cells apply at
+to 9 000. A cell marked shallower, or one still waiting for its chart to be read, is never
+dropped. A cell that has read 1σ shallower than the chart but has not yet had 5 samples over
+2 passes is a shoal waiting for its evidence: such cells are capped on their own the same way,
+so they are not crowded out by ordinary ones. At start the shallower cells apply at
 once, and the estimates are checked against the chart in the background; meanwhile
 `GET /livechart/discrepancies` marks a cell whose chart is not read yet `pending: true`. A file
 that does not load whole is renamed to `<name>.bad-<time>` and reported, so it is never saved

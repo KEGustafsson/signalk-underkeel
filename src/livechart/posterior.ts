@@ -133,28 +133,36 @@ export class Posteriors {
   }
 
   /**
-   * Bounds the cells kept (plan §4.13): once more than `max` could be dropped, drops those last
-   * sounded longest ago until `low` such cells remain, and returns how many it dropped. A cell
-   * with an adjustment, one waiting for its chart block and one that has read PROTECT_Z or more
-   * shallower than a charted prior are never dropped, so a shoal still gathering its samples or
-   * its second pass keeps its evidence. A dropped cell sounded again starts from the chart.
+   * Bounds the cells kept (plan §4.13) and returns how many it dropped. A cell with an
+   * adjustment or waiting for its chart block is never dropped. Shoals still gathering their
+   * evidence (`gathering`) and the other cells are bounded apart: once more than `max` of one
+   * kind could be dropped, those last sounded longest ago go until `low` remain. So a shoal
+   * keeps its evidence among ordinary cells, and a steady error that marks every cell of a
+   * passage still cannot grow them without end. A dropped cell sounded again starts from the
+   * chart.
    */
   prune(max: number, low: number): number {
     if (this.cells.size <= max) {
       return 0;
     }
-    const droppable: [number, number][] = [];
+    const plain: [number, number][] = [];
+    const shoals: [number, number][] = [];
     for (const [key, c] of this.cells) {
-      if (!this.store.adjustments.has(key) && !this.unsettled.has(key) && !isProtectedMark(c)) {
-        droppable.push([c.lastAt, key]);
+      if (!this.store.adjustments.has(key) && !this.unsettled.has(key)) {
+        (gathering(c) ? shoals : plain).push([c.lastAt, key]);
       }
     }
-    if (droppable.length <= max) {
+    return this.dropOldest(plain, max, low) + this.dropOldest(shoals, max, low);
+  }
+
+  /** Past `max`, drops the oldest-sounded of `kind` ([lastAt, key]) until `low` remain. */
+  private dropOldest(kind: [number, number][], max: number, low: number): number {
+    if (kind.length <= max) {
       return 0;
     }
-    droppable.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-    const drop = droppable.length - low;
-    for (const [, key] of droppable.slice(0, drop)) {
+    kind.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    const drop = kind.length - low;
+    for (const [, key] of kind.slice(0, drop)) {
       this.cells.delete(key);
     }
     return drop;
@@ -179,6 +187,13 @@ export function withPeak(c: CellPosterior): CellPosterior {
 
 /** The cell has read PROTECT_Z or more shallower than a charted prior, at some time. */
 export const isProtectedMark = (c?: CellPosterior): boolean => (c?.peakZ ?? -Infinity) >= PROTECT_Z;
+
+/**
+ * A shoal waiting for its evidence: it has read PROTECT_Z or more shallower than a charted prior
+ * and has not yet had MIN_SAMPLES samples over MIN_PASSES passes to be judged with.
+ */
+export const gathering = (c: CellPosterior): boolean =>
+  isProtectedMark(c) && (c.samples < MIN_SAMPLES || c.passes < MIN_PASSES);
 
 /** A rebase marked the cell protected: its line must be saved so the mark survives a cut. */
 export const raisedMark = (before: CellPosterior | undefined, after: CellPosterior): boolean =>

@@ -9,6 +9,8 @@ import type { CellPosterior } from "../../src/livechart/posterior";
 import {
   isDiscrepancy,
   isProtectedMark,
+  MIN_PASSES,
+  MIN_SAMPLES,
   noPrior,
   Posteriors,
   PROTECT_Z,
@@ -24,8 +26,9 @@ import { basin } from "../helpers/synthetic";
 
 /**
  * The living chart's retention bound (plan §4.13): past the cap the cells last sounded longest
- * ago are dropped, never one with an adjustment, one waiting for its block, or one that has
- * read shallower than a charted prior, even after the index box has moved away from it.
+ * ago are dropped, never one with an adjustment or one waiting for its block. A shoal still
+ * gathering its evidence is bounded apart from the other cells, so it is kept among them even
+ * after the index box has moved away from it.
  */
 
 const T0 = 1_800_000_000_000;
@@ -87,7 +90,7 @@ const ADJUSTED = { dMin: 1, sigmaD: 0.1, sigmaP: 0, flags: FLAGS.LIVECHART_ADJUS
 describe("living-chart retention", () => {
   const store = chart();
 
-  test("a prune keeps every protected cell and the newest droppable ones", () => {
+  test("a prune keeps adjusted and waiting cells and the newest shoals and other cells", () => {
     fc.assert(
       fc.property(
         fc.array(
@@ -95,7 +98,9 @@ describe("living-chart retention", () => {
             lastAt: fc.integer({ min: 0, max: 30 }),
             adjusted: fc.boolean(),
             unsettled: fc.boolean(),
-            peakZ: fc.option(uniform(-3, 3), { nil: undefined })
+            peakZ: fc.option(uniform(-3, 3), { nil: undefined }),
+            samples: fc.integer({ min: 1, max: MIN_SAMPLES + 2 }),
+            passes: fc.integer({ min: 1, max: MIN_PASSES + 1 })
           }),
           { maxLength: 60 }
         ),
@@ -115,8 +120,8 @@ describe("living-chart retention", () => {
               cellRef: 0,
               mean: 8,
               sigma: 0.3,
-              samples: 1,
-              passes: 1,
+              samples: c.samples,
+              passes: c.passes,
               lastAt: c.lastAt,
               ...(c.peakZ === undefined ? {} : { peakZ: c.peakZ })
             });
@@ -127,30 +132,35 @@ describe("living-chart retention", () => {
               p.unsettled.add(key);
             }
           });
-          const kept = (key: number) =>
-            store.adjustments.has(key) ||
-            p.unsettled.has(key) ||
-            (cells[key]?.peakZ ?? -Infinity) >= PROTECT_Z;
-          const droppable = cells
-            .map((c, key) => [c.lastAt, key] as const)
-            .filter(([, key]) => !kept(key))
-            .sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+          const kept = (key: number) => store.adjustments.has(key) || p.unsettled.has(key);
+          const shoal = (c: (typeof cells)[number]) =>
+            (c.peakZ ?? -Infinity) >= PROTECT_Z &&
+            (c.samples < MIN_SAMPLES || c.passes < MIN_PASSES);
+          const kinds = [true, false].map((isShoal) =>
+            cells
+              .map((c, key) => [c.lastAt, key, shoal(c)] as const)
+              .filter(([, key, s]) => !kept(key) && s === isShoal)
+              .sort((a, b) => a[0] - b[0] || a[1] - b[1])
+              .map(([, key]) => key)
+          );
           const before = p.cells.size;
           const dropped = p.prune(max, low);
           expect(before - p.cells.size).toBe(dropped);
-          cells.forEach((_c, key) => {
-            if (kept(key)) {
-              expect(p.cells.has(key)).toBe(true);
-            }
-          });
-          if (cells.length > max && droppable.length > max) {
-            const newest = droppable.slice(droppable.length - low).map(([, key]) => key);
-            expect([...p.cells.keys()].filter((key) => !kept(key)).sort((a, b) => a - b)).toEqual(
-              newest.sort((a, b) => a - b)
+          const left = new Set(p.cells.keys());
+          const expected = cells
+            .map((_c, key) => key)
+            .filter(
+              (key) =>
+                kept(key) ||
+                kinds.some(
+                  (kind) =>
+                    kind.includes(key) &&
+                    (cells.length <= max ||
+                      kind.length <= max ||
+                      kind.indexOf(key) >= kind.length - low)
+                )
             );
-          } else {
-            expect(dropped).toBe(0);
-          }
+          expect([...left].sort((a, b) => a - b)).toEqual(expected);
         }
       ),
       { numRuns: 200 }
@@ -216,6 +226,19 @@ describe("living-chart retention", () => {
       }),
       { numRuns: 200 }
     );
+  });
+
+  test("a passage that reads every cell shallower keeps no more shoals than the cap", () => {
+    const h = service(chart(), 20);
+    // 45 cells of one pass, all on the 8 m chart, each read 2 m shallower three times.
+    for (let i = 0; i < 45; i++) {
+      for (let k = 0; k < 3; k++) {
+        h.sound(6, other(i));
+      }
+    }
+    expect(h.svc.discrepancies()).toEqual([]);
+    expect(h.svc.status().dropped).toBeGreaterThan(0);
+    expect(h.svc.status().cells).toBeLessThanOrEqual(20);
   });
 
   test("a single shoal pass stays protected after the index box moves away from it", () => {
