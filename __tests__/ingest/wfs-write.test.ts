@@ -55,6 +55,42 @@ describe("the WFS cell is written so a power cut cannot tear it", () => {
     expect(fs.readdirSync(tmp)).toEqual(["FI1WFS01"]);
   });
 
+  test("a cell left aside by a cut between the renames is put back, not deleted", () => {
+    writeCell(dir, layers("1"));
+    fs.renameSync(dir, `${dir}.old`);
+    const rename = fs.renameSync;
+    jest.spyOn(fs, "renameSync").mockImplementation((from, to) => {
+      if (String(from).endsWith(".partial")) {
+        throw new Error("EIO");
+      }
+      rename(from, to);
+    });
+    expect(() => writeCell(dir, layers("2"))).toThrow("EIO");
+    expect(edition(dir)).toBe("1");
+  });
+
+  test("a staging folder whose flush fails is not swapped in", () => {
+    writeCell(dir, layers("1"));
+    const real = fs.fsyncSync;
+    const staging = fs.openSync;
+    let dirFd = -1;
+    jest.spyOn(fs, "openSync").mockImplementation(((p: fs.PathLike, ...rest: unknown[]) => {
+      const fd = (staging as (...a: unknown[]) => number)(p, ...rest);
+      if (String(p).endsWith(".partial")) {
+        dirFd = fd;
+      }
+      return fd;
+    }) as typeof fs.openSync);
+    jest.spyOn(fs, "fsyncSync").mockImplementation((fd) => {
+      if (fd === dirFd) {
+        throw Object.assign(new Error("EIO: i/o error, fsync"), { code: "EIO" });
+      }
+      real(fd);
+    });
+    expect(() => writeCell(dir, layers("2"))).toThrow("EIO");
+    expect(edition(dir)).toBe("1");
+  });
+
   test("a swap that fails leaves the old cell in place", () => {
     writeCell(dir, layers("1"));
     const rename = fs.renameSync;

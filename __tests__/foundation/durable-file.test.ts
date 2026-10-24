@@ -2,7 +2,11 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { AckStore } from "../../src/ack-store";
-import { appendFileDurable, writeFileDurable } from "../../src/foundation/durable-file";
+import {
+  appendFileDurable,
+  syncDirectory,
+  writeFileDurable
+} from "../../src/foundation/durable-file";
 import { LivechartService } from "../../src/livechart-service";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
 import { basin } from "../helpers/synthetic";
@@ -122,5 +126,34 @@ describe("durable writes", () => {
       expect(r.events[i - 1]).toBe(`fsync ${tmp}`);
       expect(r.events[i + 1]).toBe(`fsync ${path.basename(dir)}`);
     }
+  });
+});
+
+describe("syncDirectory", () => {
+  const dir = os.tmpdir();
+  afterEach(() => jest.restoreAllMocks());
+  const failWith = (code: string) =>
+    jest.spyOn(fs, "fsyncSync").mockImplementation(() => {
+      throw Object.assign(new Error(`${code}: fsync`), { code });
+    });
+
+  test("a flush that fails with an I/O error is thrown", () => {
+    failWith("EIO");
+    expect(() => syncDirectory(dir)).toThrow("EIO");
+  });
+
+  test.each(["EINVAL", "ENOTSUP", "EPERM", "EISDIR"])(
+    "a platform that cannot flush a directory (%s) is skipped",
+    (code) => {
+      failWith(code);
+      expect(() => syncDirectory(dir)).not.toThrow();
+    }
+  );
+
+  test("a directory that cannot be opened is skipped", () => {
+    jest.spyOn(fs, "openSync").mockImplementation(() => {
+      throw Object.assign(new Error("EISDIR: open"), { code: "EISDIR" });
+    });
+    expect(() => syncDirectory(dir)).not.toThrow();
   });
 });

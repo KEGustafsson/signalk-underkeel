@@ -227,6 +227,10 @@ export function toCellLayers(
 export function writeCell(dir: string, layers: Record<string, GeoJsonFeatureCollection>): void {
   const staging = `${dir}.partial`;
   const previous = `${dir}.old`;
+  // A cut between the two renames left the only cell aside: put it back before anything goes.
+  if (!fs.existsSync(dir) && fs.existsSync(previous)) {
+    fs.renameSync(previous, dir);
+  }
   fs.rmSync(staging, { recursive: true, force: true });
   fs.rmSync(previous, { recursive: true, force: true });
   fs.mkdirSync(staging, { recursive: true });
