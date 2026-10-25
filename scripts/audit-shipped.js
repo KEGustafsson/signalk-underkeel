@@ -61,8 +61,19 @@ function shippedPaths() {
 }
 
 function runAudit() {
+  // On Windows npm is npm.cmd, which execFileSync cannot start without a shell.
+  // Under `npm run`, npm_execpath names npm's JS entry point, so run that with node.
+  const npmCli = process.env.npm_execpath;
+  const [file, args, shell] = npmCli?.endsWith(".js")
+    ? [process.execPath, [npmCli, "audit", "--json"], false]
+    : ["npm", ["audit", "--json"], process.platform === "win32"];
   try {
-    return execFileSync("npm", ["audit", "--json"], { cwd: root, encoding: "utf8" });
+    return execFileSync(file, args, {
+      cwd: root,
+      encoding: "utf8",
+      shell,
+      maxBuffer: 64 * 1024 * 1024
+    });
   } catch (err) {
     // npm audit exits non-zero when any advisory exists; stdout still has the report.
     if (err.stdout) {
