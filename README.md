@@ -174,15 +174,15 @@ full depth. Under expert settings, **Heel effect on draft** can credit a fin kee
 
 Expert settings, with their defaults:
 
-| Group        | Settings                                                                                                                                                                                                                  |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Chart index  | index directory, rebuild at start, index leaf zoom (20), box around the vessel (10 km)                                                                                                                                    |
-| Boat         | length, beam (fallback: Signal K `design.*`); draft σ (0.05 m); block coefficient and heel effect (none, fin keel or a table), which override the hull; double squat in narrow channels; wave allowance factor (0.4 × Hs) |
-| Look-ahead   | minimum horizon (60 s); position buffer (10 m, 2σ); fan spread (COG 5°, rate of turn 0.1°/s); and the distance, probabilities and windows of the warning style, each overriding the style when set                        |
-| Water level  | manual height and σ; FMI refresh (600 s); chart-datum mappings for FMI                                                                                                                                                    |
-| Route check  | planning speed (2.5 m/s), cross-track limit (30 m), accepted P(UKC < 0) (1 %)                                                                                                                                             |
-| Living chart | depth path and transducer offsets; Signal K notes for suspected shoals; CSB export metadata                                                                                                                               |
-| Other        | mooring zones (Signal K region ids); grounding detector acceleration path and threshold (2 m/s²); Traficom WFS survey quality (B) and box half-width (10 km)                                                              |
+| Group        | Settings                                                                                                                                                                                                                               |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Chart index  | index directory, rebuild at start, index leaf zoom (20), box around the vessel (10 km)                                                                                                                                                 |
+| Boat         | length, beam (fallback: Signal K `design.*`); draft σ (0.05 m); block coefficient and heel effect (none, fin keel or a table); double squat in narrow channels; wave allowance factor (0.4 × Hs)                                       |
+| Look-ahead   | minimum horizon (60 s); position buffer (10 m, 2σ); fan spread (COG 5°, rate of turn 0.1°/s); escape-heading rate of turn (3°/s); and the distance, probabilities and windows of the warning style, each overriding the style when set |
+| Water level  | manual height and σ; FMI refresh (600 s); chart-datum mappings for FMI                                                                                                                                                                 |
+| Route check  | planning speed (2.5 m/s), cross-track limit (30 m), accepted P(UKC < 0) (1 %)                                                                                                                                                          |
+| Living chart | depth path and transducer offsets; Signal K notes for suspected shoals; CSB export metadata                                                                                                                                            |
+| Other        | mooring zones (Signal K region ids); grounding detector acceleration path and threshold (2 m/s²); Traficom WFS survey quality (B) and box half-width (10 km)                                                                           |
 
 The saved configuration carries a version, `configVersion`. At the first start after an update
 from a configuration without one, the plugin keeps a copy as `config-v1.json` in its data
@@ -231,7 +231,9 @@ Routes shown on the chart are checked 1 s after each edit and every minute; the 
 each result's age and marks it "out of date" after 3 minutes, when the chart draws its legs
 `unverified`. Stale status is shown as Unknown,
 never as the last green state. [How it works §13](docs/HOW-IT-WORKS.md#13-in-freeboard) has
-screenshots.
+screenshots, including the plugin layers in the chart list and the setup steps in the panel.
+
+![Freeboard: Open setup at the bottom of the Under-keel details panel](docs/images/how-it-works/freeboard-open-setup.jpg)
 
 ### In Signal K
 
@@ -356,17 +358,17 @@ and ESLint (`no-restricted-imports`) enforces it:
 
 ## Repository layout
 
-| Path                         | Content                                                                           |
-| ---------------------------- | --------------------------------------------------------------------------------- |
-| `src/`                       | the plugin, in TypeScript                                                         |
-| `lib/`                       | compiled output of `npm run build`; never edited, not in git                      |
-| `public/`                    | Freeboard pages: background runtime, status widget, details panel, shared helpers |
-| `schemas/navigation-safety/` | JSON Schemas of the provider-neutral navigation-safety contract (Apache-2.0)      |
-| `scripts/`                   | synthetic fixture generator, bus vendoring, release and audit checks              |
-| `fixtures/enc/`              | small synthetic cells used by the tests                                           |
-| `fixtures/s57/`              | the same synthetic cells as S-57 `.000` files, and the script that writes them    |
-| `__tests__/`                 | Jest tests, property tests, contract tests and benchmarks                         |
-| `docs/`                      | user guide, development plan, release checklist, RFC drafts                       |
+| Path                         | Content                                                                                        |
+| ---------------------------- | ---------------------------------------------------------------------------------------------- |
+| `src/`                       | the plugin, in TypeScript                                                                      |
+| `lib/`                       | compiled output of `npm run build`; never edited, not in git                                   |
+| `public/`                    | Freeboard pages: background runtime, status widget, details panel, setup steps, shared helpers |
+| `schemas/navigation-safety/` | JSON Schemas of the provider-neutral navigation-safety contract (Apache-2.0)                   |
+| `scripts/`                   | synthetic fixture generator, bus vendoring, release and audit checks                           |
+| `fixtures/enc/`              | small synthetic cells used by the tests                                                        |
+| `fixtures/s57/`              | the same synthetic cells as S-57 `.000` files, and the script that writes them                 |
+| `__tests__/`                 | Jest tests, property tests, contract tests and benchmarks                                      |
+| `docs/`                      | user guide, development plan, release checklist, RFC drafts                                    |
 
 ## Build and test
 
