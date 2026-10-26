@@ -48,6 +48,15 @@ export interface CellScan {
 /** How deep below the cells directory S-57 cells are looked for: ENC_ROOT/<cell>/<cell>.000. */
 const MAX_DEPTH = 4;
 
+/**
+ * How deep below an exchange set's root, the directory holding its
+ * CATALOG.031, cells are looked for. S-57 leaves the layout under it to the
+ * producer: Rijkswaterstaat's Inland ENC sets hold ENC_ROOT/1R/7/1R7WAD07/1R7WAD07.000.
+ */
+const EXCHANGE_SET_DEPTH = 6;
+
+const isCatalogue = (name: string): boolean => /^catalog\.031$/i.test(name);
+
 function isDirectory(p: string): boolean {
   try {
     return fs.statSync(p).isDirectory();
@@ -58,8 +67,9 @@ function isDirectory(p: string): boolean {
 
 /**
  * The S-57 cells under `cellsDir`: every `.000` file down to MAX_DEPTH, such
- * as in an ENC_ROOT exchange set. A name met twice keeps its first file in
- * path order.
+ * as in an ENC_ROOT exchange set, and down to EXCHANGE_SET_DEPTH below any
+ * directory holding a CATALOG.031 within it. A name met twice keeps its first
+ * file in path order.
  */
 export function scanCellSources(cellsDir: string | undefined): CellScan {
   const scan: CellScan = { sources: [], skipped: [] };
@@ -76,10 +86,14 @@ export function scanCellSources(cellsDir: string | undefined): CellScan {
     seen.add(name);
     scan.sources.push(source);
   };
-  const walk = (dir: string, depth: number): void => {
+  /** Reads the entries of `dir`, at `depth`, and its directories down to `deepest` (deeper below a CATALOG.031). */
+  const walk = (dir: string, depth: number, deepest: number): void => {
     const entries = fs
       .readdirSync(dir, { withFileTypes: true })
       .sort((a, b) => (a.name < b.name ? -1 : 1));
+    const limit = entries.some((e) => isCatalogue(e.name))
+      ? Math.max(deepest, depth + EXCHANGE_SET_DEPTH - 1)
+      : deepest;
     for (const e of entries) {
       if (e.name.startsWith(".")) {
         continue;
@@ -88,8 +102,8 @@ export function scanCellSources(cellsDir: string | undefined): CellScan {
       const directory = e.isDirectory() || (e.isSymbolicLink() && isDirectory(full));
       if (directory) {
         const before = scan.sources.length;
-        if (depth < MAX_DEPTH) {
-          walk(full, depth + 1);
+        if (depth < limit) {
+          walk(full, depth + 1, limit);
         }
         if (scan.sources.length === before && usageBandFromName(e.name) !== undefined) {
           scan.skipped.push(path.relative(cellsDir, full));
@@ -102,6 +116,6 @@ export function scanCellSources(cellsDir: string | undefined): CellScan {
       }
     }
   };
-  walk(cellsDir, 1);
+  walk(cellsDir, 1, MAX_DEPTH);
   return scan;
 }

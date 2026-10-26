@@ -94,10 +94,14 @@ cells.
 The plugin reads unencrypted S-57 ENC cells as they are delivered: each `.000` base cell with
 its `.001`, `.002`, … updates beside it. Copy the exchange set, for example its `ENC_ROOT`
 folder, under one directory and set **ENC cells directory** to it; `.000` files are found down
-to three folders deep. The cells are read in place with GDAL compiled to WebAssembly
+to three folders deep, and down to six below a folder holding the exchange set's `CATALOG.031`,
+so an unzipped Inland ENC download (`<set>/ENC_ROOT/1R/7/1R7WAD07/1R7WAD07.000`) can be pointed
+at as it is. The cells are read in place with GDAL compiled to WebAssembly
 (gdal3.js), which the plugin installs with it, and the updates are applied as they are read.
 Nothing is converted or written next to the cells. A cell without an `M_COVR` coverage layer
-is rejected.
+is rejected. A cell's usage band comes from the third character of its name, else from its
+`DSID_INTU`, else from its compilation scale by the IHO ranges: Inland ENC cells, purpose 7 in
+both, at 1:2 000 are berthing (6).
 
 Land, shoreline and depth areas are placed by the cell's compilation scale (6 m at 1:12 000,
 or inside an `M_CSCL` area that area's smaller scale) rather than by the survey's CATZOC (500 m
@@ -195,7 +199,9 @@ style.
 
 The chart gives depths below chart datum; the water level is how far the sea stands above it.
 
-- `none`: chart datum, with σ 0.3 m for the unknown tide. On a chart whose datum is not a
+- `none`: chart datum, with σ 0.3 m for the unknown tide. Low-water datums include the Inland
+  ENC low-water references (VERDAT 31, 36, 38) and approximate LAT (42, Rijkswaterstaat's
+  Waddenzee cells). On a chart whose datum is not a
   low-water datum, such as the Finnish mean-water ENCs (VERDAT 3, 19 and 26), this is a degraded
   level: the state is at best `alert`, route legs at best `unverified`, nothing `clear`, and
   acknowledgements and own soundings are not used until a source is configured. The reason names

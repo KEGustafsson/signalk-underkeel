@@ -135,6 +135,18 @@ describe("S-57 cells read with gdal3.js", () => {
     expect(fs.readdirSync(enc)).toEqual(["FI5RAW01.000"]);
   });
 
+  test("cells nested below a CATALOG.031 are found from above the exchange set", () => {
+    // Rijkswaterstaat's Inland ENC download: <set>/ENC_ROOT/1R/7/<cell>/<cell>.000.
+    const root = path.join(tmp, "20261023_U7Inland_Waddenzee_week 43_NL", "ENC_ROOT");
+    const cell = path.join(root, "1R", "7", "1R7RAW01");
+    fs.mkdirSync(cell, { recursive: true });
+    fs.copyFileSync(CELL, path.join(cell, "1R7RAW01.000"));
+    expect(scanCellSources(tmp).sources).toEqual([]);
+    fs.writeFileSync(path.join(root, "CATALOG.031"), "");
+    expect(scanCellSources(tmp).sources).toEqual([path.join(cell, "1R7RAW01.000")]);
+    expect(scanCellSources(root).sources).toEqual([path.join(cell, "1R7RAW01.000")]);
+  });
+
   test("a cell is named by its file, as discovery and the saved index's check name it", async () => {
     const renamed = path.join(tmp, "FI5OTHER.000");
     fs.copyFileSync(CELL, renamed);

@@ -76,6 +76,9 @@ describe("water-level resolution", () => {
     expect(resolveWaterLevel(undefined, [], undefined, NOW, NOW)).toEqual(CHART_DATUM);
     const low = datumUses([cell("LAT", 23), cell("MLLW", 12), cell("WFS")]);
     expect(resolveWaterLevel(undefined, low, undefined, NOW, NOW)).toEqual(CHART_DATUM);
+    // Inland ENC low-water references: local low water, Danube LNWL, Dutch OLR, approximate LAT.
+    const inland = datumUses([cell("L", 31), cell("D", 36), cell("O", 38), cell("WAD", 42)]);
+    expect(resolveWaterLevel(undefined, inland, undefined, NOW, NOW)).toEqual(CHART_DATUM);
     expect(CHART_DATUM.sigma).toBe(CHART_DATUM_SIGMA);
   });
 

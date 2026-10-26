@@ -218,7 +218,9 @@ signalk-underkeel/
   process.
 - GDAL/OGR compiled to WebAssembly (gdal3.js, GDAL 3.8.4, about 40 MB installed), for reading
   S-57. Decision: the plugin reads the cells as delivered, each `.000` with its updates,
-  down to three folders deep under the cells directory (an exchange set's `ENC_ROOT` included), and writes
+  down to three folders deep under the cells directory (an exchange set's `ENC_ROOT` included),
+  and six below a folder holding a `CATALOG.031` (Rijkswaterstaat's Inland ENC sets nest
+  `ENC_ROOT/1R/7/<cell>/<cell>.000`), and writes
   nothing beside them and no intermediate files; only the built index is saved. GDAL runs only
   in the index build's worker thread: it reads each cell once per build, its layers as GeoJSON
   held in one SharedArrayBuffer that the region threads read without a copy, and its 512 MB
@@ -361,7 +363,11 @@ between 0 and 2 km is raised to 2.
 
 **Coverage mosaic.** For every location, use the cell from the **largest-scale usage band**
 that covers it. Where bands overlap, the larger scale wins, and the smaller scale is used only
-to fill gaps.
+to fill gaps. A cell's band is the third character of its name, else its `DSID_INTU`, else its
+`DSPM_CSCL` by the IHO S-65 ranges (berthing above 1:4 000, harbour to 1:22 000, approach to
+1:90 000, coastal to 1:350 000, general to 1:1 500 000, overview beyond). Inland ENC cells
+carry navigational purpose 7 in both, outside 1–6; Rijkswaterstaat's, at 1:2 000, are
+berthing. A cell with none of the three is rejected (issue #50).
 
 **Output:** the index (§4.3), plus `cells.json` recording edition, update number, issue date,
 datum and the cell's files' hash. The chart edition is stamped onto every route-check result, so
@@ -775,7 +781,9 @@ and `h = 0` would then assume more water than was last observed.
     (`boxRadiusKm` 0 or a large box).
 - Decision (invariant 3): with no water-level source, chart datum (σ 0.3 m) applies as a
   measured level only where every cell's stated datum, and every datum-area code, is a low-water
-  datum (VERDAT 1, 2, 4–15, 22, 23, 27), on which the tide seldom leaves less water than charted.
+  datum (VERDAT 1, 2, 4–15, 22, 23, 27, and the Inland ENC low-water references 31, 36 and 38
+  and approximate LAT, 42, from the Inland ENC encoding guide; issue #50), on which the tide
+  seldom leaves less water than charted.
   Where one is not (mean water 3, 19 and 26, high water, local), the level is degraded, since the
   Baltic is often 0.3–0.8 m below mean water; the look-ahead is then at best `alert`, legs,
   queries and tiles never `ok` or `clear`, and neither acknowledgements nor own soundings are

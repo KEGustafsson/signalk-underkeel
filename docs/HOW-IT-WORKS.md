@@ -143,7 +143,8 @@ Inside a cell's coverage, a place that no depth area, land or unsurveyed area re
 depth either; a sounding's burn disc does not make it water.
 
 Where cells of different usage bands overlap, the larger-scale cell wins and the smaller one
-only fills gaps.
+only fills gaps. A cell's band is the third character of its name, else its `DSID_INTU`, else
+its compilation scale: Inland ENC cells (purpose 7) at 1:2 000 count as berthing, band 6.
 
 ### How the index is built
 
@@ -563,7 +564,8 @@ flowchart TD
 ```
 
 With `none`, chart datum stands in for the level only on charts referred to a low-water datum
-(LAT, MLLW and the like), where the tide seldom leaves less water than charted. On a chart whose
+(LAT, MLLW and the like, and the Inland ENC low-water references 31, 36 and 38 and approximate
+LAT, 42), where the tide seldom leaves less water than charted. On a chart whose
 `VERDAT` is mean water (3, 19 and 26, as on the Finnish ENCs), high water or a local datum, the
 Baltic is often 0.3–0.8 m below chart datum, so the level is degraded and treated as a
 fallback, as above, until a source is configured. The reason names the datums and the source

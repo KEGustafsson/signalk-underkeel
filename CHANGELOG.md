@@ -4,6 +4,17 @@ All notable changes to signalk-underkeel are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- Inland ENC cells (issue #50). A cell whose name and `DSID_INTU` give no usage band 1–6, as
+  Inland ENC cells give 7, takes its band from its compilation scale by the IHO S-65 ranges:
+  Rijkswaterstaat's Waddenzee cells, 1:2 000, are berthing. Before they were rejected ("usage
+  band unknown"). The Inland ENC low-water references (VERDAT 31, 36, 38) and approximate LAT
+  (42) count as low-water datums, so with no water-level source chart datum applies on them as
+  on LAT. Cells are found down to six folders below a folder holding the exchange set's
+  `CATALOG.031`, so an unzipped Inland ENC download (`ENC_ROOT/1R/7/<cell>/<cell>.000`) can be
+  set as the cells directory as it is.
+
 ### Changed
 
 - Survey shadow: a charted shoal beyond the boat's buffer counts by the chance the chart is off
