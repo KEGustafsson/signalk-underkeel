@@ -168,7 +168,6 @@ describe("S-57 cells read with gdal3.js", () => {
     // Sorted first, the link reaches 1R with too little depth left to find the cell, four
     // folders below it; the exchange set's CATALOG.031 leaves enough.
     fs.symlinkSync(path.join(root, "1R"), path.join(tmp, "a-link"), "junction");
-    // Named like a cell and holding none, it is reported through both paths.
     fs.mkdirSync(path.join(root, "1R", "7", "1R6NONE1"));
     expect(scanCellSources(tmp)).toEqual({
       sources: [path.join(cell, "1R6DEEP1.000")],
@@ -177,6 +176,29 @@ describe("S-57 cells read with gdal3.js", () => {
         path.join("set", "ENC_ROOT", "1R", "7", "1R6NONE1")
       ]
     });
+  });
+
+  test("a cell folder holding a link to a cell kept elsewhere is not reported as skipped", () => {
+    const store = path.join(tmp, "store");
+    const cells = path.join(tmp, "cells");
+    const folder = path.join(cells, "FI5LINK1");
+    fs.mkdirSync(store);
+    fs.mkdirSync(folder, { recursive: true });
+    const target = path.join(store, "FI5LINK1.000");
+    fs.copyFileSync(CELL, target);
+    // A copy and a spy stand in for the file link, as Windows makes one only when elevated.
+    const link = path.join(folder, "FI5LINK1.000");
+    fs.copyFileSync(CELL, link);
+    const realpath = fs.realpathSync;
+    const resolve = (p: fs.PathLike): string => (p === link ? target : realpath(p));
+    const spy = jest
+      .spyOn(fs, "realpathSync")
+      .mockImplementation(resolve as unknown as typeof fs.realpathSync);
+    try {
+      expect(scanCellSources(cells)).toEqual({ sources: [link], skipped: [] });
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   test("a link looping back into an exchange set ends the scan there", () => {

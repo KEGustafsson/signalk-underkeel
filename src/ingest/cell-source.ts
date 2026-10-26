@@ -84,7 +84,10 @@ export function scanCellSources(cellsDir: string | undefined): CellScan {
   const files = new Set<string>();
   /** Folders named like a cell, by real path: skipped unless a cell is read from under one. */
   const named = new Map<string, string>();
+  /** Real paths of the folders a `.000` was met in; a linked file's target may lie elsewhere. */
+  const holding = new Set<string>();
   const add = (source: string): void => {
+    holding.add(fs.realpathSync(path.dirname(source)));
     const real = fs.realpathSync(source);
     if (files.has(real)) {
       return;
@@ -143,7 +146,8 @@ export function scanCellSources(cellsDir: string | undefined): CellScan {
   }
   walk(cellsDir, 1, MAX_DEPTH);
   // Decided once every path is read: a folder reached too deep by one path may be read by another.
-  const holds = (dir: string): boolean => [...files].some((f) => f.startsWith(dir + path.sep));
+  const holds = (dir: string): boolean =>
+    [...holding].some((d) => d === dir || d.startsWith(dir + path.sep));
   scan.skipped = scan.skipped.filter((entry) => {
     const real = named.get(entry);
     return real === undefined || !holds(real);
