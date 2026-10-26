@@ -161,16 +161,21 @@ describe("S-57 cells read with gdal3.js", () => {
 
   test("a folder reached first by a shallow link is read again from its exchange set", () => {
     const root = path.join(tmp, "set", "ENC_ROOT");
-    const cell = path.join(root, "1R", "7", "WAD", "1R7DEEP1");
+    const cell = path.join(root, "1R", "7", "WAD", "1R6DEEP1");
     fs.mkdirSync(cell, { recursive: true });
-    fs.copyFileSync(CELL, path.join(cell, "1R7DEEP1.000"));
+    fs.copyFileSync(CELL, path.join(cell, "1R6DEEP1.000"));
     fs.writeFileSync(path.join(root, "CATALOG.031"), "");
     // Sorted first, the link reaches 1R with too little depth left to find the cell, four
     // folders below it; the exchange set's CATALOG.031 leaves enough.
     fs.symlinkSync(path.join(root, "1R"), path.join(tmp, "a-link"), "junction");
+    // Named like a cell and holding none, it is reported through both paths.
+    fs.mkdirSync(path.join(root, "1R", "7", "1R6NONE1"));
     expect(scanCellSources(tmp)).toEqual({
-      sources: [path.join(cell, "1R7DEEP1.000")],
-      skipped: []
+      sources: [path.join(cell, "1R6DEEP1.000")],
+      skipped: [
+        path.join("a-link", "7", "1R6NONE1"),
+        path.join("set", "ENC_ROOT", "1R", "7", "1R6NONE1")
+      ]
     });
   });
 

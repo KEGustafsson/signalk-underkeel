@@ -41,7 +41,7 @@ export function readCell(source: string, cellRef: number): Promise<ReadCell> {
 export interface CellScan {
   /** S-57 base cells in path order. */
   sources: string[];
-  /** Entries named like a cell that hold none, or a cell name met twice. */
+  /** Entries named like a cell that hold none the scan read, or a cell name met twice. */
   skipped: string[];
 }
 
@@ -82,10 +82,9 @@ export function scanCellSources(cellsDir: string | undefined): CellScan {
   }
   const seen = new Set<string>();
   const files = new Set<string>();
-  /** `.000` files met, the same file again included. */
-  let found = 0;
+  /** Folders named like a cell, by real path: skipped unless a cell is read from under one. */
+  const named = new Map<string, string>();
   const add = (source: string): void => {
-    found++;
     const real = fs.realpathSync(source);
     if (files.has(real)) {
       return;
@@ -102,17 +101,16 @@ export function scanCellSources(cellsDir: string | undefined): CellScan {
   /** Depth left when each real directory was read, and those being read now. */
   const left = new Map<string, number>();
   const open = new Set<string>();
-  /** One entry of a directory at `depth`, its directories read down to `limit`. */
   const take = (dir: string, e: fs.Dirent, depth: number, limit: number): void => {
     const full = path.join(dir, e.name);
     const directory = e.isDirectory() || (e.isSymbolicLink() && isDirectory(full));
     if (directory) {
-      const before = found;
+      if (usageBandFromName(e.name) !== undefined) {
+        named.set(path.relative(cellsDir, full), fs.realpathSync(full));
+        scan.skipped.push(path.relative(cellsDir, full));
+      }
       if (depth < limit) {
         walk(full, depth + 1, limit);
-      }
-      if (found === before && usageBandFromName(e.name) !== undefined) {
-        scan.skipped.push(path.relative(cellsDir, full));
       }
     } else if (isEncFile(e.name) && fs.existsSync(full)) {
       add(full);
@@ -144,5 +142,11 @@ export function scanCellSources(cellsDir: string | undefined): CellScan {
     open.delete(real);
   }
   walk(cellsDir, 1, MAX_DEPTH);
+  // Decided once every path is read: a folder reached too deep by one path may be read by another.
+  const holds = (dir: string): boolean => [...files].some((f) => f.startsWith(dir + path.sep));
+  scan.skipped = scan.skipped.filter((entry) => {
+    const real = named.get(entry);
+    return real === undefined || !holds(real);
+  });
   return scan;
 }
