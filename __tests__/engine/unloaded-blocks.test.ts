@@ -96,12 +96,15 @@ describe("look-ahead", () => {
           const cold = run(partly(mask), p, cog, sog, draft);
           expect(RANK[cold.state]).toBeGreaterThanOrEqual(RANK[loaded.state]);
           // A block beyond the footprints' flag reach adds only its risk bound by its chart
-          // position (plan §4.3): a normal state reads the same flags, at least the risk.
+          // position (plan §4.3), and as water whose survey is not read it shadows nothing: a
+          // normal state reads every flag the loaded one does, and at least its risk. A coarse
+          // footprint's hull may read more flags than the plan steps that decide the state.
           if (cold.state === "normal") {
             expect(loaded.state).toBe("normal");
-            expect(cold.footprints.map((f) => f.flags)).toEqual(
-              loaded.footprints.map((f) => f.flags)
+            const dropped = loaded.footprints.map(
+              (f, k) => f.flags & ~(cold.footprints[k]?.flags ?? 0)
             );
+            expect(dropped.every((d) => d === 0)).toBe(true);
             expect(cold.risk ?? 0).toBeGreaterThanOrEqual((loaded.risk ?? 0) - 1e-4);
           }
         }
