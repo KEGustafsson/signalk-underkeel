@@ -543,7 +543,11 @@ B and the drying flats beside them as D (σP 500 m). Read without the shadow, a 
 250 m beyond 236 m of B water counted with Φ(−176/500) = 36 %: every one of 265 points sampled
 in water charted 3 m or deeper was at least `alert` for a 1.9 m draft, and 151 were `alarm`,
 the A1 channel included. Behind the B water it counts with Φ(−236/25), nothing; in D water
-nothing changes. A CATZOC D shoal in D water, or one a strip of B water only 30 m wide keeps
+nothing changes. With the shadow, 57 of the 230 points in A1 and B water stay at least `alert`:
+51 for depths charted within their 20 m query buffer, 3 for land within 1 m, 3 for D water
+that a narrow B strip leaves in reach; no point's P rose. The search costs nothing net: 530
+queries there took 0.35 ms each with it and 0.44 ms without, its bounds pruning more of the
+walk than it adds (x86). A CATZOC D shoal in D water, or one a strip of B water only 30 m wide keeps
 from the keel, still counts (Φ(−30/25) = 12 %), and the explanation names the water that
 bounded it ("behind 30 m of water placed ±50 m"). The UKC tiles (§4.10) do not apply the
 shadow: they stay at least as severe as a query there, which `no point is riskier than the
