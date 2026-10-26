@@ -4,6 +4,7 @@ import { probabilityBelowZero } from "../foundation/stats";
 import type { ChartReach } from "./pyramid";
 import type { NodeStore, NodeValues, StandIn } from "./node-store";
 import { FLAGS } from "./node-store";
+import type { ShadowOf } from "./survey-shadow";
 
 /**
  * The state of one `minDepthOver` walk (`pyramid.ts`) and how a tile's
@@ -49,6 +50,8 @@ export interface Walk {
     chart?: Omit<ChartReach, "extent">;
   };
   stopWhenCertain: boolean;
+  /** With chart position: the survey shadow around the footprint, searched on first use. */
+  shadow?: ShadowOf;
 }
 
 /** Folds a tile's depth, σ, flags and cell into the result. */

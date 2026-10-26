@@ -207,8 +207,14 @@ describe("land and shoreline placed by their own accuracy", () => {
       lowAccuracy: false,
       posacc: 200
     };
-    const r = query([coverage(BOX), quality(BOX, 1), area(BOX, 6), placed(land(shore), 6), edge]);
+    // Under CATZOC C water (σP 250 m) the water between does not shadow the shore.
+    const r = query([coverage(BOX), quality(BOX, 4), area(BOX, 6), placed(land(shore), 6), edge]);
     expect(r.riskTile?.chart).toMatchObject({ source: "topography", sigmaP: 100 });
+    expect(r.riskTile?.chart?.shadow).toBeUndefined();
+    // A1 water surveyed right up to it (σP 2.5 m) does: the shore 100 m off is not there
+    // unless the A1 survey is off by 90 m too.
+    const a1 = query([coverage(BOX), quality(BOX, 1), area(BOX, 6), placed(land(shore), 6), edge]);
+    expect(a1.maxRisk).toBeLessThan(RISK_STOP_BELOW);
   });
 
   test("the chart position columns survive a save and reload", () => {

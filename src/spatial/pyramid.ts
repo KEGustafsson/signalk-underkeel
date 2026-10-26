@@ -27,7 +27,8 @@ import type { NodeStore, NodeValues } from "./node-store";
 import { EMPTY, FLAGS, NO_DATA } from "./node-store";
 import type { Walk } from "./walk";
 import { certain, foldFlags, REACH_FLAGS, riskAt, take, takeStandIn } from "./walk";
-import { chartReach, chartSigma, chartWeight, flagReach, MAX_CHART_SIGMA } from "./chart-position";
+import { chartReach, chartSigma, flagReach, MAX_CHART_SIGMA } from "./chart-position";
+import { flagsShadowed, shadedWeight, shadowFor } from "./survey-shadow";
 
 /**
  * `minDepthOver` (plan §4.3): the shallowest charted depth any part of a
@@ -47,6 +48,12 @@ export interface ChartReach {
   source: "survey" | "topography";
   /** Ground metres across the tile's diagonal: what it stands for lies within it. */
   extent: number;
+  /**
+   * Set when the water charted closer to the footprint bounds the weight
+   * below Φ(−distance/σP) (survey shadow, `survey-shadow.ts`): the weight is
+   * then Φ(−distance/σP) of this water instead.
+   */
+  shadow?: { distance: number; sigmaP: number };
 }
 
 /** The tile with the highest P(UKC < 0) and the values that gave it. */
@@ -199,6 +206,11 @@ function bathyRisk(w: Walk, bathy: number, sigmaD: number, bound: boolean): numb
   return riskAt(w, bathy, sigmaD);
 }
 
+/** Whether node i's flags reach the footprint from `ground` metres beyond the buffer. */
+function flagsReach(w: Walk, i: number, ground: number): boolean {
+  return ground <= flagReach(w.store.surveySigma(i)) && !flagsShadowed(w.shadow, ground);
+}
+
 /**
  * The weighted P a tile beyond the buffer adds, `ground` metres past it:
  * its survey depth's P times the chance its survey is off that far, or its
@@ -219,11 +231,14 @@ function reachRisk(
   // tile just past the buffer would then read a higher P than within it.
   const bathy = Math.max(w.store.bathyDMinOf(i), v.dMin);
   let best: { risk: number; chart: Omit<ChartReach, "extent">; dMin: number } | undefined;
+  // The shadow is only searched for a P that could raise the footprint's, past
+  // RISK_STOP_BELOW or the P found so far, as the walk only stops below one.
+  const floor = Math.max(w.maxRisk, RISK_STOP_BELOW);
   // A split node's flags hold NO_DEPTH when any leaf under it has no depth;
   // its bathyDMin is Infinity only when none has any.
   if (survey > 0 && bathy !== Infinity) {
-    const weight = chartWeight(ground, survey);
-    const risk = bathyRisk(w, bathy, v.sigmaD, bound) * weight;
+    const p = bathyRisk(w, bathy, v.sigmaD, bound);
+    const { risk, weight, shadow } = shadedWeight(w.shadow, ground, survey, p, floor);
     best = {
       risk,
       dMin: bathy,
@@ -232,15 +247,16 @@ function reachRisk(
         distance: ground,
         sigmaP: Math.min(MAX_CHART_SIGMA, survey),
         weight,
-        source: "survey"
+        source: "survey",
+        ...(shadow && { shadow })
       }
     };
   }
   // Land reads −Infinity, which v.dMin then is too; float32 rounding as for the survey depth.
   const drawn = Math.max(w.store.topoDMinOf(i), v.dMin);
   if (topo > 0 && drawn !== Infinity) {
-    const weight = chartWeight(ground, topo);
-    const risk = bathyRisk(w, drawn, v.sigmaD, bound) * weight;
+    const p = bathyRisk(w, drawn, v.sigmaD, bound);
+    const { risk, weight, shadow } = shadedWeight(w.shadow, ground, topo, p, floor);
     if (!best || risk > best.risk) {
       best = {
         risk,
@@ -249,7 +265,8 @@ function reachRisk(
           distance: ground,
           sigmaP: Math.min(MAX_CHART_SIGMA, topo),
           weight,
-          source: "topography"
+          source: "topography",
+          ...(shadow && { shadow })
         }
       };
     }
@@ -269,7 +286,7 @@ function takeBeyond(
   x: number,
   y: number
 ): void {
-  if (ground <= flagReach(w.store.surveySigma(i))) {
+  if (flagsReach(w, i, ground)) {
     foldFlags(w, v, flags);
   }
   if (!w.risk) {
@@ -302,7 +319,7 @@ function visitBeyond(w: Walk, i: number, ground: number, z: number, x: number, y
     takeBeyond(w, i, v, v.flags, ground, false, z, x, y);
     return;
   }
-  const inFlags = ground <= flagReach(w.store.surveySigma(i));
+  const inFlags = flagsReach(w, i, ground);
   const bound = w.risk ? (reachRisk(w, i, v, ground, true)?.risk ?? 0) : 0;
   const settled = bound <= Math.max(w.maxRisk, RISK_STOP_BELOW);
   if (settled && (!inFlags || (v.flags & PRECISE_FLAGS) === 0)) {
@@ -361,7 +378,7 @@ function negligible(w: Walk, i: number, gap: number): boolean {
     return false;
   }
   const ground = (gap - w.reachBase) / w.perMetre;
-  if (ground <= flagReach(w.store.surveySigma(i))) {
+  if (flagsReach(w, i, ground)) {
     return false;
   }
   if (!w.risk) {
@@ -470,6 +487,8 @@ function walkFor(store: NodeStore, geom: Geom, opts: QueryOptions): Walk {
     opts.clearAbove ?? (opts.risk ? -Infinity : Infinity),
     opts.risk?.threshold ?? -Infinity
   );
+  const reachBase = graded ? perMetre * bufferMetres : maxReach;
+  const toGround = (d: number): number => Math.max(0, (d - reachBase) / perMetre);
   return {
     store,
     geom,
@@ -477,7 +496,7 @@ function walkFor(store: NodeStore, geom: Geom, opts: QueryOptions): Walk {
     hold: bounds,
     // The plain walk's buffer, so the tiles within it are the same with chart position or not.
     buffer: graded ? mercatorBuffer(bounds, bufferMetres) * REACH_SLACK : maxReach,
-    reachBase: graded ? perMetre * bufferMetres : maxReach,
+    reachBase,
     maxReach,
     perMetre,
     graded,
@@ -489,7 +508,10 @@ function walkFor(store: NodeStore, geom: Geom, opts: QueryOptions): Walk {
     rect: { minX: 0, minY: 0, maxX: 0, maxY: 0 },
     coveredDMin: Infinity,
     cells: new Set(),
-    visits: 0
+    visits: 0,
+    shadow: graded
+      ? shadowFor(store, geom, expandRect(bounds, maxReach), maxReach, toGround)
+      : undefined
   };
 }
 

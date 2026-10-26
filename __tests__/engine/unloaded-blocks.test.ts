@@ -226,7 +226,9 @@ describe("query", () => {
 
   test("open water that is clear loaded is unverified with no block loaded", () => {
     // The point's own leaves are in a block, so with none loaded it reads their stand-in.
-    const p: LonLat = [22.022, 60.0];
+    // (At 22.022, 60.0 the point's leaf is resident, and a block 330 m off lies behind
+    // CATZOC B water, out of its flag reach under the survey shadow.)
+    const p: LonLat = [22.022, 59.995];
     expect(q(index, [p], 1.5, 0).class).toBe("clear");
     expect(q(partly(0), [p], 1.5, 0).class).toBe("unverified");
   });

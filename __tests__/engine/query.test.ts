@@ -207,4 +207,38 @@ describe("chart position uncertainty", () => {
     expect(r.explanation?.chartPosition).toMatchObject({ source: "survey", sigmaP: 25 });
     expect(r.sentence).toMatch(/away, placed ±50 m by its survey/);
   });
+
+  test("a CATZOC D bank behind a strip of B water names the strip that bounds it", () => {
+    const box = [22.0, 60.0, 22.06, 60.03] as const;
+    const m = 1 / 111195;
+    const charted = {
+      catalogue: { version: 1 as const, cells: [] },
+      pyramid: buildPyramid(
+        [
+          coverage(box),
+          quality([22.0, 60.0, 22.06, 60.015 + 40 * m], 3),
+          quality([22.0, 60.015 + 40 * m, 22.06, 60.03], 5),
+          area(box, 15),
+          area([22.028, 60.015 + 300 * m, 22.032, 60.015 + 350 * m], -1)
+        ],
+        { minZoom: 12, leafZoom: 20 }
+      ),
+      hazards: new HazardIndex([])
+    };
+    const r = queryUkc(charted, {
+      ring: [[22.03, 60.015]],
+      bufferMetres: 10,
+      terms: vesselTerms({ draft: 1.8, length: 12, beam: 4 }, { speed: 0 }, DEFAULT_DYNAMICS),
+      waterLevel: CHART_DATUM,
+      thresholds: DEFAULT_LOOKAHEAD.thresholds
+    });
+    // The bank lies under the point only if the B strip, about 30 m past the buffer, is off
+    // by its width too: Φ(−30/25) ≈ 12 %, not the D survey's Φ(−290/500) ≈ 28 %.
+    expect(r.explanation?.chartPosition).toMatchObject({ source: "survey", sigmaP: 500 });
+    expect(r.explanation?.chartPosition?.shadow?.sigmaP).toBe(25);
+    expect(r.risk).toBeLessThan(0.2);
+    expect(r.sentence).toMatch(
+      /placed ±1000 m by its survey, behind \d+ m of water placed ±50 m \(/
+    );
+  });
 });

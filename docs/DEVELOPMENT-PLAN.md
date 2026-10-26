@@ -515,6 +515,34 @@ WFS water spread no depth: their flags already make a leg `unverified`, a query 
 every leg over WFS water `fail` on land within 1 km that the data does not put there. The
 widest σ modelled is 500 m.
 
+**Decision (survey shadow, 2026-10-26, invariants 1 and 2, issue #50).** A tile g metres beyond
+the buffer lies under the footprint only if the chart is off by g there, and the water charted
+closer must then be off too: what its survey measured lies under the footprint unless it is.
+Within r metres of the buffer the closer water is placed by S(r), the widest survey σP of every
+leaf less than r away, the footprint's own included, so it is off by r with probability at
+most Φ(−r/S(r)). A tile therefore counts with at most Φ(−ρ(g)), ρ(g) = max over r ≤ g of
+r/S(r), beside its own Φ(−g/σ), and its flags count only where ρ(g) ≤ 2 as well as within 2σP
+of its survey (`spatial/survey-shadow.ts`). S(r) is the running maximum over every direction,
+not only the water between, and a leaf with no coverage, an unassessed or advisory survey or
+no depth, a block not loaded or a tile outside the chart reads as the widest σ modelled, so
+water whose position is not modelled stops the shadow. S(r) only rises with any leaf's σ and
+as any leaf comes nearer, and ρ(g) only rises with g, so a worse chart position σ anywhere, a
+wider buffer or a nearer tile never lowers a weight (invariant 2;
+`__tests__/spatial/survey-shadow.test.ts`). The walk searches S(r) nearest first, descending
+only nodes whose widest σ or flags could raise it, and only once a tile's unbounded P could
+raise the footprint's.
+
+Rijkswaterstaat's Inland ENC cells of the Waddenzee chart the buoyed channels as CATZOC A1 and
+B and the drying flats beside them as D (σP 500 m). Read without the shadow, a drying sounding
+250 m beyond 236 m of B water counted with Φ(−176/500) = 36 %: every one of 265 points sampled
+in water charted 3 m or deeper was at least `alert` for a 1.9 m draft, and 151 were `alarm`,
+the A1 channel included. Behind the B water it counts with Φ(−236/25), nothing; in D water
+nothing changes. A CATZOC D shoal in D water, or one a strip of B water only 30 m wide keeps
+from the keel, still counts (Φ(−30/25) = 12 %), and the explanation names the water that
+bounded it ("behind 30 m of water placed ±50 m"). The UKC tiles (§4.10) do not apply the
+shadow: they stay at least as severe as a query there, which `no point is riskier than the
+class drawn over it` still tests.
+
 **Storage.**
 
 - `pyramid.bin`: a JSON header line, then gzip members (level 1) of typed columns, one column
@@ -588,8 +616,8 @@ widest σ modelled is 500 m.
 `pyramid.minDepthOver(poly).dMin ≤ min(source feature depths intersecting poly ⊕ buffer)`,
 the buffer being the query's (the vessel's position uncertainty) widened by a point's burn
 radius in unassessed water; and with chart position on, its P is at least
-`P(f) · Φ(−g/σP)` for any feature f of the survey g metres beyond that buffer. The pyramid
-may be pessimistic but must never be optimistic.
+`P(f) · min(Φ(−g/σP), Φ(−ρ(g)))` for any feature f of the survey g metres beyond that buffer,
+ρ the survey shadow above. The pyramid may be pessimistic but must never be optimistic.
 
 ### 4.4 Survey quality → uncertainty
 
@@ -631,11 +659,22 @@ Two overrides apply on top of the table:
   table values (§4.11).
 
 **Zone boundaries.** A leaf that no single `M_QUAL` zone contains is still assessed when the
-assessed zones reaching it cover it together, which holds where they share the boundary vertex
-for vertex. It takes the worst σ of those zones. A boundary split differently on each side, an
-overlap or a gap leaves the leaf `UNASSESSED`.
-Coverage follows the same rule per usage band: a leaf on the shared edge of two `M_COVR`
-polygons of one band is covered when they match vertex for vertex, and `NO_COVERAGE` otherwise.
+assessed zones reaching it cover it together. It takes the worst σ of those zones. Coverage
+follows the same rule per usage band: a leaf on the shared edge of two `M_COVR` polygons of
+one band is covered when together they cover it, and `NO_COVERAGE` otherwise.
+
+**Decision (seams, 2026-10-26, invariants 3 and 4, issue #50).** "Together they cover it" was
+read exactly: every boundary edge touching the leaf had to be matched vertex for vertex by the
+neighbour's. Rijkswaterstaat's Inland ENC cells 1R7WAD07 and 1R7WAD10 meet along one line with
+their vertices split differently, and their CATZOC A1 and B zones leave a sliver under 10 cm,
+so every leaf on such a seam read `NO_COVERAGE` or `UNASSESSED`, and through its zone's 2σP
+flag reach kept a channel 1 km wide from reading as checked. Now an edge not matched exactly is
+followed across, `SEAM_TOLERANCE` (0.5 Mercator metres, at most 0.5 m on the ground) out, and
+the areas must hold that line wherever the edge lies in the leaf: an edge split differently,
+an overlap and a seam no wider than that cover; a gap wider stays `NO_COVERAGE` or
+`UNASSESSED` (`foundation/geometry.ts` `areasCoverRect`, `__tests__/spatial/coverage-seam.test.ts`).
+A seam narrower than half a metre holds no vessel and is below the drawing accuracy of any
+cell (1 mm at 1:500). Pyramid version 11.
 
 ### 4.5 Water level
 

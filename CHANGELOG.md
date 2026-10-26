@@ -2,6 +2,21 @@
 
 All notable changes to signalk-underkeel are documented here.
 
+## [Unreleased]
+
+### Changed
+
+- Survey shadow: a charted shoal beyond the boat's buffer counts by the chance the chart is off
+  by its distance, and now also by the chance that the water charted closer is off as far: what
+  that water's survey measured lies under the boat unless it is. A CATZOC D drying flat 300 m
+  beyond 250 m of CATZOC B water no longer counts, nor do its no-coverage or unassessed flags;
+  in D water alone nothing changes. The explanation names the water that bounded it ("behind
+  30 m of water placed ±50 m"), and the navigation-safety schema carries it as
+  `chartPosition.shadow`. The UKC overlay does not apply it yet and stays at least as severe.
+- Two cells, or two survey-quality zones, that meet along one line with their vertices split
+  differently, overlapping or up to 0.5 m apart now cover the leaves on that seam. Before,
+  every such leaf read no coverage or unassessed. The index is rebuilt once (pyramid version 11).
+
 ## [0.1.0] - 2026-10-25
 
 ### Added
