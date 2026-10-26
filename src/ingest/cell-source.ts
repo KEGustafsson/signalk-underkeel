@@ -49,9 +49,10 @@ export interface CellScan {
 const MAX_DEPTH = 4;
 
 /**
- * How deep below an exchange set's root, the directory holding its
- * CATALOG.031, cells are looked for. S-57 leaves the layout under it to the
- * producer: Rijkswaterstaat's Inland ENC sets hold ENC_ROOT/1R/7/1R7WAD07/1R7WAD07.000.
+ * How many folders below an exchange set's root, the directory holding its
+ * CATALOG.031, a cell may sit (as MAX_DEPTH − 1 below the cells directory).
+ * S-57 leaves the layout under it to the producer: Rijkswaterstaat's Inland
+ * ENC sets hold ENC_ROOT/1R/7/1R7WAD07/1R7WAD07.000, three folders down.
  */
 const EXCHANGE_SET_DEPTH = 6;
 
@@ -92,7 +93,7 @@ export function scanCellSources(cellsDir: string | undefined): CellScan {
       .readdirSync(dir, { withFileTypes: true })
       .sort((a, b) => (a.name < b.name ? -1 : 1));
     const limit = entries.some((e) => isCatalogue(e.name))
-      ? Math.max(deepest, depth + EXCHANGE_SET_DEPTH - 1)
+      ? Math.max(deepest, depth + EXCHANGE_SET_DEPTH)
       : deepest;
     for (const e of entries) {
       if (e.name.startsWith(".")) {

@@ -60,7 +60,6 @@ export function usageBandFromName(name: string): number | undefined {
   return usageBand(Number(name.charAt(2)));
 }
 
-/** `n` when it is a usage band 1–6. */
 function usageBand(n: number | undefined): number | undefined {
   return n !== undefined && Number.isInteger(n) && n >= 1 && n <= 6 ? n : undefined;
 }

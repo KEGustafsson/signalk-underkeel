@@ -5,6 +5,7 @@ import { FLAGS } from "../../src/spatial/node-store";
 import type { QueryOptions } from "../../src/spatial/pyramid";
 import { footprintGeom, minDepthOver, RISK_STOP_BELOW } from "../../src/spatial/pyramid";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
+import { shadedWeight } from "../../src/spatial/survey-shadow";
 import { uniform } from "../helpers/arbitraries";
 import type { Box } from "../helpers/synthetic";
 import { area, coverage, quality } from "../helpers/synthetic";
@@ -76,6 +77,24 @@ describe("a CATZOC D bank behind CATZOC B water", () => {
       query([coverage(band(-2000, 300)), ...zones, area(BOX, 15)]).flags & FLAGS.NO_COVERAGE;
     expect(gap([quality(BOX, 5)])).toBe(FLAGS.NO_COVERAGE);
     expect(gap([quality(band(-2000, 250), 3), quality(band(250, 2000), 5)])).toBe(0);
+  });
+});
+
+describe("shadedWeight", () => {
+  // Water 25 m wide placed with σ 25 m: it bounds a weight to Φ(−1) when read.
+  const strip = () => ({ at: () => ({ ratio: 1, distance: 25, sigmaP: 25 }) }) as never;
+
+  test("a tile at the buffer's edge counts in full: nothing lies between", () => {
+    expect(shadedWeight(strip, 0, 500, 0.9, 0)).toEqual({ risk: 0.9, weight: 1 });
+  });
+
+  test("beyond it the weight is the smaller of its own and the shadow's", () => {
+    const bounded = shadedWeight(strip, 10, 500, 0.9, 0);
+    expect(bounded.weight).toBe(normalCdf(-1));
+    expect(bounded.risk).toBe(0.9 * normalCdf(-1));
+    expect(bounded.shadow).toEqual({ distance: 25, sigmaP: 25 });
+    // Its own Φ(−10/5) is already smaller.
+    expect(shadedWeight(strip, 10, 5, 0.9, 0).shadow).toBeUndefined();
   });
 });
 

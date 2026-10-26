@@ -262,7 +262,8 @@ export function shadedWeight(
 ): { risk: number; weight: number; shadow?: { distance: number; sigmaP: number } } {
   const weight = chartWeight(ground, sigma);
   const risk = p * weight;
-  if (!shadow || risk <= floor) {
+  // A tile at the buffer's edge counts in full: nothing lies between to shadow it.
+  if (!shadow || ground <= 0 || risk <= floor) {
     return { risk, weight };
   }
   const s = shadow().at(ground);

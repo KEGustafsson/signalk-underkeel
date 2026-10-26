@@ -82,7 +82,8 @@ export function referenceChartPosition(
     }
     return best;
   };
-  const shaded = (g: number, weight: number): number => Math.min(weight, normalCdf(-ratio(g)));
+  const shaded = (g: number, weight: number): number =>
+    g > 0 ? Math.min(weight, normalCdf(-ratio(g))) : weight;
   let maxRisk = 0;
   let flags = 0;
   for (let z = store.minZoom; z <= store.leafZoom; z++) {

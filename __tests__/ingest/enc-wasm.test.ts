@@ -147,6 +147,18 @@ describe("S-57 cells read with gdal3.js", () => {
     expect(scanCellSources(root).sources).toEqual([path.join(cell, "1R7RAW01.000")]);
   });
 
+  test("a cell up to six folders below a CATALOG.031 is found, not seven", () => {
+    const root = path.join(tmp, "ENC_ROOT");
+    const six = path.join(root, "a", "b", "c", "d", "e", "FI5SIX01");
+    const seven = path.join(root, "a", "b", "c", "d", "e", "f", "FI5SEVEN");
+    fs.mkdirSync(six, { recursive: true });
+    fs.mkdirSync(seven, { recursive: true });
+    fs.copyFileSync(CELL, path.join(six, "FI5SIX01.000"));
+    fs.copyFileSync(CELL, path.join(seven, "FI5SEVEN.000"));
+    fs.writeFileSync(path.join(root, "CATALOG.031"), "");
+    expect(scanCellSources(tmp).sources).toEqual([path.join(six, "FI5SIX01.000")]);
+  });
+
   test("a cell is named by its file, as discovery and the saved index's check name it", async () => {
     const renamed = path.join(tmp, "FI5OTHER.000");
     fs.copyFileSync(CELL, renamed);
