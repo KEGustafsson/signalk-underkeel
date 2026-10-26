@@ -159,6 +159,20 @@ describe("S-57 cells read with gdal3.js", () => {
     expect(scanCellSources(tmp).sources).toEqual([path.join(six, "FI5SIX01.000")]);
   });
 
+  test("a link looping back into an exchange set ends the scan there", () => {
+    const root = path.join(tmp, "ENC_ROOT");
+    const cell = path.join(root, "FI5LOOP1");
+    fs.mkdirSync(cell, { recursive: true });
+    fs.copyFileSync(CELL, path.join(cell, "FI5LOOP1.000"));
+    fs.writeFileSync(path.join(root, "CATALOG.031"), "");
+    // A junction on Windows, where a directory symlink needs elevated rights.
+    fs.symlinkSync(root, path.join(cell, "back"), "junction");
+    expect(scanCellSources(tmp)).toEqual({
+      sources: [path.join(cell, "FI5LOOP1.000")],
+      skipped: []
+    });
+  });
+
   test("a cell is named by its file, as discovery and the saved index's check name it", async () => {
     const renamed = path.join(tmp, "FI5OTHER.000");
     fs.copyFileSync(CELL, renamed);

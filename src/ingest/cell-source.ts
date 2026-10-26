@@ -70,7 +70,8 @@ function isDirectory(p: string): boolean {
  * The S-57 cells under `cellsDir`: every `.000` file down to MAX_DEPTH, such
  * as in an ENC_ROOT exchange set, and down to EXCHANGE_SET_DEPTH below any
  * directory holding a CATALOG.031 within it. A name met twice keeps its first
- * file in path order.
+ * file in path order. Each directory is read once by its real path, so a
+ * linked loop ends where it comes back.
  */
 export function scanCellSources(cellsDir: string | undefined): CellScan {
   const scan: CellScan = { sources: [], skipped: [] };
@@ -87,8 +88,15 @@ export function scanCellSources(cellsDir: string | undefined): CellScan {
     seen.add(name);
     scan.sources.push(source);
   };
+  const visited = new Set<string>();
   /** Reads the entries of `dir`, at `depth`, and its directories down to `deepest` (deeper below a CATALOG.031). */
   const walk = (dir: string, depth: number, deepest: number): void => {
+    // A link back up an exchange set would otherwise raise the limit at every turn.
+    const real = fs.realpathSync(dir);
+    if (visited.has(real)) {
+      return;
+    }
+    visited.add(real);
     const entries = fs
       .readdirSync(dir, { withFileTypes: true })
       .sort((a, b) => (a.name < b.name ? -1 : 1));
