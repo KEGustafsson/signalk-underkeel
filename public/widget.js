@@ -5,10 +5,9 @@ const UKC = globalThis.UKC;
 const client = await connectExtension();
 const view = { state: "unknown", clearance: null, timeToShoal: null, message: "", stale: false };
 let unit = "m";
-/** The plugin publishes every second; a silent stream for this long is shown as unknown. */
-const STALE_MS = 10000;
+/** A state not seen for this long is shown as unknown (the liveness contract in UKC.STALE_MS). */
 let staleTimer;
-const fresh = UKC.freshness(STALE_MS);
+const fresh = UKC.freshness(UKC.STALE_MS);
 
 function armStale(ms) {
   clearTimeout(staleTimer);
@@ -18,7 +17,7 @@ function armStale(ms) {
   }, ms);
 }
 
-/** What the page shows now: three values arrive each second, mostly unchanged. */
+/** What the page shows now: values arrive on change and as keep-alives, mostly unchanged. */
 const shown = {};
 
 function render() {
@@ -61,14 +60,15 @@ if (!client.hasCapability("signalk.stream")) {
         render();
         return;
       }
-      const left = fresh(ev.path, ev.timestamp, Date.now());
+      const now = Date.now();
+      const left = fresh(ev.path, ev.timestamp, now);
       if (left === 0) {
         return;
       }
-      view[KEYS[ev.path]] = ev.value;
-      view.stale = false;
-      view.freshUntil = Date.now() + left;
-      armStale(left);
+      const armed = UKC.widgetValue(view, KEYS[ev.path], ev.value, left, now);
+      if (armed !== null) {
+        armStale(armed);
+      }
       render();
     }
   );

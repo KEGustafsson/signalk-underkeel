@@ -27,7 +27,7 @@ import { ChangeNotifier, groundingNotification, integrityUpdate } from "./notifi
 import { asNumber, INPUT_PATHS, NavInputs, sampleTime, selfValue } from "./nav-inputs";
 import type { Deferral } from "./escape-search";
 import { EscapeSearch } from "./escape-search";
-import { StatusReporter, ValuePublisher } from "./tick-publisher";
+import { LIVENESS, StatusReporter, statusReason, ValuePublisher } from "./tick-publisher";
 
 /**
  * Signal K wiring for the look-ahead: keeps the latest navigation inputs,
@@ -57,9 +57,6 @@ export const SYSTEM_CLOCK: Clock = {
   defer: (fn) => setImmediate(fn),
   cancel: (h) => clearImmediate(h as NodeJS.Immediate)
 };
-
-/** Sent every tick: the state shows the plugin is alive, and clients fetch on a new rev. */
-const EVERY_TICK = new Set<string>([PATHS.state, PATHS.envelopeRev]);
 
 export class Monitor {
   private readonly inputs = new NavInputs();
@@ -108,7 +105,7 @@ export class Monitor {
       this.grounding = new GroundingDetector(config.groundingDetector);
     }
     this.hysteresis = new Hysteresis(config.lookahead);
-    this.values = new ValuePublisher(app, pluginId, EVERY_TICK);
+    this.values = new ValuePublisher(app, pluginId, LIVENESS);
     this.status = new StatusReporter(app);
     this.escape = new EscapeSearch(
       clock,
@@ -409,25 +406,28 @@ export class Monitor {
   }
 
   private report(r: LookaheadResult): void {
+    const now = this.clock.now();
     if (!this.index) {
       // The engine is off either way; a pending reason is a status, any other an error.
       const reason = this.indexReason ?? "no chart index loaded";
       if (PENDING_REASONS.has(reason)) {
-        this.status.status(reason);
+        this.status.status(reason, now);
       } else {
-        this.status.error(reason);
+        this.status.error(reason, now);
       }
       return;
     }
     const notes = [
-      r.state === "normal" ? "Monitoring: normal" : `Monitoring: ${r.state} — ${r.reason}`,
+      r.state === "normal"
+        ? "Monitoring: normal"
+        : `Monitoring: ${r.state} — ${statusReason(r.reason)}`,
       // With an index, the reason only says why it was rebuilt or what was skipped.
       this.indexReason,
       this.escape.skipped,
       // The WFS licence allows non-navigational use only; say so while it is on.
       this.config.wfs && r.reason !== WFS_NOTICE ? WFS_NOTICE : undefined
     ];
-    this.status.status(notes.filter((n) => n !== undefined).join(" · "));
+    this.status.status(notes.filter((n) => n !== undefined).join(" · "), now);
   }
 
   /**

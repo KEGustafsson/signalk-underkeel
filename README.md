@@ -257,7 +257,9 @@ screenshots, including the plugin layers in the chart list and the setup steps i
 | `notifications.grounding`                    | only from the optional grounding detector, when the boat has gone aground                       |
 
 Any Signal K app can show these; the status line on the plugin's admin page reads, for
-example, `Monitoring: unknown — position stale`.
+example, `Monitoring: unknown — position stale`. Each value is sent when it changes; `state` and
+`envelopeRev` at least every 5 s, the others every 10 s. A display that shows them should read a
+`state` older than 15 s as unknown, as the plugin's own widget does.
 
 ## Optional features
 

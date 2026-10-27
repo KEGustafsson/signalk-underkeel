@@ -23,7 +23,9 @@ clearance and a separate notification.
 | `navigation.underKeel.waterLevel`     | m     | water level above chart datum the estimate used               |
 
 `unknown` means the inputs are stale or missing; `off` means the provider cannot run (no chart).
-A provider must not publish `normal` from stale or missing input.
+A provider must not publish `normal` from stale or missing input. A provider may send a value
+only when it changes, but sends `state` at least every 5 s; a consumer shows a `state` not
+received for 15 s as unknown.
 
 ## Notifications
 
