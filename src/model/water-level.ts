@@ -236,8 +236,14 @@ function iso(t: number): string {
 /**
  * S-57 VERDAT codes of low-water datums: the tide seldom leaves less water
  * than charted, so chart datum with σ 0.3 m stands in for an unknown level.
+ * The Inland ENC encoding guide adds 31 (local low water reference level),
+ * 36 (the Danube Commission's low water level), 38 (the Dutch river low
+ * water reference level, OLR) and 42 (approximate LAT, Rijkswaterstaat's
+ * Waddenzee cells).
  */
-const LOW_WATER_DATUMS = new Set([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 22, 23, 27]);
+const LOW_WATER_DATUMS = new Set([
+  1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 22, 23, 27, 31, 36, 38, 42
+]);
 
 export function isLowWaterDatum(verdat: number): boolean {
   return LOW_WATER_DATUMS.has(verdat);

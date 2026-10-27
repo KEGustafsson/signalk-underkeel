@@ -41,12 +41,12 @@ import {
  * assessed water no longer burned; version 8: tiles split no finer than 1 mm
  * at their cells' compilation scale; version 9: the drawn-depth column, depth areas placed by
  * the chart's drawing; version 10: an M_CSCL area's drawing σ applied only on the leaves the
- * area reaches), so an index built under
- * older rules is rebuilt rather than reused.
+ * area reaches; version 11: coverage and quality zones covering a tile across seams no wider
+ * than SEAM_TOLERANCE), so an index built under older rules is rebuilt rather than reused.
  */
 
 const MAGIC = "underkeel-pyramid";
-export const PYRAMID_VERSION = 10;
+export const PYRAMID_VERSION = 11;
 
 export interface PyramidHeader extends BlockLayout {
   magic: string;

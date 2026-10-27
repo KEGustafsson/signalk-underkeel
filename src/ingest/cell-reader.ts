@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import type { CellInfo } from "./cells";
-import { compilationSigma, usageBandFromName } from "./cells";
+import { compilationSigma, usageBandOf } from "./cells";
 import type { ChartFeature } from "./features";
 import type { GeoJsonFeatureCollection } from "./s57-geojson";
 import { parseLayer, POSITION_LAYER, S57_LAYERS } from "./s57-geojson";
@@ -47,16 +47,17 @@ export function cellInfoFromDsid(
 ): Omit<CellInfo, "band"> & { band?: number } {
   const dsnm = typeof props.DSID_DSNM === "string" ? props.DSID_DSNM : fallbackName;
   const name = dsnm.replace(/\.\d{3}$/, "");
+  const compilationScale = positive(numeric(props.DSPM_CSCL));
   return {
     name,
     edition: numeric(props.DSID_EDTN) ?? 0,
     update: numeric(props.DSID_UPDN) ?? 0,
     issueDate: typeof props.DSID_ISDT === "string" ? props.DSID_ISDT : undefined,
-    band: usageBandFromName(name),
+    band: usageBandOf(name, numeric(props.DSID_INTU), compilationScale),
     verticalDatum: numeric(props.DSPM_VDAT),
     soundingDatum: numeric(props.DSPM_SDAT),
     source: typeof props.UK_SOURCE === "string" ? props.UK_SOURCE : undefined,
-    compilationScale: positive(numeric(props.DSPM_CSCL))
+    compilationScale
   };
 }
 
@@ -126,7 +127,9 @@ export function readCellLayers(
   const partial = cellInfoFrom(layers, fallbackName);
   const band = bandOverride ?? partial.band;
   if (band === undefined) {
-    throw new Error(`cell ${partial.name}: usage band unknown; set it explicitly`);
+    throw new Error(
+      `cell ${partial.name}: usage band unknown: no band 1–6 in its name or DSID_INTU, and no compilation scale`
+    );
   }
   const info: CellInfo = { ...partial, band };
   const advisory = info.source === WFS_SOURCE ? true : undefined;

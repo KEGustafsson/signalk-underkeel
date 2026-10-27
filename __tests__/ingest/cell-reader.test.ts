@@ -2,7 +2,12 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { cellInfoFromDsid, readCellDirectory } from "../../src/ingest/cell-reader";
-import { parseCatalogue, usageBandFromName } from "../../src/ingest/cells";
+import {
+  parseCatalogue,
+  usageBandFromName,
+  usageBandFromScale,
+  usageBandOf
+} from "../../src/ingest/cells";
 import type { ChartFeature } from "../../src/ingest/features";
 import { hazardDepth, parseLayer, toParts } from "../../src/ingest/s57-geojson";
 
@@ -291,6 +296,45 @@ describe("cell catalogue", () => {
     expect(() => parseCatalogue({ version: 1, cells: [{ name: "x" }] })).toThrow(/usage band/);
     expect(() => parseCatalogue({ version: 1, cells: [null] })).toThrow(/not an object/);
     expect(() => parseCatalogue({ version: 1, cells: [{}] })).toThrow(/name/);
+  });
+
+  test("usage band from a compilation scale follows the IHO S-65 ranges", () => {
+    const cases: [number, number][] = [
+      [3_500_000, 1],
+      [1_500_000, 1],
+      [1_499_999, 2],
+      [350_000, 2],
+      [349_999, 3],
+      [90_000, 3],
+      [89_999, 4],
+      [22_000, 4],
+      [21_999, 5],
+      [12_000, 5],
+      [4_000, 5],
+      [3_999, 6],
+      [2_000, 6]
+    ];
+    expect(cases.map(([scale]) => usageBandFromScale(scale))).toEqual(cases.map(([, b]) => b));
+    expect(usageBandFromScale(undefined)).toBeUndefined();
+    expect(usageBandFromScale(0)).toBeUndefined();
+  });
+
+  test("usage band: the name first, then DSID_INTU, then the compilation scale", () => {
+    expect(usageBandOf("FI5ABCDE", 3, 90_000)).toBe(5);
+    expect(usageBandOf("1R7WAD07", 4, 2_000)).toBe(4);
+    expect(usageBandOf("1R7WAD07", 7, 2_000)).toBe(6);
+    expect(usageBandOf("1R7WAD07", 7, undefined)).toBeUndefined();
+  });
+
+  test("an Inland ENC cell (purpose 7 in name and DSID) takes its band from its scale", () => {
+    // Rijkswaterstaat's Waddenzee cells: 1R7WAD01-16, DSID_INTU 7, DSPM_CSCL 2000.
+    const props = { DSID_DSNM: "1R7WAD07.000", DSID_INTU: 7, DSPM_CSCL: 2000 };
+    expect(cellInfoFromDsid(props, "x")).toMatchObject({
+      name: "1R7WAD07",
+      band: 6,
+      compilationScale: 2000
+    });
+    expect(cellInfoFromDsid({ ...props, DSPM_CSCL: undefined }, "x").band).toBeUndefined();
   });
 
   test("DSID without a dataset name falls back to the directory name", () => {

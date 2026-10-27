@@ -57,9 +57,39 @@ export interface CellCatalogue {
  * undefined so the caller must supply the band explicitly.
  */
 export function usageBandFromName(name: string): number | undefined {
-  const c = name.charAt(2);
-  const band = Number(c);
-  return Number.isInteger(band) && band >= 1 && band <= 6 ? band : undefined;
+  return usageBand(Number(name.charAt(2)));
+}
+
+function usageBand(n: number | undefined): number | undefined {
+  return n !== undefined && Number.isInteger(n) && n >= 1 && n <= 6 ? n : undefined;
+}
+
+/**
+ * The usage band of a compilation scale 1:`scale`, by the IHO S-65 scale
+ * ranges: overview below 1:1 500 000, general to 1:350 000, coastal to
+ * 1:90 000, approach to 1:22 000, harbour to 1:4 000, berthing above it.
+ */
+export function usageBandFromScale(scale: number | undefined): number | undefined {
+  if (scale === undefined || !(scale > 0)) {
+    return undefined;
+  }
+  const limits = [1_500_000, 350_000, 90_000, 22_000, 4_000];
+  const i = limits.findIndex((limit) => scale >= limit);
+  return i < 0 ? 6 : i + 1;
+}
+
+/**
+ * A cell's usage band: the third character of its name, else the intended
+ * usage of its DSID record (`DSID_INTU`), else its compilation scale. Inland
+ * ENC cells carry 7 in both (Rijkswaterstaat's 1R7WAD07, 1:2 000), so they
+ * fall to the scale: berthing.
+ */
+export function usageBandOf(
+  name: string,
+  intu: number | undefined,
+  scale: number | undefined
+): number | undefined {
+  return usageBandFromName(name) ?? usageBand(intu) ?? usageBandFromScale(scale);
 }
 
 function finiteOrUndefined(value: unknown): number | undefined {

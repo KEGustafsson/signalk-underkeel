@@ -41,12 +41,22 @@ export function readCell(source: string, cellRef: number): Promise<ReadCell> {
 export interface CellScan {
   /** S-57 base cells in path order. */
   sources: string[];
-  /** Entries named like a cell that hold none, or a cell name met twice. */
+  /** Entries named like a cell that hold none the scan read, or a cell name met twice. */
   skipped: string[];
 }
 
 /** How deep below the cells directory S-57 cells are looked for: ENC_ROOT/<cell>/<cell>.000. */
 const MAX_DEPTH = 4;
+
+/**
+ * How many folders below an exchange set's root, the directory holding its
+ * CATALOG.031, a cell may sit (as MAX_DEPTH − 1 below the cells directory).
+ * S-57 leaves the layout under it to the producer: Rijkswaterstaat's Inland
+ * ENC sets hold ENC_ROOT/1R/7/1R7WAD07/1R7WAD07.000, three folders down.
+ */
+const EXCHANGE_SET_DEPTH = 6;
+
+const isCatalogue = (name: string): boolean => /^catalog\.031$/i.test(name);
 
 function isDirectory(p: string): boolean {
   try {
@@ -58,8 +68,12 @@ function isDirectory(p: string): boolean {
 
 /**
  * The S-57 cells under `cellsDir`: every `.000` file down to MAX_DEPTH, such
- * as in an ENC_ROOT exchange set. A name met twice keeps its first file in
- * path order.
+ * as in an ENC_ROOT exchange set, and down to EXCHANGE_SET_DEPTH below any
+ * directory holding a CATALOG.031 within it. A name met twice keeps its first
+ * file in path order; one file met again through a link counts once. A
+ * directory is read again only when reached with more depth left than
+ * before, and never from within itself, so a linked loop ends where it comes
+ * back.
  */
 export function scanCellSources(cellsDir: string | undefined): CellScan {
   const scan: CellScan = { sources: [], skipped: [] };
@@ -67,7 +81,18 @@ export function scanCellSources(cellsDir: string | undefined): CellScan {
     return scan;
   }
   const seen = new Set<string>();
+  const files = new Set<string>();
+  /** Folders named like a cell, by real path: skipped unless a cell is read from under one. */
+  const named = new Map<string, string>();
+  /** Real paths of the folders a `.000` was met in; a linked file's target may lie elsewhere. */
+  const holding = new Set<string>();
   const add = (source: string): void => {
+    holding.add(fs.realpathSync(path.dirname(source)));
+    const real = fs.realpathSync(source);
+    if (files.has(real)) {
+      return;
+    }
+    files.add(real);
     const name = sourceName(source);
     if (seen.has(name)) {
       scan.skipped.push(path.relative(cellsDir, source));
@@ -76,32 +101,56 @@ export function scanCellSources(cellsDir: string | undefined): CellScan {
     seen.add(name);
     scan.sources.push(source);
   };
-  const walk = (dir: string, depth: number): void => {
+  /** Depth left when each real directory was read, and those being read now. */
+  const left = new Map<string, number>();
+  const open = new Set<string>();
+  const take = (dir: string, e: fs.Dirent, depth: number, limit: number): void => {
+    const full = path.join(dir, e.name);
+    const directory = e.isDirectory() || (e.isSymbolicLink() && isDirectory(full));
+    if (directory) {
+      if (usageBandFromName(e.name) !== undefined) {
+        named.set(path.relative(cellsDir, full), fs.realpathSync(full));
+        scan.skipped.push(path.relative(cellsDir, full));
+      }
+      if (depth < limit) {
+        walk(full, depth + 1, limit);
+      }
+    } else if (isEncFile(e.name) && fs.existsSync(full)) {
+      add(full);
+    } else if (e.isSymbolicLink() && !fs.existsSync(full)) {
+      // A dangling link is most likely a cell the user expects read.
+      scan.skipped.push(path.relative(cellsDir, full));
+    }
+  };
+  /** Reads the entries of `dir`, at `depth`, and its directories down to `deepest` (deeper below a CATALOG.031). */
+  function walk(dir: string, depth: number, deepest: number): void {
+    // A link back up an exchange set would otherwise raise the limit at every turn.
+    const real = fs.realpathSync(dir);
+    if (open.has(real) || (left.get(real) ?? -1) >= deepest - depth) {
+      return;
+    }
+    left.set(real, deepest - depth);
+    open.add(real);
     const entries = fs
       .readdirSync(dir, { withFileTypes: true })
       .sort((a, b) => (a.name < b.name ? -1 : 1));
+    const limit = entries.some((e) => isCatalogue(e.name))
+      ? Math.max(deepest, depth + EXCHANGE_SET_DEPTH)
+      : deepest;
     for (const e of entries) {
-      if (e.name.startsWith(".")) {
-        continue;
-      }
-      const full = path.join(dir, e.name);
-      const directory = e.isDirectory() || (e.isSymbolicLink() && isDirectory(full));
-      if (directory) {
-        const before = scan.sources.length;
-        if (depth < MAX_DEPTH) {
-          walk(full, depth + 1);
-        }
-        if (scan.sources.length === before && usageBandFromName(e.name) !== undefined) {
-          scan.skipped.push(path.relative(cellsDir, full));
-        }
-      } else if (isEncFile(e.name) && fs.existsSync(full)) {
-        add(full);
-      } else if (e.isSymbolicLink() && !fs.existsSync(full)) {
-        // A dangling link is most likely a cell the user expects read.
-        scan.skipped.push(path.relative(cellsDir, full));
+      if (!e.name.startsWith(".")) {
+        take(dir, e, depth, limit);
       }
     }
-  };
-  walk(cellsDir, 1);
+    open.delete(real);
+  }
+  walk(cellsDir, 1, MAX_DEPTH);
+  // Decided once every path is read: a folder reached too deep by one path may be read by another.
+  const holds = (dir: string): boolean =>
+    [...holding].some((d) => d === dir || d.startsWith(dir + path.sep));
+  scan.skipped = scan.skipped.filter((entry) => {
+    const real = named.get(entry);
+    return real === undefined || !holds(real);
+  });
   return scan;
 }

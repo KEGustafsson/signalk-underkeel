@@ -104,7 +104,16 @@
             "distance": { "type": "number", "minimum": 0 },
             "sigmaP": { "type": "number", "minimum": 0 },
             "weight": { "$ref": "#/$defs/probability" },
-            "source": { "enum": ["survey", "topography"] }
+            "source": { "enum": ["survey", "topography"] },
+            "shadow": {
+              "description": "Set when the water charted closer to the footprint bounds the weight (survey shadow): the tile lies under the keel only if that water, distance metres wide and placed with 1-sigma sigmaP, is off by its width too, so weight is Phi(-distance/sigmaP) of this water instead.",
+              "type": "object",
+              "required": ["distance", "sigmaP"],
+              "properties": {
+                "distance": { "type": "number", "minimum": 0 },
+                "sigmaP": { "type": "number", "minimum": 0 }
+              }
+            }
           }
         },
         "mean": { "$ref": "#/$defs/metresOrNull" },

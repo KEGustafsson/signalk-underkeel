@@ -2,6 +2,32 @@
 
 All notable changes to signalk-underkeel are documented here.
 
+## [Unreleased]
+
+### Added
+
+- Inland ENC cells (issue #50). A cell whose name and `DSID_INTU` give no usage band 1–6, as
+  Inland ENC cells give 7, takes its band from its compilation scale by the IHO S-65 ranges:
+  Rijkswaterstaat's Waddenzee cells, 1:2 000, are berthing. Before they were rejected ("usage
+  band unknown"). The Inland ENC low-water references (VERDAT 31, 36, 38) and approximate LAT
+  (42) count as low-water datums, so with no water-level source chart datum applies on them as
+  on LAT. Cells are found down to six folders below a folder holding the exchange set's
+  `CATALOG.031`, so an unzipped Inland ENC download (`ENC_ROOT/1R/7/<cell>/<cell>.000`) can be
+  set as the cells directory as it is.
+
+### Changed
+
+- Survey shadow: a charted shoal beyond the boat's buffer counts by the chance the chart is off
+  by its distance, and now also by the chance that the water charted closer is off as far: what
+  that water's survey measured lies under the boat unless it is. A CATZOC D drying flat 300 m
+  beyond 250 m of CATZOC B water no longer counts, nor do its no-coverage or unassessed flags;
+  in D water alone nothing changes. The explanation names the water that bounded it ("behind
+  30 m of water placed ±50 m"), and the navigation-safety schema carries it as
+  `chartPosition.shadow`. The UKC overlay does not apply it yet and stays at least as severe.
+- Two cells, or two survey-quality zones, that meet along one line with their vertices split
+  differently, overlapping or up to 0.5 m apart now cover the leaves on that seam. Before,
+  every such leaf read no coverage or unassessed. The index is rebuilt once (pyramid version 11).
+
 ## [0.1.0] - 2026-10-25
 
 ### Added

@@ -356,27 +356,156 @@ function collectEdges(poly: PolygonGeom, r: Rect, sides: Map<string, number>): b
 }
 
 /**
- * True only when the areas together cover the closed rectangle. Every edge
- * that touches it must have area on both sides, which holds where two
- * polygons share the edge vertex for vertex; with no boundary of the union
- * crossing the rectangle, its centre decides. An edge split differently on
- * each side, or two areas that overlap rather than meet, returns false:
- * callers read false as "not covered", so it costs precision, never safety.
+ * Gaps between areas no wider than this, in Mercator metres (at most as
+ * many metres on the ground), count as covered by `areasCoverRect`. Two
+ * cells, or two quality zones, that meet along one line are often drawn
+ * with their vertices split differently along it, or a few centimetres
+ * apart: Rijkswaterstaat's Inland ENC cells 1R7WAD07 and 1R7WAD10 meet so,
+ * and their CATZOC A1 and B zones leave a sliver under 10 cm. Read exactly,
+ * every tile on such a seam had no coverage or no assessed survey.
  */
-export function areasCoverRect(geoms: readonly Geom[], r: Rect): boolean {
-  const sides = new Map<string, number>();
-  const polys = geoms.flatMap((g) => (g.type === "polygon" ? g.polygons : []));
-  for (const poly of polys) {
-    if (!collectEdges(poly, r, sides)) {
+export const SEAM_TOLERANCE = 0.5;
+
+/** Where segment a→b crosses segment c→d, as a fraction along a→b; undefined when it does not. */
+function crossingAt(a: XY, b: XY, c: XY, d: XY): number | undefined {
+  const rx = b[0] - a[0];
+  const ry = b[1] - a[1];
+  const sx = d[0] - c[0];
+  const sy = d[1] - c[1];
+  const den = rx * sy - ry * sx;
+  if (den === 0) {
+    return undefined;
+  }
+  const qx = c[0] - a[0];
+  const qy = c[1] - a[1];
+  const t = (qx * sy - qy * sx) / den;
+  const u = (qx * ry - qy * rx) / den;
+  return t >= 0 && t <= 1 && u >= 0 && u <= 1 ? t : undefined;
+}
+
+/**
+ * Whether the line SEAM_TOLERANCE off edge a→b on its `outward` side (+1
+ * left, −1 right) lies in the areas wherever the edge is in `r`. Along that
+ * line the areas only start or stop where it crosses one of their edges, so
+ * the midpoint between each pair of crossings decides its stretch.
+ */
+function outsideCovered(
+  a: XY,
+  b: XY,
+  len: number,
+  outward: number,
+  polys: readonly PolygonGeom[],
+  r: Rect
+): boolean {
+  if (!segmentIntersectsRect(a, b, r)) {
+    return true;
+  }
+  const [t0, t1] = [span.t0, span.t1];
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const nx = (-dy / len) * SEAM_TOLERANCE * outward;
+  const ny = (dx / len) * SEAM_TOLERANCE * outward;
+  const p: XY = [a[0] + dx * t0 + nx, a[1] + dy * t0 + ny];
+  const q: XY = [a[0] + dx * t1 + nx, a[1] + dy * t1 + ny];
+  const ts = crossings(p, q, polys);
+  for (let k = 0; k + 1 < ts.length; k++) {
+    const m = ((ts[k] as number) + (ts[k + 1] as number)) / 2;
+    const x = p[0] + (q[0] - p[0]) * m;
+    const y = p[1] + (q[1] - p[1]) * m;
+    if (!polys.some((poly) => inPolygon(x, y, poly))) {
       return false;
     }
   }
-  for (const s of sides.values()) {
-    if (s !== (LEFT | RIGHT)) {
-      return false;
+  return true;
+}
+
+/** 0, 1 and every fraction along p→q where it crosses an edge of the areas, in order. */
+function crossings(p: XY, q: XY, polys: readonly PolygonGeom[]): number[] {
+  const [minX, maxX] = [Math.min(p[0], q[0]), Math.max(p[0], q[0])];
+  const [minY, maxY] = [Math.min(p[1], q[1]), Math.max(p[1], q[1])];
+  const ts = [0, 1];
+  for (const poly of polys) {
+    for (const ring of [poly.outer, ...poly.holes]) {
+      const n = ring.length;
+      for (let i = 0, j = n - 1; i < n; j = i++) {
+        const c = ring[j] as XY;
+        const d = ring[i] as XY;
+        if (
+          Math.max(c[0], d[0]) < minX ||
+          Math.min(c[0], d[0]) > maxX ||
+          Math.max(c[1], d[1]) < minY ||
+          Math.min(c[1], d[1]) > maxY
+        ) {
+          continue;
+        }
+        const t = crossingAt(p, q, c, d);
+        if (t !== undefined) {
+          ts.push(t);
+        }
+      }
+    }
+  }
+  return ts.sort((x, y) => x - y);
+}
+
+/**
+ * `areasCoverRect` across seams: every edge touching `r` that bounds its own
+ * area on one side has the areas, within SEAM_TOLERANCE, on the other, so no
+ * boundary of the union, seams aside, crosses `r`. Then an edge touching it
+ * puts it inside the union; with none, its centre decides.
+ */
+function coverAcrossSeams(polys: readonly PolygonGeom[], r: Rect): boolean {
+  let touched = false;
+  for (const poly of polys) {
+    for (const ring of [poly.outer, ...poly.holes]) {
+      const n = ring.length;
+      for (let i = 0, j = n - 1; i < n; j = i++) {
+        const a = ring[j] as XY;
+        const b = ring[i] as XY;
+        const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+        if (len === 0 || !segmentIntersectsRect(a, b, r)) {
+          continue;
+        }
+        const sides = interiorSides(a, b, len, poly);
+        // An edge with area on both sides of its own, or on neither (a spike), bounds nothing.
+        if (sides === LEFT || sides === RIGHT) {
+          touched = true;
+          if (!outsideCovered(a, b, len, sides === LEFT ? -1 : 1, polys, r)) {
+            return false;
+          }
+        }
+      }
     }
   }
   const cx = (r.minX + r.maxX) / 2;
   const cy = (r.minY + r.maxY) / 2;
-  return polys.some((poly) => inPolygon(cx, cy, poly));
+  return touched || polys.some((poly) => inPolygon(cx, cy, poly));
+}
+
+/**
+ * True only when the areas together cover the closed rectangle, gaps no
+ * wider than SEAM_TOLERANCE aside. Where two polygons share each edge vertex
+ * for vertex, every edge that touches the rectangle has area on both sides;
+ * with no boundary of the union crossing the rectangle, its centre decides.
+ * Otherwise each such edge is followed across, `SEAM_TOLERANCE` out, so an
+ * edge split differently on each side, two areas that overlap, or a seam
+ * narrower than that still cover. Callers read false as "not covered".
+ */
+export function areasCoverRect(geoms: readonly Geom[], r: Rect): boolean {
+  const sides = new Map<string, number>();
+  const polys = geoms.flatMap((g) => (g.type === "polygon" ? g.polygons : []));
+  let shared = true;
+  for (const poly of polys) {
+    if (!collectEdges(poly, r, sides)) {
+      shared = false;
+      break;
+    }
+  }
+  if (shared && [...sides.values()].every((s) => s === (LEFT | RIGHT))) {
+    const cx = (r.minX + r.maxX) / 2;
+    const cy = (r.minY + r.maxY) / 2;
+    return polys.some((poly) => inPolygon(cx, cy, poly));
+  }
+  // One area alone has no seam: an edge of it touching the rectangle is the union's.
+  return polys.length > 1 && coverAcrossSeams(polys, r);
 }

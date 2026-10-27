@@ -143,7 +143,8 @@ Inside a cell's coverage, a place that no depth area, land or unsurveyed area re
 depth either; a sounding's burn disc does not make it water.
 
 Where cells of different usage bands overlap, the larger-scale cell wins and the smaller one
-only fills gaps.
+only fills gaps. A cell's band is the third character of its name, else its `DSID_INTU`, else
+its compilation scale: Inland ENC cells (purpose 7) at 1:2 000 count as berthing, band 6.
 
 ### How the index is built
 
@@ -303,7 +304,17 @@ beyond it counts with its P(UKC < 0) times Φ(−g/σP), the chance the chart is
 distance g in its direction: a drying area 50 m beyond the buffer counts with 2 % in CATZOC B
 water (σP 25 m) and 42 % in C (σP 250 m), and the depth reported under the boat is the depth
 charted there. Its flags (no coverage, unassessed) count within 2 × σP. Unassessed and Traficom
-WFS water spreads no depth, since it never reads as `normal` anyway. The position σ comes from the GNSS (HDOP × 3 m, 5 m without HDOP) and
+WFS water spreads no depth, since it never reads as `normal` anyway.
+
+The water charted between counts too (survey shadow). A shoal lies under the boat only if the
+water charted closer is off by as much, since its survey measured that water where the boat
+is. So a tile counts with at most Φ(−r/σ) for any distance r up to its own, σ being the worst
+survey σP within r of the buffer, the boat's own water included: a drying flat in CATZOC D
+water (σP 500 m) 300 m beyond 250 m of CATZOC B water (σP 25 m) counts with Φ(−250/25), nothing,
+and its flags do not reach the boat. A strip of B water only 30 m wide still lets it count
+with Φ(−30/25) = 12 %, and the explanation says "behind 30 m of water placed ±50 m". Water
+with no coverage, no assessed survey or no depth stops the shadow, as does a part of the index
+not yet loaded. The position σ comes from the GNSS (HDOP × 3 m, 5 m without HDOP) and
 is raised by the integrity check in section 7.
 
 The warning window is set by the warning style: 120 s with Balanced, 180 s with Early, 90 s with
@@ -553,7 +564,8 @@ flowchart TD
 ```
 
 With `none`, chart datum stands in for the level only on charts referred to a low-water datum
-(LAT, MLLW and the like), where the tide seldom leaves less water than charted. On a chart whose
+(LAT, MLLW and the like, and the Inland ENC low-water references 31, 36 and 38 and approximate
+LAT, 42), where the tide seldom leaves less water than charted. On a chart whose
 `VERDAT` is mean water (3, 19 and 26, as on the Finnish ENCs), high water or a local datum, the
 Baltic is often 0.3–0.8 m below chart datum, so the level is degraded and treated as a
 fallback, as above, until a source is configured. The reason names the datums and the source
@@ -598,7 +610,8 @@ that tile (section 8) at zero speed (no squat):
 
 A cell is also drawn at least as bad as a route check or `POST /query` there would read it from
 the cells around it: each one's P times Φ(−g/σP) for its distance g, and an unverified cell's
-flags within 2 × σP. Water 30 m from a drying area in CATZOC B water (Φ(−30/25) ≈ 12 %) is
+flags within 2 × σP. The overlay leaves out the survey shadow (section 6), so beside poorly
+surveyed water it can draw a margin the look-ahead and a query no longer count. Water 30 m from a drying area in CATZOC B water (Φ(−30/25) ≈ 12 %) is
 therefore `danger`, and so is water up to about 400 m from a 0 m area in C water; unassessed
 and Traficom WFS water spreads no depth and is `unverified` anyway. A part of a cell raised
 only so carries `reach`.
@@ -853,11 +866,12 @@ page says what is missing: no Signal K stream on the widget, or no shared routes
 - Burn discs are as wide as the survey's position uncertainty: a CATZOC C sounding blocks a
   disc 1 km across, and since each C tile also counts 500 m beyond a footprint, the sounding
   reaches a footprint up to 1 km away.
-- An index leaf that straddles two survey zones takes the worse zone's σ when the zones share
-  their boundary vertex for vertex. A boundary split differently on each side, an overlap or a
-  gap leaves the leaf unassessed. The same holds for two cells of one usage band meeting along
-  a shared edge: matched vertex for vertex, the leaf on the edge is covered; otherwise it reads
-  as no coverage.
+- An index leaf that straddles two survey zones takes the worse zone's σ when the zones
+  together cover it, their boundaries split differently or overlapping, or apart by up to
+  0.5 m. A wider gap leaves the leaf unassessed. The same holds for two cells of one usage band
+  meeting along an edge: covered across a seam up to 0.5 m wide, no coverage across a wider one.
+- The UKC overlay does not apply the survey shadow, so it can draw a margin beside CATZOC C or
+  D water that the look-ahead, a route check and a query leave out.
 - Only unencrypted S-57 cells are read: S-63 encrypted cells must be decrypted first.
 - The look-ahead follows course and turn rate, not the route. In a winding fairway it sees the
   shore ahead before each bend and raises warn or alarm until the boat turns.

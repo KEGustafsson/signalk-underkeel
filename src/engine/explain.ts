@@ -33,12 +33,15 @@ export interface Explanation {
    * Set when the deciding tile lies beyond the footprint and its buffer:
    * how far, how well the chart places it, and the chance it lies under
    * the keel. `charted`, `mean` and `sigma` are then the tile's own.
+   * `shadow` is set when the water charted closer bounds that chance: it
+   * lies under the keel only if that water is off by its distance too.
    */
   chartPosition?: {
     distance: number;
     sigmaP: number;
     weight: number;
     source: ChartReach["source"];
+    shadow?: { distance: number; sigmaP: number };
   };
   /** Mean UKC, metres; null on land. */
   mean: number | null;
@@ -81,7 +84,10 @@ export function explain(
         distance: Math.round(c.distance),
         sigmaP: r2(c.sigmaP),
         weight: Math.round(c.weight * 10000) / 10000,
-        source: c.source
+        source: c.source,
+        ...(c.shadow && {
+          shadow: { distance: Math.round(c.shadow.distance), sigmaP: r2(c.shadow.sigmaP) }
+        })
       }
     }),
     mean: finite(u.mean),
@@ -190,7 +196,10 @@ export function sentence(e: Explanation): string {
   const p = e.chartPosition;
   if (p) {
     const what = p.source === "topography" ? "chart drawing" : "survey";
-    terms[0] = `${terms[0]} ${m(p.distance)} away, placed ±${m(2 * p.sigmaP)} by its ${what} (${pct(p.weight)} % under the keel)`;
+    const behind = p.shadow
+      ? `, behind ${m(p.shadow.distance)} of water placed ±${m(2 * p.shadow.sigmaP)}`
+      : "";
+    terms[0] = `${terms[0]} ${m(p.distance)} away, placed ±${m(2 * p.sigmaP)} by its ${what}${behind} (${pct(p.weight)} % under the keel)`;
   }
   const mean = e.mean === null ? "−∞ m" : m(e.mean).replace(/^-/, "−");
   return `${terms.join(" ")} → μ = ${mean}, σ = ${m(e.sigma)}, P = ${pct(e.risk)} %`;

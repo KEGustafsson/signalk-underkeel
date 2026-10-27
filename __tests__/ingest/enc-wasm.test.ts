@@ -135,6 +135,86 @@ describe("S-57 cells read with gdal3.js", () => {
     expect(fs.readdirSync(enc)).toEqual(["FI5RAW01.000"]);
   });
 
+  test("cells nested below a CATALOG.031 are found from above the exchange set", () => {
+    // Rijkswaterstaat's Inland ENC download: <set>/ENC_ROOT/1R/7/<cell>/<cell>.000.
+    const root = path.join(tmp, "20261023_U7Inland_Waddenzee_week 43_NL", "ENC_ROOT");
+    const cell = path.join(root, "1R", "7", "1R7RAW01");
+    fs.mkdirSync(cell, { recursive: true });
+    fs.copyFileSync(CELL, path.join(cell, "1R7RAW01.000"));
+    expect(scanCellSources(tmp).sources).toEqual([]);
+    fs.writeFileSync(path.join(root, "CATALOG.031"), "");
+    expect(scanCellSources(tmp).sources).toEqual([path.join(cell, "1R7RAW01.000")]);
+    expect(scanCellSources(root).sources).toEqual([path.join(cell, "1R7RAW01.000")]);
+  });
+
+  test("a cell up to six folders below a CATALOG.031 is found, not seven", () => {
+    const root = path.join(tmp, "ENC_ROOT");
+    const six = path.join(root, "a", "b", "c", "d", "e", "FI5SIX01");
+    const seven = path.join(root, "a", "b", "c", "d", "e", "f", "FI5SEVEN");
+    fs.mkdirSync(six, { recursive: true });
+    fs.mkdirSync(seven, { recursive: true });
+    fs.copyFileSync(CELL, path.join(six, "FI5SIX01.000"));
+    fs.copyFileSync(CELL, path.join(seven, "FI5SEVEN.000"));
+    fs.writeFileSync(path.join(root, "CATALOG.031"), "");
+    expect(scanCellSources(tmp).sources).toEqual([path.join(six, "FI5SIX01.000")]);
+  });
+
+  test("a folder reached first by a shallow link is read again from its exchange set", () => {
+    const root = path.join(tmp, "set", "ENC_ROOT");
+    const cell = path.join(root, "1R", "7", "WAD", "1R6DEEP1");
+    fs.mkdirSync(cell, { recursive: true });
+    fs.copyFileSync(CELL, path.join(cell, "1R6DEEP1.000"));
+    fs.writeFileSync(path.join(root, "CATALOG.031"), "");
+    // Sorted first, the link reaches 1R with too little depth left to find the cell, four
+    // folders below it; the exchange set's CATALOG.031 leaves enough.
+    fs.symlinkSync(path.join(root, "1R"), path.join(tmp, "a-link"), "junction");
+    fs.mkdirSync(path.join(root, "1R", "7", "1R6NONE1"));
+    expect(scanCellSources(tmp)).toEqual({
+      sources: [path.join(cell, "1R6DEEP1.000")],
+      skipped: [
+        path.join("a-link", "7", "1R6NONE1"),
+        path.join("set", "ENC_ROOT", "1R", "7", "1R6NONE1")
+      ]
+    });
+  });
+
+  test("a cell folder holding a link to a cell kept elsewhere is not reported as skipped", () => {
+    const store = path.join(tmp, "store");
+    const cells = path.join(tmp, "cells");
+    const folder = path.join(cells, "FI5LINK1");
+    fs.mkdirSync(store);
+    fs.mkdirSync(folder, { recursive: true });
+    const target = path.join(store, "FI5LINK1.000");
+    fs.copyFileSync(CELL, target);
+    // A copy and a spy stand in for the file link, as Windows makes one only when elevated.
+    const link = path.join(folder, "FI5LINK1.000");
+    fs.copyFileSync(CELL, link);
+    const realpath = fs.realpathSync;
+    const resolve = (p: fs.PathLike): string => (p === link ? target : realpath(p));
+    const spy = jest
+      .spyOn(fs, "realpathSync")
+      .mockImplementation(resolve as unknown as typeof fs.realpathSync);
+    try {
+      expect(scanCellSources(cells)).toEqual({ sources: [link], skipped: [] });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("a link looping back into an exchange set ends the scan there", () => {
+    const root = path.join(tmp, "ENC_ROOT");
+    const cell = path.join(root, "FI5LOOP1");
+    fs.mkdirSync(cell, { recursive: true });
+    fs.copyFileSync(CELL, path.join(cell, "FI5LOOP1.000"));
+    fs.writeFileSync(path.join(root, "CATALOG.031"), "");
+    // A junction on Windows, where a directory symlink needs elevated rights.
+    fs.symlinkSync(root, path.join(cell, "back"), "junction");
+    expect(scanCellSources(tmp)).toEqual({
+      sources: [path.join(cell, "FI5LOOP1.000")],
+      skipped: []
+    });
+  });
+
   test("a cell is named by its file, as discovery and the saved index's check name it", async () => {
     const renamed = path.join(tmp, "FI5OTHER.000");
     fs.copyFileSync(CELL, renamed);

@@ -5,6 +5,7 @@ import { REACH_SLACK } from "../../src/spatial/pyramid";
 import fc from "fast-check";
 import {
   areasCoverRect,
+  SEAM_TOLERANCE,
   geomBounds,
   geomContainsRect,
   geomRectDistance,
@@ -164,9 +165,8 @@ describe("planar geometry", () => {
       expect(areasCoverRect([donutGeom], r(35, 35, 45, 45))).toBe(false);
     });
 
-    test("a gap, an overlap or a differently split edge is not resolved", () => {
-      expect(areasCoverRect([west, poly(square(51, 0, 100, 100))], across)).toBe(false);
-      expect(areasCoverRect([west, poly(square(49, 0, 100, 100))], across)).toBe(false);
+    test("an overlap or an edge split differently on each side covers", () => {
+      expect(areasCoverRect([west, poly(square(49, 0, 100, 100))], across)).toBe(true);
       const split = poly([
         [50, 0],
         [100, 0],
@@ -174,7 +174,34 @@ describe("planar geometry", () => {
         [50, 100],
         [50, 50]
       ]);
-      expect(areasCoverRect([west, split], across)).toBe(false);
+      expect(areasCoverRect([west, split], across)).toBe(true);
+      // Split differently and off the line by a few centimetres, as cells meet in practice.
+      const off = poly([
+        [50.03, 0],
+        [100, 0],
+        [100, 100],
+        [50, 100],
+        [50.02, 50]
+      ]);
+      expect(areasCoverRect([west, off], across)).toBe(true);
+    });
+
+    test("a gap wider than SEAM_TOLERANCE is not covered; one narrower is", () => {
+      const beyond = 50 + 2 * SEAM_TOLERANCE;
+      expect(areasCoverRect([west, poly(square(beyond, 0, 100, 100))], across)).toBe(false);
+      expect(areasCoverRect([west, poly(square(51, 0, 100, 100))], across)).toBe(false);
+      const within = 50 + SEAM_TOLERANCE / 2;
+      expect(areasCoverRect([west, poly(square(within, 0, 100, 100))], across)).toBe(true);
+      // A rect wholly in a narrow gap that no edge touches is not covered.
+      const wide = poly(square(60, 0, 100, 100));
+      expect(areasCoverRect([west, wide], r(52, 40, 58, 60))).toBe(false);
+    });
+
+    test("an edge the union keeps is not covered across, however split", () => {
+      // Two polygons on the same side: the east edge at 50 bounds the union.
+      const a = poly(square(0, 0, 50, 50));
+      const b = poly(square(0, 50, 50, 100));
+      expect(areasCoverRect([a, b], across)).toBe(false);
     });
 
     test("a spike into a gap does not cover it", () => {
@@ -202,7 +229,7 @@ describe("planar geometry", () => {
      * they share it, every rect inside the square is covered; when one is
      * shifted, a true answer must still hold at every probed point.
      */
-    test("property: true only when every point of the rect is in an area", () => {
+    test("property: true only when every point of the rect is in an area or a seam", () => {
       const cut = fc
         .uniqueArray(fc.integer({ min: 1, max: 99 }), { minLength: 0, maxLength: 6 })
         .chain((xs) =>
@@ -245,9 +272,10 @@ describe("planar geometry", () => {
               for (let j = 0; j <= 4; j++) {
                 const p = [x + (w * i) / 4 + 1e-7, y + (h * j) / 4 + 1e-7] as const;
                 // A point on the shared edge is in both areas; pointInPolygon alone
-                // may count it in neither.
+                // may count it in neither. A point in a seam no wider than
+                // SEAM_TOLERANCE lies within it of an area.
                 const inside = [lower, upper].some(
-                  (g) => geomRectDistance(g, r(p[0], p[1], p[0], p[1])) <= 1e-9
+                  (g) => geomRectDistance(g, r(p[0], p[1], p[0], p[1])) <= SEAM_TOLERANCE + 1e-9
                 );
                 expect(inside).toBe(true);
               }
