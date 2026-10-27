@@ -3,9 +3,8 @@ import type { Geom, PolygonGeom } from "../../src/foundation/geometry";
 import { rectGap } from "../../src/foundation/geo";
 import { REACH_SLACK } from "../../src/spatial/pyramid";
 import fc from "fast-check";
+import { areasCoverRect, SEAM_TOLERANCE } from "../../src/foundation/area-cover";
 import {
-  areasCoverRect,
-  SEAM_TOLERANCE,
   geomBounds,
   geomContainsRect,
   geomRectDistance,

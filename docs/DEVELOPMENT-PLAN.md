@@ -425,9 +425,12 @@ features and coverage at `DSPM_CSCL`.
 vertices, a uniform grid of its edges, so a tile test reads only the edges near the tile and
 the edges that span the corner's row; one boundary pass and four corner tests decide both "the
 area reaches the tile" and "the area contains the tile", and an area containing a tile is
-passed to its children as containing them. The tests return exactly what the per-vertex walk
-returns (`src/spatial/polygon-index.ts`), so the pyramid is unchanged. The index build in the
-worker evaluates one minZoom root at a time from only the cells whose features reach it (a
+passed to its children as containing them. The seam coverage test of coverage and quality
+zones reads the same edge grids, and a sounding's burn radius tests only the quality zones
+filed under its point on a grid of the cell's zone boxes. The tests return exactly what the
+per-vertex walk returns (`src/spatial/polygon-index.ts`,
+`__tests__/spatial/zone-index-equality.test.ts`), so the pyramid is unchanged. The index build
+in the worker evaluates one minZoom root at a time from only the cells whose features reach it (a
 survey pass keeps each cell's extent and widest burn radius), on up to four threads (one per
 core but one and per GiB of RAM), and joins the roots in key order; each root depends only on
 the features reaching it, so the pyramid is byte-identical to a build of all cells at once
@@ -689,7 +692,7 @@ flag reach kept a channel 1 km wide from reading as checked. Now an edge not mat
 followed across, `SEAM_TOLERANCE` (0.5 Mercator metres, at most 0.5 m on the ground) out, and
 the areas must hold that line wherever the edge lies in the leaf: an edge split differently,
 an overlap and a seam no wider than that cover; a gap wider stays `NO_COVERAGE` or
-`UNASSESSED` (`foundation/geometry.ts` `areasCoverRect`, `__tests__/spatial/coverage-seam.test.ts`).
+`UNASSESSED` (`foundation/area-cover.ts` `areasCoverRect`, `__tests__/spatial/coverage-seam.test.ts`).
 A seam narrower than half a metre holds no vessel and is below the drawing accuracy of any
 cell (1 mm at 1:500). Pyramid version 11.
 

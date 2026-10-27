@@ -1,4 +1,5 @@
-import type { Rect } from "../foundation/geo";
+import type { Rect, XY } from "../foundation/geo";
+import type { CoverAreas } from "../foundation/area-cover";
 import type { PolygonGeom, Ring } from "../foundation/geometry";
 import { segmentRectDistance } from "../foundation/geometry";
 
@@ -400,4 +401,64 @@ export function polygonsRectRelation(polys: readonly PolygonIndex[], r: Rect): n
     rel = corners > 0 ? PARTIAL : rel;
   }
   return rel;
+}
+
+/** `polygonsRectDistance(polys, r, 0) === 0` for the rectangle that is the point (x, y). */
+export function polygonsTouchPoint(polys: readonly PolygonIndex[], x: number, y: number): boolean {
+  const r = { minX: x, minY: y, maxX: x, maxY: y };
+  return polys.some(
+    (p) => !farFrom(p, r, 0) && (inPolygon(x, y, p) || boundaryRectDistance(p, r, 0) === 0)
+  );
+}
+
+/** Calls `each` with edge i, from vertex i - 1 to vertex i; returns what it returns. */
+function edgeTo(ri: RingIndex, i: number, each: (a: XY, b: XY) => boolean): boolean {
+  const j = prev(ri.n, i);
+  edgeA[0] = xOf(ri, j);
+  edgeA[1] = yOf(ri, j);
+  edgeB[0] = xOf(ri, i);
+  edgeB[1] = yOf(ri, i);
+  return each(edgeA, edgeB);
+}
+
+/** The ring's edges filed in the cells `r` grown by `margin` reaches; false once `each` stops. */
+function ringEdgesNear(
+  ri: RingIndex,
+  r: Rect,
+  margin: number,
+  each: (a: XY, b: XY) => boolean
+): boolean {
+  const b = ri.box;
+  if (
+    r.minX - margin > b.maxX ||
+    r.maxX + margin < b.minX ||
+    r.minY - margin > b.maxY ||
+    r.maxY + margin < b.minY
+  ) {
+    return true;
+  }
+  const g = ri.grid;
+  let go = true;
+  if (!g) {
+    for (let i = 0; i < ri.n && go; i++) {
+      go = edgeTo(ri, i, each);
+    }
+    return go;
+  }
+  forNearEdges(g, r, margin, (i) => (go = edgeTo(ri, i, each)));
+  return go;
+}
+
+/** The polygons as area-cover.ts `areasCover` reads them, only the edges near a rectangle walked. */
+export function coverAreas(polys: readonly PolygonIndex[]): CoverAreas {
+  return {
+    count: polys.length,
+    inside: (k, x, y) => inPolygon(x, y, polys[k] as PolygonIndex),
+    edgesNear: (k, r, margin, each) => {
+      const p = polys[k] as PolygonIndex;
+      if (ringEdgesNear(p.outer, r, margin, each)) {
+        p.holes.every((h) => ringEdgesNear(h, r, margin, each));
+      }
+    }
+  };
 }

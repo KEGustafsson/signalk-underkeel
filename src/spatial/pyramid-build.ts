@@ -11,13 +11,15 @@ import {
   tileRange,
   tileRect
 } from "../foundation/geo";
-import { areasCoverRect, geomContainsRect, geomRectDistance } from "../foundation/geometry";
+import { areasCover } from "../foundation/area-cover";
+import { geomContainsRect, geomRectDistance } from "../foundation/geometry";
 import type { ChartFeature, DepthFeature, QualityFeature } from "../ingest/features";
 import type { BuildOptions, Item } from "./build-items";
 import { buildArea, DEFAULT_BUILD, prepareItems } from "./build-items";
 import type { ChartPosition, NodeColumns, NodeValues } from "./node-store";
 import { combine, EMPTY, FLAGS, joinPosition, NO_DATA, NodeStore } from "./node-store";
 import {
+  coverAreas,
   FULL,
   MISS,
   polygonsContainRect,
@@ -164,6 +166,11 @@ function qualityEdge(hits: Hit[]): boolean {
  */
 const BLUR_RATIO = 8;
 
+/** `areasCoverRect` over the hits' areas, through their indexed polygons. */
+function hitsCover(hits: Hit[], rect: Rect): boolean {
+  return areasCover(coverAreas(hits.flatMap((h) => h.item.shape ?? [])), inWorld(rect));
+}
+
 /**
  * Highest usage band whose coverage holds the whole tile, by one polygon
  * or by adjacent cells of the band meeting along a shared edge.
@@ -172,14 +179,7 @@ function coveredBand(coverage: Hit[], rect: Rect): number | undefined {
   const bands = [...new Set(coverage.map((h) => h.item.f.band))].sort((a, b) => b - a);
   return bands.find((band) => {
     const inBand = coverage.filter((h) => h.item.f.band === band);
-    return (
-      inBand.some((h) => h.full) ||
-      (inBand.length > 1 &&
-        areasCoverRect(
-          inBand.map((h) => h.item.f.geom),
-          inWorld(rect)
-        ))
-    );
+    return inBand.some((h) => h.full) || (inBand.length > 1 && hitsCover(inBand, rect));
   });
 }
 
@@ -269,13 +269,7 @@ function assessedCover(hits: Hit[], rect: Rect): boolean {
   if (zones.some((h) => h.full)) {
     return true;
   }
-  return (
-    zones.length > 0 &&
-    areasCoverRect(
-      zones.map((h) => h.item.f.geom),
-      inWorld(rect)
-    )
-  );
+  return zones.length > 0 && hitsCover(zones, rect);
 }
 
 /**
