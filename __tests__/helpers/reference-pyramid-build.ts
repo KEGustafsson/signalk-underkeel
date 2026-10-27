@@ -17,18 +17,14 @@ import {
   tileRange,
   tileRect
 } from "../../src/foundation/geo";
-import {
-  areasCoverRect,
-  geomBounds,
-  geomContainsRect,
-  geomRectDistance
-} from "../../src/foundation/geometry";
+import { geomBounds, geomContainsRect, geomRectDistance } from "../../src/foundation/geometry";
 import type { ChartFeature, DepthFeature, QualityFeature } from "../../src/ingest/features";
 import { MAX_CHART_BUFFER } from "../../src/spatial/chart-position";
 import type { ChartPosition, NodeValues } from "../../src/spatial/node-store";
 import { combine, EMPTY, FLAGS, NO_DATA, NodeStore } from "../../src/spatial/node-store";
 import type { QualityOptions } from "../../src/spatial/quality";
 import { DEFAULT_QUALITY, sigmaFor, SWEPT_SIGMA_D } from "../../src/spatial/quality";
+import { areasCoverRect } from "./reference-area-cover";
 
 /**
  * Builds the min-depth pyramid top-down (plan §4.3). A tile is subdivided
