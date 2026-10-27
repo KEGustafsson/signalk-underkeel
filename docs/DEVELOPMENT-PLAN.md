@@ -306,6 +306,33 @@ depths, is loaded meanwhile. With the WFS on, its box is the one the ENC cells a
 `boxRadiusKm: 0` keeps the whole build (an index built in a box is then rebuilt whole); a radius
 between 0 and 2 km is raised to 2.
 
+**Box refresh copies unchanged tiles (decision, 2026-10-27).** A z10 root is 23 km across at
+53° N, wider than a 10 km box, so copying whole roots as the whole-set refresh does would copy
+none. `evaluate` reads the box only in its tests of each tile against the box and its build
+area, and every tile under a tile wholly inside the box (by 1 m), or wholly in the build area
+with no ground in the box, takes them the same way (`boxState`). A box build therefore
+records, for each tile from z10 to z15 in either state, a SHA-256 of that state and the items
+the tile is evaluated from, in order: each item's cell by content (`sourceIdentity`: an S-57
+cell's name and files' hash, a directory's layer bytes), its index among the cell's features
+and its inherited `full` flag (`tiles.json`, with the box, each cell's identity, the plugin
+version, `PYRAMID_VERSION` and a SHA-256 of `pyramid.bin`). The next box build copies a tile's
+saved subtree when the tile is in the same state in both boxes and its digest matches, and a
+whole root when it is in the same state in both and the same cells by identity, in the same
+order, reach it; copied cell references are moved to the new catalogue by identity. The
+digest covers every input of the subtree, the parents' pruning included, so a changed cell or
+one only one build read is built again. A copied node's float32 columns are what the build
+stored; parents take maxima and minima of them, which commute with that rounding, so the
+result is byte-identical to a fresh build: a property test over random moves, resizes, a cell
+missing from the saved build and a changed cell, and five moves of the 10 km Waddenzee box
+(pyramid, hazards, cells and reach files). Nothing is copied with another leaf zoom, stamp or
+pyramid, or with no readable `tiles.json`. On the Waddenzee box (x86, warm cell cache, one
+thread) a 5 km move east copied 66 % of the nodes and built in 6.9–7.2 s instead of
+11.6–11.7 s; 8 km east 54 %, 6.4–6.9 s instead of 10.4–11.6 s; 5 km north 43 %, 9.1–9.5 s
+instead of 13.3–13.6 s; 8 km south 42 %, 8.1–9.2 s instead of 11.5–12.5 s. Parsing the cells
+and preparing their items stays: the digests need the items. No root lies inside a 10 km
+box; one can lie inside a box whose radius exceeds half a root's width (12 km at 53° N), as
+the cap allows at speed.
+
 **Box size and rebuild status (2026-10-27).** A box must hold SOG × 1.5 × the build time plus
 the look-ahead's reach and the 2.36 km band; the build time is the last measured one grown by
 ((R + 2 km) / (R_measured + 2 km))², never shortened (`box-sizing.ts`). A box too small for
@@ -647,7 +674,10 @@ class drawn over it` still tests.
   roots of the ENC cells). Every root is built when the saved
   index holds other cells or another order, another leaf zoom, no `reach.json`, or fails to
   read. As at start, a cell with the same DSID edition, update, issue date and datum areas is
-  taken as unchanged.
+  taken as unchanged. A box build copies tiles instead (§4.2, `tiles.json`).
+- `tiles.json` (box indexes) holds the digests a box refresh copies tiles by (§4.2); 64 KB for
+  the 10 km Waddenzee box. `cells.json` is written as `parseCatalogue` reads it back, so a
+  cell's entry taken from the saved catalogue has the bytes of one read from the cell.
 - The index is built in a child process, at start as for a new WFS box (§4.2), and posted
   to the main thread up to 1 000 000 pyramid nodes (`HELD_WHOLE_NODES`; a larger one is read
   back from the committed files block by block); until the process hands it over the

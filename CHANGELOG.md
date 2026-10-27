@@ -26,6 +26,14 @@ All notable changes to signalk-underkeel are documented here.
   10 km Waddenzee chart box rebuilt in 12–15 s instead of 30–34 s, with no 300–370 MB reader
   process; the whole 20-cell set in 78–90 s instead of 141 s on one thread (x86). A torn or
   damaged entry is read from the cell again. The built index is byte for byte the same.
+- A chart box refresh copies from the saved box index each tile down to z15 that lies inside
+  both boxes, or in both boxes' build-area band outside them, and is evaluated from the same
+  features of the same cells (by files' hash or bytes); `tiles.json` beside the index holds
+  the digests. On the 10 km Waddenzee box (x86, warm cell cache) a 5 km move copied 66 % of
+  the nodes and built in 6.9–7.2 s instead of 11.6–11.7 s, an 8 km move 54 % in 6.4–6.9 s
+  instead of 10.4–11.6 s. The index is byte for byte the one a fresh build of the new box
+  makes; a changed cell's tiles, another leaf zoom or plugin version, or a missing or foreign
+  `tiles.json` are built afresh. `cells.json` is written in the field order it is read back.
 
 ### Added
 

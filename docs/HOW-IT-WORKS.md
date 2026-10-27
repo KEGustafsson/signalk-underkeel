@@ -770,7 +770,7 @@ flowchart TD
   P[vessel position, checked periodically] --> D{more than half the box radius from<br/>the box centre, or the edge ahead<br/>closer than a rebuild's run?}
   D -- no --> KEEP[keep the current index]
   D -- yes, and no download<br/>in the last minute or so --> W[in a worker thread: download the box<br/>centred ahead along the course<br/>DepthArea_A, DredgedArea_A, Sounding_P]
-  W --> B[rebuild in the same thread the index tiles<br/>about 20 km square that the old or new box reaches;<br/>copy the others from the saved index]
+  W --> B[rebuild the index in the same process, copying from the saved index<br/>the tiles whose chart features and box state are unchanged]
   B --> S[swap the new index in;<br/>the look-ahead keeps running]
   W -- fails --> E[keep the old index, report the error,<br/>retry after a longer back-off]
 ```
@@ -798,6 +798,15 @@ flowchart TD
   more than the 1.86 km chart reach from its edge, keeps the plain reason. A route leg that is
   `unverified` for no coverage and whose corridor reaches past the box gets a `reason` saying
   it is outside the chart box; the details panel lists it under the leg table.
+- **Rebuild:** a new box copies from the saved index every tile down to z15 (0.6 km across at
+  53° N) that lies inside both the old and the new box, or in both boxes' 2 km build-area band
+  outside them, and is built from the same chart features: the same cells, compared by their
+  files or bytes, and the same features of them. Tiles a changed cell reaches are built again,
+  so with the WFS on, whose cell is downloaded anew for each box, the tiles its features reach
+  are. The index is byte for byte the one a fresh build makes. A 5 km move of the 10 km
+  Waddenzee box of ENC cells copied 66 % of the tiles' nodes and took 7 s instead of 12 s
+  (x86). With `boxRadiusKm` 0 and the WFS on, a refresh copies the z10 roots (about 20 km
+  square) that neither the old nor the new WFS box reaches.
 - **Priority:** the WFS cell is usage band 1, so any ENC cell wins where both cover.
 - **Land:** the WFS has no land objects. Water that no depth area reaches is land, so a gap in
   the data never reads as open water.
