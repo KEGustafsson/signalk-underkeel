@@ -1,7 +1,7 @@
 import { UkcTileChanges } from "../src/api/ukc-tile-changes";
 import type { TileChanges } from "../src/api/ukc-tile-changes";
 import { parseConfig } from "../src/config";
-import { UkcTileCache } from "../src/engine/ukc-tile-geometry";
+import { UkcTileCache } from "../src/engine/ukc-tile-cache";
 import type { LonLat } from "../src/foundation/geo";
 import { haversine, offset, tileAt, toMercator } from "../src/foundation/geo";
 import type { AreaLevels } from "../src/model/level-regimes";

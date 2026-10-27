@@ -6,7 +6,7 @@ import type { TileInputs, UkcTileChanges } from "./api/ukc-tile-changes";
 import type { PluginConfig } from "./config";
 import type { RequestQueue } from "./route-service";
 import { queryUkc } from "./engine/query";
-import type { UkcTileCache } from "./engine/ukc-tile-geometry";
+import type { UkcTileCache } from "./engine/ukc-tile-cache";
 import type { UkcRect, UkcTileInput } from "./engine/ukc-tiles";
 import { ukcTileWithRange } from "./engine/ukc-tiles";
 import type { AreaLevels } from "./model/level-regimes";
@@ -105,9 +105,40 @@ export function ukcTileReply(z: number, x: number, y: number, deps: QueryService
   if (z < UKC_MIN_ZOOM) {
     return { status: 200, contentType: MVT_TYPE, body: encodeMvt("ukc", []) };
   }
-  // One feature per class, and per class raised by a nearby cell's chart position or flags.
+  return drawnReply(z, x, y, vessel, deps);
+}
+
+/** The tile at the water level where it is, recorded in the change list. */
+function drawnReply(
+  z: number,
+  x: number,
+  y: number,
+  vessel: VesselModel,
+  deps: QueryServiceDeps
+): TileReply {
+  const t = tileInput(vessel, deps);
+  deps.tileChanges?.observe(t.inputs);
+  const inside = t.inputs.beyond?.within(z, x, y) ?? true;
+  const input = inside || !t.beyond ? t.inside : t.beyond;
+  const { store } = t.inputs;
+  // The bytes last encoded, when the input is one they were drawn at (and the cache has
+  // seen no change to the index or the cells since): the same bytes, for the same range.
+  const kept = deps.tileCache?.drawnTile(store, z, x, y, input);
+  if (kept) {
+    deps.tileChanges?.serve(z, x, y, kept.range, inside);
+    return { status: 200, contentType: MVT_TYPE, body: kept.body, memo: kept };
+  }
+  const { rects, range } = ukcTileWithRange(store, z, x, y, MVT_EXTENT, input, deps.tileCache);
+  deps.tileChanges?.serve(z, x, y, range, inside);
+  const body = encodeTile(rects);
+  const memo = deps.tileCache?.keepDrawn(store, z, x, y, input, range, body);
+  return { status: 200, contentType: MVT_TYPE, body, ...(memo && { memo }) };
+}
+
+/** One feature per class, and per class raised by a nearby cell's chart position or flags. */
+function encodeTile(rects: UkcRect[]): Uint8Array {
   const byClass = new Map<string, [number, number][][]>();
-  for (const r of drawTile(z, x, y, vessel, deps)) {
+  for (const r of rects) {
     const key = r.reach ? `${r.class}|reach` : r.class;
     const rings = byClass.get(key) ?? [];
     rings.push([
@@ -126,31 +157,7 @@ export function ukcTileReply(z: number, x: number, y: number, deps: QueryService
     }
     return { rings, properties };
   });
-  return { status: 200, contentType: MVT_TYPE, body: encodeMvt("ukc", features) };
-}
-
-/** The tile's cells at the water level where the tile is, recorded in the change list. */
-function drawTile(
-  z: number,
-  x: number,
-  y: number,
-  vessel: VesselModel,
-  deps: QueryServiceDeps
-): UkcRect[] {
-  const t = tileInput(vessel, deps);
-  deps.tileChanges?.observe(t.inputs);
-  const inside = t.inputs.beyond?.within(z, x, y) ?? true;
-  const { rects, range } = ukcTileWithRange(
-    t.inputs.store,
-    z,
-    x,
-    y,
-    MVT_EXTENT,
-    inside || !t.beyond ? t.inside : t.beyond,
-    deps.tileCache
-  );
-  deps.tileChanges?.serve(z, x, y, range, inside);
-  return rects;
+  return encodeMvt("ukc", features);
 }
 
 /**

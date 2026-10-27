@@ -1,7 +1,7 @@
 import { Readable } from "stream";
-import { gunzipSync } from "zlib";
+import { gunzipSync, gzipSync } from "zlib";
 import type { Request, RequestHandler, Response } from "express";
-import type { ApiProvider } from "../../src/api/routes";
+import type { ApiProvider, TileReply } from "../../src/api/routes";
 import { registerRoutes } from "../../src/api/routes";
 import { fakeRouter } from "../helpers/plugin-harness";
 
@@ -141,46 +141,95 @@ describe("UKC tile headers", () => {
 });
 
 describe("UKC tile compression", () => {
-  // Signal K's compression() leaves this type alone, so the route gzips it itself.
+  // Signal K's compression() leaves this type alone, so the route gzips it itself, off the event loop.
   const tile = new Uint8Array(4000).map((_, i) => i % 7);
-  const api = {
-    ukcTile: (z: number) => ({
-      status: 200,
-      contentType: "application/vnd.mapbox-vector-tile",
-      body: z === 11 ? new Uint8Array([1, 2, 3]) : tile
-    })
-  } as unknown as ApiProvider;
-  const fetchTile = (z: string, acceptEncoding?: string) => {
-    const { router, call } = fakeRouter();
-    registerRoutes(router as never, api);
-    const headers: Record<string, string> =
-      acceptEncoding === undefined ? {} : { "accept-encoding": acceptEncoding };
-    return call("/v1/tiles/ukc/:z/:x/:file", {}, { z, x: "0", file: "0.pbf" }, headers);
-  };
+  const small = new Uint8Array([1, 2, 3]);
+  const TYPE = "application/vnd.mapbox-vector-tile";
 
-  test("a client that accepts gzip gets the tile gzipped, and caches key on the encoding", () => {
-    const r = fetchTile("16", "gzip, deflate, br");
+  /** The route's reply to one tile request, once it is sent. */
+  const fetchReply = (reply: TileReply, acceptEncoding?: string) => {
+    const api = { ukcTile: () => reply } as unknown as ApiProvider;
+    let handler: RequestHandler | undefined;
+    const add = (p: string, h: RequestHandler) => {
+      if (p === "/v1/tiles/ukc/:z/:x/:file") {
+        handler = h;
+      }
+    };
+    registerRoutes({ get: add, post: add, delete: add }, api);
+    return new Promise<{ headers: Record<string, string>; type?: string; body: Buffer }>(
+      (resolve) => {
+        const headers: Record<string, string> = {};
+        let type: string | undefined;
+        const res = {
+          setHeader: (k: string, v: string) => (headers[k.toLowerCase()] = v),
+          status: () => res,
+          type: (t: string) => {
+            type = t;
+            return res;
+          },
+          send: (body: Buffer) => resolve({ headers, type, body })
+        };
+        const reqHeaders: Record<string, string> =
+          acceptEncoding === undefined ? {} : { "accept-encoding": acceptEncoding };
+        handler?.(
+          { params: { z: "16", x: "0", file: "0.pbf" }, headers: reqHeaders } as unknown as Request,
+          res as unknown as Response,
+          () => undefined
+        );
+      }
+    );
+  };
+  const fetchTile = (z: string, acceptEncoding?: string) =>
+    fetchReply({ status: 200, contentType: TYPE, body: z === "11" ? small : tile }, acceptEncoding);
+
+  test("a client that accepts gzip gets the tile gzipped, and caches key on the encoding", async () => {
+    const r = await fetchTile("16", "gzip, deflate, br");
     expect(r.headers["content-encoding"]).toBe("gzip");
     expect(r.headers.vary).toBe("Accept-Encoding");
-    expect(r.type).toBe("application/vnd.mapbox-vector-tile");
-    const sent = r.body as Buffer;
-    expect(sent.length).toBeLessThan(tile.length / 4);
-    expect(new Uint8Array(gunzipSync(sent))).toEqual(tile);
+    expect(r.type).toBe(TYPE);
+    expect(r.body.length).toBeLessThan(tile.length / 4);
+    expect(new Uint8Array(gunzipSync(r.body))).toEqual(tile);
+  });
+
+  test("the gzip is the bytes gzipSync gives, and the reply's memo keeps it for the next request", async () => {
+    const memo: { gzip?: Uint8Array } = {};
+    const reply: TileReply = { status: 200, contentType: TYPE, body: tile, memo };
+    const first = await fetchReply(reply, "gzip");
+    expect(first.body.equals(gzipSync(tile))).toBe(true);
+    expect(memo.gzip).toEqual(new Uint8Array(first.body));
+    // A kept gzip is sent as it is: the stand-in below could not come from compressing.
+    memo.gzip = new Uint8Array([9, 9, 9]);
+    const second = await fetchReply(reply, "gzip");
+    expect(second.headers["content-encoding"]).toBe("gzip");
+    expect(new Uint8Array(second.body)).toEqual(new Uint8Array([9, 9, 9]));
+    const plain = await fetchReply(reply, "identity");
+    expect(plain.headers["content-encoding"]).toBeUndefined();
+    expect(new Uint8Array(plain.body)).toEqual(tile);
+  });
+
+  test("the event loop runs while a tile is compressed", async () => {
+    const big = new Uint8Array(2 * 2 ** 20).map((_, i) => (i * 2654435761) >>> 24);
+    let ticks = 0;
+    const timer = setInterval(() => ticks++, 1);
+    const r = await fetchReply({ status: 200, contentType: TYPE, body: big }, "gzip");
+    clearInterval(timer);
+    expect(new Uint8Array(gunzipSync(r.body))).toEqual(big);
+    expect(ticks).toBeGreaterThan(0);
   });
 
   test.each([[undefined], ["identity"], ["gzip;q=0, *"], ["br"]])(
     "Accept-Encoding %p gets the tile as it is",
-    (accept) => {
-      const r = fetchTile("16", accept);
+    async (accept) => {
+      const r = await fetchTile("16", accept);
       expect(r.headers["content-encoding"]).toBeUndefined();
       expect(r.headers.vary).toBe("Accept-Encoding");
-      expect(new Uint8Array(r.body as Buffer)).toEqual(tile);
+      expect(new Uint8Array(r.body)).toEqual(tile);
     }
   );
 
-  test("a tile below 1 kB is not worth compressing", () => {
-    const r = fetchTile("11", "gzip");
+  test("a tile below 1 kB is not worth compressing", async () => {
+    const r = await fetchTile("11", "gzip");
     expect(r.headers["content-encoding"]).toBeUndefined();
-    expect(new Uint8Array(r.body as Buffer)).toEqual(new Uint8Array([1, 2, 3]));
+    expect(new Uint8Array(r.body)).toEqual(small);
   });
 });
