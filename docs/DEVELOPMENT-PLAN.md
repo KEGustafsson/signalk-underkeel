@@ -585,9 +585,16 @@ class drawn over it` still tests.
   every answer equals that of the store held whole. `loadChartIndex(dir, { whole: true })` joins every block back into the store's own columns, in file order, for code that reads a store's levels directly (an incremental rebuild copying unchanged roots). A store's `loadRevision` counts block
   loads and drops, and `blocksChangedSince(revision)` names the block tiles, for caches of
   answers that may have read a stand-in.
-- `cells.json` (provenance) and `hazards.json` (exact hazard geometry) sit beside it. The
-  hazard R-tree is rebuilt from `hazards.json` at load, packed in typed arrays (about 47 bytes
-  per hazard).
+- `cells.json` (provenance) and `hazards.bin` (the named hazards) sit beside it.
+  `hazards.bin` is a JSON header line with the body's length and CRC-32, then the body: point
+  hazards as Hilbert-ordered columns (Float64 position, feature index, depth, an id into
+  shared fields) with the boxes of a tree over runs of 16 points, and lines and areas as JSON.
+  A depth is stored in whole centimetres only when that gives it back exactly, otherwise as
+  Float64, so a named hazard's depth equals the tile depth it set. The index is used on views
+  of the file's bytes: the 427 385 Waddenzee hazards take an 11 MB file, load in 11–15 ms and
+  hold 11 MB, where `hazards.json` took 89 MB, 1.6–2.4 s and 211 MB (x86). A short, long or
+  changed file fails the load and the index is rebuilt; an index saved with `hazards.json` is
+  rebuilt too.
 - `reach.json` holds each cell's reach: the box of its features, its widest burn radius and
   its coverage box. A build told which cells changed (the WFS cell after each download) copies
   from the saved index every z10 root that none of them reaches, by the saved reach or the new

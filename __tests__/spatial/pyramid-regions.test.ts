@@ -42,7 +42,7 @@ describe("pyramid built region by region", () => {
     const regions = await buildByRegion(job, inProcess);
     expect(serializePyramid(regions.pyramid).equals(serializePyramid(whole.pyramid))).toBe(true);
     expect(regions.catalogue).toEqual(whole.catalogue);
-    expect(regions.hazards.features).toEqual(whole.hazards.features);
+    expect(regions.hazards.features()).toEqual(whole.hazards.features());
   });
 
   test("each root reads only the cells that reach it", () => {

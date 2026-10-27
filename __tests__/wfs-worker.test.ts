@@ -5,6 +5,7 @@ import path from "path";
 import type { IndexParts } from "../src/spatial/build-worker";
 import { runBuild } from "../src/spatial/build-worker";
 import { loadChartIndex, saveChartIndex, stageChartIndex } from "../src/spatial/chart-index";
+import { serializeHazards } from "../src/spatial/hazard-file";
 import { pyramidColumns } from "../src/spatial/store";
 import { Worker } from "worker_threads";
 import { workerBuilder, workerHeapLimitMb } from "../src/wfs-service";
@@ -100,7 +101,7 @@ describe("only the main thread writes the index directory", () => {
     const staging = stageChartIndex(indexDir, fixture);
     const posted: IndexParts = {
       catalogue: fixture.catalogue,
-      hazards: fixture.hazards.features,
+      hazards: serializeHazards(fixture.hazards),
       minZoom: fixture.pyramid.minZoom,
       leafZoom: fixture.pyramid.leafZoom,
       cols: pyramidColumns(fixture.pyramid),

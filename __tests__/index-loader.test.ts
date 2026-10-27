@@ -216,7 +216,7 @@ describe("a saved index that cannot be read", () => {
   test.each([
     ["an empty cells.json", () => fs.truncateSync(indexFile("cells.json"), 0)],
     ["a half-written pyramid.bin", () => halve("pyramid.bin")],
-    ["a half-written hazards.json", () => halve("hazards.json")],
+    ["a half-written hazards.bin", () => halve("hazards.bin")],
     [
       "an empty cells.json and pyramid.bin",
       () => ["cells.json", "pyramid.bin"].forEach((f) => fs.truncateSync(indexFile(f), 0))
@@ -272,7 +272,7 @@ describe("a saved index too large to load on the event loop", () => {
     const sync = loadChartIndex(p.read);
     const read = await loadChartIndexAsync(p.read);
     expect(read.catalogue).toEqual(sync.catalogue);
-    expect(read.hazards.features).toEqual(sync.hazards.features);
+    expect(read.hazards.features()).toEqual(sync.hazards.features());
     expect(read.pyramid.count).toBe(sync.pyramid.count);
     for (let z = sync.pyramid.minZoom; z <= sync.pyramid.leafZoom; z++) {
       for (const [x, y, i] of sync.pyramid.entries(z)) {
@@ -337,7 +337,7 @@ describe("a saved index built in a box around the vessel", () => {
 
   test.each([
     ["an empty cells.json", () => fs.truncateSync(path.join(indexDir(), "cells.json"), 0)],
-    ["an empty hazards.json", () => fs.truncateSync(path.join(indexDir(), "hazards.json"), 0)]
+    ["an empty hazards.bin", () => fs.truncateSync(path.join(indexDir(), "hazards.bin"), 0)]
   ])("with %s is rebuilt in its saved box, not from every cell", (_what, tear) => {
     tear();
     const p = planIndex(config(), dataDir);
@@ -382,7 +382,7 @@ describe("a saved index built in a box around the vessel", () => {
     fs.writeFileSync(file, Buffer.concat([old, buf.subarray(nl + 1)]));
     const p = planIndex(config(), dataDir);
     expect("build" in p && p.notes).toEqual([
-      "rebuilt the index: the saved one is from an older pyramid version or its header is damaged"
+      "rebuilt the index: the saved one is from an older index version or its header is damaged"
     ]);
     expect(readBox(indexDir())?.leafZoom).toBe(16);
   });

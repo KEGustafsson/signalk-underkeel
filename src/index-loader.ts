@@ -415,7 +415,7 @@ function missingReason(cfg: PluginConfig, indexDir: string, stale: boolean): str
 /**
  * `stale`: the saved index holds WFS depths and the source is off. `mismatch`, why the saved
  * index is not used as is: none is saved, that, the source is on and the saved index lacks
- * its cell, or the index was built under an older pyramid version.
+ * its cell, or the index was saved by an older version of its pyramid or hazard file.
  */
 function savedMatches(
   cfg: PluginConfig,
@@ -431,7 +431,7 @@ function savedMatches(
       : stale
         ? "the saved one holds Traficom WFS depths and that source is off"
         : !savedIndexIsCurrent(indexDir)
-          ? "the saved one is from an older pyramid version or its header is damaged"
+          ? "the saved one is from an older index version or its header is damaged"
           : extraDirs.length > 0 && !holds
             ? "the saved one lacks the Traficom WFS cell"
             : undefined;

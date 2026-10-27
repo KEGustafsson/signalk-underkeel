@@ -22,7 +22,7 @@ export { SCHEMA } from "./config-schema";
  */
 
 export interface PluginConfig {
-  /** Directory holding a built index (cells.json, pyramid.bin, hazards.json). */
+  /** Directory holding a built index (cells.json, pyramid.bin, hazards.bin). */
   indexDir?: string;
   /** Directory of S-57 cells (`.000` with updates, also in sub-folders) to build from. */
   cellsDir?: string;
