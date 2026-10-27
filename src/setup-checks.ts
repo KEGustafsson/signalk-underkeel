@@ -1,6 +1,8 @@
 import type { ServerAPI } from "@signalk/server-api";
+import os from "os";
 import type { PluginState } from "./api-wiring";
 import type { SchemaHints } from "./config-schema";
+import { usableMemory } from "./foundation/memory";
 import { publicReason } from "./foundation/public-text";
 import type { DatumUse } from "./ingest/datum";
 import { isLowWaterDatum } from "./model/water-level";
@@ -21,6 +23,20 @@ export interface DatumFact {
   fmi: boolean;
 }
 
+/** The machine the server runs on, for the hardware advice. */
+export interface HostFacts {
+  /** RAM this process may use (a container's limit when it sets one), bytes. */
+  memory: number;
+  /** RAM free for new allocations now, bytes. */
+  available: number;
+  cpus: number;
+}
+
+export function hostFacts(): HostFacts {
+  const memory = usableMemory();
+  return { memory, available: Math.min(os.freemem(), memory), cpus: os.availableParallelism() };
+}
+
 export interface SetupFacts {
   /** `design.*` from Signal K, metres. */
   signalk: { draft?: number; length?: number; beam?: number };
@@ -31,12 +47,13 @@ export interface SetupFacts {
   /** Cells in the loaded index; 0 without one. */
   cells: number;
   datums: DatumFact[];
+  host: HostFacts;
 }
 
 export type CheckLevel = "ok" | "warn" | "todo";
 
 export interface SetupCheck {
-  id: "charts" | "draft" | "waterLevel" | "lookahead";
+  id: "charts" | "draft" | "waterLevel" | "lookahead" | "hardware";
   level: CheckLevel;
   text: string;
 }
@@ -54,7 +71,11 @@ function datumFacts(uses: readonly DatumUse[]): DatumFact[] {
   }));
 }
 
-export function setupFacts(app: Pick<ServerAPI, "getSelfPath">, s: PluginState): SetupFacts {
+export function setupFacts(
+  app: Pick<ServerAPI, "getSelfPath">,
+  s: PluginState,
+  host: HostFacts = hostFacts()
+): SetupFacts {
   const value = (path: string) => selfValue(app, path);
   const draft = value("design.draft") as { maximum?: unknown } | undefined;
   const length = value("design.length") as { overall?: unknown } | undefined;
@@ -70,7 +91,8 @@ export function setupFacts(app: Pick<ServerAPI, "getSelfPath">, s: PluginState):
     depthPaths,
     tide: typeof value("environment.tide.heightNow") === "number",
     cells: s.load?.index?.catalogue.cells.length ?? 0,
-    datums: datumFacts(s.monitor?.waterLevelStatus().datums ?? [])
+    datums: datumFacts(s.monitor?.waterLevelStatus().datums ?? []),
+    host
   };
 }
 
@@ -136,12 +158,67 @@ function lookaheadCheck(s: PluginState): SetupCheck {
   return { id: "lookahead", level, text: `Look-ahead: ${last.state}${reason}` };
 }
 
+const GIB = 2 ** 30;
+/** At or below this the machine is a 1 GB class one: a Raspberry Pi 3 or a Cerbo GX. */
+export const SMALL_MEMORY = 1.5 * GIB;
+/** At or above this a whole small chart set can be indexed at once. */
+export const LARGE_MEMORY = 4 * GIB;
+/** Less free than this and a chart index build may not fit. */
+export const LOW_AVAILABLE = 256 * 2 ** 20;
+
+const gb = (bytes: number): string => (bytes / GIB).toFixed(1);
+
+/** Advice on the index settings for a 1 GB class machine; empty elsewhere. */
+function smallMachineAdvice(s: PluginState, memory: number): string[] {
+  if (memory > SMALL_MEMORY) {
+    return [];
+  }
+  const advice: string[] = [];
+  // With the Traficom WFS on, its own radius sets the box.
+  if (s.config?.boxRadiusKm === 0 && !s.config.wfs) {
+    advice.push(
+      "Index box 0 indexes every cell, which may not fit in this memory: set Index box around the vessel to 10 km unless the chart set is small"
+    );
+  }
+  if ((s.config?.leafZoom ?? 0) >= 20) {
+    advice.push("consider Index leaf zoom 19, which needs fewer tiles");
+  }
+  return advice;
+}
+
+/**
+ * The machine's RAM and CPUs, with advice on the index settings. It never changes a
+ * setting: the user decides, and a smaller box or a coarser leaf zoom only warns more.
+ */
+function hardwareCheck(s: PluginState, facts: SetupFacts): SetupCheck {
+  const { memory, available, cpus } = facts.host;
+  const head = `Hardware: ${cpus} CPU${cpus === 1 ? "" : "s"}, ${gb(memory)} GB RAM, ${gb(available)} GB free`;
+  const advice = smallMachineAdvice(s, memory);
+  if (available < LOW_AVAILABLE) {
+    const mb = Math.round(available / 2 ** 20);
+    advice.push(
+      `only ${mb} MB free: a chart index build may run out of memory; stop plugins you do not use`
+    );
+  }
+  if (advice.length > 0) {
+    return { id: "hardware", level: "warn", text: `${head}. ${advice.join("; ")}.` };
+  }
+  const box = s.config?.boxRadiusKm ?? 0;
+  if (memory >= LARGE_MEMORY && box > 0 && !s.config?.wfs) {
+    const tip =
+      "With a small chart set, Index box 0 indexes it once and avoids rebuilds as the vessel moves.";
+    return { id: "hardware", level: "ok", text: `${head}. ${tip}` };
+  }
+  return { id: "hardware", level: "ok", text: head };
+}
+
 export function setupChecks(s: PluginState, facts: SetupFacts): SetupCheck[] {
   return [
     chartsCheck(s, facts),
     draftCheck(s, facts),
     waterLevelCheck(s, facts),
-    lookaheadCheck(s)
+    lookaheadCheck(s),
+    hardwareCheck(s, facts)
   ];
 }
 

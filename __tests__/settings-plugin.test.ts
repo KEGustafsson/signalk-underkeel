@@ -73,7 +73,13 @@ describe("settings in the running plugin", () => {
         cells: 2,
         depthPaths: ["belowTransducer"]
       });
-      expect(s.checks.map((c) => c.id)).toEqual(["charts", "draft", "waterLevel", "lookahead"]);
+      expect(s.checks.map((c) => c.id)).toEqual([
+        "charts",
+        "draft",
+        "waterLevel",
+        "lookahead",
+        "hardware"
+      ]);
       expect(s.checks[1]).toEqual({
         id: "draft",
         level: "ok",
