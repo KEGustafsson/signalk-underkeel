@@ -20,6 +20,8 @@ export interface CellSource {
   dir: string;
   ref: number;
   layers?: EncLayers;
+  /** The cell's content (`sourceIdentity`), for the digests of a box build's tiles. */
+  id?: string;
 }
 
 /** The heap a parse of `c` holds, estimated from the bytes it is parsed from. */

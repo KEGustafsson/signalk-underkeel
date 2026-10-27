@@ -8,7 +8,7 @@ import type { BuildJob } from "../../src/spatial/build-worker";
 import { runBuild } from "../../src/spatial/build-worker";
 import { REACH_FILE } from "../../src/spatial/build-reuse";
 import { commitChartIndex, loadChartIndex } from "../../src/spatial/chart-index";
-import { rootColumns } from "../../src/spatial/pyramid-build";
+import { rootColumns } from "../../src/spatial/tile-reuse";
 import { pyramidColumns } from "../../src/spatial/store";
 import { spreadCells } from "../helpers/shifted-cells";
 
