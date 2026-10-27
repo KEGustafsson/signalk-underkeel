@@ -5,6 +5,7 @@ import type { PluginState } from "./api-wiring";
 import type { PluginConfig, WfsConfig } from "./config";
 import type { Rect } from "./foundation/geo";
 import { toMercator } from "./foundation/geo";
+import { cellCacheDir } from "./index-loader";
 import type { Bbox } from "./ingest/wfs";
 import { WFS_SOURCE } from "./ingest/wfs";
 import { startLivechart } from "./livechart-service";
@@ -108,6 +109,7 @@ export function startWfs(
     config,
     dir,
     indexDir: w.config.indexDir ?? path.join(w.app.getDataDirPath(), "index"),
+    cacheDir: cellCacheDir(w.app.getDataDirPath()),
     leafZoom: w.config.leafZoom,
     cellsDir: w.config.cellsDir,
     inBox: w.config.boxRadiusKm > 0,
