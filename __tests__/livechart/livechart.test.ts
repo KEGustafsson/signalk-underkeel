@@ -48,6 +48,8 @@ function raw(depth: number, at: number, extra: Partial<RawSounding> = {}): RawSo
     hdop: 0.9,
     methodQuality: "GNSS Fix",
     roll: 0,
+    // Passes under way: the CSB log keeps every sounding (csb-thin.test.ts covers the thinning).
+    sog: 3,
     waterLevel: WL,
     ...extra
   };

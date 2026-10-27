@@ -10,6 +10,7 @@ import { Hysteresis } from "./engine/hysteresis";
 import { escapeFor, evaluateLookahead } from "./engine/lookahead";
 import { notificationFor, notificationKey, NOTIFY_REFRESH_MS } from "./engine/notify";
 import type { LonLat } from "./foundation/geo";
+import type { RawSounding } from "./livechart/soundings";
 import { PATHS, publishable } from "./foundation/state";
 import type { FetchLike } from "./model/fmi";
 import type { IntegrityResult } from "./model/integrity";
@@ -27,7 +28,7 @@ import { ChangeNotifier, groundingNotification, integrityUpdate } from "./notifi
 import { asNumber, INPUT_PATHS, NavInputs, sampleTime, selfValue } from "./nav-inputs";
 import type { Deferral } from "./escape-search";
 import { EscapeSearch } from "./escape-search";
-import { StatusReporter, ValuePublisher } from "./tick-publisher";
+import { LIVENESS, StatusReporter, statusReason, ValuePublisher } from "./tick-publisher";
 
 /**
  * Signal K wiring for the look-ahead: keeps the latest navigation inputs,
@@ -57,9 +58,6 @@ export const SYSTEM_CLOCK: Clock = {
   defer: (fn) => setImmediate(fn),
   cancel: (h) => clearImmediate(h as NodeJS.Immediate)
 };
-
-/** Sent every tick: the state shows the plugin is alive, and clients fetch on a new rev. */
-const EVERY_TICK = new Set<string>([PATHS.state, PATHS.envelopeRev]);
 
 export class Monitor {
   private readonly inputs = new NavInputs();
@@ -108,7 +106,7 @@ export class Monitor {
       this.grounding = new GroundingDetector(config.groundingDetector);
     }
     this.hysteresis = new Hysteresis(config.lookahead);
-    this.values = new ValuePublisher(app, pluginId, EVERY_TICK);
+    this.values = new ValuePublisher(app, pluginId, LIVENESS);
     this.status = new StatusReporter(app);
     this.escape = new EscapeSearch(
       clock,
@@ -261,13 +259,7 @@ export class Monitor {
   }
 
   /** The navigation inputs that are still fresh, for living-chart samples. */
-  fresh(): {
-    position?: LonLat;
-    heading?: number;
-    hdop?: number;
-    methodQuality?: string;
-    roll?: number;
-  } {
+  fresh(): Pick<RawSounding, "position" | "heading" | "hdop" | "methodQuality" | "roll" | "sog"> {
     const now = this.clock.now();
     const limit = this.config.lookahead.staleAfter * 1000;
     const f = <T>(x: Sample<T> | undefined): T | undefined =>
@@ -278,7 +270,8 @@ export class Monitor {
       heading: f(n.heading),
       hdop: f(n.hdop),
       methodQuality: f(n.methodQuality),
-      roll: f(n.roll)
+      roll: f(n.roll),
+      sog: f(n.sog)
     };
   }
 
@@ -409,25 +402,28 @@ export class Monitor {
   }
 
   private report(r: LookaheadResult): void {
+    const now = this.clock.now();
     if (!this.index) {
       // The engine is off either way; a pending reason is a status, any other an error.
       const reason = this.indexReason ?? "no chart index loaded";
       if (PENDING_REASONS.has(reason)) {
-        this.status.status(reason);
+        this.status.status(reason, now);
       } else {
-        this.status.error(reason);
+        this.status.error(reason, now);
       }
       return;
     }
     const notes = [
-      r.state === "normal" ? "Monitoring: normal" : `Monitoring: ${r.state} — ${r.reason}`,
+      r.state === "normal"
+        ? "Monitoring: normal"
+        : `Monitoring: ${r.state} — ${statusReason(r.reason)}`,
       // With an index, the reason only says why it was rebuilt or what was skipped.
       this.indexReason,
       this.escape.skipped,
       // The WFS licence allows non-navigational use only; say so while it is on.
       this.config.wfs && r.reason !== WFS_NOTICE ? WFS_NOTICE : undefined
     ];
-    this.status.status(notes.filter((n) => n !== undefined).join(" · "));
+    this.status.status(notes.filter((n) => n !== undefined).join(" · "), now);
   }
 
   /**

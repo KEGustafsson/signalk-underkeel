@@ -231,13 +231,15 @@ const LOOKAHEAD = {
     distance: {
       type: "number",
       title: "Look-ahead distance (m)",
-      description: FOLLOWS_STYLE,
+      description: `${FOLLOWS_STYLE} Each second the look-ahead scores footprints out to this distance, at most 400; a longer one costs more CPU per tick, which counts on a Raspberry Pi 3 or Cerbo GX.`,
       minimum: 0,
       maximum: LOOKAHEAD_LIMITS.distance
     },
     minHorizon: {
       type: "number",
       title: "Minimum horizon (s)",
+      description:
+        "The look-ahead reaches at least this far in time at speed. A longer horizon scores more footprints each second, at most 400, so more CPU per tick.",
       default: 60,
       minimum: 0,
       maximum: LOOKAHEAD_LIMITS.minHorizon
@@ -276,8 +278,22 @@ const CHART_INDEX = {
     description:
       "Where the depth index built from the cells is kept between restarts. Default: <plugin data dir>/index"
   },
-  rebuildIndex: { type: "boolean", title: "Rebuild index at start", default: false },
-  leafZoom: { type: "number", title: "Index leaf zoom", default: 20, minimum: 14, maximum: 22 },
+  rebuildIndex: {
+    type: "boolean",
+    title: "Rebuild index at start",
+    description:
+      "Builds the index again at every start, with the CPU, memory and flash writes of a first build. The index is rebuilt anyway when a cell changes; leave this off.",
+    default: false
+  },
+  leafZoom: {
+    type: "number",
+    title: "Index leaf zoom",
+    description:
+      "Size of the smallest index tile: about 19 m across at 20 and 38 m at 19 at 60° N. Each step down needs fewer tiles, so less memory, disk and build time. A tile keeps the shallowest depth inside it, so a coarser index warns more, never less. Consider 19 on a 1 GB Raspberry Pi 3 or Cerbo GX. Changing it rebuilds the index.",
+    default: 20,
+    minimum: 14,
+    maximum: 22
+  },
   boxRadiusKm: {
     type: "number",
     title: "Index box around the vessel (km)",

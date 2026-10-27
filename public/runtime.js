@@ -19,10 +19,9 @@ async function setOverlay(overlayId, source, data) {
   }
 }
 
-/** The plugin publishes every second; a path silent this long is no longer current. */
-const STALE_MS = 10000;
+/** The state and envelopeRev come at least every 5 s; one not seen for UKC.STALE_MS is not current. */
 const FETCH_TIMEOUT_MS = 8000;
-const fresh = UKC.freshness(STALE_MS);
+const fresh = UKC.freshness(UKC.STALE_MS);
 /** Handlers per Signal K path, called only with values the plugin published recently. */
 const onPath = {};
 const isDown = (state) => state === "off" || state === "unknown";

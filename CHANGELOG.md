@@ -2,6 +2,35 @@
 
 All notable changes to signalk-underkeel are documented here.
 
+## [Unreleased]
+
+### Changed
+
+- `navigation.underKeel.state` and `.envelopeRev` are sent when they change and at least every
+  5 s, no longer every second: at the dock a history logger stored two points a second. Over
+  240 stationary ticks the plugin sent 626 values in 242 deltas, now 242 in 74. A display should
+  read a `state` not received for 15 s as unknown; the status widget does, and only a fresh
+  `state` keeps it current, and the chart runtime withdraws the envelope 15 s after the last
+  `envelopeRev` (it was 10 s). Notifications are unchanged.
+- The plugin status no longer carries the seconds to shoal (`GET /status` still has them), and a
+  status that differs only in its numbers is set at most every 30 s: through the warn zone of a
+  240 s approach the status was set 67 times, now 5.
+- Below 1 kn, or without a fresh SOG, the living chart's CSB export log (`soundings.ndjson`)
+  keeps one sounding per cell per minute. A 10 Hz sounder on a moored boat rewrote the
+  40 000-line file every 33 minutes. Every accepted sounding still updates its cell, so
+  discrepancies are found as before. `GET /status` counts the left-out soundings as
+  `livechart.csbThinned`.
+
+### Added
+
+- A hardware line in the setup check: CPUs, RAM and free RAM, with advice on 1 GB machines
+  (keep the index box, consider leaf zoom 19), on little free RAM, and on large ones (box 0
+  avoids rebuilds for a small chart set). It changes no setting.
+- Descriptions on **Index leaf zoom**, **Rebuild index at start**, **Look-ahead distance** and
+  **Minimum horizon** saying what each costs in CPU or memory.
+- README: what to check before installing on Victron Venus OS, whose Node.js version the
+  repository does not record.
+
 ## [0.2.1] - 2026-10-27
 
 ### Fixed

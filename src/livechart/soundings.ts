@@ -32,6 +32,8 @@ export interface RawSounding {
   methodQuality?: string;
   /** Roll, radians. */
   roll?: number;
+  /** Speed over ground, m/s, when fresh; only the CSB export log reads it. */
+  sog?: number;
   waterLevel: WaterLevel;
 }
 

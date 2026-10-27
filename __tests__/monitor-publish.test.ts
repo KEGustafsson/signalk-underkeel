@@ -3,7 +3,14 @@ import { parseConfig } from "../src/config";
 import { SLOW_TICK_MS } from "../src/escape-search";
 import type { Clock } from "../src/monitor";
 import { Monitor } from "../src/monitor";
-import { KEEP_ALIVE_MS, ValuePublisher } from "../src/tick-publisher";
+import {
+  KEEP_ALIVE_MS,
+  LIVENESS_KEEP_ALIVE_MS,
+  STATUS_REFRESH_MS,
+  StatusReporter,
+  statusReason,
+  ValuePublisher
+} from "../src/tick-publisher";
 import { NOTIFY_REFRESH_MS } from "../src/engine/notify";
 import { BUILDING_REASON, LOADING_REASON, WFS_WAITING_REASON } from "../src/index-loader";
 import type { ChartIndex } from "../src/spatial/chart-index";
@@ -100,7 +107,7 @@ const approach = (seconds: number, at: number) =>
   navDelta(ROCK[0] - (3 * seconds) / M_PER_DEG_LON, ROCK[1], 3, at);
 
 describe("tick publishing", () => {
-  test("unchanged values wait for the keep-alive; state and envelope rev go every tick", () => {
+  test("unchanged values wait for the keep-alive; state and envelope rev for a shorter one", () => {
     const r = rig(false);
     const still = navDelta(22.003, 60.0125, 0, T0);
     r.deltas.length = 0;
@@ -108,16 +115,56 @@ describe("tick publishing", () => {
     for (let i = 0; i < ticks; i++) {
       r.tick({ ...still, updates: still.updates.map((u) => ({ ...u, timestamp: undefined })) });
     }
-    expect(sent(r.deltas, "navigation.underKeel.state")).toBe(ticks);
-    expect(sent(r.deltas, "navigation.underKeel.envelopeRev")).toBe(ticks);
+    const liveness = Math.floor(ticks / (LIVENESS_KEEP_ALIVE_MS / 1000));
+    expect(sent(r.deltas, "navigation.underKeel.state")).toBe(liveness);
+    expect(sent(r.deltas, "navigation.underKeel.envelopeRev")).toBe(liveness);
     // Once when it first changes, then at the keep-alive; the level was sent at start.
     expect(sent(r.deltas, "navigation.underKeel.clearance")).toBe(2);
     expect(sent(r.deltas, "navigation.underKeel.waterLevel")).toBe(1);
   });
 
+  test("at the dock the state and rev go out every 5 s, never with a longer gap", () => {
+    const r = rig(false);
+    const still = navDelta(22.003, 60.0125, 0, T0);
+    const sentAt: Record<string, number[]> = { state: [], rev: [] };
+    for (let i = 0; i < 240; i++) {
+      r.deltas.length = 0;
+      r.tick({ ...still, updates: still.updates.map((u) => ({ ...u, timestamp: undefined })) });
+      if (sent(r.deltas, "navigation.underKeel.state") > 0) {
+        sentAt.state?.push(i);
+      }
+      if (sent(r.deltas, "navigation.underKeel.envelopeRev") > 0) {
+        sentAt.rev?.push(i);
+      }
+    }
+    const step = LIVENESS_KEEP_ALIVE_MS / 1000;
+    for (const at of Object.values(sentAt)) {
+      expect(at.length).toBe(240 / step);
+      expect(Math.max(...at.slice(1).map((t, i) => t - (at[i] ?? 0)))).toBe(step);
+    }
+  });
+
+  test("a new state goes out on the tick it changes, between keep-alives", () => {
+    const r = rig(false);
+    const published: { state: string; sent: unknown }[] = [];
+    let previous = r.monitor.last.state;
+    for (let t = 150; t > 25; t--) {
+      r.deltas.length = 0;
+      r.tick(approach(t, T0 + (151 - t) * 1000));
+      const state = r.monitor.last.state;
+      if (state !== previous) {
+        const v = values(r.deltas).find((x) => x.path === "navigation.underKeel.state");
+        published.push({ state, sent: v?.value });
+      }
+      previous = state;
+    }
+    expect(published.length).toBeGreaterThanOrEqual(2);
+    expect(published.filter((p) => p.sent !== p.state)).toEqual([]);
+  });
+
   test("each value's keep-alive counts from when that value was last sent", () => {
     const out: Partial<Delta>[] = [];
-    const p = new ValuePublisher({ handleMessage: (_id, d) => out.push(d) }, "p", new Set());
+    const p = new ValuePublisher({ handleMessage: (_id, d) => out.push(d) }, "p");
     p.send(
       [
         { path: "a", value: 1 },
@@ -158,6 +205,51 @@ describe("tick publishing", () => {
     r.tick(approach(40, T0 + 6000));
     r.tick(approach(39, T0 + 7000));
     expect(r.statuses.at(-1)).toMatch(/^Monitoring: (warn|alarm)/);
+  });
+
+  test("the status carries no countdown: through the warn zone it changes with the state", () => {
+    const r = rig(false);
+    const states: string[] = [];
+    r.statuses.length = 0;
+    for (let t = 150; t > 25; t--) {
+      r.tick(approach(t, T0 + (151 - t) * 1000));
+      if (states.at(-1) !== r.monitor.last.state) {
+        states.push(r.monitor.last.state);
+      }
+    }
+    expect(states).toEqual(expect.arrayContaining(["warn", "alarm"]));
+    // One status per state entered, at most: the seconds to shoal no longer change it.
+    expect(r.statuses.length).toBeLessThanOrEqual(states.length);
+    expect(r.statuses.filter((s) => / in \d+ s/.test(s))).toEqual([]);
+    expect(r.statuses).toContain("Monitoring: warn — shoal ahead");
+    // /status keeps the countdown.
+    expect(r.monitor.last.reason).toMatch(/ in \d+ s|under the vessel/);
+  });
+
+  test("statusReason drops only the countdown", () => {
+    expect(statusReason("shoal ahead in 42 s")).toBe("shoal ahead");
+    expect(statusReason("no chart coverage ahead in 7 s")).toBe("no chart coverage ahead");
+    expect(statusReason("HDOP 6.0; shoal risk ahead in 90 s")).toBe("HDOP 6.0; shoal risk ahead");
+    expect(statusReason("shoal under the vessel")).toBe("shoal under the vessel");
+  });
+
+  test("a status whose numbers drift is set again at most every 30 s; new words at once", () => {
+    const set: string[] = [];
+    const errors: string[] = [];
+    const s = new StatusReporter({
+      setPluginStatus: (m) => set.push(m),
+      setPluginError: (m) => errors.push(m)
+    });
+    for (let i = 0; i < 60; i++) {
+      s.status(`Monitoring: warn — HDOP ${(6 + i / 10).toFixed(1)}`, i * 1000);
+    }
+    expect(set.length).toBe(Math.ceil(60_000 / STATUS_REFRESH_MS));
+    s.status("Monitoring: alarm — HDOP 9.9", 60_500);
+    expect(set.at(-1)).toBe("Monitoring: alarm — HDOP 9.9");
+    // An error after a status, and the same error again, is set once.
+    s.error("cannot read index", 61_000);
+    s.error("cannot read index", 62_000);
+    expect(errors).toEqual(["cannot read index"]);
   });
 
   test("the countdown is refreshed at most every 30 s; a new state goes out at once", () => {
