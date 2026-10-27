@@ -40,11 +40,15 @@ export function forkLimited(script: string, heapMb: number, group = false): Limi
     windowsHide: true
   });
   let tail = "";
+  // Seen as it arrives: on macOS V8's native stack trace pushes the line out of the tail.
+  let outOfMemory = false;
   child.stderr?.setEncoding("utf8");
   child.stderr?.on("data", (s: string) => {
-    tail = (tail + s).slice(-STDERR_TAIL);
+    const joined = tail + s;
+    outOfMemory ||= OUT_OF_MEMORY.test(joined);
+    tail = joined.slice(-STDERR_TAIL);
   });
-  return { child, stderr: () => tail.trim(), outOfMemory: () => OUT_OF_MEMORY.test(tail) };
+  return { child, stderr: () => tail.trim(), outOfMemory: () => outOfMemory };
 }
 
 /**
