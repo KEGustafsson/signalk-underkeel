@@ -1,5 +1,5 @@
 import type { Rect, XY } from "../foundation/geo";
-import type { Geom } from "../foundation/geometry";
+import type { Geom, MeasuredGeom } from "../foundation/geometry";
 import { probabilityBelowZero } from "../foundation/stats";
 import type { ChartReach } from "./pyramid";
 import type { NodeStore, NodeValues, StandIn } from "./node-store";
@@ -14,6 +14,8 @@ import type { ShadowOf } from "./survey-shadow";
 export interface Walk {
   store: NodeStore;
   geom: Geom;
+  /** `geom` laid out for its distances to tiles. */
+  measured: MeasuredGeom;
   /** Bounds of `geom`, and a point of it when it has one. */
   bounds: Rect;
   /** `bounds` grown by `buffer`: every tile within the buffer of the footprint lies in it. */
@@ -52,6 +54,8 @@ export interface Walk {
   stopWhenCertain: boolean;
   /** With chart position: the survey shadow around the footprint, searched on first use. */
   shadow?: ShadowOf;
+  /** The source of the last P counted beyond the buffer (`pyramid.ts` reachRisk). */
+  reachSource: ChartReach["source"];
 }
 
 /** Folds a tile's depth, σ, flags and cell into the result. */
