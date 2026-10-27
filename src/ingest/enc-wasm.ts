@@ -16,7 +16,8 @@ import { POSITION_LAYER, S57_LAYERS } from "./s57-geojson";
  * quality. NOAA US5FL61M (1.5 MB, 10 000 features used) reads in
  * 1.7 s at 270 MB RSS; one `ogrinfo -json -features` of every layer took
  * 4.4 s at 510 MB (x86). The WebAssembly memory is never returned to the
- * system, so run this in a worker thread that exits after the build.
+ * system, so the index build runs this in a child process that exits once the cells are read
+ * (`enc-read-process.ts`).
  */
 
 const S57_OPTIONS = [
@@ -159,7 +160,8 @@ const text = (bytes: Uint8Array): string =>
 const parse = (bytes: Uint8Array): GeoJsonFeatureCollection =>
   JSON.parse(text(bytes)) as GeoJsonFeatureCollection;
 
-function shared(parts: Map<string, Uint8Array>): EncLayers {
+/** A cell's layers copied into one SharedArrayBuffer. */
+export function sharedLayers(parts: Map<string, Uint8Array>): EncLayers {
   let size = 0;
   parts.forEach((b) => (size += b.byteLength));
   const buffer = new SharedArrayBuffer(size);
@@ -176,6 +178,11 @@ function shared(parts: Map<string, Uint8Array>): EncLayers {
 
 /** The layers the index reads from a `.000` cell and its updates, each read once. */
 export async function readEncLayers(file: string): Promise<EncLayers> {
+  return sharedLayers(await readEncParts(file));
+}
+
+/** `readEncLayers` with each layer in a buffer of its own, as a message carries them. */
+export async function readEncParts(file: string): Promise<Map<string, Uint8Array>> {
   const g = await gdalJs();
   const read = await serial(async () => {
     const stamp = encStamp(file);
@@ -216,7 +223,7 @@ export async function readEncLayers(file: string): Promise<EncLayers> {
     }
   }
   parts.set(POSITION_LAYER, Buffer.from(JSON.stringify(positionLayer(primitives))));
-  return shared(parts);
+  return parts;
 }
 
 /**

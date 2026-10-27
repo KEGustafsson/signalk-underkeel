@@ -1,11 +1,12 @@
+import childProcess from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
 import * as durable from "../src/foundation/durable-file";
 import type { BuildJob } from "../src/spatial/build-worker";
-import { runBuild } from "../src/spatial/build-worker";
+import { builtReply, HELD_WHOLE_NODES, runBuild } from "../src/spatial/build-worker";
 import { readCellDirectory } from "../src/ingest/cell-reader";
-import { buildChartIndex, commitChartIndex, loadChartIndex } from "../src/spatial/chart-index";
+import { buildChartIndex, loadChartIndex } from "../src/spatial/chart-index";
 import type { IndexBuilder } from "../src/wfs-service";
 import underkeel = require("../src/index");
 import { CELLS, FIXTURES } from "./helpers/fixture-index";
@@ -13,15 +14,15 @@ import { fakeApp, fakeClock, T0 } from "./helpers/plugin-harness";
 import { spreadCells } from "./helpers/shifted-cells";
 
 /**
- * The off-loop index build behind the Traficom WFS box (plan §4.2, §6).
- * The worker entry runs in-process with a stubbed worker_threads; the real
- * thread needs the compiled lib/, which `npm run build` makes.
+ * The off-loop index build behind the Traficom WFS box (plan §4.2, §6). The build runs in a
+ * child process from the compiled lib/, which `npm run build` makes; its parts run in-process.
  */
 
 const LIB_BUILDER = path.resolve(__dirname, "..", "lib", "wfs-service.js");
 const LIB_WORKER = path.resolve(__dirname, "..", "lib", "spatial", "build-worker.js");
 const LIB_STORE = path.resolve(__dirname, "..", "lib", "spatial", "store.js");
 const built = fs.existsSync(LIB_BUILDER) && fs.existsSync(LIB_WORKER);
+const S57 = path.resolve(__dirname, "..", "fixtures", "s57", "FI5RAW01.000");
 
 let dir: string;
 beforeEach(() => {
@@ -33,46 +34,23 @@ function job(dirs = [path.join(FIXTURES, "FI5SYNTH")]): BuildJob {
   return { dirs, leafZoom: 16, indexDir: path.join(dir, "index") };
 }
 
-/** Runs the worker entry in-process and resolves with what it posted once it has. */
-async function runWorkerEntry(data: BuildJob): Promise<unknown[]> {
-  const messages: unknown[] = [];
-  jest.isolateModules(() => {
-    jest.doMock("worker_threads", () => ({
-      parentPort: { postMessage: (m: unknown) => messages.push(m) },
-      workerData: { ...data, threads: 1 }
-    }));
-    require("../src/spatial/build-worker");
-  });
-  jest.dontMock("worker_threads");
-  for (let i = 0; i < 100 && messages.length === 0; i++) {
-    await new Promise((r) => setTimeout(r, 10));
-  }
-  return messages;
-}
-
-describe("index build worker entry", () => {
-  test("builds and stages the index, leaving the index directory to the main thread", async () => {
-    const j = job();
-    const messages = await runWorkerEntry(j);
-    expect(messages).toEqual([
-      {
-        ok: true,
-        staging: expect.any(String),
-        index: expect.objectContaining({
-          minZoom: 10,
-          leafZoom: 16,
-          roots: { built: 1, copied: 0 }
-        })
-      }
-    ]);
-    expect(fs.existsSync(j.indexDir)).toBe(false);
-    commitChartIndex(j.indexDir, (messages[0] as { staging: string }).staging);
-    expect(loadChartIndex(j.indexDir).catalogue.cells.map((c) => c.name)).toEqual(["FI5SYNTH"]);
+describe("build process reply", () => {
+  test("posts the index for a pyramid the main thread holds whole", async () => {
+    const r = await runBuild({ ...job(), threads: 1 });
+    expect(builtReply(r)).toEqual({ ok: true, staging: r.staging, index: r.index });
+    expect(fs.existsSync(job().indexDir)).toBe(false);
   });
 
-  test("reports a failed build as a message instead of throwing", async () => {
-    const messages = await runWorkerEntry(job([path.join(dir, "missing")]));
-    expect(messages).toEqual([{ ok: false, error: expect.any(String) }]);
+  test("leaves the index out above HELD_WHOLE_NODES, for the main thread to read the files", async () => {
+    const r = await runBuild({ ...job(), threads: 1 });
+    const big = {
+      ...r.index,
+      cols: { ...r.index.cols, dMin: new Float64Array(HELD_WHOLE_NODES + 1) }
+    };
+    expect(builtReply({ staging: r.staging, index: big })).toEqual({
+      ok: true,
+      staging: r.staging
+    });
   });
 });
 
@@ -101,14 +79,14 @@ describe("workerBuilder (compiled lib/)", () => {
     return ((await import(LIB_BUILDER)) as { workerBuilder: IndexBuilder }).workerBuilder;
   }
 
-  test("indexes the cells in a worker thread and loads the result", async () => {
+  test("indexes the cells in a child process and loads the result", async () => {
     const j = job();
     const index = await (await builder())(j, new AbortController().signal);
     expect(index.catalogue.cells.map((c) => c.name)).toEqual(["FI5SYNTH"]);
     expect(fs.existsSync(path.join(j.indexDir, "pyramid.bin"))).toBe(true);
   });
 
-  test("hands the index over from the worker without reading the saved files", async () => {
+  test("hands the index over from the build process without reading the saved files", async () => {
     const j = job();
     const read = jest.spyOn(fs, "readFileSync");
     try {
@@ -126,32 +104,61 @@ describe("workerBuilder (compiled lib/)", () => {
     }
   });
 
-  test("rejects with the worker's error when the build fails", async () => {
+  test("builds in a child process the index an in-process build makes, S-57 cells read in a reader process", async () => {
+    const j = job([S57, path.join(FIXTURES, "FI5SYNTH")]);
+    const index = await (await builder())(j, new AbortController().signal);
+    const { staging } = await runBuild({ ...j, indexDir: path.join(dir, "inline"), threads: 1 });
+    for (const file of ["pyramid.bin", "hazards.bin", "cells.json", "reach.json"]) {
+      expect(
+        fs
+          .readFileSync(path.join(j.indexDir, file))
+          .equals(fs.readFileSync(path.join(staging, file)))
+      ).toBe(true);
+    }
+    const inline = loadChartIndex(staging);
+    const { serializePyramid } = (await import(LIB_STORE)) as {
+      serializePyramid: (s: unknown) => Buffer;
+    };
+    expect(serializePyramid(index.pyramid).equals(serializePyramid(inline.pyramid))).toBe(true);
+    expect(index.hazards.features()).toEqual(inline.hazards.features());
+    expect(index.catalogue).toEqual(inline.catalogue);
+    expect(index.catalogue.cells.map((c) => c.name)).toEqual(["FI5RAW01", "FI5SYNTH"]);
+  });
+
+  test("rejects with the build process's error when the build fails", async () => {
     const build = await builder();
     await expect(
       build(job([path.join(dir, "missing")]), new AbortController().signal)
     ).rejects.toThrow(/missing/);
   });
 
-  test("rejects when aborted before the worker starts", async () => {
+  test("rejects when aborted before the build process starts", async () => {
     const ctl = new AbortController();
     const pending = (await builder())(job(), ctl.signal);
     ctl.abort();
     await expect(pending).rejects.toThrow("aborted");
   });
 
-  test("terminates a running worker on abort and leaves no index", async () => {
-    const ctl = new AbortController();
-    const j = job();
-    const pending = (await builder())(j, ctl.signal);
-    // One turn of the event loop lets the builder get past its wait and start the thread.
-    await new Promise((resolve) => setImmediate(resolve));
-    ctl.abort();
-    await expect(pending).rejects.toThrow("aborted");
-    expect(fs.readdirSync(dir)).toEqual([]);
+  test("kills a running build process on abort and leaves no index", async () => {
+    const fork = jest.spyOn(childProcess, "fork");
+    try {
+      const ctl = new AbortController();
+      const j = job([S57, path.join(FIXTURES, "FI5SYNTH")]);
+      const pending = (await builder())(j, ctl.signal);
+      // One turn of the event loop lets the builder get past its wait and start the process.
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(fork).toHaveBeenCalledTimes(1);
+      ctl.abort();
+      await expect(pending).rejects.toThrow("aborted");
+      const child = fork.mock.results[0]?.value as childProcess.ChildProcess;
+      expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
+      expect(fs.readdirSync(dir)).toEqual([]);
+    } finally {
+      fork.mockRestore();
+    }
   });
 
-  test("stop() during the build at start terminates the worker and leaves no index or staging", async () => {
+  test("stop() during the build at start kills the build process and leaves no index or staging", async () => {
     const build = await builder();
     const dataDir = path.join(dir, "data");
     fs.mkdirSync(dataDir);
@@ -161,7 +168,7 @@ describe("workerBuilder (compiled lib/)", () => {
     plugin.start(options, () => undefined);
     await new Promise((resolve) => setImmediate(resolve));
     plugin.stop();
-    // A build with an aborted signal settles only once every aborted worker has exited.
+    // A build with an aborted signal settles only once every aborted build process has exited.
     const done = new AbortController();
     done.abort();
     await expect(build(job(), done.signal)).rejects.toThrow("aborted");

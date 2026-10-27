@@ -1,17 +1,18 @@
-import { parentPort, workerData } from "worker_threads";
+import { isMainThread } from "worker_threads";
 import { cellSources, cellsMissing, savedCatalogue, sourceKeys } from "./index-loader";
+import type { EncReader } from "./ingest/enc-read-process";
 import type { Bbox, WfsDownload, WfsFetch } from "./ingest/wfs";
 import { downloadWfsCell } from "./ingest/wfs";
 import { readBox } from "./spatial/build-box";
 import type { BuildJob, BuildReply, IndexParts } from "./spatial/build-worker";
-import { runBuild, transfers } from "./spatial/build-worker";
+import { builtReply, runBuild, serveBuildProcess } from "./spatial/build-worker";
 
 /**
  * A Traficom WFS refresh off the event loop: download, parse, clip and write the cell, then
  * build and stage the index. The 10 km box is a 22 MB page whose parse and clip blocked the
- * main thread for 0.3–0.5 s on x86 and took 100 MB of its heap. The staging directory, the
- * index with its pyramid columns moved, and the feature counts come back; the main thread
- * commits the index.
+ * main thread for 0.3–0.5 s on x86 and took 100 MB of its heap. It runs in a child process
+ * (`runBuildProcess`); the staging directory, the index when the main thread holds it whole,
+ * and the feature counts come back, and the main thread commits the index.
  */
 
 export interface WfsJob {
@@ -70,19 +71,23 @@ export function refreshBuild(job: WfsJob, cells: string[]): BuildJob {
 export async function runWfsJob(
   job: WfsJob,
   fetch: WfsFetch,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  reader?: EncReader
 ): Promise<{ staging: string; index: IndexParts; features: WfsCounts }> {
   const cells = refreshCells(job);
   const features = job.download
     ? await downloadWfsCell({ ...job.download, now: new Date(job.download.now), fetch, signal })
     : NO_FEATURES;
-  return { ...(await runBuild(refreshBuild(job, cells))), features };
+  return { ...(await runBuild(refreshBuild(job, cells), reader)), features };
 }
 
-if (parentPort && workerData) {
-  const port = parentPort;
-  runWfsJob(workerData as WfsJob, globalThis.fetch).then(
-    (r) => port.postMessage({ ok: true, ...r } satisfies WfsReply, transfers(r.index.cols)),
-    (err: Error) => port.postMessage({ ok: false, error: err.message } satisfies WfsReply)
+if (isMainThread && require.main === module && process.send) {
+  serveBuildProcess(
+    (job: WfsJob, reader) =>
+      runWfsJob(job, globalThis.fetch, undefined, reader).then((r): WfsReply => ({
+        ...builtReply(r),
+        features: r.features
+      })),
+    (job) => job.build.heapMb
   );
 }

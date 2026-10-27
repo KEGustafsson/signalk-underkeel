@@ -1,8 +1,8 @@
 import fs from "fs";
+import { forkLimited, killGroup } from "./foundation/child-process";
 import { usableMemory } from "./foundation/memory";
 import path from "path";
 import { MAX_POSITION_BUFFER } from "./engine/fan";
-import { Worker } from "worker_threads";
 import type { LonLat } from "./foundation/geo";
 import { haversine, project } from "./foundation/geo";
 import type { WfsConfig } from "./config";
@@ -21,7 +21,7 @@ import { NO_FEATURES, refreshBuild, refreshCells } from "./wfs-worker";
 import type { Clock } from "./monitor";
 import { readBox } from "./spatial/build-box";
 import { MAX_CHART_BUFFER } from "./spatial/chart-position";
-import type { BuildJob, BuildReply, IndexParts } from "./spatial/build-worker";
+import type { BuildJob, BuildReply } from "./spatial/build-worker";
 import { adoptIndex } from "./spatial/build-worker";
 import { readsSettled } from "./spatial/block-reader";
 import type { ChartIndex } from "./spatial/chart-index";
@@ -49,11 +49,11 @@ export type WfsRefresher = (
   signal: AbortSignal
 ) => Promise<{ index: ChartIndex; features: WfsCounts }>;
 
-/** Settles once every worker aborted so far has exited. */
+/** Settles once every build process aborted so far has exited. */
 let exits: Promise<unknown> = Promise.resolve();
 
 /**
- * Old-generation heap for a build worker: a quarter of the RAM, 256 MB to 2 GB. The ENC pair
+ * Old-generation heap for a build process: a quarter of the RAM, 256 MB to 2 GB. The ENC pair
  * plus a 10 km WFS box at leaf zoom 20 builds in under 96 MB; without a limit an oversized
  * build grows until the kernel ends the whole Signal K server on a 1 GB Pi 3 or Cerbo GX.
  */
@@ -62,13 +62,14 @@ export function workerHeapLimitMb(totalBytes = usableMemory()): number {
 }
 
 /**
- * Runs `script` in a worker thread with `data` and resolves with its staged reply. The
- * worker only stages; the caller moves the result into place on the main thread, and never
- * for an aborted run, so a worker still exiting cannot replace an index saved after it was
- * aborted. An aborted worker runs until terminate() resolves, so its run rejects only then
- * and the next run starts only then; stop() itself returns at once.
+ * Runs the compiled `script` in a child process (`forkLimited`) with `data` and resolves with
+ * its staged reply. The child only stages; the caller moves the result into place on the main
+ * thread, and never for an aborted run, so a build still exiting cannot replace an index
+ * saved after it was aborted. An abort kills the child and its S-57 reader (`killGroup`); its
+ * run rejects once the child has exited and its staging is removed, and the next run starts
+ * only then. stop() itself returns at once. A child that ends without a reply fails the run.
  */
-export async function runWorker<R extends BuildReply>(
+export async function runBuildProcess<R extends BuildReply>(
   script: string,
   data: object,
   signal: AbortSignal,
@@ -80,28 +81,27 @@ export async function runWorker<R extends BuildReply>(
     throw new Error("aborted");
   }
   return new Promise((resolve, reject) => {
-    const worker = new Worker(script, {
-      workerData: data,
-      resourceLimits: { maxOldGenerationSizeMb: heapMb }
-    });
-    const thread = worker.threadId;
+    const { child, stderr, outOfMemory } = forkLimited(script, heapMb, true);
+    const { pid } = child;
+    let replied = false;
+    // Staging the child left half-written: once it has exited nothing else writes there.
+    const cleanup = (): void => {
+      if (indexDir !== undefined && pid !== undefined) {
+        removeStaging(indexDir, (p) => p === pid);
+      }
+    };
+    const closed = new Promise<void>((r) => child.once("close", () => r()));
     const abort = (): void => {
-      // A worker stopped mid-write leaves its staging behind; once it has
-      // exited nothing else writes there.
-      const exit = worker
-        .terminate()
-        .catch(() => undefined)
-        .then(() =>
-          indexDir === undefined
-            ? undefined
-            : removeStaging(indexDir, (p, t) => p === process.pid && t === thread)
-        )
-        .catch(() => undefined);
+      killGroup(child);
+      const exit = closed.then(cleanup).catch(() => undefined);
       exits = Promise.all([exits, exit]);
       void exit.then(() => reject(new Error("aborted")));
     };
     signal.addEventListener("abort", abort, { once: true });
-    worker.once("message", (m: R) => {
+    child.on("message", (m: R) => {
+      replied = true;
+      // It exits once the reply is sent; killed, it cannot linger holding its memory.
+      child.kill("SIGKILL");
       if (signal.aborted) {
         if (m.staging) {
           fs.rmSync(m.staging, { recursive: true, force: true });
@@ -109,39 +109,47 @@ export async function runWorker<R extends BuildReply>(
         return;
       }
       signal.removeEventListener("abort", abort);
-      void worker.terminate();
       if (m.ok && m.staging) {
         resolve(m as R & { staging: string });
       } else {
         reject(new Error(m.error ?? "index build failed"));
       }
     });
-    worker.once("error", (err: Error & { code?: string }) => {
-      if (signal.aborted) {
+    // A child that could not start, or ended without a reply: the index in use stays.
+    child.once("error", (err) => {
+      if (!signal.aborted && !replied) {
+        signal.removeEventListener("abort", abort);
+        killGroup(child);
+        reject(err);
+      }
+    });
+    child.once("close", (code: number | null, end: string | null) => {
+      if (signal.aborted || replied) {
         return;
       }
       signal.removeEventListener("abort", abort);
+      try {
+        cleanup();
+      } catch {
+        // Left for the next start's recovery, which removes staging of exited processes.
+      }
+      const how = code === null ? `signal ${end ?? "?"}` : `code ${code}`;
+      const tail = stderr() === "" ? "" : `: ${stderr()}`;
       reject(
-        err.code === "ERR_WORKER_OUT_OF_MEMORY"
-          ? new Error(`index build stopped at the ${heapMb} MB worker heap limit: ${err.message}`)
-          : err
+        new Error(
+          outOfMemory()
+            ? `index build stopped at the ${heapMb} MB heap limit${tail}`
+            : `index build process exited with ${how} without a result${tail}`
+        )
       );
     });
-    // Settles a worker that ended without a message or an error; after either it is a no-op.
-    worker.once("exit", (code: number) => {
-      if (!signal.aborted) {
-        signal.removeEventListener("abort", abort);
-        reject(new Error(`index build worker exited with code ${code} without a result`));
-      }
-    });
+    // A child that cannot take the job exits, and "close" reports it.
+    child.send(data, () => undefined);
   });
 }
 
-/** Up to this many nodes (about 38 MB of columns) the posted index is kept as posted. */
-const HELD_WHOLE_NODES = 1_000_000;
-
 /**
- * Moves a staged index into `indexDir` and adopts the one the worker posted, unless the run
+ * Moves a staged index into `indexDir` and adopts the one the build posted, unless the run
  * was aborted meanwhile. Reading the saved index back blocked the event loop for 52–61 ms
  * with the Nauvo pair and a 10 km WFS box at leaf zoom 20, 258–292 ms with 32 cells (x86).
  */
@@ -156,12 +164,11 @@ async function commit(
     throw new Error("aborted");
   }
   commitChartIndex(indexDir, m.staging);
-  const posted = adoptIndex(m.index as IndexParts);
-  if (posted.pyramid.count <= HELD_WHOLE_NODES) {
-    return posted;
+  if (m.index) {
+    return adoptIndex(m.index);
   }
-  // Held whole, a coast-wide index would stay resident after every refresh; the committed
-  // file is read block by block instead, its blocks verified off the event loop.
+  // A pyramid above HELD_WHOLE_NODES is not posted: the committed file is read block by block,
+  // its blocks verified off the event loop.
   const index = await loadChartIndexAsync(indexDir);
   if (signal.aborted) {
     throw new Error("aborted");
@@ -169,23 +176,23 @@ async function commit(
   return index;
 }
 
-/** Builds in a worker thread from the compiled `lib/spatial/build-worker.js`. */
+/** Builds in a child process from the compiled `lib/spatial/build-worker.js`. */
 export const workerBuilder: IndexBuilder = async (job, signal) => {
   const script = path.join(__dirname, "spatial", "build-worker.js");
   const heapMb = workerHeapLimitMb();
-  const m = await runWorker(script, { ...job, heapMb }, signal, job.indexDir, heapMb);
+  const m = await runBuildProcess(script, { ...job, heapMb }, signal, job.indexDir, heapMb);
   return await commit(job.indexDir, m, signal);
 };
 
 /**
- * The whole refresh in a worker thread from the compiled `lib/wfs-worker.js`, which fetches
+ * The whole refresh in a child process from the compiled `lib/wfs-worker.js`, which fetches
  * with its own global fetch.
  */
 export const workerRefresher: WfsRefresher = async (job, signal) => {
   const script = path.join(__dirname, "wfs-worker.js");
   const heapMb = workerHeapLimitMb();
   const data: WfsJob = { ...job, build: { ...job.build, heapMb } };
-  const m = await runWorker<WfsReply>(script, data, signal, job.build.indexDir, heapMb);
+  const m = await runBuildProcess<WfsReply>(script, data, signal, job.build.indexDir, heapMb);
   const features = m.features ?? NO_FEATURES;
   return { index: await commit(job.build.indexDir, m, signal), features };
 };

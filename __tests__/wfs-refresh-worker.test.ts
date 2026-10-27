@@ -6,6 +6,7 @@ import path from "path";
 import { cellSources, sourceKeys } from "../src/index-loader";
 import { boxAround } from "../src/ingest/wfs";
 import { readBox } from "../src/spatial/build-box";
+import { builtReply } from "../src/spatial/build-worker";
 import { commitChartIndex, loadChartIndex } from "../src/spatial/chart-index";
 import type { WfsRefresher } from "../src/wfs-service";
 import type { WfsJob, WfsReply } from "../src/wfs-worker";
@@ -13,8 +14,8 @@ import { CELLS, FIXTURES } from "./helpers/fixture-index";
 
 /**
  * The Traficom WFS refresh worker (PL4): download, parse, clip, cell write and index build
- * all off the main thread. The entry runs in-process with a stubbed worker_threads; the real
- * thread needs the compiled lib/, which `npm run build` makes. The WFS is a local HTTP server.
+ * all off the main thread. The job runs in-process; the child process needs the compiled lib/,
+ * which `npm run build` makes. The WFS is a local HTTP server.
  */
 
 const LIB_SERVICE = path.resolve(__dirname, "..", "lib", "wfs-service.js");
@@ -73,33 +74,21 @@ function job(url: string): WfsJob {
   };
 }
 
-describe("WFS refresh worker entry", () => {
+describe("WFS refresh job", () => {
   test("downloads the box, writes the cell and stages an index for the main thread", async () => {
     const wfs = await wfsServer(collection([AREA]));
     try {
       const j = job(wfs.url);
-      const messages: WfsReply[] = [];
-      jest.isolateModules(() => {
-        jest.doMock("worker_threads", () => ({
-          parentPort: { postMessage: (m: WfsReply) => messages.push(m) },
-          workerData: { ...j, build: { ...j.build, threads: 1 } }
-        }));
-        require("../src/wfs-worker");
+      const { runWfsJob } = await import("../src/wfs-worker");
+      const r = await runWfsJob({ ...j, build: { ...j.build, threads: 1 } }, globalThis.fetch);
+      expect({ ...builtReply(r), features: r.features } satisfies WfsReply).toEqual({
+        ok: true,
+        staging: expect.any(String),
+        index: expect.objectContaining({ leafZoom: 16 }),
+        features: { depthAreas: 1, dredgedAreas: 0, soundings: 0 }
       });
-      jest.dontMock("worker_threads");
-      for (let i = 0; i < 100 && messages.length === 0; i++) {
-        await new Promise((r) => setTimeout(r, 20));
-      }
-      expect(messages).toEqual([
-        {
-          ok: true,
-          staging: expect.any(String),
-          index: expect.objectContaining({ leafZoom: 16 }),
-          features: { depthAreas: 1, dredgedAreas: 0, soundings: 0 }
-        }
-      ]);
       expect(fs.existsSync(j.build.indexDir)).toBe(false);
-      commitChartIndex(j.build.indexDir, messages[0]?.staging as string);
+      commitChartIndex(j.build.indexDir, r.staging);
       expect(loadChartIndex(j.build.indexDir).catalogue.cells.map((c) => c.name)).toEqual([
         "FI5SYNTH",
         "FI1WFS01"

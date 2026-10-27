@@ -118,7 +118,7 @@ reports no coverage, never clear water; a radius under 2 km is raised to 2. Unti
 with the reason `waiting for the vessel position to build the chart box`. Set the box to 0 to
 index every cell.
 
-At the first start the plugin builds a chart index from the cells in a worker thread and saves
+At the first start the plugin builds a chart index from the cells in a child process and saves
 it under the plugin data directory, `~/.signalk/plugin-config-data/signalk-underkeel/index`
 unless **Chart index directory** says otherwise. Until the index is ready the engine is `off`
 with the reason `building chart index`. The 12 NOAA cells around Miami (6.8 MB of `.000` and
