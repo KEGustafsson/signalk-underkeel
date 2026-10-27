@@ -191,8 +191,8 @@ class Source {
   readonly iNear: number;
 
   constructor(g: TileGeometry, s: number) {
-    this.sigma = g.sourceSigma[s] as number;
-    this.scale = g.sourceScale[s] as number;
+    this.sigma = g.sigmas[g.sourceSigma[s] as number] as number;
+    this.scale = g.sourceScale;
     this.x0 = g.sourceRect[4 * s] as number;
     this.y0 = g.sourceRect[4 * s + 1] as number;
     this.x1 = g.sourceRect[4 * s + 2] as number;

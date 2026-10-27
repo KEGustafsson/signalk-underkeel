@@ -1615,8 +1615,14 @@ whose ring leaves that window is kept, which never lowers a slot.
 
 **UKC tile geometry cache.** The cells of a tile, its sources and the flag-reach slots of each
 unverified cell do not depend on the water level, draft or σ, so the tile route keeps them per tile in
-typed arrays (`UkcTileCache`, least recently used first out beyond 8 MiB) and a request only
-classes the tile's value kinds and draws. The cache holds for one `NodeStore`: another store
+typed arrays (`UkcTileCache`, least recently used first out beyond 24 MiB, about 120 z14 tiles)
+and a request only classes the tile's value kinds and draws. The columns are narrow: kinds and σ
+are 16-bit indexes (32-bit past 65 536 entries), the scale is one number per tile, and a source's
+edges are float32 rounded outward (west and north down, east and south up), so a slot is never
+further from a source than the chart gives and no class falls (invariant 2; a tie that float
+noise decided at a slot's edge may now read as the worse class). The encoded tile is kept as well
+(`DRAWN_CACHE_BYTES` = 4 MiB with its gzip, same invalidation), for any threshold in the range
+`ukcTileWithRange` returned when σ, the warn and alert levels and the fallback flag are equal. The cache holds for one `NodeStore`: another store
 (a handover or a WFS rebuild) empties it. Every write to `NodeStore.adjustments` bumps its
 `revision` in the same call; an entry whose revision is behind compares the living-chart
 cells in its tile with those it was walked with and is walked again when they differ, so a

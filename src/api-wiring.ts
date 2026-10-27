@@ -5,7 +5,7 @@ import { addAck, deleteAck, listAcks } from "./ack-service";
 import { ukcStyle } from "./api/manifest";
 import type { ApiProvider, ApiReply } from "./api/routes";
 import { UkcTileChanges } from "./api/ukc-tile-changes";
-import { UkcTileCache } from "./engine/ukc-tile-geometry";
+import { UkcTileCache } from "./engine/ukc-tile-cache";
 import type { PluginConfig } from "./config";
 import { parseConfig } from "./config";
 import type { EngineStatus } from "./foundation/state";

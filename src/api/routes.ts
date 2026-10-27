@@ -1,5 +1,5 @@
 import type { Request, RequestHandler, Response } from "express";
-import { gzipSync } from "zlib";
+import { gzip as gzipAsync } from "zlib";
 import type { Envelope } from "../engine/envelope";
 import { publicReason } from "../foundation/public-text";
 
@@ -15,6 +15,8 @@ export interface TileReply {
   status: number;
   contentType: string;
   body: Uint8Array | { errors: string[] };
+  /** Kept with the body for as long as it is: where the route leaves its gzip for the next reply. */
+  memo?: { gzip?: Uint8Array };
 }
 
 export interface ApiProvider {
@@ -200,14 +202,7 @@ export function registerRoutes(
     res.setHeader("Cache-Control", "no-cache");
     if (reply.body instanceof Uint8Array) {
       res.setHeader("Vary", "Accept-Encoding");
-      // Signal K's compression() skips this content type; it leaves an encoded body alone.
-      const gzip =
-        reply.body.length >= GZIP_MIN_BYTES && acceptsGzip(req.headers?.["accept-encoding"]);
-      if (gzip) {
-        res.setHeader("Content-Encoding", "gzip");
-      }
-      const body = gzip ? gzipSync(reply.body) : Buffer.from(reply.body);
-      res.status(reply.status).type(reply.contentType).send(body);
+      sendTile(res, reply, reply.body, acceptsGzip(req.headers?.["accept-encoding"]));
     } else {
       res.status(reply.status).json(publicBody(reply.status, reply.body));
     }
@@ -253,6 +248,39 @@ function registerSettings(router: Registrar, api: ApiProvider, log: (m: string) 
       .then((body) => send(res, api.saveSettings(body)))
       .catch((err: unknown) => fail(res, err, log));
   });
+}
+
+/**
+ * Sends a tile body, gzipped when the client takes it and the body is worth it.
+ * Signal K's compression() skips the tile content type and leaves an encoded body alone.
+ */
+function sendTile(res: Response, reply: TileReply, raw: Uint8Array, gzip: boolean): void {
+  const sendBody = (body: Uint8Array, encoded: boolean): void => {
+    if (encoded) {
+      res.setHeader("Content-Encoding", "gzip");
+    }
+    res
+      .status(reply.status)
+      .type(reply.contentType)
+      .send(Buffer.from(body.buffer, body.byteOffset, body.byteLength));
+  };
+  if (raw.length < GZIP_MIN_BYTES || !gzip) {
+    sendBody(raw, false);
+  } else if (reply.memo?.gzip) {
+    sendBody(reply.memo.gzip, true);
+  } else {
+    // Off the event loop: a tile of some kilobytes takes a millisecond or more on a Pi.
+    gzipAsync(raw, (err, packed) => {
+      if (err) {
+        sendBody(raw, false);
+        return;
+      }
+      if (reply.memo) {
+        reply.memo.gzip = packed;
+      }
+      sendBody(packed, true);
+    });
+  }
 }
 
 /** Smaller bodies gain less from gzip than its header costs; compression() uses the same. */
