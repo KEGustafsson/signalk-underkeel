@@ -227,7 +227,8 @@ signalk-underkeel/
   down to three folders deep under the cells directory (an exchange set's `ENC_ROOT` included),
   and six below a folder holding a `CATALOG.031` (Rijkswaterstaat's Inland ENC sets nest
   `ENC_ROOT/1R/7/<cell>/<cell>.000`), and writes
-  nothing beside them and no intermediate files; only the built index is saved. GDAL runs only
+  nothing beside them and no intermediate files; the built index and the cell cache below are
+  saved in the plugin's data. GDAL runs only
   in a short-lived child of the index build process (`src/ingest/enc-read-process.ts`): it
   reads each cell once per build and sends its layers as GeoJSON, one message per cell, which
   the build holds in one SharedArrayBuffer per cell that the region threads read without a
@@ -244,6 +245,21 @@ signalk-underkeel/
   it replaces needed `signalk-container` and an export step per cell. The 12
   NOAA cells around Miami (6.8 MB) build in 19 s at leaf zoom 18 on x86; reading US5FL61M
   (1.5 MB) takes 1.6 s of that.
+- Decision: the read layers and extents of each S-57 cell are kept between builds in
+  `<data dir>/cell-cache` (`src/ingest/cell-cache.ts`), never in the index directory, which a
+  commit replaces whole, and never beside the cells. An entry is filed under the cell's resolved
+  path, its files' hash above, the plugin's and gdal3.js's versions and the driver options and
+  layers read; a cell whose hash differs is read with GDAL again (invariant 3). Entries are
+  Brotli-compressed (quality 4; the 20 Waddenzee cells' 281 MB of GeoJSON as 34 MB), written
+  once per cell edition through an fsynced rename and carry a SHA-256 of themselves, so a torn
+  or damaged entry is read from the cell, not used. The cache keeps at most 512 MB, dropping
+  the entries a build does not use, written longest ago first, and writes nothing that would
+  leave less than 512 MB free; entries of cells no longer present go when a build opens it.
+  With every cell kept no reader process starts: the 10 km Waddenzee box built in 12–15 s
+  instead of 30–34 s (x86). Box selection reads each cell's extent from `extents.json` there
+  unless its files changed. A build parses each cell's layers once for the survey and keeps
+  up to a sixteenth of its heap of parsed cells for the regions, those used next soonest, so a
+  cell reaching several roots is not parsed for each.
 - Must run on a Raspberry Pi 4 as well as on the Jetson Orin. Budget: index RAM under 150 MB,
   look-ahead CPU under 5 % of one core.
 

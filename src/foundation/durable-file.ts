@@ -14,7 +14,7 @@ import path from "path";
  */
 export function writeFileDurable(
   file: string,
-  data: string,
+  data: string | Uint8Array,
   tmp = `${file}.tmp-${process.pid}`
 ): void {
   const fd = fs.openSync(tmp, "w");

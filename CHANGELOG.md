@@ -21,6 +21,12 @@ All notable changes to signalk-underkeel are documented here.
   discrepancies are found as before. `GET /status` counts the left-out soundings as
   `livechart.csbThinned`.
 
+- An index build keeps each S-57 cell's read layers and extent in `cell-cache` in the plugin
+  data directory (at most 512 MB) and reads with GDAL only the cells whose files changed. The
+  10 km Waddenzee chart box rebuilt in 12–15 s instead of 30–34 s, with no 300–370 MB reader
+  process; the whole 20-cell set in 78–90 s instead of 141 s on one thread (x86). A torn or
+  damaged entry is read from the cell again. The built index is byte for byte the same.
+
 ### Added
 
 - A hardware line in the setup check: CPUs, RAM and free RAM, with advice on 1 GB machines

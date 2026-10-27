@@ -140,7 +140,11 @@ with the reason `building chart index`. The 12 NOAA cells around Miami (6.8 MB o
 updates) build in 19 s at leaf zoom 18 on x86. Later starts load the saved index, 0.1 s for
 those cells, and rebuild it when a cell was added or removed, or a cell's `.000` or update files
 changed; `GET /status` names the cells that caused the rebuild. **Rebuild index at start**
-forces a rebuild on every start. A cell folder may be a symbolic link.
+forces a rebuild on every start. A cell folder may be a symbolic link. What the build read
+from each cell is kept, compressed, in `cell-cache` in the plugin data directory (at most 512 MB), so a
+chart box refresh reads again only the cells whose files changed: the 10 km Waddenzee box
+rebuilds in 12–15 s instead of 30–34 s on x86. Deleting the folder is safe; the cells are then
+read again.
 
 Folders of GeoJSON layers exported by `scripts/enc-to-geojson.sh` for earlier versions are no
 longer read: point **ENC cells directory** at the original `.000` cells instead. Such a folder

@@ -152,7 +152,32 @@ export type EncLayers = Record<string, Uint8Array>;
  * The cell's file stamp, kept with its layers. It is taken before GDAL opens
  * the cell, so an update added during the read leaves a stamp that differs.
  */
-const STAMP_LAYER = "_files";
+export const STAMP_LAYER = "_files";
+
+let readerId: string | undefined;
+
+/**
+ * What decides a cell's layers besides its files: the plugin's and gdal3.js's versions, the
+ * driver options and the layers read with their filters. The layer cache (`cell-cache.ts`)
+ * files a cell's layers under it, so an upgrade or a changed option reads every cell again.
+ */
+export function encReaderId(): string {
+  if (readerId === undefined) {
+    const version = (file: string): unknown =>
+      (JSON.parse(fs.readFileSync(file, "utf8")) as { version?: unknown }).version;
+    const gdalDir = path.dirname(require.resolve("gdal3.js/node.js"));
+    const id = {
+      plugin: version(path.join(__dirname, "..", "..", "package.json")),
+      gdal: version(path.join(gdalDir, "package.json")),
+      options: S57_OPTIONS,
+      layers: LAYERS,
+      stamp: STAMP_LAYER,
+      position: POSITION_LAYER
+    };
+    readerId = createHash("sha256").update(JSON.stringify(id)).digest("hex");
+  }
+  return readerId;
+}
 
 const text = (bytes: Uint8Array): string =>
   Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("utf8");

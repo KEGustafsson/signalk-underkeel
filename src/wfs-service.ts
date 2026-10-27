@@ -79,6 +79,8 @@ export interface WfsServiceDeps {
   /** `<data dir>/wfs`, or the ENC box's directory: holds box.json and any WFS cell. */
   dir: string;
   indexDir: string;
+  /** The cell cache the builds use (`BuildJob.cacheDir`); none when absent. */
+  cacheDir?: string;
   leafZoom: number;
   /**
    * The S-57 cells directory, scanned by the refresh off the event loop; its cells are built
@@ -424,6 +426,7 @@ export class WfsService {
             dirs: "url" in config ? [this.cellDir] : [],
             leafZoom: this.deps.leafZoom,
             indexDir: this.deps.indexDir,
+            ...(this.deps.cacheDir === undefined ? {} : { cacheDir: this.deps.cacheDir }),
             ...(inBox ? {} : { changed: [this.cellDir] })
           }
         },

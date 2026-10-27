@@ -10,7 +10,7 @@ import { boxAround } from "../src/ingest/wfs";
 import { boxCells, boxRect, readBox } from "../src/spatial/build-box";
 import { cellReach, DEFAULT_BUILD } from "../src/spatial/build-items";
 import type { BuildJob } from "../src/spatial/build-worker";
-import { buildByRegion, runBuild, runRegion } from "../src/spatial/build-worker";
+import { buildByRegion, runBuild, runRegions } from "../src/spatial/build-worker";
 import { commitChartIndex, loadChartIndex } from "../src/spatial/chart-index";
 import { FLAGS } from "../src/spatial/node-store";
 import type { NodeStore } from "../src/spatial/node-store";
@@ -51,7 +51,7 @@ function boxJob(centre: LonLat, radiusKm: number): BuildJob {
   };
 }
 
-const inline = (job: BuildJob) => buildByRegion(job, (j) => Promise.resolve(runRegion(j)));
+const inline = (job: BuildJob) => buildByRegion(job, (j) => Promise.resolve(runRegions(j)));
 
 /** The worker's job run in-process: stage, commit and load, as workerBuilder does. */
 const boxBuilder: IndexBuilder = async (job) => {
@@ -200,11 +200,18 @@ describe("plugin with the box around the vessel", () => {
     expect(h.statuses).toContain(BOX_WAITING_REASON);
     h.send(navDelta(ROCK[0], ROCK[1], 0, clock.now()));
     clock.advance(10_000);
-    await settle();
-    const status = call("/v1/status").body as {
+    type Status = {
       wfs: unknown;
-      chartBox: { box: { radiusKm: number; catzoc?: number } };
+      chartBox: { box: { radiusKm: number; catzoc?: number } | null };
       index: { cells: { name: string }[] };
+    };
+    // The build writes the cell cache off the event loop before it hands the index over.
+    for (let i = 0; i < 500 && !(call("/v1/status").body as Status).chartBox.box; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    await settle();
+    const status = call("/v1/status").body as Status & {
+      chartBox: { box: { radiusKm: number; catzoc?: number } };
     };
     expect(status.wfs).toBeNull();
     expect(status.chartBox.box.radiusKm).toBe(2);

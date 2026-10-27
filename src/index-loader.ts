@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import type { PluginConfig } from "./config";
+import { CACHE_DIR } from "./ingest/cell-cache";
 import type { CellInfo } from "./ingest/cells";
 import { parseCatalogue } from "./ingest/cells";
 import type { CellScan } from "./ingest/cell-source";
@@ -142,10 +143,27 @@ export function planIndex(
 ): IndexPlan {
   const indexDir = cfg.indexDir ?? path.join(dataDir, "index");
   try {
-    return plan(cfg, indexDir, extraDirs, syncLoadBytes);
+    return withCache(plan(cfg, indexDir, extraDirs, syncLoadBytes), cellCacheDir(dataDir));
   } catch (err) {
     return { load: failedLoad(indexDir, err) };
   }
+}
+
+/**
+ * The cell cache (`cell-cache.ts`) in the plugin's data directory, never in `indexDir`: a
+ * commit replaces the index directory whole.
+ */
+export const cellCacheDir = (dataDir: string): string => path.join(dataDir, CACHE_DIR);
+
+/** `p` with every build it can lead to using the cell cache in `cacheDir`. */
+function withCache(p: IndexPlan, cacheDir: string): IndexPlan {
+  if ("build" in p) {
+    return { ...p, build: { ...p.build, cacheDir } };
+  }
+  if ("read" in p) {
+    return { ...p, unreadable: (err) => withCache(p.unreadable(err), cacheDir) };
+  }
+  return p;
 }
 
 export const failedLoad = (indexDir: string, err: unknown): IndexLoad => ({
