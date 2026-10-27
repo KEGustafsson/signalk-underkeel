@@ -18,7 +18,8 @@ import {
 import type { Geom } from "../foundation/geometry";
 import {
   geomBounds,
-  geomRectDistance,
+  measuredRectDistance,
+  measureGeom,
   pointRectDistance,
   rectWithin,
   shiftGeom
@@ -28,7 +29,7 @@ import { EMPTY, FLAGS, NO_DATA } from "./node-store";
 import type { Walk } from "./walk";
 import { certain, foldFlags, REACH_FLAGS, riskAt, take, takeStandIn } from "./walk";
 import { chartReach, chartSigma, flagReach, MAX_CHART_SIGMA } from "./chart-position";
-import { flagsShadowed, shadedWeight, shadowFor } from "./survey-shadow";
+import { flagsShadowed, shadedRisk, shadedWeight, shadowFor } from "./survey-shadow";
 
 /**
  * `minDepthOver` (plan §4.3): the shallowest charted depth any part of a
@@ -189,7 +190,7 @@ function distanceTo(w: Walk, rect: Rect, reach: number): number {
       return d;
     }
   }
-  return geomRectDistance(w.geom, rect, reach);
+  return measuredRectDistance(w.measured, rect, reach);
 }
 
 /**
@@ -211,64 +212,40 @@ function flagsReach(w: Walk, i: number, ground: number): boolean {
   return ground <= flagReach(w.store.surveySigma(i)) && !flagsShadowed(w.shadow, ground);
 }
 
+/** What `reachRisk` returns for a node that places no depth by its chart position. */
+const NO_REACH = -1;
+
 /**
  * The weighted P a tile beyond the buffer adds, `ground` metres past it:
  * its survey depth's P times the chance its survey is off that far, or its
  * drawn depth's (land, depth areas) times the chance the drawing is. Exact
- * for a leaf, a bound for a split node.
+ * for a leaf, a bound for a split node; NO_REACH when it places no depth.
+ * The source that gave it is left in `w.reachSource`.
  */
-function reachRisk(
-  w: Walk,
-  i: number,
-  v: NodeValues,
-  ground: number,
-  bound: boolean
-): { risk: number; chart: Omit<ChartReach, "extent">; dMin: number } | undefined {
+function reachRisk(w: Walk, i: number, v: NodeValues, ground: number, bound: boolean): number {
   const survey = w.store.surveySigma(i);
   const topo = w.store.topoSigma(i);
   // The survey depth is never shallower than dMin, the least of every depth under the node,
   // but it is stored as a float32 rounded shallower and could read one ulp under dMin: a
   // tile just past the buffer would then read a higher P than within it.
   const bathy = Math.max(w.store.bathyDMinOf(i), v.dMin);
-  let best: { risk: number; chart: Omit<ChartReach, "extent">; dMin: number } | undefined;
+  let best = NO_REACH;
   // The shadow is only searched for a P that could raise the footprint's, past
   // RISK_STOP_BELOW or the P found so far, as the walk only stops below one.
   const floor = Math.max(w.maxRisk, RISK_STOP_BELOW);
   // A split node's flags hold NO_DEPTH when any leaf under it has no depth;
   // its bathyDMin is Infinity only when none has any.
   if (survey > 0 && bathy !== Infinity) {
-    const p = bathyRisk(w, bathy, v.sigmaD, bound);
-    const { risk, weight, shadow } = shadedWeight(w.shadow, ground, survey, p, floor);
-    best = {
-      risk,
-      dMin: bathy,
-      // The σ the weight used: chartWeight caps it at MAX_CHART_SIGMA.
-      chart: {
-        distance: ground,
-        sigmaP: Math.min(MAX_CHART_SIGMA, survey),
-        weight,
-        source: "survey",
-        ...(shadow && { shadow })
-      }
-    };
+    best = shadedRisk(w.shadow, ground, survey, bathyRisk(w, bathy, v.sigmaD, bound), floor);
+    w.reachSource = "survey";
   }
   // Land reads −Infinity, which v.dMin then is too; float32 rounding as for the survey depth.
   const drawn = Math.max(w.store.topoDMinOf(i), v.dMin);
   if (topo > 0 && drawn !== Infinity) {
-    const p = bathyRisk(w, drawn, v.sigmaD, bound);
-    const { risk, weight, shadow } = shadedWeight(w.shadow, ground, topo, p, floor);
-    if (!best || risk > best.risk) {
-      best = {
-        risk,
-        dMin: drawn,
-        chart: {
-          distance: ground,
-          sigmaP: Math.min(MAX_CHART_SIGMA, topo),
-          weight,
-          source: "topography",
-          ...(shadow && { shadow })
-        }
-      };
+    const risk = shadedRisk(w.shadow, ground, topo, bathyRisk(w, drawn, v.sigmaD, bound), floor);
+    if (best === NO_REACH || risk > best) {
+      best = risk;
+      w.reachSource = "topography";
     }
   }
   return best;
@@ -289,22 +266,35 @@ function takeBeyond(
   if (flagsReach(w, i, ground)) {
     foldFlags(w, v, flags);
   }
-  if (!w.risk) {
+  const risk = w.risk ? reachRisk(w, i, v, ground, bound) : NO_REACH;
+  if (risk === NO_REACH || (w.riskTile !== undefined && !(risk > w.riskTile.risk))) {
     return;
   }
-  const r = reachRisk(w, i, v, ground, bound);
-  if (r && (w.riskTile === undefined || r.risk > w.riskTile.risk)) {
-    const sigmaD = r.chart.source === "topography" && r.dMin === -Infinity ? 0 : v.sigmaD;
-    w.riskTile = {
-      v: { ...v, dMin: r.dMin, sigmaD, flags },
-      z,
-      x,
-      y,
-      risk: r.risk,
-      chart: r.chart
-    };
-    w.maxRisk = r.risk;
-  }
+  // The source reachRisk took, weighed again with the same arguments for its explanation.
+  const source = w.reachSource;
+  const sigma = source === "survey" ? w.store.surveySigma(i) : w.store.topoSigma(i);
+  const placed = source === "survey" ? w.store.bathyDMinOf(i) : w.store.topoDMinOf(i);
+  const dMin = Math.max(placed, v.dMin);
+  const p = bathyRisk(w, dMin, v.sigmaD, bound);
+  const floor = Math.max(w.maxRisk, RISK_STOP_BELOW);
+  const { weight, shadow } = shadedWeight(w.shadow, ground, sigma, p, floor);
+  const sigmaD = source === "topography" && dMin === -Infinity ? 0 : v.sigmaD;
+  w.riskTile = {
+    v: { ...v, dMin, sigmaD, flags },
+    z,
+    x,
+    y,
+    risk,
+    // The σ the weight used: chartWeight caps it at MAX_CHART_SIGMA.
+    chart: {
+      distance: ground,
+      sigmaP: Math.min(MAX_CHART_SIGMA, sigma),
+      weight,
+      source,
+      ...(shadow && { shadow })
+    }
+  };
+  w.maxRisk = risk;
 }
 
 /**
@@ -320,8 +310,8 @@ function visitBeyond(w: Walk, i: number, ground: number, z: number, x: number, y
     return;
   }
   const inFlags = flagsReach(w, i, ground);
-  const bound = w.risk ? (reachRisk(w, i, v, ground, true)?.risk ?? 0) : 0;
-  const settled = bound <= Math.max(w.maxRisk, RISK_STOP_BELOW);
+  const bound = w.risk ? reachRisk(w, i, v, ground, true) : NO_REACH;
+  const settled = bound === NO_REACH || bound <= Math.max(w.maxRisk, RISK_STOP_BELOW);
   if (settled && (!inFlags || (v.flags & PRECISE_FLAGS) === 0)) {
     if (inFlags) {
       foldFlags(w, v, v.flags);
@@ -384,8 +374,8 @@ function negligible(w: Walk, i: number, gap: number): boolean {
   if (!w.risk) {
     return true;
   }
-  const bound = reachRisk(w, i, w.store.values(i), ground, w.store.isSplit(i))?.risk ?? 0;
-  return bound <= Math.max(w.maxRisk, RISK_STOP_BELOW);
+  const bound = reachRisk(w, i, w.store.values(i), ground, w.store.isSplit(i));
+  return bound === NO_REACH || bound <= Math.max(w.maxRisk, RISK_STOP_BELOW);
 }
 
 /**
@@ -435,7 +425,7 @@ function takeAdjustments(w: Walk, reach: Rect): void {
   const z = w.store.adjustZoom;
   const range = tileRange(z, reach);
   const consider = (x: number, y: number, v: NodeValues): void => {
-    if (geomRectDistance(w.geom, tileRect(z, x, y), w.buffer) <= w.buffer) {
+    if (measuredRectDistance(w.measured, tileRect(z, x, y), w.buffer) <= w.buffer) {
       take(w, v, z, x, y);
     }
   };
@@ -492,6 +482,7 @@ function walkFor(store: NodeStore, geom: Geom, opts: QueryOptions): Walk {
   return {
     store,
     geom,
+    measured: measureGeom(geom),
     bounds,
     hold: bounds,
     // The plain walk's buffer, so the tiles within it are the same with chart position or not.
@@ -504,6 +495,7 @@ function walkFor(store: NodeStore, geom: Geom, opts: QueryOptions): Walk {
     risk: opts.risk,
     maxRisk: 0,
     stopWhenCertain: opts.stopWhenCertain === true,
+    reachSource: "survey",
     result: { ...EMPTY },
     rect: { minX: 0, minY: 0, maxX: 0, maxY: 0 },
     coveredDMin: Infinity,
@@ -525,9 +517,11 @@ function walkFor(store: NodeStore, geom: Geom, opts: QueryOptions): Walk {
 export function minDepthOver(store: NodeStore, geom: Geom, opts: QueryOptions = {}): DepthResult {
   const w = walkFor(store, geom, opts);
   const bounds = w.bounds;
+  const measured = w.measured;
   const reach = expandRect(bounds, w.maxReach);
   for (const shift of worldShifts(reach)) {
     w.geom = shift === 0 ? geom : shiftGeom(geom, shift);
+    w.measured = shift === 0 ? measured : measureGeom(w.geom);
     w.bounds = shiftRect(bounds, shift);
     w.hold = expandRect(w.bounds, w.buffer);
     w.vertex = vertexOf(w.geom);

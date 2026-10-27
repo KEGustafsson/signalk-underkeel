@@ -1,5 +1,20 @@
 import type { Rect, XY } from "./geo";
 import { emptyRect, extendRect } from "./geo";
+import type { MeasuredPolygon } from "./rect-distance";
+import {
+  apartDistance,
+  boundaryDistance,
+  emptyPolygon,
+  lineDistance,
+  measureLine,
+  measurePolygon,
+  pointRectDistance2,
+  scratchLineDistance,
+  scratchPolygon,
+  segmentDistance2,
+  segmentTouchesRect,
+  span
+} from "./rect-distance";
 
 /**
  * Planar geometry in Web Mercator metres. Rings are implicitly closed; a
@@ -101,12 +116,7 @@ export function pointInPolygon(p: XY, poly: PolygonGeom): boolean {
 function segmentDistance(x: number, y: number, a: XY, b: XY): number {
   const dx = b[0] - a[0];
   const dy = b[1] - a[1];
-  const len2 = dx * dx + dy * dy;
-  const t = len2 === 0 ? 0 : ((x - a[0]) * dx + (y - a[1]) * dy) / len2;
-  const c = Math.max(0, Math.min(1, t));
-  const ex = x - (a[0] + c * dx);
-  const ey = y - (a[1] + c * dy);
-  return Math.sqrt(ex * ex + ey * ey);
+  return Math.sqrt(segmentDistance2(x, y, a[0], a[1], dx, dy, dx * dx + dy * dy));
 }
 
 /** Distance from p to the closest point of segment a→b (a point segment when a = b). */
@@ -116,39 +126,12 @@ export function pointSegmentDistance(p: XY, a: XY, b: XY): number {
 
 /** 0 inside or on the rectangle, else the distance to its nearest edge or corner. */
 export function pointRectDistance(p: XY, r: Rect): number {
-  const dx = Math.max(r.minX - p[0], 0, p[0] - r.maxX);
-  const dy = Math.max(r.minY - p[1], 0, p[1] - r.maxY);
-  return Math.sqrt(dx * dx + dy * dy);
+  return Math.sqrt(pointRectDistance2(p[0], p[1], r));
 }
-
-/** One Liang–Barsky clip against edge (p, q); returns false when the segment misses. */
-function clip(p: number, q: number, t: { t0: number; t1: number }): boolean {
-  if (p === 0) {
-    return q >= 0;
-  }
-  const r = q / p;
-  if (p < 0) {
-    t.t0 = Math.max(t.t0, r);
-  } else {
-    t.t1 = Math.min(t.t1, r);
-  }
-  return t.t0 <= t.t1;
-}
-
-const span = { t0: 0, t1: 1 };
 
 /** Liang–Barsky: does segment a→b touch the closed rectangle? */
 export function segmentIntersectsRect(a: XY, b: XY, r: Rect): boolean {
-  const dx = b[0] - a[0];
-  const dy = b[1] - a[1];
-  span.t0 = 0;
-  span.t1 = 1;
-  return (
-    clip(-dx, a[0] - r.minX, span) &&
-    clip(dx, r.maxX - a[0], span) &&
-    clip(-dy, a[1] - r.minY, span) &&
-    clip(dy, r.maxY - a[1], span)
-  );
+  return segmentTouchesRect(a[0], a[1], b[0], b[1], r);
 }
 
 /** The fractions [t0, t1] of segment a→b that `segmentIntersectsRect` finds in `r`; undefined when it misses. */
@@ -170,65 +153,44 @@ export function segmentRectDistance(a: XY, b: XY, r: Rect): number {
   if (segmentIntersectsRect(a, b, r)) {
     return 0;
   }
-  return Math.min(
-    pointRectDistance(a, r),
-    pointRectDistance(b, r),
-    segmentDistance(r.minX, r.minY, a, b),
-    segmentDistance(r.maxX, r.minY, a, b),
-    segmentDistance(r.maxX, r.maxY, a, b),
-    segmentDistance(r.minX, r.maxY, a, b)
-  );
-}
-
-/** Segment distance, or Infinity when its bounding box alone is farther than `limit`. */
-function segmentRectDistanceUpTo(a: XY, b: XY, r: Rect, limit: number): number {
-  if (
-    Math.min(a[0], b[0]) > r.maxX + limit ||
-    Math.max(a[0], b[0]) < r.minX - limit ||
-    Math.min(a[1], b[1]) > r.maxY + limit ||
-    Math.max(a[1], b[1]) < r.minY - limit
-  ) {
-    return Infinity;
-  }
-  return segmentRectDistance(a, b, r);
-}
-
-function pathRectDistance(coords: readonly XY[], closed: boolean, r: Rect, limit: number): number {
-  let d = Infinity;
-  const n = coords.length;
-  for (let i = closed ? 0 : 1; i < n && d > 0; i++) {
-    const a = coords[i === 0 ? n - 1 : i - 1] as XY;
-    d = Math.min(d, segmentRectDistanceUpTo(a, coords[i] as XY, r, Math.min(limit, d)));
-  }
-  return d;
+  return apartDistance(a[0], a[1], b[0], b[1], r);
 }
 
 function polygonBoundaryRectDistance(poly: PolygonGeom, r: Rect, limit: number): number {
-  let d = pathRectDistance(poly.outer, true, r, limit);
-  for (const hole of poly.holes) {
-    if (d === 0) {
-      break;
-    }
-    d = Math.min(d, pathRectDistance(hole, true, r, Math.min(limit, d)));
-  }
-  return d;
+  return boundaryDistance(scratchPolygon(poly), r, limit);
 }
 
 /**
- * Distance from a rectangle to the area of a polygon (0 when they overlap).
+ * `inPolygon` for a point, which off the outer ring's box is out without the
+ * ray cast: at or above its top or below its bottom no edge straddles it,
+ * and a crossing rounds past its sides by far less than the ROUNDING the box
+ * is widened by, so beyond them every straddling edge crosses the ray or none
+ * does.
+ */
+function inMeasured(x: number, y: number, m: MeasuredPolygon): boolean {
+  return y >= m.minY && y < m.maxY && x >= m.xLo && x <= m.xHi && inPolygon(x, y, m.poly);
+}
+
+function cornerInPolygon(r: Rect, m: MeasuredPolygon): boolean {
+  return (
+    inMeasured(r.minX, r.minY, m) ||
+    inMeasured(r.maxX, r.minY, m) ||
+    inMeasured(r.maxX, r.maxY, m) ||
+    inMeasured(r.minX, r.maxY, m)
+  );
+}
+
+/**
  * If no rectangle corner lies in the area, any overlap must cross the area's
  * boundary, so the boundary distance is exact.
  */
+function measuredPolygonDistance(m: MeasuredPolygon, r: Rect, limit: number): number {
+  return cornerInPolygon(r, m) ? 0 : boundaryDistance(m, r, limit);
+}
+
+/** Distance from a rectangle to the area of a polygon (0 when they overlap). */
 export function polygonRectDistance(poly: PolygonGeom, r: Rect, limit = Infinity): number {
-  if (
-    inPolygon(r.minX, r.minY, poly) ||
-    inPolygon(r.maxX, r.minY, poly) ||
-    inPolygon(r.maxX, r.maxY, poly) ||
-    inPolygon(r.minX, r.maxY, poly)
-  ) {
-    return 0;
-  }
-  return polygonBoundaryRectDistance(poly, r, limit);
+  return measuredPolygonDistance(scratchPolygon(poly), r, limit);
 }
 
 /**
@@ -241,11 +203,48 @@ export function geomRectDistance(geom: Geom, r: Rect, limit = Infinity): number 
     return pointRectDistance(geom.p, r);
   }
   if (geom.type === "line") {
-    return pathRectDistance(geom.coords, false, r, limit);
+    return scratchLineDistance(geom.coords, r, limit);
   }
   let d = Infinity;
   for (const poly of geom.polygons) {
-    d = Math.min(d, polygonRectDistance(poly, r, Math.min(limit, d)));
+    d = Math.min(d, measuredPolygonDistance(scratchPolygon(poly), r, Math.min(limit, d)));
+    if (d === 0) {
+      break;
+    }
+  }
+  return d;
+}
+
+/** A geometry laid out once for the many `measuredRectDistance` calls of a query walk. */
+export interface MeasuredGeom {
+  geom: Geom;
+  polygons: MeasuredPolygon[];
+  /** A line's edges; empty for a point or polygons. */
+  line: Float64Array;
+}
+
+/** Lays out `geom` for `measuredRectDistance`. */
+export function measureGeom(geom: Geom): MeasuredGeom {
+  return {
+    geom,
+    polygons:
+      geom.type === "polygon" ? geom.polygons.map((p) => measurePolygon(p, emptyPolygon())) : [],
+    line: geom.type === "line" ? measureLine(geom.coords) : new Float64Array(0)
+  };
+}
+
+/** `geomRectDistance` of the geometry `m` was measured from. */
+export function measuredRectDistance(m: MeasuredGeom, r: Rect, limit = Infinity): number {
+  const geom = m.geom;
+  if (geom.type === "point") {
+    return pointRectDistance(geom.p, r);
+  }
+  if (geom.type === "line") {
+    return lineDistance(m.line, r, limit);
+  }
+  let d = Infinity;
+  for (const poly of m.polygons) {
+    d = Math.min(d, measuredPolygonDistance(poly, r, Math.min(limit, d)));
     if (d === 0) {
       break;
     }
