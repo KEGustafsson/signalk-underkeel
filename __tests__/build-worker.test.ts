@@ -106,7 +106,17 @@ describe("workerBuilder (compiled lib/)", () => {
 
   test("builds in a child process the index an in-process build makes, S-57 cells read in a reader process", async () => {
     const j = job([S57, path.join(FIXTURES, "FI5SYNTH")]);
-    const index = await (await builder())(j, new AbortController().signal);
+    const phases: string[] = [];
+    const index = await (
+      await builder()
+    )(j, new AbortController().signal, (p) =>
+      phases.push(`${p.phase} ${p.done ?? ""}/${p.total ?? ""}`)
+    );
+    // Each phase's first and last report reach the server; the throttle drops the rest.
+    expect(phases[0]).toBe("cells 0/1");
+    expect(phases).toContain("cells 1/1");
+    expect(phases.filter((p) => p.startsWith("roots")).pop()).toMatch(/^roots (\d+)\/\1$/);
+    expect(phases[phases.length - 1]).toBe("save /");
     const { staging } = await runBuild({ ...j, indexDir: path.join(dir, "inline"), threads: 1 });
     for (const file of ["pyramid.bin", "hazards.bin", "cells.json", "reach.json"]) {
       expect(

@@ -4,6 +4,7 @@ import type { EncReader } from "./ingest/enc-read-process";
 import type { Bbox, WfsDownload, WfsFetch } from "./ingest/wfs";
 import { downloadWfsCell } from "./ingest/wfs";
 import { readBox } from "./spatial/build-box";
+import { reportProgress } from "./spatial/build-progress";
 import type { BuildJob, BuildReply, IndexParts } from "./spatial/build-worker";
 import { builtReply, runBuild, serveBuildProcess } from "./spatial/build-worker";
 
@@ -75,6 +76,9 @@ export async function runWfsJob(
   reader?: EncReader
 ): Promise<{ staging: string; index: IndexParts; features: WfsCounts }> {
   const cells = refreshCells(job);
+  if (job.download) {
+    reportProgress({ phase: "download" });
+  }
   const features = job.download
     ? await downloadWfsCell({ ...job.download, now: new Date(job.download.now), fetch, signal })
     : NO_FEATURES;

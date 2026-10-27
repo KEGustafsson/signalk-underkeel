@@ -347,4 +347,20 @@ describe("extension display logic", () => {
     ).toEqual(["Water level 0.4 m (fmi:forecast)", "N"]);
     expect(UKC.statusLines({ waterLevel: null }, "m")).toEqual([]);
   });
+
+  test("the panel shows the chart box rebuild, and why a leg outside the box is unverified", () => {
+    const summary =
+      "chart box rebuilding (10 km): building roots 3/10, started 2 min ago, first build";
+    expect(UKC.statusLines({ chartBox: { summary } }, "m")).toEqual([summary]);
+    expect(UKC.statusLines({ chartBox: { summary: null } }, "m")).toEqual([]);
+    const reason = "the leg reaches outside the chart box around the vessel";
+    const legs = [
+      { index: 0, status: "unverified", minUkc: null, risk: 0, flags: ["NO_COVERAGE"], reason },
+      { index: 1, status: "ok", minUkc: 2, risk: 0, flags: [] }
+    ];
+    expect(UKC.compactResult({ name: "A", legs }).legs).toEqual([
+      { index: 0, status: "unverified", minUkc: null, risk: 0, reason },
+      { index: 1, status: "ok", minUkc: 2, risk: 0 }
+    ]);
+  });
 });

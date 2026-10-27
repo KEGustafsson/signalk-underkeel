@@ -38,6 +38,8 @@ import type { Rect } from "../foundation/geo";
 import { tileRange } from "../foundation/geo";
 import type { BuildBox } from "./build-box";
 import { boxCells, boxRect, writeBox } from "./build-box";
+import type { ProgressMessage } from "./build-progress";
+import { reportProgress, reportProgressTo, throttled } from "./build-progress";
 
 /**
  * Index build off the event loop: a child process reads the cells, builds
@@ -118,9 +120,15 @@ class EncReads {
 
   async fetch(sources: readonly string[]): Promise<void> {
     const files = sources.filter((s) => isEncFile(s) && !this.layers.has(s));
+    if (files.length === 0) {
+      return;
+    }
+    const done = this.layers.size;
+    reportProgress({ phase: "cells", done, total: done + files.length });
     for (const [file, layers] of await this.reader(files)) {
       this.layers.set(file, layers);
     }
+    reportProgress({ phase: "cells", done: this.layers.size, total: this.layers.size });
   }
 
   of(source: string): EncLayers | undefined {
@@ -249,22 +257,28 @@ export async function buildByRegion(
     copies.has(k) ? [] : cellsReaching(region, minZoom, s.reaches)
   );
   await reads.fetch(reaching.flat().map((ref) => job.dirs[ref] as string));
+  const toBuild = roots.length - copies.size;
+  let built = 0;
+  reportProgress({ phase: "roots", done: 0, total: toBuild });
   const parts: RegionPart[] = await Promise.all(
-    roots.map(async (region, k) => ({
-      region,
-      cols:
-        copies.get(k) ??
-        (await run({
-          cells: (reaching[k] ?? []).map((ref) => {
-            const dir = job.dirs[ref] as string;
-            const layers = reads.of(dir);
-            return layers ? { dir, ref, layers } : { dir, ref };
-          }),
-          leafZoom: job.leafZoom,
-          region,
-          within
-        }))
-    }))
+    roots.map(async (region, k) => {
+      const copied = copies.get(k);
+      if (copied) {
+        return { region, cols: copied };
+      }
+      const cols = await run({
+        cells: (reaching[k] ?? []).map((ref) => {
+          const dir = job.dirs[ref] as string;
+          const layers = reads.of(dir);
+          return layers ? { dir, ref, layers } : { dir, ref };
+        }),
+        leafZoom: job.leafZoom,
+        region,
+        within
+      });
+      reportProgress({ phase: "roots", done: ++built, total: toBuild });
+      return { region, cols };
+    })
   );
   const { body, cols } = joinParts(minZoom, job.leafZoom, parts);
   return {
@@ -387,6 +401,7 @@ export function regionPool(
 }
 
 function stage(job: BuildJob, index: BuiltIndex): { staging: string; index: IndexParts } {
+  reportProgress({ phase: "save" });
   const staging = stageChartIndex(job.indexDir, index);
   try {
     writeReach(staging, index.reaches);
@@ -470,6 +485,12 @@ export function serveBuildProcess<J>(
   // --max-old-space-size capped this process's heap at its start; left set, V8 would apply it
   // to every region thread too, over the share regionPool gives each.
   v8.setFlagsFromString("--max-old-space-size=0");
+  // Progress goes out ahead of the reply on the same channel; a send that fails is dropped.
+  reportProgressTo(
+    throttled((progress) =>
+      process.send?.({ progress } satisfies ProgressMessage, undefined, {}, () => undefined)
+    )
+  );
   process.once("message", (job: J) => {
     const reader = readInChild(heapMb(job) ?? DEFAULT_READER_HEAP_MB);
     run(job, reader)

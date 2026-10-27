@@ -69,8 +69,18 @@ export function statusReport(s: {
   };
 }
 
-/** The box the index is built in around the vessel, as the box service keeps it. */
+/**
+ * The box the index is built in around the vessel, as the box service keeps it: the build in
+ * progress with its phase and estimate, the size the speed needs, and one line saying both.
+ */
 function boxSection(box: WfsService): unknown {
-  const { busy, lastError } = box.status();
-  return { box: box.current ?? null, busy, lastError: publicReason(lastError) ?? null };
+  const { busy, lastError, rebuild, sizing, summary } = box.status();
+  return {
+    box: box.current ?? null,
+    busy,
+    lastError: publicReason(lastError) ?? null,
+    rebuild: rebuild ?? null,
+    sizing,
+    summary: summary ?? null
+  };
 }

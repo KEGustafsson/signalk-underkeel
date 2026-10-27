@@ -271,6 +271,11 @@ const LOOKAHEAD = {
   }
 };
 
+/** A chart box half-width field, km. */
+const BOX_KM = { type: "number", minimum: 0, maximum: 50 };
+const boxKm = (title: string, def: number, description: string): Json =>
+  Object.assign({ title, description, default: def }, BOX_KM);
+
 const CHART_INDEX = {
   indexDir: {
     type: "string",
@@ -294,15 +299,16 @@ const CHART_INDEX = {
     minimum: 14,
     maximum: 22
   },
-  boxRadiusKm: {
-    type: "number",
-    title: "Index box around the vessel (km)",
-    description:
-      "Half-width of the area the index is built in around the vessel; it is rebuilt as the vessel moves. Outside it the plugin reports no coverage. 0 indexes every cell (slow for large chart sets); a radius under 2 km is raised to 2. With the Traficom WFS on, its radius is used.",
-    default: 10,
-    minimum: 0,
-    maximum: 50
-  }
+  boxRadiusKm: boxKm(
+    "Index box around the vessel (km)",
+    10,
+    "Half-width of the area the index is built in around the vessel; it is rebuilt as the vessel moves. Outside it the plugin reports no coverage, and the reason says the vessel is outside the chart box. At speed the box grows past this radius, up to the largest index box, so the vessel cannot reach its edge, less the look-ahead, before the next box is built: a box must hold 1.5 times the distance run during the last build (grown with the build area) plus the look-ahead and a 2.4 km band. It grows at once when too small, and shrinks only at the next rebuild once the speed needs under 70% of it. 0 indexes every cell (slow for large chart sets); a radius under 2 km is raised to 2. With the Traficom WFS on, its radius is used, and the box grows to 25 km at most."
+  ),
+  boxMaxRadiusKm: boxKm(
+    "Largest index box at speed (km)",
+    0,
+    "The box around the vessel grows up to this half-width at speed. 0 sizes it from the RAM: 10 km on a 1 GB Raspberry Pi or Cerbo GX, 20 km with 4 GB, 28 km with 8 GB. The status says when even this box is too small for the speed and build time."
+  )
 };
 
 const EXPERT = {

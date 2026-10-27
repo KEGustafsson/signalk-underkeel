@@ -316,6 +316,10 @@
     if (status && status.wfs && status.wfs.notice) {
       parts.push(status.wfs.notice);
     }
+    // The chart box rebuild in progress, or a box too small for the speed.
+    if (status && status.chartBox && status.chartBox.summary) {
+      parts.push(status.chartBox.summary);
+    }
     return parts;
   }
 
@@ -346,7 +350,11 @@
       name: r.name,
       rev: r.rev,
       legs: (r.legs || []).map(function (leg) {
-        return { index: leg.index, status: leg.status, minUkc: leg.minUkc, risk: leg.risk };
+        const row = { index: leg.index, status: leg.status, minUkc: leg.minUkc, risk: leg.risk };
+        if (leg.reason) {
+          row.reason = leg.reason;
+        }
+        return row;
       })
     };
     ["receivedAt", "checkedAt", "error", "pending"].forEach(function (k) {

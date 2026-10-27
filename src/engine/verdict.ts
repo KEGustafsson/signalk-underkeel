@@ -15,6 +15,9 @@ export interface Verdict {
 
 const inS = (t: number): string => `${t.toFixed(0)} s`;
 
+/** How every reason that a footprint lacks chart coverage begins (`chart-box.ts` reads it). */
+export const NO_COVERAGE = "no chart coverage";
+
 /** Reads a tick's footprints as if every step had been scored with a full chart walk. */
 export interface Refine {
   /**
@@ -69,13 +72,13 @@ export function classify(
   if (warn && warn.t <= opts.warnWithin) {
     // At a coverage edge the risk comes from the gap's unassessed σ, so say so.
     const gap = ((warn.f.riskTile?.flags ?? 0) & FLAGS.NO_COVERAGE) !== 0;
-    const what = gap ? "no chart coverage" : "shoal";
+    const what = gap ? NO_COVERAGE : "shoal";
     return { state: "warn", reason: `${what} ahead in ${inS(warn.t)}`, tts };
   }
   const uncovered = first((f) => f.uncovered, true);
   if (uncovered) {
     const where = uncovered.t === 0 ? "at the vessel" : `ahead in ${inS(uncovered.t)}`;
-    return { state: "warn", reason: `no chart coverage ${where}`, tts };
+    return { state: "warn", reason: `${NO_COVERAGE} ${where}`, tts };
   }
   const alert = first((f) => f.risk >= th.alert);
   if (alert) {

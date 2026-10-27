@@ -70,6 +70,8 @@ export interface LegResult {
     hazard?: { class: string; lnam?: string; valsou: number | null };
   };
   explanation?: Explanation;
+  /** Why the leg is unverified, when the flags alone do not say (`chart-box.ts`). */
+  reason?: string;
 }
 
 export interface RouteCheckResult {

@@ -11,8 +11,10 @@ import type { PluginConfig } from "./config";
 import { departureWindow } from "./engine/departure-window";
 import type { RouteCheckInput } from "./engine/route-check";
 import { checkRouteYielding } from "./engine/route-check";
+import { explainOutsideBox } from "./engine/chart-box";
 import { DEFAULT_REPAIR, repairRoute } from "./engine/route-repair";
 import type { LonLat } from "./foundation/geo";
+import type { Bbox } from "./ingest/wfs";
 import type { WaterLevel } from "./model/uncertainty";
 import type { VesselModel } from "./model/vessel";
 import { FALLBACK_HULL } from "./model/vessel";
@@ -32,6 +34,8 @@ export interface RouteServiceDeps {
   getRoute(id: string): Promise<unknown>;
   now(): number;
   queue: RequestQueue;
+  /** The box the index in use was built in around the vessel; none for a whole index. */
+  chartBox?: () => Bbox | undefined;
 }
 
 /**
@@ -244,9 +248,14 @@ export async function routeCheck(
   if (isReply(p)) {
     return p;
   }
+  const halfWidth = p.input.xteLimit + p.input.planningBuffer;
   return deps.queue.run(scoped, async (signal) => ({
     status: 200,
-    body: await checkRouteYielding(p.index, p.input, deps.now(), pauseFor(signal))
+    body: explainOutsideBox(
+      await checkRouteYielding(p.index, p.input, deps.now(), pauseFor(signal)),
+      deps.chartBox?.(),
+      halfWidth
+    )
   }));
 }
 

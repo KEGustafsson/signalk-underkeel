@@ -17,7 +17,7 @@ import type { NodeStore } from "../src/spatial/node-store";
 import { footprintGeom, minDepthOver } from "../src/spatial/pyramid";
 import type { IndexBuilder } from "../src/wfs-service";
 import underkeel = require("../src/index");
-import { BANK, CELLS, prepareFixtureIndex, ROCK } from "./helpers/fixture-index";
+import { BANK, CELLS, M_PER_DEG_LON, prepareFixtureIndex, ROCK } from "./helpers/fixture-index";
 import { fakeApp, fakeClock, fakeRouter, lastValue, navDelta, T0 } from "./helpers/plugin-harness";
 import { boxRing } from "./helpers/synthetic";
 
@@ -214,6 +214,83 @@ describe("plugin with the box around the vessel", () => {
     clock.advance(1000);
     expect(lastValue(h.deltas, "navigation.underKeel.state")).not.toBe("off");
     expect(h.errors).toEqual([]);
+    plugin.stop();
+  }, 60_000);
+
+  test("outside the box while it is rebuilt: still warn, and the reason and status say why", async () => {
+    const clock = fakeClock(T0);
+    const h = fakeApp(dir);
+    let builds = 0;
+    // The first box builds; the second reports progress and runs until stop() aborts it.
+    const builder: IndexBuilder = (job, signal, progress) => {
+      builds += 1;
+      if (builds === 1) {
+        return boxBuilder(job, signal);
+      }
+      progress?.({ phase: "roots", done: 3, total: 10 });
+      return new Promise((_, reject) =>
+        signal.addEventListener("abort", () => reject(new Error("aborted")))
+      );
+    };
+    const plugin = underkeel(h.app, clock, globalThis.fetch, builder);
+    plugin.start(
+      {
+        vessel: { draft: 0.5, length: 12, beam: 4 },
+        cellsDir: CELLS,
+        leafZoom: LEAF,
+        boxRadiusKm: 2
+      },
+      () => undefined
+    );
+    const { router, call, post } = fakeRouter();
+    plugin.registerWithRouter?.(router as never);
+    h.send(navDelta(ROCK[0], ROCK[1], 0, clock.now()));
+    clock.advance(10_000);
+    const boxNow = () =>
+      (call("/v1/status").body as { chartBox: Record<string, unknown> }).chartBox;
+    for (let i = 0; i < 50 && (boxNow().busy || boxNow().box === null); i++) {
+      await settle();
+    }
+    expect(builds).toBe(1);
+    expect(boxNow().busy).toBe(false);
+    // A leg from the vessel to 6 km east runs out of the 2 km box.
+    const east: LonLat = [ROCK[0] + 6000 / M_PER_DEG_LON, ROCK[1]];
+    const route = { type: "LineString", coordinates: [ROCK, east] };
+    const checked = (await post("/v1/route-check", { route })).body as {
+      legs: { status: string; reason?: string }[];
+    };
+    expect(checked.legs[0]?.status).toBe("unverified");
+    expect(checked.legs[0]?.reason).toMatch(/outside the chart box around the vessel/);
+    // 4 km east of the box centre, a minute after the first build: the next one starts.
+    const away: LonLat = [ROCK[0] + 4000 / M_PER_DEG_LON, ROCK[1]];
+    clock.advance(60_000);
+    h.send(navDelta(away[0], away[1], 0, clock.now()));
+    clock.advance(1000);
+    for (let i = 0; i < 50 && builds < 2; i++) {
+      await settle();
+    }
+    h.send(navDelta(away[0], away[1], 0, clock.now()));
+    clock.advance(1000);
+    expect(builds).toBe(2);
+    // The state is what no coverage gives anywhere: warn, with sound.
+    expect(lastValue(h.deltas, "navigation.underKeel.state")).toBe("warn");
+    const n = lastValue(h.deltas, "notifications.navigation.underKeel") as {
+      state: string;
+      method: string[];
+      message: string;
+    };
+    expect(n.state).toBe("warn");
+    expect(n.method).toContain("sound");
+    expect(n.message).toMatch(
+      /^no chart coverage at the vessel: outside the chart box, the box is rebuilding around the vessel \(last build took \d+ s\)/
+    );
+    const box = (call("/v1/status").body as { chartBox: Record<string, unknown> }).chartBox;
+    expect(box.busy).toBe(true);
+    expect(box.rebuild).toMatchObject({ radiusKm: 2, phase: "roots", done: 3, total: 10 });
+    expect(box.summary).toMatch(/^chart box rebuilding \(2 km\): building roots 3\/10, started/);
+    expect(h.statuses[h.statuses.length - 1]).toMatch(
+      /^Monitoring: warn — no chart coverage at the vessel: outside the chart box.* · chart box rebuilding \(2 km\): building roots 3\/10/
+    );
     plugin.stop();
   }, 60_000);
 });

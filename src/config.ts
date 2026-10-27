@@ -12,6 +12,7 @@ import { LIMITS } from "./api/route-request";
 import { DEFAULT_WFS_URL, WFS_LIMITS } from "./ingest/wfs";
 import type { WarningStyle } from "./config-presets";
 import { WARNING_PRESETS, warningStyle } from "./config-presets";
+import { MAX_BOX_KM } from "./box-sizing";
 
 export { SCHEMA } from "./config-schema";
 
@@ -35,6 +36,11 @@ export interface PluginConfig {
    * vessel moves. 0 builds every cell. With the Traficom WFS on, its radius is used.
    */
   boxRadiusKm: number;
+  /**
+   * Largest half-width the box grows to at speed, km, never below the box's own radius; 0
+   * sizes it from the RAM (`autoCapKm`).
+   */
+  boxMaxRadiusKm: number;
   /** Sets the look-ahead fields the configuration leaves empty. */
   warningStyle: WarningStyle;
   vessel: Partial<VesselModel>;
@@ -250,6 +256,7 @@ export function parseConfig(raw: unknown): PluginConfig {
     rebuildIndex: r.rebuildIndex === true,
     leafZoom: Math.round(num(r.leafZoom, 20, 14, 22)),
     boxRadiusKm: boxRadius(r.boxRadiusKm),
+    boxMaxRadiusKm: num(r.boxMaxRadiusKm, 0, 0, MAX_BOX_KM),
     warningStyle: style,
     vessel: {
       draft: optionalPositive(v.draft),
