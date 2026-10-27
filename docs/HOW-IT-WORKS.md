@@ -782,6 +782,22 @@ flowchart TD
   (the 500 m position buffer cap plus 1.86 km of chart position reach, counted up to half the
   radius). The new box is centred where the vessel will be when it is ready, at
   most 8 km ahead, so a slow Raspberry Pi at planing speed is not left at the old box's edge.
+- **Box size at speed:** a box must hold 1.5 times the distance run during a build plus the
+  look-ahead and that band. The build time is the last measured one, grown with the build area
+  ((radius + 2 km)²) for a larger box. A box too small for the speed is rebuilt at once at the
+  smallest 0.5 km step that holds 1.25 times the speed, up to **Largest index box at speed**
+  (0: from the RAM, 10 km at 1 GB, 20 km at 4 GB, 28 km at 8 GB; WFS boxes 25 km at most). It
+  is kept while the speed needs over 70 % of it and shrinks only at a rebuild due anyway. When
+  no box up to the cap holds the speed, the status says so, for example "chart box 10 km is
+  too small for 15.0 kn with 12 min builds: no box size keeps up". A box larger than the
+  configured radius whose build hits the heap limit lowers the cap by a quarter for the run.
+- **Outside the box:** the state is what no coverage gives anywhere (`warn`), and the reason
+  names the box, for example "no chart coverage at the vessel: outside the chart box, the box
+  is rebuilding around the vessel (last build took 5 min)", or "at the chart box edge", or "a
+  box rebuild is due", or "the box rebuild failed and is retried". No coverage inside the box,
+  more than the 1.86 km chart reach from its edge, keeps the plain reason. A route leg that is
+  `unverified` for no coverage and whose corridor reaches past the box gets a `reason` saying
+  it is outside the chart box; the details panel lists it under the leg table.
 - **Priority:** the WFS cell is usage band 1, so any ENC cell wins where both cover.
 - **Land:** the WFS has no land objects. Water that no depth area reaches is land, so a gap in
   the data never reads as open water.
@@ -795,7 +811,14 @@ flowchart TD
   over it are `unverified`, and the overlay draws it `unverified`, never `clear`. Warnings and
   alarms over WFS water are raised as usual.
 - **Status:** `GET /status` has a `wfs` section with the box, its fetch time, the feature counts
-  and the notice; the plugin status line repeats the notice while the source is on.
+  and the notice; the plugin status line repeats the notice while the source is on. Its
+  `chartBox` section (also for a box of ENC cells alone) has `rebuild` while a build runs:
+  `startedAt`, `elapsedMs`, `radiusKm`, the build process's last `phase` (`download`, `cells`,
+  `roots`, `save`) with `done`/`total`, and `estimateMs` from the last build; `sizing` with the
+  next box's `radiusKm`, `enough`, `neededKm`, `capKm` and `sog`; and `summary`, the line the
+  plugin status and the details panel show, such as "chart box rebuilding (10 km): building
+  roots 12/40, started 2 min ago, last build took 5 min". The build process posts progress at
+  each phase's start and end and at most every 2 s between.
 
 ## 13. In Freeboard
 

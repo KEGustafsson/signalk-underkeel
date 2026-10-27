@@ -12,8 +12,15 @@ import { cellsNear } from "./livechart/rebind";
 import type { FetchLike } from "./model/fmi";
 import type { Clock } from "./monitor";
 import type { ChartIndex } from "./spatial/chart-index";
+import { autoCapKm } from "./box-sizing";
 import type { EncBoxConfig, IndexBuilder } from "./wfs-service";
-import { inThreadRefresher, workerBuilder, workerRefresher, WfsService } from "./wfs-service";
+import {
+  inThreadRefresher,
+  workerBuilder,
+  workerHeapLimitMb,
+  workerRefresher,
+  WfsService
+} from "./wfs-service";
 
 /** What the Traficom WFS box needs from the running plugin. */
 export interface WfsWiring {
@@ -119,6 +126,7 @@ export function startWfs(
     position: () => w.state.monitor?.nav.position?.value,
     motion: () => freshMotion(w),
     lookahead: w.config.lookahead,
+    maxRadiusKm: w.config.boxMaxRadiusKm || autoCapKm(workerHeapLimitMb()),
     onIndex: (index, changed) => useIndex(w, index, changed),
     error: (m) => {
       w.app.error(m);

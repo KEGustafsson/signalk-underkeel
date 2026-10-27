@@ -113,6 +113,15 @@ function renderRoutes(entries) {
         table.append(tr);
       });
       box.append(table);
+      // Why a leg is unverified when its status alone does not say, as outside the chart box.
+      r.legs
+        .filter((leg) => leg.reason)
+        .forEach((leg) => {
+          const note = document.createElement("div");
+          note.className = "muted";
+          note.textContent = `Leg ${leg.index + 1}: ${leg.reason}`;
+          box.append(note);
+        });
       return box;
     })
   );

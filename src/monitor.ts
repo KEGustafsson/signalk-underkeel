@@ -1,5 +1,6 @@
 import type { Delta, Path, ServerAPI, Unsubscribes } from "@signalk/server-api";
 import type { PluginConfig } from "./config";
+import { type ChartBoxView, withBoxReason } from "./engine/chart-box";
 import { buildEnvelope, ENVELOPE_DEADBAND, EnvelopeTracker } from "./engine/envelope";
 import type { LookaheadInputs, LookaheadResult, NavState, Sample } from "./engine/lookahead";
 import type { AckStore } from "./ack-store";
@@ -90,6 +91,8 @@ export class Monitor {
   private inputsAt?: { inputs: LookaheadInputs; now: number };
   private readonly values: ValuePublisher;
   private readonly status: StatusReporter;
+  /** The chart box around the vessel, named in no-coverage reasons and the plugin status. */
+  chartBox?: () => ChartBoxView;
 
   constructor(
     private readonly app: App,
@@ -369,7 +372,7 @@ export class Monitor {
     });
     // Hysteresis publishes this tick's heading, never a held one; headingFor gives null when
     // the tick is not escapable.
-    const next = this.suppressed(held);
+    const next = this.suppressed(withBoxReason(held, this.chartBox?.()));
     if (next.state !== this.last.state) {
       this.since = this.clock.now();
     }
@@ -398,16 +401,16 @@ export class Monitor {
     }
     this.checkGrounding(r);
     this.escape.after(raw.state, this.clock.now() - t0, escapable);
-    this.report(r);
+    this.report(r, this.chartBox?.().summary);
   }
 
-  private report(r: LookaheadResult): void {
+  private report(r: LookaheadResult, boxNote?: string): void {
     const now = this.clock.now();
     if (!this.index) {
       // The engine is off either way; a pending reason is a status, any other an error.
       const reason = this.indexReason ?? "no chart index loaded";
       if (PENDING_REASONS.has(reason)) {
-        this.status.status(reason, now);
+        this.status.status(boxNote ? `${reason} · ${boxNote}` : reason, now);
       } else {
         this.status.error(reason, now);
       }
@@ -420,6 +423,7 @@ export class Monitor {
       // With an index, the reason only says why it was rebuilt or what was skipped.
       this.indexReason,
       this.escape.skipped,
+      boxNote,
       // The WFS licence allows non-navigational use only; say so while it is on.
       this.config.wfs && r.reason !== WFS_NOTICE ? WFS_NOTICE : undefined
     ];

@@ -62,7 +62,7 @@ function harness(fetch: WfsFetch = okReply, extra: Partial<WfsServiceDeps> = {})
         fetched.push(url);
         return fetch(url, init);
       },
-      (job, signal) => builder.build(job, signal)
+      (job, signal, progress) => builder.build(job, signal, progress)
     ),
     clock: { now: () => t.now, setInterval: () => 1, clearInterval: () => undefined },
     position: () => t.pos,
@@ -594,5 +594,134 @@ describe("box service and the index in use", () => {
     alone.t.pos = POS;
     await alone.service.check();
     expect(alone.built).toEqual([]);
+  });
+});
+
+describe("box rebuild progress and size", () => {
+  const POS: LonLat = [22.08, 60.07];
+  const KN = 1852 / 3600;
+  const SMALL = {
+    config: { url: "https://wfs.test/wfs", radiusKm: 3, catzoc: 3 },
+    maxRadiusKm: 20
+  };
+  const saved = (radiusKm: number, durationMs: number): void =>
+    fs.writeFileSync(
+      path.join(TMP, "box.json"),
+      JSON.stringify({
+        bbox: boxAround(POS, radiusKm),
+        centre: POS,
+        radiusKm,
+        catzoc: 3,
+        fetchedAt: "2026-10-20T07:00:00Z",
+        features: { depthAreas: 1, dredgedAreas: 0, soundings: 0 },
+        durationMs
+      })
+    );
+  const index = {
+    catalogue: { version: 1, cells: [{ name: "FI5ENC01" }] }
+  } as unknown as ChartIndex;
+  const turns = async (): Promise<void> => {
+    for (let i = 0; i < 10; i++) {
+      await new Promise((r) => setImmediate(r));
+    }
+  };
+
+  test("the build's progress reaches the status with its start and estimate", async () => {
+    saved(10, 300_000);
+    const h = harness();
+    h.t.index = index;
+    let started = (): void => undefined;
+    const building = new Promise<void>((r) => (started = r));
+    h.builder.build = (_job, signal, progress) => {
+      progress?.({ phase: "roots", done: 2, total: 8 });
+      started();
+      return new Promise((_, reject) =>
+        signal.addEventListener("abort", () => reject(new Error("aborted")))
+      );
+    };
+    // Past half the radius from the centre: a rebuild starts.
+    h.t.pos = project(POS, 0, 6000);
+    void h.service.check();
+    await building;
+    h.t.now += 120_000;
+    const s = h.service.status();
+    expect(s.busy).toBe(true);
+    expect(s.rebuild).toMatchObject({
+      radiusKm: 10,
+      phase: "roots",
+      done: 2,
+      total: 8,
+      elapsedMs: 120_000,
+      estimateMs: 300_000
+    });
+    expect(s.summary).toBe(
+      "chart box rebuilding (10 km): building roots 2/8, started 2 min ago, last build took 5 min"
+    );
+    expect(h.service.view()).toMatchObject({ rebuilding: true, failed: false, lastMs: 300_000 });
+    h.service.stop();
+    await turns();
+    expect(h.service.status().rebuild).toBeUndefined();
+    expect(h.service.status().summary).toBeUndefined();
+  });
+
+  test("at speed a small box grows, and keeps its size when the speed eases", async () => {
+    saved(3, 60_000);
+    const h = harness(okReply, SMALL);
+    const build = h.builder.build;
+    // The 6 km box builds in the time its build area predicts.
+    h.builder.build = (job, signal) => {
+      h.t.now += 150_000;
+      return build(job, signal);
+    };
+    h.t.index = index;
+    h.t.pos = POS;
+    h.t.motion = { sog: 20 * KN, cog: Math.PI / 2 };
+    await h.service.check();
+    expect(h.indexes).toHaveLength(1);
+    expect(h.service.current?.radiusKm).toBe(6);
+    expect(h.service.status().sizing).toMatchObject({ radiusKm: 6, enough: true, capKm: 20 });
+    h.t.now += 120_000;
+    h.t.motion = { sog: 18 * KN, cog: Math.PI / 2 };
+    h.t.pos = h.service.current?.centre;
+    await h.service.check();
+    expect(h.indexes).toHaveLength(1);
+    expect(h.service.status().sizing.radiusKm).toBe(6);
+    // Far slower, the next box is smaller; the box in use is not rebuilt for it.
+    h.t.now += 120_000;
+    h.t.motion = { sog: 5 * KN, cog: Math.PI / 2 };
+    await h.service.check();
+    expect(h.indexes).toHaveLength(1);
+    expect(h.service.status().sizing.radiusKm).toBeLessThan(6 * 0.7);
+  });
+
+  test("the status says when even the cap is too small for the speed and build time", () => {
+    saved(10, 720_000);
+    const h = harness();
+    h.t.motion = { sog: 15 * KN, cog: 0 };
+    expect(h.service.status().summary).toBe(
+      "chart box 10 km is too small for 15.0 kn with 12 min builds: no box size keeps up"
+    );
+    saved(3, 60_000);
+    const capped = harness(okReply, { ...SMALL, maxRadiusKm: 4 });
+    capped.t.motion = { sog: 20 * KN, cog: 0 };
+    expect(capped.service.status().summary).toMatch(
+      /^chart box 4 km is too small for 20\.0 kn with \d+ s builds: needs 5 km, limit 4 km$/
+    );
+  });
+
+  test("a grown box that runs its build out of memory is not tried at that size again", async () => {
+    saved(3, 60_000);
+    const h = harness(okReply, SMALL);
+    h.builder.build = () =>
+      Promise.reject(new Error("index build stopped at the 256 MB heap limit"));
+    h.t.index = index;
+    h.t.pos = POS;
+    h.t.motion = { sog: 20 * KN, cog: Math.PI / 2 };
+    await h.service.check();
+    expect(h.errors).toHaveLength(1);
+    const s = h.service.status();
+    expect(s.sizing.capKm).toBe(4.5);
+    expect(s.summary).toMatch(/chart box limited to 4\.5 km: a larger one ran out of memory$/);
+    expect(h.service.view().failed).toBe(true);
   });
 });
