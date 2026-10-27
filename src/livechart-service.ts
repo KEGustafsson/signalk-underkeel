@@ -15,6 +15,7 @@ import {
   raisedMark,
   rebasePrior
 } from "./livechart/posterior";
+import { CsbThinner } from "./livechart/csb-thin";
 import { cellRefAt } from "./livechart/restore";
 import { unloadedBlock } from "./livechart/chart-blocks";
 import type { Rebased } from "./livechart/settle";
@@ -33,7 +34,8 @@ import type { ChartIndex } from "./spatial/chart-index";
  * posteriors; a confirmed discrepancy lowers the cell for every query and
  * becomes a Signal K note. The adjustments are kept in `livechart.json` beside
  * the index, the cells in `cells.ndjson` and the accepted soundings in
- * `soundings.ndjson`. Nothing here can make a cell deeper (safety invariant 5).
+ * `soundings.ndjson`, thinned below 1 kn (CsbThinner). Nothing here can make a cell
+ * deeper (safety invariant 5).
  */
 
 export interface LivechartConfig {
@@ -73,6 +75,9 @@ export class LivechartService {
   private stopTimer?: () => void;
   readonly rejected = new Map<string, number>();
   accepted = 0;
+  /** Accepted soundings the CSB export log left out at low speed; their cells still have them. */
+  thinned = 0;
+  private readonly thinner = new CsbThinner();
   /** Cells dropped by the retention bound since start. */
   private dropped = 0;
   private readonly maxCells: number;
@@ -224,9 +229,15 @@ export class LivechartService {
       return;
     }
     this.accepted += 1;
-    this.files.appendSample(r.sounding);
+    // Every accepted sounding updates its cell; only the CSB export log is thinned.
     const c = this.posteriors.add(r.sounding);
-    this.files.cellChanged(tileKey(c.z, c.x, c.y));
+    const key = tileKey(c.z, c.x, c.y);
+    if (this.thinner.keep(key, r.sounding.at, raw.sog)) {
+      this.files.appendSample(r.sounding);
+    } else {
+      this.thinned += 1;
+    }
+    this.files.cellChanged(key);
     // An unsettled cell is judged against the prior it holds, the stand-ins' (never deeper than
     // the chart's) or none, and against the chart's once the settler has read it.
     this.settler.soon();
@@ -324,6 +335,7 @@ export class LivechartService {
     return {
       source: this.config.source.path,
       accepted: this.accepted,
+      csbThinned: this.thinned,
       rejected: Object.fromEntries(this.rejected),
       cells: this.posteriors.cells.size,
       // Cells waiting for their chart block to load to be judged against it.

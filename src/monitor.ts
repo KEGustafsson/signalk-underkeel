@@ -10,6 +10,7 @@ import { Hysteresis } from "./engine/hysteresis";
 import { escapeFor, evaluateLookahead } from "./engine/lookahead";
 import { notificationFor, notificationKey, NOTIFY_REFRESH_MS } from "./engine/notify";
 import type { LonLat } from "./foundation/geo";
+import type { RawSounding } from "./livechart/soundings";
 import { PATHS, publishable } from "./foundation/state";
 import type { FetchLike } from "./model/fmi";
 import type { IntegrityResult } from "./model/integrity";
@@ -258,13 +259,7 @@ export class Monitor {
   }
 
   /** The navigation inputs that are still fresh, for living-chart samples. */
-  fresh(): {
-    position?: LonLat;
-    heading?: number;
-    hdop?: number;
-    methodQuality?: string;
-    roll?: number;
-  } {
+  fresh(): Pick<RawSounding, "position" | "heading" | "hdop" | "methodQuality" | "roll" | "sog"> {
     const now = this.clock.now();
     const limit = this.config.lookahead.staleAfter * 1000;
     const f = <T>(x: Sample<T> | undefined): T | undefined =>
@@ -275,7 +270,8 @@ export class Monitor {
       heading: f(n.heading),
       hdop: f(n.hdop),
       methodQuality: f(n.methodQuality),
-      roll: f(n.roll)
+      roll: f(n.roll),
+      sog: f(n.sog)
     };
   }
 

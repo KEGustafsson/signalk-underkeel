@@ -665,8 +665,10 @@ describe("plugin lifecycle", () => {
     expect(list).toHaveLength(1);
     expect(list[0]?.measured).toBeLessThan(list[0]?.charted as number);
     expect(notes[0]).toMatch(/^notes\/underkeel-shoal-/);
+    // At 0.3 m/s, under 1 kn: the cell has all six soundings, the CSB log one per pass.
+    expect(list[0]).toMatchObject({ samples: 6 });
     const csb = call("/v1/livechart/csb.geojson").body as { features: unknown[] };
-    expect(csb.features).toHaveLength(6);
+    expect(csb.features).toHaveLength(2);
     plugin.stop();
     expect(fs.existsSync(path.join(dataDir, "livechart.json"))).toBe(true);
   });

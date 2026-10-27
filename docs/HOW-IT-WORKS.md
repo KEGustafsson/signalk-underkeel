@@ -203,7 +203,9 @@ so a faulty transducer cannot switch off a hazard. The shallower cells survive a
 index's leaf zoom: each new cell takes the shallowest depth of the old cells it holds. The
 shallower cells are saved to `livechart.json` within 10 s of being marked. Each cell's estimate
 is appended to `cells.ndjson` every 10 minutes, but only for the cells sounded since the last
-save, and the soundings are appended to `soundings.ndjson` every minute. The estimates are
+save, and the soundings are appended to `soundings.ndjson` every minute. Below 1 kn, or without
+a fresh SOG, that file keeps one sounding per cell per minute, so a sounder on a moored boat
+does not wear the storage; every sounding still updates its cell's estimate. The estimates are
 capped: once more than 10 000 cells could be dropped, those sounded longest ago go first, down
 to 9 000. A cell marked shallower, or one still waiting for its chart to be read, is never
 dropped. A cell that has read 1σ shallower than the chart but has not yet had 5 samples over

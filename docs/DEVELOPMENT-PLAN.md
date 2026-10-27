@@ -1439,6 +1439,14 @@ appended to `soundings.ndjson`, one per line, every minute; once the file would 
 10 minutes, and within 10 s of an adjustment being added or moving a 5 cm depth or 1 cm σ step;
 everything is saved on stop.
 
+Decision (PL1 amendment, 2026-10-27): the CSB export log is thinned at low speed. A 10 Hz
+sounder on a moored boat logged 36 000 soundings an hour, so the 40 000-line file was rewritten
+every 33 minutes. Below 1 kn SOG, or with no fresh SOG, `soundings.ndjson` keeps one sounding per
+cell per minute (`src/livechart/csb-thin.ts`); at 1 kn and above it keeps every one. Every
+accepted sounding still updates its cell posterior, so discrepancies and lowered depths are
+unchanged (safety invariant 5; `__tests__/livechart/csb-thin.test.ts`). `GET /status` counts the
+soundings left out of the log as `livechart.csbThinned`.
+
 Decision (PL1 amendment, 2026-10-24): the cells are appended and bounded. With every cell
 rewritten at each save and none ever dropped, a boat at anchor rewrote every cell it had ever
 sounded every 10 minutes, and a start read a chart prior for each of them, which for a long

@@ -28,6 +28,8 @@ function raw(depth: number, at: number, position = SHOAL): RawSounding {
     positionAt: at,
     hdop: 0.9,
     methodQuality: "GNSS Fix",
+    // Under way: the CSB log keeps every sounding (csb-thin.test.ts covers the thinning).
+    sog: 3,
     waterLevel: { h: 0, sigma: 0.05, source: "manual" }
   };
 }
@@ -121,7 +123,7 @@ describe("living-chart save schedule", () => {
     let onDepth: (p: string, v: unknown, at: number) => void = () => undefined;
     const monitor = {
       watch: (_paths: string[], fn: typeof onDepth) => (onDepth = fn),
-      fresh: () => ({ position: SHOAL, hdop: 0.9, methodQuality: "GNSS Fix" }),
+      fresh: () => ({ position: SHOAL, hdop: 0.9, methodQuality: "GNSS Fix", sog: 3 }),
       nav: { position: { at: T0 } },
       waterLevel: () => ({ h: 0, sigma: 0.05, source: "manual" })
     } as unknown as Monitor;
