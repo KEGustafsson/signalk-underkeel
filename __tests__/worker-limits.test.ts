@@ -48,6 +48,19 @@ describe("build process limits", () => {
     ).rejects.toThrow(/index build stopped at the 16 MB heap limit/);
   }, 30_000);
 
+  test("the limit is named when V8's stack trace pushes its message out of the stderr tail", async () => {
+    // As on macOS: the out-of-memory line, a long native stack trace, then SIGABRT.
+    const oom = script(
+      'const fs = require("fs");' +
+        'fs.writeSync(2, "FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory\\n");' +
+        "for (let i = 0; i < 60; i++) fs.writeSync(2, `${i}: 0x1031002a0 v8::Function::Call(v8::Isolate*) [node]\\n`);" +
+        "process.abort();"
+    );
+    await expect(
+      runBuildProcess(oom, {}, new AbortController().signal, undefined, 16)
+    ).rejects.toThrow(/index build stopped at the 16 MB heap limit/);
+  });
+
   test("a process that exits without an answer fails the build instead of leaving it pending", async () => {
     const quits = script("process.exit(3);");
     await expect(runBuildProcess(quits, {}, new AbortController().signal)).rejects.toThrow(
