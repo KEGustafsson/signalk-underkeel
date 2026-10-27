@@ -119,7 +119,7 @@ describe("workerBuilder (compiled lib/)", () => {
         serializePyramid: (s: unknown) => Buffer;
       };
       expect(serializePyramid(index.pyramid).equals(serializePyramid(saved.pyramid))).toBe(true);
-      expect(index.hazards.features).toEqual(saved.hazards.features);
+      expect(index.hazards.features()).toEqual(saved.hazards.features());
       expect(index.catalogue).toEqual(saved.catalogue);
     } finally {
       read.mockRestore();
@@ -180,7 +180,7 @@ describe("workerBuilder (compiled lib/)", () => {
       string,
       string
     ];
-    for (const file of ["pyramid.bin", "hazards.json", "cells.json", "reach.json"]) {
+    for (const file of ["pyramid.bin", "hazards.bin", "cells.json", "reach.json"]) {
       expect(
         fs.readFileSync(path.join(three, file)).equals(fs.readFileSync(path.join(one, file)))
       ).toBe(true);
@@ -207,7 +207,7 @@ describe("workerBuilder (compiled lib/)", () => {
       string,
       string
     ];
-    for (const file of ["pyramid.bin", "hazards.json", "cells.json", "reach.json"]) {
+    for (const file of ["pyramid.bin", "hazards.bin", "cells.json", "reach.json"]) {
       expect(
         fs.readFileSync(path.join(three, file)).equals(fs.readFileSync(path.join(one, file)))
       ).toBe(true);

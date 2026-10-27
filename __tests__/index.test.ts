@@ -1055,6 +1055,28 @@ describe("index loader", () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  test("rebuilds a saved index whose hazards are in hazards.json, and replaces it", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-old-"));
+    try {
+      const cfg = parseConfig({ cellsDir: CELLS, boxRadiusKm: 0, leafZoom: 16 });
+      const built = await loadOrBuildIndex(cfg, dir);
+      const index = path.join(dir, "index");
+      const json = (built.index?.hazards.features() ?? []).map((f) => ({
+        ...f,
+        depth: Number.isFinite(f.depth) ? f.depth : null
+      }));
+      fs.rmSync(path.join(index, "hazards.bin"));
+      fs.writeFileSync(path.join(index, "hazards.json"), JSON.stringify(json));
+      const again = await loadOrBuildIndex(cfg, dir);
+      expect(again.built).toBe(true);
+      expect(again.index?.hazards.size).toBe(json.length);
+      expect(fs.readdirSync(index).sort()).toEqual(["cells.json", "hazards.bin", "pyramid.bin"]);
+      expect((await loadOrBuildIndex(cfg, dir)).built).toBe(false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("manifest and step", () => {

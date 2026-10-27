@@ -217,7 +217,25 @@ describe("index persistence", () => {
       const loaded = loadChartIndex(dir);
       expect(loaded.catalogue).toEqual(index.catalogue);
       expect(loaded.hazards.size).toBe(index.hazards.size);
+      expect(loaded.hazards.features()).toEqual(index.hazards.features());
       expect(loaded.pyramid.count).toBe(index.pyramid.count);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a changed or short hazards.bin fails the load rather than loading fewer hazards", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-index-"));
+    try {
+      saveChartIndex(dir, fixtureIndex());
+      const file = path.join(dir, "hazards.bin");
+      const good = fs.readFileSync(file);
+      const flipped = Buffer.from(good);
+      flipped[good.length - 1] = (flipped[good.length - 1] as number) ^ 1;
+      fs.writeFileSync(file, flipped);
+      expect(() => loadChartIndex(dir)).toThrow("CRC mismatch");
+      fs.writeFileSync(file, good.subarray(0, good.length - 8));
+      expect(() => loadChartIndex(dir)).toThrow("truncated");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -270,9 +288,7 @@ describe("durable save", () => {
     });
     try {
       saveChartIndex(path.join(dir, "index"), fixtureIndex());
-      const files = ["cells.json", "pyramid.bin", "hazards.json"].map(
-        (f) => `fsync index.tmp/${f}`
-      );
+      const files = ["cells.json", "pyramid.bin", "hazards.bin"].map((f) => `fsync index.tmp/${f}`);
       // Windows cannot open a directory; NTFS journals the rename itself.
       expect(events).toEqual(
         process.platform === "win32"

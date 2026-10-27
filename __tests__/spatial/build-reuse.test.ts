@@ -18,7 +18,7 @@ import { spreadCells } from "../helpers/shifted-cells";
  * must be the ones a build of every root writes, byte for byte.
  */
 
-const FILES = ["cells.json", "pyramid.bin", "hazards.json", REACH_FILE];
+const FILES = ["cells.json", "pyramid.bin", "hazards.bin", REACH_FILE];
 /** z10 tile edges near the ENC copies: a column edge in longitude, a row edge in latitude. */
 const COLUMN_EDGE = 575 * (360 / 1024) - 180;
 const ROW_EDGE = 60.065;
