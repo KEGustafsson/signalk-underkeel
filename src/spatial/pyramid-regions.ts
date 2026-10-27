@@ -11,7 +11,7 @@ import {
 } from "../foundation/geo";
 import type { BuildOptions, CellReach, Item } from "./build-items";
 import type { NodeColumns } from "./node-store";
-import type { RootRange } from "./pyramid-build";
+import type { RootRange, TakeTile } from "./pyramid-build";
 import { buildRoots } from "./pyramid-build";
 import type { NodeStore } from "./node-store";
 import { bodyColumns, pyramidColumns, storeOnBody } from "./store";
@@ -87,8 +87,13 @@ export function regionReach(
  * reaching it in catalogue order. Area rings live on only in the items' indexed
  * shapes, so the features need not be held while the region builds.
  */
-export function buildRegion(items: Item[], opts: BuildOptions, region: RootRange): NodeColumns {
-  return pyramidColumns(buildRoots(items, opts, region));
+export function buildRegion(
+  items: Item[],
+  opts: BuildOptions,
+  region: RootRange,
+  take?: TakeTile
+): NodeColumns {
+  return pyramidColumns(buildRoots(items, opts, region, take));
 }
 
 /** The nodes built for one region of roots. */

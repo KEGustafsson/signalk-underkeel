@@ -92,7 +92,13 @@ function syncDirectory(dir: string): void {
  * (`build-reuse.ts`, `build-box.ts`) beside them, and `hazards.json` of an
  * index saved before `hazards.bin`, which a rebuild replaces.
  */
-const INDEX_FILES = new Set([...Object.values(FILES), "hazards.json", "reach.json", "box.json"]);
+const INDEX_FILES = new Set([
+  ...Object.values(FILES),
+  "hazards.json",
+  "reach.json",
+  "box.json",
+  "tiles.json"
+]);
 
 /** The first entry of directory `dir` that is not an index file. */
 function foreignFile(dir: string): string | undefined {
@@ -147,7 +153,10 @@ export function stageChartIndex(dir: string, index: ChartIndex): string {
   const staging = `${dir}.tmp-${suffix}`;
   fs.mkdirSync(staging, { recursive: true });
   try {
-    writeDurable(path.join(staging, FILES.cells), JSON.stringify(index.catalogue, null, 2));
+    // Written as it is read back, so an entry a build took from a saved catalogue has the
+    // same bytes as one read from the cell.
+    const catalogue = parseCatalogue(index.catalogue);
+    writeDurable(path.join(staging, FILES.cells), JSON.stringify(catalogue, null, 2));
     writeDurable(path.join(staging, FILES.pyramid), serializePyramid(index.pyramid));
     writeDurable(path.join(staging, FILES.hazards), serializeHazards(index.hazards));
     syncDirectory(staging);

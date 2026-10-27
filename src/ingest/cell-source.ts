@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import fs from "fs";
 import path from "path";
 import type { ReadCell } from "./cell-reader";
@@ -30,6 +31,28 @@ export function currentInfo(source: string): Partial<CellInfo> {
   return isEncFile(source)
     ? { name: sourceName(source), files: encStamp(source) }
     : readCellInfo(source);
+}
+
+/**
+ * The content a build reads from the cell at `source`: an S-57 cell's name and files' stamp,
+ * by which the cell cache keeps its layers, or a directory's name and a hash of its GeoJSON
+ * layers' bytes, since a directory's DSID stays when the Traficom WFS cell is downloaded
+ * again. Two builds that record the same identity read the same features from the cell.
+ */
+export function sourceIdentity(source: string): string {
+  if (isEncFile(source)) {
+    return `s57 ${sourceName(source)} ${encStamp(source)}`;
+  }
+  const hash = createHash("sha256");
+  for (const file of fs
+    .readdirSync(source)
+    .filter((f) => f.endsWith(".geojson"))
+    .sort()) {
+    const bytes = fs.readFileSync(path.join(source, file));
+    hash.update(`${file} ${bytes.length}\n`);
+    hash.update(bytes);
+  }
+  return `dir ${sourceName(source)} ${hash.digest("hex")}`;
 }
 
 export function readCell(source: string, cellRef: number): Promise<ReadCell> {

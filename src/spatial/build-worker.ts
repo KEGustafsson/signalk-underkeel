@@ -2,22 +2,18 @@ import fs from "fs";
 import os from "os";
 import v8 from "v8";
 import { isMainThread, parentPort, Worker, workerData } from "worker_threads";
-import type { CellInfo } from "../ingest/cells";
 import { exitWithParent, sendToParent } from "../foundation/child-process";
 import { usableMemory } from "../foundation/memory";
-import type { ReadCell } from "../ingest/cell-reader";
 import { cachedReader, LayerCache } from "../ingest/cell-cache";
-import { isEncFile } from "../ingest/cell-source";
+import { isEncFile, sourceIdentity } from "../ingest/cell-source";
 import type { EncReader } from "../ingest/enc-read-process";
 import { readInChild, readInProcess } from "../ingest/enc-read-process";
-import type { EncLayers } from "../ingest/enc-wasm";
-import type { DepthFeature } from "../ingest/features";
 import type { CellReach } from "./build-items";
-import { buildArea, cellReach, DEFAULT_BUILD } from "./build-items";
-import type { SavedIndex } from "./build-reuse";
-import { copiedRoots, savedIndex, unchangedInfo, writeReach } from "./build-reuse";
+import { buildArea, DEFAULT_BUILD } from "./build-items";
+import { reusePlan, savedBoxIndex, savedIndex, writeReach } from "./build-reuse";
+import { clipRange, EncReads, survey } from "./build-survey";
 import type { ChartIndex } from "./chart-index";
-import { isNamedHazard, stageChartIndex } from "./chart-index";
+import { stageChartIndex } from "./chart-index";
 import { HazardIndex } from "./hazards";
 import type { IndexParts } from "./index-parts";
 import { indexParts } from "./index-parts";
@@ -31,12 +27,13 @@ import type { BuildBox } from "./build-box";
 import { boxCells, boxRect, writeBox } from "./build-box";
 import type { ProgressMessage } from "./build-progress";
 import { reportProgress, reportProgressTo, throttled } from "./build-progress";
-import type { CellSource } from "./parsed-cells";
 import { keptParsedBytes, ParsedCells } from "./parsed-cells";
-import type { RegionJob, RegionRunner, RegionSharing } from "./region-jobs";
+import type { RegionJob, RegionResult, RegionRunner, RegionSharing } from "./region-jobs";
 import { regionGroups, runRegions } from "./region-jobs";
+import type { TileDigest } from "./tile-reuse";
+import { writeTiles } from "./tile-reuse";
 
-export type { RegionJob, RegionRunner, RegionSharing } from "./region-jobs";
+export type { RegionJob, RegionResult, RegionRunner, RegionSharing } from "./region-jobs";
 export { runRegions } from "./region-jobs";
 
 /**
@@ -71,8 +68,9 @@ export interface BuildJob {
   /**
    * Builds only around the vessel: the cells reaching this box are read and only the tiles
    * within chart position reach of it built, every tile not inside it being no coverage
-   * (plan §4.2). Not with `changed`: roots of a saved index built in another box are not
-   * copied.
+   * (plan §4.2). A tile in the same box state in this box and in the box of the index saved
+   * in `indexDir`, evaluated from the same items, is copied from it (`tile-reuse.ts`). Not
+   * with `changed`.
    */
   box?: BuildBox;
   /**
@@ -92,122 +90,15 @@ export const defaultThreads = (
   cores = os.availableParallelism()
 ): number => (memory <= 4 * 2 ** 30 ? 1 : Math.max(1, Math.min(4, cores - 1)));
 
-/**
- * S-57 cells' layers, each read once per build through `reader` before the phase that needs
- * them: the cells the survey reads, then the rest of those reaching the roots to build. Read
- * in a child process, gdal3.js's WebAssembly memory is gone before the roots are built.
- * Directories are read by whoever needs them.
- */
-class EncReads {
-  private readonly layers = new Map<string, EncLayers>();
-
-  constructor(
-    private readonly reader: EncReader,
-    private readonly parsed: ParsedCells
-  ) {}
-
-  async fetch(sources: readonly string[]): Promise<void> {
-    const files = sources.filter((s) => isEncFile(s) && !this.layers.has(s));
-    if (files.length === 0) {
-      return;
-    }
-    const done = this.layers.size;
-    reportProgress({ phase: "cells", done, total: done + files.length });
-    for (const [file, layers] of await this.reader(files)) {
-      this.layers.set(file, layers);
-    }
-    reportProgress({ phase: "cells", done: this.layers.size, total: this.layers.size });
-  }
-
-  of(source: string): EncLayers | undefined {
-    if (!isEncFile(source)) {
-      return undefined;
-    }
-    const layers = this.layers.get(source);
-    if (!layers) {
-      throw new Error(`${source} was not read before the build needed it`);
-    }
-    return layers;
-  }
-
-  source(dir: string, ref: number): CellSource {
-    const layers = this.of(dir);
-    return layers ? { dir, ref, layers } : { dir, ref };
-  }
-
-  /** The cell parsed, kept for the regions while the budget allows. */
-  cell(dir: string, ref: number): ReadCell {
-    const cell = this.parsed.cell(this.source(dir, ref));
-    this.parsed.trim();
-    return cell;
-  }
-}
-
-interface Survey {
-  infos: CellInfo[];
-  hazards: DepthFeature[];
-  reaches: CellReach[];
-  /** Catalogue indices of the cells read anew: all of them without a saved index. */
-  changed: number[];
-}
-
-/**
- * Reads each cell once for what the index keeps of it: provenance, named
- * hazards and reach. A cell the saved index holds unchanged keeps its saved
- * hazards and reach, and only its DSID is read.
- */
-async function survey(
-  job: BuildJob,
-  saved: SavedIndex | undefined,
-  reads: EncReads
-): Promise<Survey> {
-  const opts = { ...DEFAULT_BUILD, leafZoom: job.leafZoom };
-  const out: Survey = { infos: [], hazards: [], reaches: [], changed: [] };
-  const kept = job.dirs.map((dir, i) => {
-    const was = saved?.cells[i];
-    return was && !job.changed?.includes(dir) ? unchangedInfo(dir, was) : undefined;
-  });
-  await reads.fetch(job.dirs.filter((_, i) => kept[i] === undefined));
-  for (const [i, dir] of job.dirs.entries()) {
-    const info = kept[i];
-    if (saved && info) {
-      out.infos.push(info);
-      out.hazards.push(...(saved.hazards.get(i) ?? []));
-      out.reaches.push(saved.reaches[i] as CellReach);
-      continue;
-    }
-    const cell = reads.cell(dir, i);
-    out.infos.push(cell.info);
-    out.hazards.push(...cell.features.filter(isNamedHazard));
-    out.reaches.push(cellReach(cell.features, opts));
-    out.changed.push(i);
-  }
-  return out;
-}
-
-/** The roots of `range` that `box` also holds; all of `range` without a box. */
-function clipRange(
-  range: RootRange | undefined,
-  box: RootRange | undefined
-): RootRange | undefined {
-  if (!range || !box) {
-    return range;
-  }
-  const r = {
-    minX: Math.max(range.minX, box.minX),
-    minY: Math.max(range.minY, box.minY),
-    maxX: Math.min(range.maxX, box.maxX),
-    maxY: Math.min(range.maxY, box.maxY)
-  };
-  return r.minX <= r.maxX && r.minY <= r.maxY ? r : undefined;
-}
-
 /** A built index with what the next build reuses and the main thread adopts. */
 export interface BuiltIndex extends ChartIndex {
   reaches: CellReach[];
   /** The pyramid's columns, views on one buffer, so a reply moves them without a copy. */
   cols: NodeColumns;
-  roots: { built: number; copied: number };
+  /** Roots built and copied whole, and every node copied from the saved index. */
+  roots: { built: number; copied: number; nodesCopied: number };
+  /** A box build's tiles file: each cell's identity and the tiles' digests. */
+  tiles?: { ids: string[]; digests: TileDigest[] };
 }
 
 /**
@@ -243,45 +134,55 @@ async function buildRegions(
 ): Promise<BuiltIndex> {
   const { minZoom } = DEFAULT_BUILD;
   const within = job.box && boxRect(job.box.bbox);
-  const saved = job.changed ? savedIndex(job.indexDir, job.dirs, job.leafZoom) : undefined;
-  const s = await survey(job, saved, reads);
+  const ids = within && job.dirs.map(sourceIdentity);
+  const saved = job.changed
+    ? savedIndex(job.indexDir, job.dirs, job.leafZoom)
+    : within
+      ? savedBoxIndex(job.indexDir, job.dirs, job.leafZoom)
+      : undefined;
+  const s = await survey(job, saved, reads, ids);
   const range = clipRange(
     cellsRootRange(s.reaches, minZoom),
     within && tileRange(minZoom, buildArea(within))
   );
   const roots = range ? rootRegions(range) : [];
-  const copies = saved
-    ? copiedRoots(
-        saved,
-        s.changed.flatMap((i) => [s.reaches[i], saved.reaches[i]] as CellReach[]),
-        roots
-      )
-    : new Map<number, NodeColumns>();
+  const box = within && ids ? { box: within, ids } : undefined;
+  const { copies, digests, regions } = reusePlan(saved, { ...s, box }, roots);
   const reaching = roots.map((region, k) =>
     copies.has(k) ? [] : cellsReaching(region, minZoom, s.reaches)
   );
   await reads.fetch(reaching.flat().map((ref) => job.dirs[ref] as string));
   const build = roots.flatMap((_, k) => (copies.has(k) ? [] : [k]));
   const built = new Map<number, NodeColumns>();
+  let nodesCopied = [...copies.values()].reduce((n, c) => n + c.z.length, 0);
   reportProgress({ phase: "roots", done: 0, total: build.length });
   await Promise.all(
     regionGroups(build, roots, sharing.perColumn).map(async (ks) => {
       const refs = [...new Set(ks.flatMap((k) => reaching[k] ?? []))];
       const at = new Map(refs.map((ref, i) => [ref, i]));
-      const cols = await run({
-        cells: refs.map((ref) => reads.source(job.dirs[ref] as string, ref)),
-        regions: ks.map((k) => ({
-          region: roots[k] as RootRange,
-          cells: (reaching[k] ?? []).map((ref) => at.get(ref) as number)
-        })),
+      const results = await run({
+        cells: refs.map((ref) => reads.source(job.dirs[ref] as string, ref, ids?.[ref])),
+        regions: ks.map((k) => {
+          const saved = regions.get(k);
+          return {
+            region: roots[k] as RootRange,
+            cells: (reaching[k] ?? []).map((ref) => at.get(ref) as number),
+            ...(saved ? { saved } : {})
+          };
+        }),
         leafZoom: job.leafZoom,
         within,
         keepBytes: sharing.keepBytes
       });
-      if (cols.length !== ks.length) {
-        throw new Error(`a region job of ${ks.length} regions returned ${cols.length}`);
+      if (results.length !== ks.length) {
+        throw new Error(`a region job of ${ks.length} regions returned ${results.length}`);
       }
-      ks.forEach((k, j) => built.set(k, cols[j] as NodeColumns));
+      ks.forEach((k, j) => {
+        const r = results[j] as RegionResult;
+        built.set(k, r.cols);
+        digests.push(...r.digests);
+        nodesCopied += r.copied;
+      });
       reportProgress({ phase: "roots", done: built.size, total: build.length });
     })
   );
@@ -296,7 +197,8 @@ async function buildRegions(
     hazards: new HazardIndex(s.hazards),
     reaches: s.reaches,
     cols,
-    roots: { built: roots.length - copies.size, copied: copies.size }
+    roots: { built: roots.length - copies.size, copied: copies.size, nodesCopied },
+    ...(ids ? { tiles: { ids, digests } } : {})
   };
 }
 
@@ -310,7 +212,7 @@ export const transfers = (cols: NodeColumns): ArrayBuffer[] => [
   )
 ];
 
-type Reply = { cols?: NodeColumns[]; error?: string };
+type Reply = { results?: RegionResult[]; error?: string };
 
 /**
  * Region builds on `size` threads running this file, each taking the next
@@ -366,7 +268,7 @@ export function regionPool(
   });
   const run: RegionRunner = (job) =>
     new Promise((resolve, reject) => {
-      const done = (r: Reply) => (r.cols ? resolve(r.cols) : reject(new Error(r.error)));
+      const done = (r: Reply) => (r.results ? resolve(r.results) : reject(new Error(r.error)));
       if (failure !== undefined) {
         done({ error: failure });
         return;
@@ -390,6 +292,10 @@ function stage(job: BuildJob, index: BuiltIndex): { staging: string; index: Inde
     writeReach(staging, index.reaches);
     if (job.box) {
       writeBox(staging, { ...job.box, leafZoom: job.leafZoom });
+    }
+    if (job.box && index.tiles) {
+      const { minZoom, leafZoom } = index.pyramid;
+      writeTiles(staging, { bbox: job.box.bbox, minZoom, leafZoom, ...index.tiles });
     }
   } catch (err) {
     // The reply carries no staging path to clean up, so a full card would leave a whole copy.
@@ -432,8 +338,11 @@ export async function runBuild(
 function serveRegions(port: NonNullable<typeof parentPort>): void {
   port.on("message", (job: RegionJob) => {
     try {
-      const cols = runRegions(job);
-      port.postMessage({ cols }, cols.flatMap(transfers));
+      const results = runRegions(job);
+      port.postMessage(
+        { results },
+        results.flatMap((r) => transfers(r.cols))
+      );
     } catch (err) {
       port.postMessage({ error: (err as Error).message });
     }

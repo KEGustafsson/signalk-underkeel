@@ -115,7 +115,7 @@ describe("index built in a box", () => {
   test("a box away from every cell reads no cell and builds no root", async () => {
     const boxed = await inline(boxJob([10, 50], 10));
     expect(boxed.catalogue.cells).toEqual([]);
-    expect(boxed.roots).toEqual({ built: 0, copied: 0 });
+    expect(boxed.roots).toEqual({ built: 0, copied: 0, nodesCopied: 0 });
   });
 
   test("is saved with its box and the cell stamps it chose from", async () => {

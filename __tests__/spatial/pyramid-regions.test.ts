@@ -4,10 +4,9 @@ import path from "path";
 import * as reader from "../../src/ingest/cell-reader";
 import { readCellDirectory } from "../../src/ingest/cell-reader";
 import { cellReach, DEFAULT_BUILD, prepareItems } from "../../src/spatial/build-items";
-import type { BuildJob } from "../../src/spatial/build-worker";
+import type { BuildJob, RegionResult } from "../../src/spatial/build-worker";
 import { buildByRegion, regionPool, runRegions } from "../../src/spatial/build-worker";
 import { buildChartIndex } from "../../src/spatial/chart-index";
-import type { NodeColumns } from "../../src/spatial/node-store";
 import type { RegionPart } from "../../src/spatial/pyramid-regions";
 import {
   cellsReaching,
@@ -104,9 +103,11 @@ describe("joining region parts", () => {
     const job: BuildJob = { dirs, leafZoom: 14, indexDir: path.join(tmp, "index"), threads: 1 };
     const parts: RegionPart[] = [];
     await buildByRegion(job, async (j) => {
-      const cols = runRegions(j);
-      j.regions.forEach(({ region }, k) => parts.push({ region, cols: cols[k] as NodeColumns }));
-      return cols;
+      const results = runRegions(j);
+      j.regions.forEach(({ region }, k) =>
+        parts.push({ region, cols: (results[k] as RegionResult).cols })
+      );
+      return results;
     });
     expect(() => joinRegions(10, 14, [...parts].reverse())).toThrow(/column and row order/);
     const wide = { ...(parts[0] as RegionPart), region: { minX: 0, minY: 0, maxX: 1, maxY: 0 } };

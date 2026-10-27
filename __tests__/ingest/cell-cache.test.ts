@@ -85,7 +85,8 @@ describe("index built from the cell cache", () => {
       "cells.json",
       "hazards.bin",
       "pyramid.bin",
-      "reach.json"
+      "reach.json",
+      "tiles.json"
     ]);
   }, 30_000);
 
