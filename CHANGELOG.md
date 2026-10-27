@@ -2,6 +2,15 @@
 
 All notable changes to signalk-underkeel are documented here.
 
+## [0.2.1] - 2026-10-27
+
+### Fixed
+
+- The tests pass in the Signal K plugin registry, which runs them with a read-only home
+  directory. There npm could not write its cache, so the published-package test's
+  `npm pack --dry-run` failed and the plugin lost its "tested" mark. The test now gives npm a
+  cache under the temp directory. The plugin itself is unchanged.
+
 ## [0.2.0] - 2026-10-27
 
 ### Added

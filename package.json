@@ -1,6 +1,6 @@
 {
   "name": "signalk-underkeel",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Under-keel clearance awareness for Signal K: look-ahead grounding risk, route checks and a living chart.",
   "main": "lib/index.js",
   "files": [
