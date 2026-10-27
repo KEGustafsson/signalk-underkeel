@@ -117,7 +117,8 @@ These hold in every change. A change that weakens one needs an explicit decision
 | Package/release  | `npm run verify:ci-local`, then `docs/release-checklist.md`              |
 
 `npm test` must stay hermetic and under 120 s: the Signal K plugin registry runs it with no
-network and `SIGNALK_REGISTRY_TEST=1` (see `.github/workflows/plugin-test.yml`). Tests run in
+network, a read-only home directory (a test that runs npm gives it a cache under the temp
+directory) and `SIGNALK_REGISTRY_TEST=1` (see `.github/workflows/plugin-test.yml`). Tests run in
 `__tests__/helpers/node-realm-environment.js`. A test may make at most 20 000 `expect()` calls
 (target 5 000): collect per-element checks in a property and assert once. CI fails
 `npm run verify` when the test run takes over 120 s (`UNDERKEEL_TEST_BUDGET_S`). Never skip a
