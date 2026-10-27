@@ -24,7 +24,7 @@ import {
  * to, when none exists yet or when the cells changed since it was saved,
  * otherwise loads the saved one. Failure is reported as a reason, so the
  * engine can publish `off` with it. A build is returned as a job, so the
- * plugin runs it in a worker thread instead of blocking the server.
+ * plugin runs it in a child process instead of blocking the server.
  */
 
 export interface IndexLoad {

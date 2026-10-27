@@ -112,7 +112,7 @@ export function startWfs(
     cellsDir: w.config.cellsDir,
     inBox: w.config.boxRadiusKm > 0,
     index: () => w.state.load?.index,
-    // The worker fetches with its own global fetch; an injected builder, as in the tests,
+    // The build process fetches with its own global fetch; an injected builder, as in the tests,
     // gets the download on this thread with the injected fetch.
     refresh: w.build === workerBuilder ? workerRefresher : inThreadRefresher(w.fetch, w.build),
     clock: w.clock,
