@@ -6,6 +6,32 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Changed
 
+- Index builds run in a child process (Node `fork`, `MALLOC_ARENA_MAX=2`) instead of a worker
+  thread, and S-57 cells are read with GDAL in a short-lived reader process of their own, so
+  the memory a build used is returned when it ends. After the whole 20-cell Waddenzee build the
+  server held 1.07–1.42 GB; it now holds about 100 MB (x86). A build that crashes or passes its
+  heap limit fails with the reason and keeps the index in use. Region threads default to 1 on
+  machines with up to 4 GB of RAM.
+- Named hazards are saved in `hazards.bin` (CRC-checked columns, depths exact in centimetres)
+  instead of `hazards.json`: 11 MB instead of 89 MB for the Waddenzee set. Loading the saved
+  index takes 0.31–0.35 s instead of 1.5–1.7 s, blocks the event loop for 5–7 ms instead of
+  1.1–1.3 s, and leaves 97–101 MB resident instead of 282–292 MB. A damaged file rebuilds the
+  index; an index saved with `hazards.json` is rebuilt once.
+- Index builds test soundings against survey zones through a zone grid, and coverage through
+  the edge grids, with results identical to before: the 10 km Waddenzee box built in 31.6 s
+  instead of 57.2 s, the whole set in 147 s instead of 216 s (x86, one thread).
+- The look-ahead's chart walk measures footprint-to-tile distances with exact pre-checks and
+  allocates less: ticks on the Waddenzee index take 13–18 ms instead of 22–28 ms (median, x86),
+  with every result byte-identical.
+- UKC overlay tiles are kept encoded (4 MiB) beside their geometry (24 MiB, about 41 % of its
+  former size, source edges stored as float32 rounded outward), and gzipped off the event
+  loop. A 40-tile viewport redrawn unchanged takes about 0 ms instead of 1.4–2.1 s (x86).
+- While the chart box is rebuilding, or the vessel is outside it, the no-coverage reason says
+  so ("outside the chart box, the box is rebuilding around the vessel (last build took 5
+  min)"); the state stays `warn`. `GET /status` `chartBox` reports the rebuild's phase,
+  progress and estimate, and the panel shows it. The box grows with speed and the measured
+  build time up to `boxMaxRadiusKm` (by default from the build heap: 10 km on 1 GB, 20 km on
+  4 GB) and says when no size keeps up. Route legs left unverified past the box say why.
 - `navigation.underKeel.state` and `.envelopeRev` are sent when they change and at least every
   5 s, no longer every second: at the dock a history logger stored two points a second. Over
   240 stationary ticks the plugin sent 626 values in 242 deltas, now 242 in 74. A display should
