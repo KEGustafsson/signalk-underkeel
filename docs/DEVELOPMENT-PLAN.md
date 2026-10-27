@@ -290,6 +290,20 @@ depths, is loaded meanwhile. With the WFS on, its box is the one the ENC cells a
 `boxRadiusKm: 0` keeps the whole build (an index built in a box is then rebuilt whole); a radius
 between 0 and 2 km is raised to 2.
 
+**Box size and rebuild status (2026-10-27).** A box must hold SOG × 1.5 × the build time plus
+the look-ahead's reach and the 2.36 km band; the build time is the last measured one grown by
+((R + 2 km) / (R_measured + 2 km))², never shortened (`box-sizing.ts`). A box too small for
+the speed is due at once, rebuilt at the smallest 0.5 km step holding 1.25 × SOG, between
+`boxRadiusKm` and `boxMaxRadiusKm` (0: 10 km × √(build heap / 256 MB), at most 50 km; WFS 25
+km); it is kept while the speed needs over 70 % of it. Under this growth law a 10 km box
+rarely grows: past the radius where 1.5 × SOG × build time is half the box, a larger box adds
+less reach than its longer build costs, and the status says no size keeps up. A heap-limit
+failure of a grown box lowers the cap by a quarter for the run. No coverage at or past the box
+edge keeps its state (`warn`, with sound) and its reason gains the box's part ("outside the
+chart box, the box is rebuilding around the vessel"); route legs left `unverified` by no
+coverage past the box get a `reason`. The build process posts its phase and counts over IPC
+(at most every 2 s), shown in `/status` `chartBox.rebuild` and the status line.
+
 **Sources, in priority order:**
 
 1. **S-57 ENC cells.** Either reuse the `.000` files the user already gave to

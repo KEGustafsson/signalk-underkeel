@@ -124,7 +124,12 @@ The index covers a box around the vessel, **Index box around the vessel (km)** (
 each way), and is rebuilt off the event loop as the vessel moves, so a large exchange set such
 as NOAA's 698 East and Gulf coast cells is never indexed whole: only the cells reaching the box
 are read (21 of them around Miami, 22 s at leaf zoom 20 on x86). Outside the box the plugin
-reports no coverage, never clear water; a radius under 2 km is raised to 2. Until the first position arrives the engine is `off`
+reports no coverage, never clear water, and the reason says the vessel is outside the chart box
+and whether it is being rebuilt; the plugin status and the details panel show the rebuild's
+phase, start and the last build's duration. At speed the box grows past its radius, up to
+**Largest index box at speed** (0 sizes it from the RAM), so the vessel cannot reach the edge
+before the next box is built (docs/HOW-IT-WORKS.md §12). A radius under 2 km is raised to 2.
+Until the first position arrives the engine is `off`
 with the reason `waiting for the vessel position to build the chart box`. Set the box to 0 to
 index every cell.
 
