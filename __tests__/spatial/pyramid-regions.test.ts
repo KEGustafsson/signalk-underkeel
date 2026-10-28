@@ -146,12 +146,14 @@ describe("region thread pool", () => {
 
   test("a thread out of memory fails with the heap limit named, so the box cap comes down", async () => {
     const file = path.join(tmp, "hog.js");
-    // Bounded, so a limit that does not apply fails the test instead of the machine.
+    // Bounded, so a limit that does not apply fails the test instead of the machine. Arrays of
+    // 8 MB reach the limit in a few collections: small objects thrashed the collector for 7 s,
+    // starving the timing tests that run beside this one.
     fs.writeFileSync(
       file,
       'require("worker_threads").parentPort.once("message", () => {' +
         "const keep = [];" +
-        "while (process.memoryUsage().heapUsed < 1024 * 2 ** 20) keep.push({ a: Math.random() });" +
+        "while (process.memoryUsage().heapUsed < 1024 * 2 ** 20) keep.push(new Array(2 ** 20).fill(0));" +
         "});"
     );
     const pool = regionPool(1, file, 64);
