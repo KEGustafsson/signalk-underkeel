@@ -255,8 +255,9 @@ describe("plugin with the box around the vessel", () => {
     clock.advance(10_000);
     const boxNow = () =>
       (call("/v1/status").body as { chartBox: Record<string, unknown> }).chartBox;
-    for (let i = 0; i < 50 && (boxNow().busy || boxNow().box === null); i++) {
-      await settle();
+    // The build writes the cell cache off the event loop before it hands the index over.
+    for (let i = 0; i < 500 && (boxNow().busy || boxNow().box === null); i++) {
+      await new Promise((r) => setTimeout(r, 10));
     }
     expect(builds).toBe(1);
     expect(boxNow().busy).toBe(false);
@@ -273,8 +274,8 @@ describe("plugin with the box around the vessel", () => {
     clock.advance(60_000);
     h.send(navDelta(away[0], away[1], 0, clock.now()));
     clock.advance(1000);
-    for (let i = 0; i < 50 && builds < 2; i++) {
-      await settle();
+    for (let i = 0; i < 500 && builds < 2; i++) {
+      await new Promise((r) => setTimeout(r, 10));
     }
     h.send(navDelta(away[0], away[1], 0, clock.now()));
     clock.advance(1000);

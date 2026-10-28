@@ -307,7 +307,7 @@ const CHART_INDEX = {
   boxMaxRadiusKm: boxKm(
     "Largest index box at speed (km)",
     0,
-    "The box around the vessel grows up to this half-width at speed. 0 sizes it from the RAM: 10 km on a 1 GB Raspberry Pi or Cerbo GX, 20 km with 4 GB, 28 km with 8 GB. The status says when even this box is too small for the speed and build time."
+    "The box around the vessel grows up to this half-width at speed. 0 sizes it from the RAM the system reports: 10 km on a 1 GB Raspberry Pi or Cerbo GX, about 19 km on a 4 GB Raspberry Pi 4, about 27 km with 8 GB. The status says when even this box is too small for the speed and build time."
   )
 };
 

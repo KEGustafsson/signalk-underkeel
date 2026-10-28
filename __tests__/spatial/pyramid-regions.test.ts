@@ -143,4 +143,24 @@ describe("region thread pool", () => {
       pool.close();
     }
   });
+
+  test("a thread out of memory fails with the heap limit named, so the box cap comes down", async () => {
+    const file = path.join(tmp, "hog.js");
+    // Bounded, so a limit that does not apply fails the test instead of the machine.
+    fs.writeFileSync(
+      file,
+      'require("worker_threads").parentPort.once("message", () => {' +
+        "const keep = [];" +
+        "while (process.memoryUsage().heapUsed < 1024 * 2 ** 20) keep.push({ a: Math.random() });" +
+        "});"
+    );
+    const pool = regionPool(1, file, 64);
+    try {
+      const region = { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+      const job = { cells: [], regions: [{ region, cells: [] }], leafZoom: 14, keepBytes: 0 };
+      await expect(pool.run(job)).rejects.toThrow(/region thread stopped at the 64 MB heap limit/);
+    } finally {
+      pool.close();
+    }
+  }, 30_000);
 });

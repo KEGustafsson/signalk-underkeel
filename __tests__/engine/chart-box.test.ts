@@ -62,6 +62,18 @@ describe("no-coverage reasons at the chart box", () => {
     );
   });
 
+  test("the edge is judged from the footprint's buffer, which the chart walk reaches past", () => {
+    // 2.08 km inside the edge: past the widest chart position reach (1.86 km) from the hull,
+    // within it from a 500 m buffer, where a box-edge tile can still flag the footprint.
+    const near = { ...fp(0, east(7900)), buffer: 500 };
+    expect(boxCoverage("no chart coverage at the vessel", [near], REBUILDING)).toMatch(
+      /^no chart coverage at the vessel: at the chart box edge, /
+    );
+    expect(boxCoverage("no chart coverage at the vessel", [fp(0, east(7900))], REBUILDING)).toBe(
+      "no chart coverage at the vessel"
+    );
+  });
+
   test("a gap ahead is judged at the footprint the reason names", () => {
     const fps = [fp(0, east(1000)), fp(30, east(2000)), fp(60, east(11_000))];
     const box = { ...REBUILDING, lastMs: undefined };

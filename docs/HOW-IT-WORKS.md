@@ -789,7 +789,8 @@ flowchart TD
   look-ahead and that band. The build time is the last measured one, grown with the build area
   ((radius + 2 km)²) for a larger box. A box too small for the speed is rebuilt at once at the
   smallest 0.5 km step that holds 1.25 times the speed, up to **Largest index box at speed**
-  (0: from the RAM, 10 km at 1 GB, 20 km at 4 GB, 28 km at 8 GB; WFS boxes 25 km at most). It
+  (0: from the RAM the system reports, 10 km at 1 GB, about 19 km on a 4 GB Raspberry Pi 4,
+  about 27 km with 8 GB; WFS boxes 25 km at most). It
   is kept while the speed needs over 70 % of it and shrinks only at a rebuild due anyway. When
   no box up to the cap holds the speed, the status says so, for example "chart box 10 km is
   too small for 15.0 kn with 12 min builds: no box size keeps up". A box larger than the

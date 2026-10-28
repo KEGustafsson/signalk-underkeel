@@ -1,4 +1,5 @@
 import type { CellCatalogue } from "../ingest/cells";
+import { parseCatalogue } from "../ingest/cells";
 import type { BuiltIndex } from "./build-worker";
 import type { ChartIndex } from "./chart-index";
 import { readHazards, serializeHazards } from "./hazard-file";
@@ -19,7 +20,9 @@ export interface IndexParts {
 export function indexParts(b: BuiltIndex): IndexParts {
   const { catalogue, hazards, pyramid, cols, roots } = b;
   const { minZoom, leafZoom } = pyramid;
-  return { catalogue, hazards: serializeHazards(hazards), minZoom, leafZoom, cols, roots };
+  // As `cells.json` saves it, so the catalogue handed over compares equal to one loaded.
+  const parsed = parseCatalogue(catalogue);
+  return { catalogue: parsed, hazards: serializeHazards(hazards), minZoom, leafZoom, cols, roots };
 }
 
 /**

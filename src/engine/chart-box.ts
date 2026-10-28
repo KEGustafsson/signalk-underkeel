@@ -49,12 +49,11 @@ const COVERAGE_REASON = new RegExp(`^${NO_COVERAGE} (?:at the vessel|ahead in (\
 
 /**
  * Whether footprint `f` reaches the box edge: a tile across the edge reads no coverage and
- * flags footprints up to the widest chart position reach inside it.
+ * flags footprints up to their buffer plus the widest chart position reach inside it.
  */
 function atEdge(f: FootprintResult, bbox: Bbox): boolean {
   const ring = f.ring.length > 0 ? f.ring : [f.center];
-  const margin = MAX_CHART_BUFFER + (f.ring.length > 0 ? 0 : f.buffer);
-  return ring.some((p) => !insideBox(p, bbox, margin));
+  return ring.some((p) => !insideBox(p, bbox, MAX_CHART_BUFFER + f.buffer));
 }
 
 function boxState(box: ChartBoxView): string {

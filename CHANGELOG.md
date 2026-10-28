@@ -30,8 +30,8 @@ All notable changes to signalk-underkeel are documented here.
   so ("outside the chart box, the box is rebuilding around the vessel (last build took 5
   min)"); the state stays `warn`. `GET /status` `chartBox` reports the rebuild's phase,
   progress and estimate, and the panel shows it. The box grows with speed and the measured
-  build time up to `boxMaxRadiusKm` (by default from the build heap: 10 km on 1 GB, 20 km on
-  4 GB) and says when no size keeps up. Route legs left unverified past the box say why.
+  build time up to `boxMaxRadiusKm` (by default from the build heap: 10 km on 1 GB, about 19 km on a
+  4 GB Raspberry Pi 4) and says when no size keeps up. Route legs left unverified past the box say why.
 - `navigation.underKeel.state` and `.envelopeRev` are sent when they change and at least every
   5 s, no longer every second: at the dock a history logger stored two points a second. Over
   240 stationary ticks the plugin sent 626 values in 242 deltas, now 242 in 74. A display should

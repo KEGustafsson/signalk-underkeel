@@ -22,7 +22,8 @@ export const MAX_BOX_KM = 50;
 
 /**
  * The automatic cap for a build heap of `heapMb`: 10 km at 256 MB (a 1 GB Pi 3 or Cerbo GX),
- * 20 km at 1 GB (a 4 GB Pi 4), 28 km at 2 GB. A build's memory grows with the box's area,
+ * 20 km at 1 GB, 28 km at 2 GB, rounded down to STEP_KM. The heap is a quarter of the RAM the
+ * system reports, which on a 4 GB Pi 4 is about 3.8 GiB: 19 km. A build's memory grows with the box's area,
  * and the 10 km box with the ENC pair at leaf zoom 20 builds in under 96 MB.
  */
 export function autoCapKm(heapMb: number): number {

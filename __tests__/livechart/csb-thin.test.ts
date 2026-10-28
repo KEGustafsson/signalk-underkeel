@@ -19,7 +19,6 @@ import { basin } from "../helpers/synthetic";
  */
 
 const T0 = 1_800_000_000_000;
-/** Metres per degree of latitude. */
 const M_PER_DEG_LAT = 111_320;
 const BERTH: LonLat = [22.05, 60.05];
 const CONFIG: LivechartConfig = {

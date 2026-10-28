@@ -99,6 +99,8 @@ describe("workerBuilder (compiled lib/)", () => {
       expect(serializePyramid(index.pyramid).equals(serializePyramid(saved.pyramid))).toBe(true);
       expect(index.hazards.features()).toEqual(saved.hazards.features());
       expect(index.catalogue).toEqual(saved.catalogue);
+      // Key for key, as the WFS swap compares catalogues by their JSON to rebind only near cells.
+      expect(JSON.stringify(index.catalogue)).toBe(JSON.stringify(saved.catalogue));
     } finally {
       read.mockRestore();
     }

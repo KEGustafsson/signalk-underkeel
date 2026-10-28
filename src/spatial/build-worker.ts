@@ -261,7 +261,16 @@ export function regionPool(
       done?.(r);
       pump();
     });
-    w.on("error", (err) => die(w, err.message));
+    // Out of memory, a thread fails with Node's own message; the box service lowers its cap
+    // only on one naming the heap limit, as the build process's does.
+    w.on("error", (err: NodeJS.ErrnoException) =>
+      die(
+        w,
+        err.code === "ERR_WORKER_OUT_OF_MEMORY" && resourceLimits
+          ? `region thread stopped at the ${resourceLimits.maxOldGenerationSizeMb} MB heap limit`
+          : err.message
+      )
+    );
     w.on("exit", (code) => die(w, `region thread exited with code ${code}`));
     idle.push(w);
     return w;
