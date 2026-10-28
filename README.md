@@ -106,7 +106,14 @@ its `.001`, `.002`, … updates beside it. Copy the exchange set, for example it
 folder, under one directory and set **ENC cells directory** to it; `.000` files are found down
 to three folders deep, and down to six below a folder holding the exchange set's `CATALOG.031`,
 so an unzipped Inland ENC download (`<set>/ENC_ROOT/1R/7/1R7WAD07/1R7WAD07.000`) can be pointed
-at as it is. The cells are read in place with GDAL compiled to WebAssembly
+at as it is. A chart set downloaded in signalk-charts-provider-simple's **ENC Charts** tab
+(version 2.14.0 checked) keeps its cells, separately published updates numbered on, under
+`~/.signalk/plugin-config-data/signalk-charts-provider-simple/chart-set-cache/<set>/cells/<cell>/raw/`,
+where `<set>` is the set's name with spaces as `_` and characters other than A–Z, 0–9, `_` and
+`-` left out (`Gulf of Finland` is `Gulf_of_Finland`): set **ENC cells directory** to the
+`<set>` folder. The `chart-set-cache` folder itself is one level too deep: no cell is found
+there, and `GET /status` lists as skipped only the cell folders whose name gives a usage band
+1–6. The cells are read in place with GDAL compiled to WebAssembly
 (gdal3.js), which the plugin installs with it, and the updates are applied as they are read.
 Nothing is converted or written next to the cells. A cell without an `M_COVR` coverage layer
 is rejected. A cell's usage band comes from the third character of its name, else from its
