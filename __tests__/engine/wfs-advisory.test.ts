@@ -1,4 +1,5 @@
 import fs from "fs";
+import os from "os";
 import path from "path";
 import { evaluateLookahead } from "../../src/engine/lookahead";
 import type { NavState } from "../../src/engine/lookahead";
@@ -24,7 +25,7 @@ const BOX: Bbox = [22.0, 60.0, 22.02, 60.01];
 const ENC_BOX = [22.002, 60.006, 22.006, 60.009] as const;
 const NOW = 1_800_000_000_000;
 const KEEL = { draft: 2, length: 12, beam: 4 };
-const TMP = path.join(__dirname, "..", "temp", "wfs-advisory");
+const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-wfs-advisory-"));
 
 function square([w, s, e, n]: readonly number[]) {
   return [

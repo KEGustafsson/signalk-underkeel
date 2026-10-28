@@ -1,4 +1,5 @@
 import fs from "fs";
+import os from "os";
 import path from "path";
 import { haversine } from "../../src/foundation/geo";
 import { readCellDirectory } from "../../src/ingest/cell-reader";
@@ -11,7 +12,7 @@ import {
   WFS_LIMITS
 } from "../../src/ingest/wfs";
 
-const TMP = path.join(__dirname, "..", "temp", "wfs-ingest");
+const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-wfs-ingest-"));
 afterAll(() => fs.rmSync(TMP, { recursive: true, force: true }));
 
 function reply(features: unknown[], extra: Record<string, unknown> = {}) {

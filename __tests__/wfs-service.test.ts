@@ -1,4 +1,5 @@
 import fs from "fs";
+import os from "os";
 import path from "path";
 import type { LonLat } from "../src/foundation/geo";
 import { haversine, project } from "../src/foundation/geo";
@@ -10,7 +11,7 @@ import type { BuildJob } from "../src/spatial/build-worker";
 import type { IndexBuilder, WfsBox, WfsServiceDeps } from "../src/wfs-service";
 import { inThreadRefresher, WfsService } from "../src/wfs-service";
 
-const TMP = path.join(__dirname, "temp", "wfs-service");
+const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-wfs-service-"));
 const CHARTS = path.join(TMP, "charts");
 const ENC = path.join(CHARTS, "FI5ENC01.000");
 const KM_LON_60 = 1 / (111.195 * Math.cos(Math.PI / 3));

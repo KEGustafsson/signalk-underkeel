@@ -1,3 +1,4 @@
+import { execFile } from "child_process";
 import fs from "fs";
 import http from "http";
 import type { AddressInfo } from "net";
@@ -8,7 +9,6 @@ import { boxAround } from "../src/ingest/wfs";
 import { readBox } from "../src/spatial/build-box";
 import { builtReply } from "../src/spatial/build-worker";
 import { commitChartIndex, loadChartIndex } from "../src/spatial/chart-index";
-import type { WfsRefresher } from "../src/wfs-service";
 import type { WfsJob, WfsReply } from "../src/wfs-worker";
 import { CELLS, FIXTURES } from "./helpers/fixture-index";
 
@@ -145,41 +145,75 @@ describe("WFS box refresh with S-57 cells", () => {
   });
 });
 
+/**
+ * Serves a 30 MB page from a fresh process and runs `workerRefresher` there, ticking every 5 ms
+ * on its main thread. Run inside Jest, the longest pause counted the collector on the runner's
+ * own heap: 181 ms late in a coverage run, against 100 ms. Prints the longest pause, the
+ * page's length and what the refresh returned.
+ */
+const PAUSE_PROBE = `
+const http = require("http");
+const [libService, area, jobJson] = process.argv.slice(1);
+const { workerRefresher } = require(libService);
+const AREA = JSON.parse(area);
+const collection = (features) =>
+  Buffer.from(JSON.stringify({ type: "FeatureCollection", features, numberMatched: features.length }));
+// Bulky attributes the cell does not keep: the page is large, the index small.
+const pad = Array.from({ length: 20000 }, (_, i) => i * 1.000123);
+const page = collection(Array.from({ length: 100 }, (_, i) => ({
+  ...AREA, properties: { ...AREA.properties, IDENTIFIER: "FI " + i, PAD: pad }
+})));
+const server = http.createServer((req, res) => {
+  const q = new URL(req.url || "/", "http://x").searchParams;
+  const first = q.get("startIndex") === "0" && (q.get("typeNames") || "").includes("DepthArea");
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(first ? page : collection([]));
+});
+server.listen(0, "127.0.0.1", async () => {
+  const job = JSON.parse(jobJson);
+  job.download.url = "http://127.0.0.1:" + server.address().port + "/wfs";
+  let last = performance.now();
+  let longest = 0;
+  const ticker = setInterval(() => {
+    const now = performance.now();
+    longest = Math.max(longest, now - last - 5);
+    last = now;
+  }, 5);
+  try {
+    const { index, features } = await workerRefresher(job, new AbortController().signal);
+    const cells = index.catalogue.cells.map((c) => c.name);
+    console.log(JSON.stringify({ longest, bytes: page.length, depthAreas: features.depthAreas, cells }));
+  } finally {
+    clearInterval(ticker);
+    server.close();
+  }
+});
+`;
+
 describe("workerRefresher (compiled lib/)", () => {
   if (!fs.existsSync(LIB_SERVICE) || !fs.existsSync(LIB_WORKER)) {
     throw new Error("lib/ is not built: run `npm run build` before the tests");
   }
 
   test("a 30 MB page is fetched, parsed and indexed without blocking the main thread", async () => {
-    // Bulky attributes the cell does not keep: the page is large, the index small.
-    const pad = Array.from({ length: 20_000 }, (_, i) => i * 1.000123);
-    const page = collection(
-      Array.from({ length: 100 }, (_, i) => ({
-        ...AREA,
-        properties: { ...AREA.properties, IDENTIFIER: `FI ${i}`, PAD: pad }
-      }))
+    const out = await new Promise<string>((resolve, reject) =>
+      execFile(
+        process.execPath,
+        ["-e", PAUSE_PROBE, LIB_SERVICE, JSON.stringify(AREA), JSON.stringify(job(""))],
+        { encoding: "utf8", timeout: 60_000 },
+        (err, stdout) => (err ? reject(err) : resolve(stdout))
+      )
     );
-    expect(page.length).toBeGreaterThan(30e6);
-    const wfs = await wfsServer(page);
-    const { workerRefresher } = (await import(LIB_SERVICE)) as {
-      workerRefresher: WfsRefresher;
+    const r = JSON.parse(out) as {
+      longest: number;
+      bytes: number;
+      depthAreas: number;
+      cells: string[];
     };
-    let last = performance.now();
-    let longest = 0;
-    const ticker = setInterval(() => {
-      const now = performance.now();
-      longest = Math.max(longest, now - last - 5);
-      last = now;
-    }, 5);
-    try {
-      const { index, features } = await workerRefresher(job(wfs.url), new AbortController().signal);
-      expect(features.depthAreas).toBe(100);
-      expect(index.catalogue.cells.map((c) => c.name)).toEqual(["FI5SYNTH", "FI1WFS01"]);
-    } finally {
-      clearInterval(ticker);
-      wfs.close();
-    }
+    expect(r.bytes).toBeGreaterThan(30e6);
+    expect(r.depthAreas).toBe(100);
+    expect(r.cells).toEqual(["FI5SYNTH", "FI1WFS01"]);
     // JSON.parse of this page alone takes 130–145 ms on the x86 machine that measured it.
-    expect(longest).toBeLessThan(100);
+    expect(r.longest).toBeLessThan(100);
   }, 60_000);
 });
