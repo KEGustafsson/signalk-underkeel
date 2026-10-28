@@ -207,24 +207,34 @@ signalk-underkeel/
 - `@turf/*`, only for buffers and planning-time geometry. The hot path uses its own
   local-tangent-plane math.
 - `better-sqlite3` for soundings and acknowledgements.
-- `worker_threads` for the index build. The worker's old-generation heap is capped at a
-  quarter of the RAM (256 MB to 2 GB), and the root threads it starts share a second such
-  cap, so the build's old-generation heaps total at most half the RAM; the threads run only
-  with at least 2 GiB, one per GiB (`defaultThreads`). These caps bound the V8 heaps, not the
-  process RSS (buffers and typed arrays sit outside them). A build whose heap outgrows them
-  ends the worker with an error in the status and the previous index stays in use, rather
-  than growing the heap until the kernel ends the server. A server started with
-  `--max-old-space-size` overrides the cap, because V8 flags apply to every isolate in the
-  process.
+- A child process (`child_process.fork`) for the index build, with `MALLOC_ARENA_MAX=2`
+  (`src/foundation/child-process.ts`). Built in a worker thread, the server kept 1.1–1.6 GB
+  RSS after a whole 20-cell Waddenzee build, though about 146 MB of its JS data was live:
+  glibc's per-thread malloc arenas and gdal3.js's WebAssembly memory are not returned when a
+  thread exits, and they are when a process does. The process's old-generation heap is capped
+  at a quarter of the RAM (256 MB to 2 GB) with `--max-old-space-size`, and the root threads
+  it starts share a second such cap, so the build's old-generation heaps total at most half
+  the RAM; the root threads run only above 4 GiB, one per core but one, at most four
+  (`defaultThreads`): three saved 18% of the Waddenzee box's build time for about 500 MB more
+  peak RSS. These caps bound the V8 heaps, not the process RSS (buffers and typed arrays sit
+  outside them). A build whose heap outgrows them, or whose process ends without a reply,
+  fails with an error in the status and the previous index stays in use, rather than growing
+  the heap until the kernel ends the server. The server's own V8 flags are not passed on, so
+  a server started with `--max-old-space-size` no longer lifts the cap. stop() kills the build
+  process and the S-57 reader it started (one process group on POSIX).
 - GDAL/OGR compiled to WebAssembly (gdal3.js, GDAL 3.8.4, about 40 MB installed), for reading
   S-57. Decision: the plugin reads the cells as delivered, each `.000` with its updates,
   down to three folders deep under the cells directory (an exchange set's `ENC_ROOT` included),
   and six below a folder holding a `CATALOG.031` (Rijkswaterstaat's Inland ENC sets nest
   `ENC_ROOT/1R/7/<cell>/<cell>.000`), and writes
   nothing beside them and no intermediate files; only the built index is saved. GDAL runs only
-  in the index build's worker thread: it reads each cell once per build, its layers as GeoJSON
-  held in one SharedArrayBuffer that the region threads read without a copy, and its 512 MB
-  WebAssembly memory goes when the worker exits. Whether a saved index still matches is told on
+  in a short-lived child of the index build process (`src/ingest/enc-read-process.ts`): it
+  reads each cell once per build and sends its layers as GeoJSON, one message per cell, which
+  the build holds in one SharedArrayBuffer per cell that the region threads read without a
+  copy. The reader exits before the roots are built, so its 512 MB of WebAssembly memory is
+  gone by then and the build's peak RSS is the larger of the two phases, not their sum. The
+  cells a build reads are read in at most two such runs: those the survey reads, then those
+  reaching roots that are built rather than copied. Whether a saved index still matches is told on
   the main thread without GDAL, by a hash of each cell's files' names, sizes and modification
   times (`CellInfo.files`). The hash covers the base cell and the updates in the folder of its
   resolved path, where GDAL applies them to a linked `.000`, and a build takes it just before
@@ -307,12 +317,12 @@ between 0 and 2 km is raised to 2.
    its centre when it is handed over; at
    25 kn with 10-minute rebuilds the half-radius rule alone handed a box over with the vessel
    5.4 km past the old box's edge. A box centred ahead covers less water astern, which route
-   checks of legs behind the vessel see as uncovered (`unverified`, invariant 4). A worker
-   thread downloads the box, parses, clips and writes the cell (each layer and then the folder
+   checks of legs behind the vessel see as uncovered (`unverified`, invariant 4). A child
+   process downloads the box, parses, clips and writes the cell (each layer and then the folder
    fsynced before it is swapped in, the old cell moved back if the swap fails, so a power cut
    leaves the old cell, the new one or none, never a torn layer), rebuilds the index and stages
-   it; the main thread moves it into place and swaps in the index the worker posts, its pyramid
-   columns moved rather than copied, so the handover reads nothing
+   it; the main thread moves it into place and swaps in the index the process posts, so the
+   handover reads nothing
    back from disk (the read-back held the event loop 52–61 ms at z20 with two Nauvo cells and
    258–292 ms with 32; the handover now 21–23 and 68–97 ms, on x86). The rebuild
    builds only the z10 roots that the WFS cell reaches in the saved index or now, and copies
@@ -425,11 +435,14 @@ features and coverage at `DSPM_CSCL`.
 vertices, a uniform grid of its edges, so a tile test reads only the edges near the tile and
 the edges that span the corner's row; one boundary pass and four corner tests decide both "the
 area reaches the tile" and "the area contains the tile", and an area containing a tile is
-passed to its children as containing them. The tests return exactly what the per-vertex walk
-returns (`src/spatial/polygon-index.ts`), so the pyramid is unchanged. The index build in the
-worker evaluates one minZoom root at a time from only the cells whose features reach it (a
-survey pass keeps each cell's extent and widest burn radius), on up to four threads (one per
-core but one and per GiB of RAM), and joins the roots in key order; each root depends only on
+passed to its children as containing them. The seam coverage test of coverage and quality
+zones reads the same edge grids, and a sounding's burn radius tests only the quality zones
+filed under its point on a grid of the cell's zone boxes. The tests return exactly what the
+per-vertex walk returns (`src/spatial/polygon-index.ts`,
+`__tests__/spatial/zone-index-equality.test.ts`), so the pyramid is unchanged. The index build
+in its process evaluates one minZoom root at a time from only the cells whose features reach it (a
+survey pass keeps each cell's extent and widest burn radius), on up to four threads (above 4 GiB
+of RAM, one per core but one), and joins the roots in key order; each root depends only on
 the features reaching it, so the pyramid is byte-identical to a build of all cells at once
 whatever the thread count, and only one neighbourhood's features are held per thread.
 
@@ -585,9 +598,16 @@ class drawn over it` still tests.
   every answer equals that of the store held whole. `loadChartIndex(dir, { whole: true })` joins every block back into the store's own columns, in file order, for code that reads a store's levels directly (an incremental rebuild copying unchanged roots). A store's `loadRevision` counts block
   loads and drops, and `blocksChangedSince(revision)` names the block tiles, for caches of
   answers that may have read a stand-in.
-- `cells.json` (provenance) and `hazards.json` (exact hazard geometry) sit beside it. The
-  hazard R-tree is rebuilt from `hazards.json` at load, packed in typed arrays (about 47 bytes
-  per hazard).
+- `cells.json` (provenance) and `hazards.bin` (the named hazards) sit beside it.
+  `hazards.bin` is a JSON header line with the body's length and CRC-32, then the body: point
+  hazards as Hilbert-ordered columns (Float64 position, feature index, depth, an id into
+  shared fields) with the boxes of a tree over runs of 16 points, and lines and areas as JSON.
+  A depth is stored in whole centimetres only when that gives it back exactly, otherwise as
+  Float64, so a named hazard's depth equals the tile depth it set. The index is used on views
+  of the file's bytes: the 427 385 Waddenzee hazards take an 11 MB file, load in 11–15 ms and
+  hold 11 MB, where `hazards.json` took 89 MB, 1.6–2.4 s and 211 MB (x86). A short, long or
+  changed file fails the load and the index is rebuilt; an index saved with `hazards.json` is
+  rebuilt too.
 - `reach.json` holds each cell's reach: the box of its features, its widest burn radius and
   its coverage box. A build told which cells changed (the WFS cell after each download) copies
   from the saved index every z10 root that none of them reaches, by the saved reach or the new
@@ -598,8 +618,9 @@ class drawn over it` still tests.
   index holds other cells or another order, another leaf zoom, no `reach.json`, or fails to
   read. As at start, a cell with the same DSID edition, update, issue date and datum areas is
   taken as unchanged.
-- The index is built in a worker thread, at start as for a new WFS box (§4.2), and posted
-  to the main thread with its pyramid columns moved; until the worker hands it over the
+- The index is built in a child process, at start as for a new WFS box (§4.2), and posted
+  to the main thread up to 1 000 000 pyramid nodes (`HELD_WHOLE_NODES`; a larger one is read
+  back from the committed files block by block); until the process hands it over the
   look-ahead is `off` with the reason `building chart index`, and the WFS box starts only
   after the handover, so this build never replaces a newer box's index.
   A saved `pyramid.bin` over 1 MB is read off the event loop the same way, `off` with
@@ -682,7 +703,7 @@ flag reach kept a channel 1 km wide from reading as checked. Now an edge not mat
 followed across, `SEAM_TOLERANCE` (0.5 Mercator metres, at most 0.5 m on the ground) out, and
 the areas must hold that line wherever the edge lies in the leaf: an edge split differently,
 an overlap and a seam no wider than that cover; a gap wider stays `NO_COVERAGE` or
-`UNASSESSED` (`foundation/geometry.ts` `areasCoverRect`, `__tests__/spatial/coverage-seam.test.ts`).
+`UNASSESSED` (`foundation/area-cover.ts` `areasCoverRect`, `__tests__/spatial/coverage-seam.test.ts`).
 A seam narrower than half a metre holds no vessel and is below the drawing accuracy of any
 cell (1 mm at 1:500). Pyramid version 11.
 
@@ -1615,8 +1636,14 @@ whose ring leaves that window is kept, which never lowers a slot.
 
 **UKC tile geometry cache.** The cells of a tile, its sources and the flag-reach slots of each
 unverified cell do not depend on the water level, draft or σ, so the tile route keeps them per tile in
-typed arrays (`UkcTileCache`, least recently used first out beyond 8 MiB) and a request only
-classes the tile's value kinds and draws. The cache holds for one `NodeStore`: another store
+typed arrays (`UkcTileCache`, least recently used first out beyond 24 MiB, about 120 z14 tiles)
+and a request only classes the tile's value kinds and draws. The columns are narrow: kinds and σ
+are 16-bit indexes (32-bit past 65 536 entries), the scale is one number per tile, and a source's
+edges are float32 rounded outward (west and north down, east and south up), so a slot is never
+further from a source than the chart gives and no class falls (invariant 2; a tie that float
+noise decided at a slot's edge may now read as the worse class). The encoded tile is kept as well
+(`DRAWN_CACHE_BYTES` = 4 MiB with its gzip, same invalidation), for any threshold in the range
+`ukcTileWithRange` returned when σ, the warn and alert levels and the fallback flag are equal. The cache holds for one `NodeStore`: another store
 (a handover or a WFS rebuild) empties it. Every write to `NodeStore.adjustments` bumps its
 `revision` in the same call; an entry whose revision is behind compares the living-chart
 cells in its tile with those it was walked with and is walked again when they differ, so a

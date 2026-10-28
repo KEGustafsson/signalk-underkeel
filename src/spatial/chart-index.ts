@@ -6,6 +6,7 @@ import type { ReadCell } from "../ingest/cell-reader";
 import type { CellCatalogue } from "../ingest/cells";
 import { parseCatalogue } from "../ingest/cells";
 import type { ChartFeature, DepthFeature } from "../ingest/features";
+import { isOtherHazardsVersion, readHazards, serializeHazards } from "./hazard-file";
 import { HazardIndex } from "./hazards";
 import type { NodeStore } from "./node-store";
 import type { BuildOptions } from "./pyramid-build";
@@ -56,18 +57,13 @@ export function buildChartIndex(cells: ReadCell[], opts: Partial<BuildOptions> =
   };
 }
 
-const FILES = { cells: "cells.json", pyramid: "pyramid.bin", hazards: "hazards.json" };
-
-/** JSON has no infinities; land and dry hazards are stored as null. */
-interface StoredHazard extends Omit<DepthFeature, "depth"> {
-  depth: number | null;
-}
+const FILES = { cells: "cells.json", pyramid: "pyramid.bin", hazards: "hazards.bin" };
 
 /**
  * With delayed allocation a power cut after a rename can leave the renamed
  * directory holding empty files, so each file is on disk before the rename.
  */
-function writeDurable(file: string, data: string | Buffer): void {
+function writeDurable(file: string, data: string | Uint8Array): void {
   const fd = fs.openSync(file, "w");
   try {
     fs.writeFileSync(fd, data);
@@ -93,9 +89,10 @@ function syncDirectory(dir: string): void {
 
 /**
  * The files an index directory holds: these three, the build's reach and box
- * (`build-reuse.ts`, `build-box.ts`) beside them.
+ * (`build-reuse.ts`, `build-box.ts`) beside them, and `hazards.json` of an
+ * index saved before `hazards.bin`, which a rebuild replaces.
  */
-const INDEX_FILES = new Set([...Object.values(FILES), "reach.json", "box.json"]);
+const INDEX_FILES = new Set([...Object.values(FILES), "hazards.json", "reach.json", "box.json"]);
 
 /** The first entry of directory `dir` that is not an index file. */
 function foreignFile(dir: string): string | undefined {
@@ -152,11 +149,7 @@ export function stageChartIndex(dir: string, index: ChartIndex): string {
   try {
     writeDurable(path.join(staging, FILES.cells), JSON.stringify(index.catalogue, null, 2));
     writeDurable(path.join(staging, FILES.pyramid), serializePyramid(index.pyramid));
-    const hazards: StoredHazard[] = index.hazards.features.map((f) => ({
-      ...f,
-      depth: Number.isFinite(f.depth) ? f.depth : null
-    }));
-    writeDurable(path.join(staging, FILES.hazards), JSON.stringify(hazards));
+    writeDurable(path.join(staging, FILES.hazards), serializeHazards(index.hazards));
     syncDirectory(staging);
   } catch (err) {
     fs.rmSync(staging, { recursive: true, force: true });
@@ -294,21 +287,30 @@ export function recoverChartIndex(dir: string): boolean {
   return true;
 }
 
-/** Whether the saved index's pyramid was built under this version's rules; reads its header only. */
-export function savedIndexIsCurrent(dir: string): boolean {
-  const fd = fs.openSync(path.join(dir, FILES.pyramid), "r");
+/** The first 512 bytes of `file`. */
+function head(file: string): Buffer {
+  const fd = fs.openSync(file, "r");
   try {
-    const head = Buffer.alloc(512);
-    return isCurrentPyramid(head.subarray(0, fs.readSync(fd, head, 0, head.length, 0)));
+    const buf = Buffer.alloc(512);
+    return buf.subarray(0, fs.readSync(fd, buf, 0, buf.length, 0));
   } finally {
     fs.closeSync(fd);
   }
 }
 
-const hazardsFrom = (json: string): HazardIndex =>
-  new HazardIndex(
-    (JSON.parse(json) as StoredHazard[]).map((h) => ({ ...h, depth: h.depth ?? -Infinity }))
+/**
+ * Whether the saved index's pyramid was built under this version's rules and
+ * its hazards saved in this version's file, not in `hazards.json` or another
+ * version of `hazards.bin`; reads their headers only.
+ */
+export function savedIndexIsCurrent(dir: string): boolean {
+  const hazards = path.join(dir, FILES.hazards);
+  return (
+    isCurrentPyramid(head(path.join(dir, FILES.pyramid))) &&
+    fs.existsSync(hazards) &&
+    !isOtherHazardsVersion(head(hazards))
   );
+}
 
 export interface LoadOptions {
   /** How the pyramid's blocks are read and kept (`block-cache.ts`). */
@@ -337,13 +339,13 @@ export function loadChartIndex(dir: string, opts: LoadOptions = {}): ChartIndex 
     JSON.parse(fs.readFileSync(path.join(dir, FILES.cells), "utf8"))
   );
   const pyramid = checked(openPyramid(path.join(dir, FILES.pyramid), opts.cache), opts);
-  const hazards = hazardsFrom(fs.readFileSync(path.join(dir, FILES.hazards), "utf8"));
+  const hazards = readHazards(fs.readFileSync(path.join(dir, FILES.hazards)));
   return { catalogue, pyramid, hazards };
 }
 
 /**
  * `loadChartIndex` with the file reads and the pyramid's inflates off the
- * event loop; parsing the catalogue and hazards stays on it.
+ * event loop; parsing the catalogue and checking the hazards' CRC stays on it.
  */
 export async function loadChartIndexAsync(
   dir: string,
@@ -358,5 +360,5 @@ export async function loadChartIndexAsync(
   ]);
   await cacheOf(pyramid)?.verify();
   const catalogue = parseCatalogue(JSON.parse(cells.toString("utf8")));
-  return { catalogue, pyramid, hazards: hazardsFrom(hazards.toString("utf8")) };
+  return { catalogue, pyramid, hazards: readHazards(hazards) };
 }

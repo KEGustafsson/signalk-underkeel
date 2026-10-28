@@ -109,7 +109,7 @@ export function savedIndex(
     return undefined;
   }
   const hazards = new Map<number, DepthFeature[]>();
-  for (const f of saved.hazards.features) {
+  for (const f of saved.hazards.features()) {
     const own = hazards.get(f.cellRef) ?? [];
     own.push(f);
     hazards.set(f.cellRef, own);

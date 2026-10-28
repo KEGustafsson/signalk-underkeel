@@ -630,8 +630,12 @@ index that was read in or dropped since the tile was drawn.
 The background runtime asks every 15 s and after each 1 cm water-level move, and Freeboard
 fetches only the tiles listed. With the tide rising 2 mm/s that is 2 tile fetches a minute in
 a z14 view instead of 108. The cells of each tile and the reach of their neighbours are kept
-between requests (up to 8 MiB) and walked again when the index changes or an own sounding
-changes a cell in the tile, so a fetch after a water-level move only re-classes the cells.
+between requests, in a cache bounded in bytes (`TILE_CACHE_BYTES`), and walked again when the
+index changes or an own sounding changes a cell in the tile, so a fetch after a water-level move
+only re-classes the cells. The encoded tile is kept too, with its gzip, in a second byte-bounded
+cache (`DRAWN_CACHE_BYTES`, both in `ukc-tile-cache.ts`), and served again while the
+water level stays within the tile's range and the σ, risk levels and fallback flag are the same;
+a tile is compressed off the event loop.
 
 `GET /ukc-style.json` is a MapLibre style for these tiles. The plugin also registers a
 `plotterExtensions` resource that declares the overlay, so a plotter that supports the Plotter

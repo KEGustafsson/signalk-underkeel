@@ -12,7 +12,7 @@ import { geomBounds, geomRectDistance } from "../foundation/geometry";
 import type { ChartFeature, QualityFeature } from "../ingest/features";
 import { MAX_CHART_BUFFER } from "./chart-position";
 import type { PolygonIndex } from "./polygon-index";
-import { indexPolygon } from "./polygon-index";
+import { indexPolygon, polygonsTouchPoint } from "./polygon-index";
 import type { QualityOptions } from "./quality";
 import { DEFAULT_QUALITY, sigmaFor } from "./quality";
 
@@ -69,6 +69,62 @@ interface Zone {
   q: QualityFeature;
   bbox: Rect;
   sigmaP: number;
+  /** The zone's polygons, indexed when a point first falls in its box. */
+  shape?: PolygonIndex[];
+}
+
+/** A cell's quality zones filed by box on a uniform grid: a point reads the zones of its grid cell. */
+interface ZoneGrid {
+  box: Rect;
+  size: number;
+  cells: Zone[][];
+}
+
+/** Monotone in `v`, so a zone box holding `v` is filed under its slot. */
+function slot(g: ZoneGrid, v: number, min: number, max: number): number {
+  return Math.min(g.size - 1, Math.max(0, Math.floor(((v - min) / (max - min || 1)) * g.size)));
+}
+
+function zoneGrid(zones: Zone[]): ZoneGrid {
+  // An empty zone's box is inverted and overlaps nothing.
+  const filed = zones.filter((z) => z.bbox.minX <= z.bbox.maxX && z.bbox.minY <= z.bbox.maxY);
+  const box = emptyRect();
+  for (const z of filed) {
+    extendRect(box, z.bbox.minX, z.bbox.minY);
+    extendRect(box, z.bbox.maxX, z.bbox.maxY);
+  }
+  const size = Math.max(1, Math.min(64, Math.ceil(Math.sqrt(filed.length))));
+  const g: ZoneGrid = { box, size, cells: Array.from({ length: size * size }, () => []) };
+  for (const z of filed) {
+    const x0 = slot(g, z.bbox.minX, box.minX, box.maxX);
+    const x1 = slot(g, z.bbox.maxX, box.minX, box.maxX);
+    const y1 = slot(g, z.bbox.maxY, box.minY, box.maxY);
+    for (let y = slot(g, z.bbox.minY, box.minY, box.maxY); y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        (g.cells[y * size + x] as Zone[]).push(z);
+      }
+    }
+  }
+  return g;
+}
+
+/** Every zone whose box holds (x, y), and maybe others. */
+function zonesAt(g: ZoneGrid, x: number, y: number): Zone[] {
+  const b = g.box;
+  if (!(x >= b.minX && x <= b.maxX && y >= b.minY && y <= b.maxY)) {
+    return [];
+  }
+  return g.cells[slot(g, y, b.minY, b.maxY) * g.size + slot(g, x, b.minX, b.maxX)] as Zone[];
+}
+
+/** `geomRectDistance(z.q.geom, bbox, 0) === 0` for a point's box, through the indexed polygons. */
+function touches(z: Zone, bbox: Rect): boolean {
+  const geom = z.q.geom;
+  if (geom.type !== "polygon") {
+    return geomRectDistance(geom, bbox, 0) === 0;
+  }
+  z.shape ??= geom.polygons.map(indexPolygon);
+  return polygonsTouchPoint(z.shape, bbox.minX, bbox.minY);
 }
 
 /** Only point hazards and soundings are burned. */
@@ -83,15 +139,21 @@ const burns = (f: ChartFeature): boolean =>
  * zone set reaching an unassessed zone, is burned within k·σP of the widest
  * zone containing it, the unassessed σP when none does.
  */
-function burnRadius(f: ChartFeature, bbox: Rect, zones: Zone[], opts: BuildOptions): number {
+function burnRadius(
+  f: ChartFeature,
+  bbox: Rect,
+  zones: ZoneGrid | undefined,
+  opts: BuildOptions
+): number {
   if (!burns(f)) {
     return 0;
   }
   let sigmaP = 0;
   let covered = false;
   let unassessed = false;
-  for (const z of zones) {
-    if (rectsOverlap(z.bbox, bbox) && geomRectDistance(z.q.geom, bbox, 0) === 0) {
+  // A point's box is the point; the result does not depend on the zones' order.
+  for (const z of zones ? zonesAt(zones, bbox.minX, bbox.minY) : []) {
+    if (rectsOverlap(z.bbox, bbox) && touches(z, bbox)) {
       covered = true;
       unassessed ||= z.q.catzoc === 6 || z.q.advisory === true;
       sigmaP = Math.max(sigmaP, z.sigmaP);
@@ -117,38 +179,54 @@ const NO_RINGS: Geom = { type: "polygon", polygons: [] };
 /** Accepts a feature by its box and burn radius. */
 type Keep = (bbox: Rect, radius: number) => boolean;
 
+interface Reach {
+  bbox: Rect;
+  radius: number;
+  /** A quality zone's polygons when a point's test indexed them. */
+  shape?: PolygonIndex[];
+}
+
 /**
  * Each feature's box and burn radius, the radius from its own cell's quality
  * zones; undefined for a feature `keep` rejects. A point that cannot reach
  * even at its cell's widest radius is rejected before its zones are tested.
  */
-function reaches(
-  features: ChartFeature[],
-  opts: BuildOptions,
-  keep?: Keep
-): ({ bbox: Rect; radius: number } | undefined)[] {
+function reaches(features: ChartFeature[], opts: BuildOptions, keep?: Keep): (Reach | undefined)[] {
   const zonesByCell = new Map<number, Zone[]>();
+  const zoneOf = new Map<ChartFeature, Zone>();
   for (const f of features) {
     if (f.role === "quality") {
       const zones = zonesByCell.get(f.cellRef) ?? [];
       const sigmaP = sigmaFor(f.catzoc, 0, f, opts.quality).sigmaP;
-      zones.push({ q: f, bbox: geomBounds(f.geom), sigmaP });
+      const zone: Zone = { q: f, bbox: geomBounds(f.geom), sigmaP };
+      zones.push(zone);
+      zoneOf.set(f, zone);
       zonesByCell.set(f.cellRef, zones);
     }
   }
   const widest = new Map<number, number>();
+  const grids = new Map<number, ZoneGrid>();
   for (const [cellRef, zones] of zonesByCell) {
     widest.set(cellRef, widestRadius(zones, opts));
+    grids.set(cellRef, zoneGrid(zones));
   }
-  return features.map((f) => {
+  const out = features.map((f): Reach | undefined => {
     const bbox = geomBounds(f.geom);
     const most = burns(f) ? (widest.get(f.cellRef) ?? widestRadius([], opts)) : 0;
     if (keep && !keep(bbox, most)) {
       return undefined;
     }
-    const radius = burnRadius(f, bbox, zonesByCell.get(f.cellRef) ?? [], opts);
+    const radius = burnRadius(f, bbox, grids.get(f.cellRef), opts);
     return keep && !keep(bbox, radius) ? undefined : { bbox, radius };
   });
+  // Once every point is tested: a zone is indexed by the first point in its box.
+  features.forEach((f, i) => {
+    const r = out[i];
+    if (r) {
+      r.shape = zoneOf.get(f)?.shape;
+    }
+  });
+  return out;
 }
 
 /**
@@ -164,7 +242,8 @@ export function prepareItems(features: ChartFeature[], opts: BuildOptions, keep?
       return;
     }
     const { bbox, radius } = reach;
-    const shape = f.geom.type === "polygon" ? f.geom.polygons.map(indexPolygon) : undefined;
+    const shape =
+      reach.shape ?? (f.geom.type === "polygon" ? f.geom.polygons.map(indexPolygon) : undefined);
     // Only coverage and quality rings are read again; an area's live on in `shape` alone.
     const rings = !shape || f.role === "coverage" || f.role === "quality";
     out.push({ f: rings ? f : ({ ...f, geom: NO_RINGS } as ChartFeature), bbox, radius, shape });

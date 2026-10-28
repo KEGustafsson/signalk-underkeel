@@ -2,6 +2,7 @@ import { rectGap, tileRect, tileSize } from "../../src/foundation/geo";
 import { probabilityBelowZero } from "../../src/foundation/stats";
 import type { UkcClass, UkcRect, UkcTileInput } from "../../src/engine/ukc-tiles";
 import { DETAIL_ZOOMS } from "../../src/engine/ukc-tiles";
+import { ceil32, floor32 } from "../../src/engine/ukc-tile-geometry";
 import { chartReach, chartWeight, flagReach, reachersOf } from "../../src/spatial/chart-position";
 import type { Reacher } from "../../src/spatial/chart-position";
 import type { NodeStore, NodeValues } from "../../src/spatial/node-store";
@@ -17,6 +18,8 @@ import { cellsInTile } from "../../src/spatial/tile-walk";
  * level, and unverified within an unverified cell's flag reach. Gaps are
  * computed as the drawing computes them, in slots, so the two agree to the
  * last bit rather than by tolerance. Equality tests run it beside the drawing.
+ * The drawing keeps a source's edges as float32 rounded outward; so does this,
+ * unless `exact`, which keeps them whole to measure what the rounding adds.
  */
 
 const UNVERIFIED = FLAGS.NO_COVERAGE | FLAGS.UNASSESSED | FLAGS.NO_DEPTH | FLAGS.NOT_FOR_NAVIGATION;
@@ -77,16 +80,25 @@ function sources(r: Reacher, input: UkcTileInput): { risk: number; sigma: number
   return out;
 }
 
-function reachGrid(store: NodeStore, z: number, x: number, y: number, input: UkcTileInput) {
+function reachGrid(
+  store: NodeStore,
+  z: number,
+  x: number,
+  y: number,
+  input: UkcTileInput,
+  exact: boolean
+) {
+  const down = exact ? (v: number) => v : floor32;
+  const up = exact ? (v: number) => v : ceil32;
   const tile = tileRect(z, x, y);
   const slot = tileSize(z) / SLOTS;
   const grid = new Uint8Array(SLOTS * SLOTS);
   const { warn, alert } = input.thresholds;
   for (const r of reachersOf(store, tile, z + DETAIL_ZOOMS)) {
-    const x0 = (r.rect.minX - tile.minX) / slot;
-    const y0 = (tile.maxY - r.rect.maxY) / slot;
-    const x1 = (r.rect.maxX - tile.minX) / slot;
-    const y1 = (tile.maxY - r.rect.minY) / slot;
+    const x0 = down((r.rect.minX - tile.minX) / slot);
+    const y0 = down((tile.maxY - r.rect.maxY) / slot);
+    const x1 = up((r.rect.maxX - tile.minX) / slot);
+    const y1 = up((tile.maxY - r.rect.minY) / slot);
     const scale = r.perMetre / slot;
     const flagged = r.surveySigma > 0 && (r.values.flags & UNVERIFIED) !== 0;
     const flags = r.perMetre * flagReach(r.surveySigma);
@@ -180,9 +192,10 @@ export function referenceUkcTile(
   x: number,
   y: number,
   extent: number,
-  input: UkcTileInput
+  input: UkcTileInput,
+  exact = false
 ): UkcRect[] {
-  const grid = reachGrid(store, z, x, y, input);
+  const grid = reachGrid(store, z, x, y, input, exact);
   const rects: UkcRect[] = [];
   for (const c of cellsInTile(store, z, x, y, z + DETAIL_ZOOMS)) {
     const cls = classed(c.values, input, c.bound);

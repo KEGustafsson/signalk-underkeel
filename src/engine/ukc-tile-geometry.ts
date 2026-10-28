@@ -1,11 +1,9 @@
 import type { Rect } from "../foundation/geo";
 import { rectGap, tileRect, tileSize } from "../foundation/geo";
-import { chartReach, chartSigma, flagReach, reachersOf } from "../spatial/chart-position";
+import { chartReach, flagReach, reachersOf } from "../spatial/chart-position";
 import type { NodeStore, NodeValues } from "../spatial/node-store";
 import { FLAGS } from "../spatial/node-store";
-import { mercatorBuffer } from "../spatial/pyramid";
-import type { Adjusted } from "../spatial/tile-walk";
-import { adjustmentsIn, cellsInTile } from "../spatial/tile-walk";
+import { cellsInTile } from "../spatial/tile-walk";
 
 /** Cells per tile side at most: 2^6 = 64. */
 export const DETAIL_ZOOMS = 6;
@@ -15,6 +13,39 @@ export const SLOTS = 2 ** DETAIL_ZOOMS;
 
 /** Uint32 words of one flag mask: a bit per slot, row by row from the north edge. */
 export const MASK_WORDS = (SLOTS * SLOTS) / 32;
+
+/** An array of indexes into a table: 16 bits wherever the table is small enough. */
+export type IndexArray = Uint16Array | Uint32Array;
+
+/** `values`, each below `count`, as the narrowest index array that holds them. */
+function indexes(values: ArrayLike<number>, count: number): IndexArray {
+  return count <= 0x10000 ? Uint16Array.from(values) : Uint32Array.from(values);
+}
+
+/** An index array of `length` entries for a table of `count`, to be filled in place. */
+function indexArray(length: number, count: number): IndexArray {
+  return count <= 0x10000 ? new Uint16Array(length) : new Uint32Array(length);
+}
+
+const f32 = new Float32Array(1);
+const f32Bits = new Int32Array(f32.buffer);
+
+/** The greatest float32 at most `v`: a float32 stored for `v` never lies above it. */
+export function floor32(v: number): number {
+  f32[0] = v;
+  const f = f32[0] as number;
+  if (!(f > v)) {
+    return f;
+  }
+  // One float32 step toward -Infinity: the bit pattern counts away from zero.
+  f32Bits[0] = (f32Bits[0] as number) + (f > 0 ? -1 : 1);
+  return f32[0] as number;
+}
+
+/** The least float32 at least `v`. */
+export function ceil32(v: number): number {
+  return -floor32(-v);
+}
 
 /** Flags that keep a cell from reading clear (invariant 4). */
 export const UNVERIFIED =
@@ -40,17 +71,22 @@ export interface TileGeometry {
   cellZ: Uint8Array;
   cellX: Uint16Array;
   cellY: Uint16Array;
-  cellKind: Uint32Array;
+  cellKind: IndexArray;
   /**
-   * Per source: its kind (a survey depth, or land placed by its own σ), its
-   * position σ in metres, slots per ground metre at the poleward edge of its
-   * reach, and four entries of `sourceRect`: its west, north, east and south
-   * edges in slots from the tile's west and north edges.
+   * Per source: its kind (a survey depth, or land placed by its own σ), the
+   * entry of `sigmas` holding its position σ, and four entries of
+   * `sourceRect`: its west, north, east and south edges in slots from the
+   * tile's west and north edges. The edges are float32 rounded outward (west
+   * and north down, east and south up), which only widens a source: no slot
+   * is further from it, so no class is lowered (invariant 2).
    */
-  sourceKind: Uint32Array;
-  sourceSigma: Float64Array;
-  sourceScale: Float64Array;
-  sourceRect: Float64Array;
+  sourceKind: IndexArray;
+  sourceSigma: IndexArray;
+  sourceRect: Float32Array;
+  /** The distinct source σ in metres. */
+  sigmas: Float64Array;
+  /** Slots per ground metre at the poleward edge of the tile's reach, as for every source. */
+  sourceScale: number;
   /** The unverified kinds whose flag reach covers some slot; flagKind[m] covers mask m. */
   flagKind: Uint32Array;
   /** MASK_WORDS words per entry of flagKind. */
@@ -65,7 +101,7 @@ export function tileGeometry(store: NodeStore, z: number, x: number, y: number):
   const cellZ = new Uint8Array(n);
   const cellX = new Uint16Array(n);
   const cellY = new Uint16Array(n);
-  const cellKind = new Uint32Array(n);
+  const cellKind = new Array<number>(n);
   cells.forEach((c, i) => {
     const scale = 2 ** (c.z - z);
     cellZ[i] = c.z - z;
@@ -74,18 +110,32 @@ export function tileGeometry(store: NodeStore, z: number, x: number, y: number):
     cellKind[i] = kinds.of(c.values, c.bound);
   });
   const reach = reachOf(store, z, x, y, kinds);
-  return { ...kinds.columns(), cellZ, cellX, cellY, cellKind, ...reach };
+  return {
+    ...kinds.columns(),
+    cellZ,
+    cellX,
+    cellY,
+    cellKind: indexes(cellKind, kinds.count),
+    ...reach
+  };
 }
 
 /** Bytes of a geometry's columns. */
 export function geometryBytes(g: TileGeometry): number {
-  return Object.values(g).reduce((sum: number, a: ArrayBufferView) => sum + a.byteLength, 0);
+  return Object.values(g).reduce(
+    (sum: number, a: ArrayBufferView | number) => sum + (typeof a === "number" ? 8 : a.byteLength),
+    0
+  );
 }
 
 class Kinds {
   /** Kinds by dMin; a Map key takes -0 as 0, so dMin is compared again with Object.is. */
   private readonly byDepth = new Map<number, number[]>();
   private readonly values: [NodeValues, boolean][] = [];
+
+  get count(): number {
+    return this.values.length;
+  }
 
   of(v: NodeValues, bound: boolean): number {
     let list = this.byDepth.get(v.dMin);
@@ -126,7 +176,7 @@ const LAND: NodeValues = { dMin: -Infinity, sigmaD: 0, sigmaP: 0, flags: 0, cell
 
 type Reach = Pick<
   TileGeometry,
-  "sourceKind" | "sourceSigma" | "sourceScale" | "sourceRect" | "flagKind" | "flagMask"
+  "sourceKind" | "sourceSigma" | "sigmas" | "sourceScale" | "sourceRect" | "flagKind" | "flagMask"
 >;
 
 /** West, north, east and south edges in slots. */
@@ -310,14 +360,42 @@ function reachOf(store: NodeStore, z: number, x: number, y: number, kinds: Kinds
   const used = [...masks].filter(([, m]) => m.some((w) => w !== 0));
   const flagMask = new Uint32Array(used.length * MASK_WORDS);
   used.forEach(([, m], i) => flagMask.set(m, i * MASK_WORDS));
-  const sources = edges(joined(joined(gathered, 0), 1));
   return {
-    sourceKind: Uint32Array.from(sources, (g) => g.k),
-    sourceSigma: Float64Array.from(sources, (g) => g.sigma),
-    sourceScale: Float64Array.from(sources, (g) => g.scale),
-    sourceRect: Float64Array.from(sources.flatMap((g) => g.r)),
+    ...packSources(edges(joined(joined(gathered, 0), 1)), kinds),
     flagKind: Uint32Array.from(used, ([k]) => k),
     flagMask
+  };
+}
+
+/** The columns of `sources`: kinds and σ as indexes, edges as float32 rounded outward. */
+function packSources(
+  sources: Gathered[],
+  kinds: Kinds
+): Pick<Reach, "sourceKind" | "sourceSigma" | "sigmas" | "sourceScale" | "sourceRect"> {
+  const sigmas = new Map<number, number>();
+  for (const g of sources) {
+    if (!sigmas.has(g.sigma)) {
+      sigmas.set(g.sigma, sigmas.size);
+    }
+  }
+  const rect = new Float32Array(4 * sources.length);
+  const sourceKind = indexArray(sources.length, kinds.count);
+  const sourceSigma = indexArray(sources.length, sigmas.size);
+  sources.forEach(({ k, sigma, r }, i) => {
+    rect[4 * i] = floor32(r[0]);
+    rect[4 * i + 1] = floor32(r[1]);
+    rect[4 * i + 2] = ceil32(r[2]);
+    rect[4 * i + 3] = ceil32(r[3]);
+    sourceKind[i] = k;
+    sourceSigma[i] = sigmas.get(sigma) as number;
+  });
+  return {
+    sourceKind,
+    sourceSigma,
+    sigmas: Float64Array.from(sigmas.keys()),
+    // reachersOf gives every source of a tile the same perMetre.
+    sourceScale: sources[0]?.scale ?? 0,
+    sourceRect: rect
   };
 }
 
@@ -359,125 +437,4 @@ function cover(mask: Uint32Array, rect: Rect, reach: number, tile: Rect, slot: n
       k += hi - lo + 1;
     }
   }
-}
-
-/** Default byte budget of a UkcTileCache. */
-export const TILE_CACHE_BYTES = 8 * 2 ** 20;
-
-/** Bytes an entry costs besides its columns: its objects, typed-array headers and Map slot. */
-const ENTRY_BYTES = 3072;
-
-interface Entry {
-  geometry: TileGeometry;
-  /** The living-chart cells the geometry was walked with. */
-  adjusted: Adjusted[];
-  /** `store.adjustments.revision` they were last found unchanged at. */
-  revision: number;
-  bytes: number;
-}
-
-/**
- * Tile geometries by (z, x, y), least recently used dropped first beyond
- * `maxBytes`. An entry holds for one store and the living-chart cells in its
- * tile: another store (a handover or a WFS rebuild) empties the cache, and a
- * write to the store's adjustments has each entry compare the cells in its
- * tile before it is used again (invariant 5).
- */
-export class UkcTileCache {
-  bytes = 0;
-  private store: WeakRef<NodeStore> | undefined;
-  private count = -1;
-  private loads = 0;
-  private readonly entries = new Map<string, Entry>();
-
-  constructor(readonly maxBytes = TILE_CACHE_BYTES) {}
-
-  get size(): number {
-    return this.entries.size;
-  }
-
-  geometry(store: NodeStore, z: number, x: number, y: number): TileGeometry {
-    if (this.store?.deref() !== store || this.count !== store.count) {
-      this.entries.clear();
-      this.bytes = 0;
-      this.store = new WeakRef(store);
-      this.count = store.count;
-      this.loads = store.loadRevision;
-    }
-    if (store.loadRevision !== this.loads) {
-      // A tile walked over a block read from its stand-ins is safe but no longer what the
-      // loaded block gives; a block dropped since reads its stand-ins again.
-      this.dropOver(store, store.blocksChangedSince(this.loads));
-      this.loads = store.loadRevision;
-    }
-    const key = `${z}/${x}/${y}`;
-    const revision = store.adjustments.revision;
-    const hit = this.entries.get(key);
-    if (hit) {
-      this.entries.delete(key);
-      this.bytes -= hit.bytes;
-      if (hit.revision === revision || sameCells(hit.adjusted, adjustmentsIn(store, z, x, y))) {
-        hit.revision = revision;
-        this.keep(key, hit);
-        return hit.geometry;
-      }
-    }
-    const adjusted = adjustmentsIn(store, z, x, y);
-    const before = store.loadRevision;
-    const geometry = tileGeometry(store, z, x, y);
-    if (store.loadRevision !== before) {
-      // The walk read small blocks on the spot: this tile saw them loaded, while tiles cached
-      // before it over the same blocks saw their stand-ins.
-      this.dropOver(store, store.blocksChangedSince(before));
-      this.loads = store.loadRevision;
-    }
-    this.keep(key, {
-      geometry,
-      adjusted,
-      revision,
-      bytes: geometryBytes(geometry) + ENTRY_BYTES + adjusted.length * 64
-    });
-    return geometry;
-  }
-
-  private dropOver(store: NodeStore, blocks: readonly { z: number; x: number; y: number }[]): void {
-    if (blocks.length === 0) {
-      return;
-    }
-    // A tile's sources are cells up to the store's widest chart reach outside
-    // it, scaled at the tile's own latitude as reachersOf scales it.
-    const ground = chartReach(chartSigma(store).max);
-    const near = blocks.map((b) => tileRect(b.z, b.x, b.y));
-    for (const [key, e] of this.entries) {
-      const [z, x, y] = key.split("/").map(Number) as [number, number, number];
-      const tile = tileRect(z, x, y);
-      const reach = mercatorBuffer(tile, ground);
-      if (near.some((rect) => rectGap(tile, rect) <= reach)) {
-        this.entries.delete(key);
-        this.bytes -= e.bytes;
-      }
-    }
-  }
-
-  private keep(key: string, entry: Entry): void {
-    if (entry.bytes > this.maxBytes) {
-      return;
-    }
-    this.entries.set(key, entry);
-    this.bytes += entry.bytes;
-    for (const [k, e] of this.entries) {
-      if (this.bytes <= this.maxBytes) {
-        break;
-      }
-      this.entries.delete(k);
-      this.bytes -= e.bytes;
-    }
-  }
-}
-
-function sameCells(a: readonly Adjusted[], b: readonly Adjusted[]): boolean {
-  return (
-    a.length === b.length &&
-    a.every((c, i) => c.x === b[i]?.x && c.y === b[i]?.y && c.values === b[i]?.values)
-  );
 }
