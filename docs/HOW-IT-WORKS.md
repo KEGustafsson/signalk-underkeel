@@ -322,13 +322,15 @@ not yet loaded. The position σ comes from the GNSS (HDOP × 3 m, 5 m without HD
 is raised by the integrity check in section 7.
 
 The warning window is set by the warning style: 120 s with Balanced, 180 s with Early, 90 s with
-Late. Within it the steps are at most 3 s apart; for a fast boat the step shrinks so neighbouring
-footprints still touch. At 5 kn (2.6 m/s) the Balanced horizon is 214 s. Past the warning
-window, the widest window a state is raised in, only every k-th step is scored, the most that
-still leaves neighbouring footprints touching (every 3rd at 6 kn, every 20th at 1 kn). A tick
-scores at most 400 footprints: a long horizon at low speed spaces the footprints past the window
-wider still, up to where neighbouring footprints would stop touching, and only beyond that is the
-horizon cut; within the window the steps stay 3 s apart. Where a footprint past the window is the
+Late. Within it the steps are 3 s apart. Each footprint sweeps the hull from the step before, so
+for a fast boat it is the hull drawn out along the track rather than one snapshot, and the
+footprints cover the track with no buffer at all; the buffer is left for the position's
+uncertainty, and no footprint moves when the buffer changes. At 5 kn (2.6 m/s) the Balanced
+horizon is 214 s. Past the warning window, the widest window a state is raised in, only every
+k-th step is scored, so that one footprint sweeps at most three hull lengths (every 3rd at 6 kn,
+every 23rd at 1 kn, for a 12 m hull). A tick scores at most 400 footprints: a long horizon at
+low speed spaces the footprints past the window wider still, up to three hull lengths, and only
+beyond that is the horizon cut; within the window the steps stay 3 s apart. Where a footprint past the window is the
 first to reach the warn or alert level or a coverage gap, the steps it skipped are scored too, so the time
 to shoal and the time in the reason are those of the 3 s steps. The look-ahead distance is
 at most 5 NM (9260 m) and the minimum horizon at most 600 s.

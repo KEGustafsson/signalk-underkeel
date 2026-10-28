@@ -194,13 +194,13 @@ describe("coarse steps beyond the warn window", () => {
       NOW,
       opts
     );
-    // 1200 s horizon in 3 s steps; beyond 120 s every 21st, as (12 + 20) / 0.5 = 64 s.
+    // 1200 s horizon in 3 s steps; beyond 120 s every 24th, as 3 hulls of 12 m / 0.5 = 72 s.
     expect(r.horizon).toBe(1200);
     const step = 3;
     const gaps = r.footprints.slice(1).map((f, i) => f.t - (r.footprints[i] as FootprintResult).t);
     expect(gaps.slice(0, 40).every((g) => Math.abs(g - step) < 1e-9)).toBe(true);
-    expect(gaps.slice(40, -1).every((g) => Math.abs(g - 21 * step) < 1e-9)).toBe(true);
-    expect(r.footprints.length).toBe(59);
+    expect(gaps.slice(40, -1).every((g) => Math.abs(g - 24 * step) < 1e-9)).toBe(true);
+    expect(r.footprints.length).toBe(56);
   });
 });
 

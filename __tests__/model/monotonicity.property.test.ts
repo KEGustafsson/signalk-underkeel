@@ -131,7 +131,12 @@ describe("risk monotonicity (property)", () => {
           expect(unsure).toBeGreaterThanOrEqual(sure - RISK_STOP_BELOW);
         }
       ),
-      { numRuns: 30 }
+      {
+        numRuns: 30,
+        // From CI: a 0.008 m buffer floor spaced the footprints 2.98 s apart and the 2.16 m one
+        // 3 s apart though both got a 10 m buffer, and the narrow one's samples read P 1e-4 higher.
+        examples: [[22.002, 60.001, 2.6848050817578373, 3.3553, 3.9629, 0.2154, 0.008]]
+      }
     );
   });
 });

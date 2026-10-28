@@ -5,7 +5,7 @@ import { buildManifest } from "../src/api/manifest";
 import * as loader from "../src/index-loader";
 import { loadOrBuildIndex } from "../src/index-loader";
 import { parseConfig } from "../src/config";
-import { stepFor, DEFAULT_LOOKAHEAD } from "../src/engine/lookahead";
+import { sweepFor, DEFAULT_LOOKAHEAD } from "../src/engine/lookahead";
 import underkeel = require("../src/index");
 import { tileAt, toMercator } from "../src/foundation/geo";
 import type { BuildJob } from "../src/spatial/build-worker";
@@ -1106,11 +1106,11 @@ describe("manifest and step", () => {
     expect(m?.buttons[0]?.action).toEqual({ type: "togglePanel", panel: "details" });
   });
 
-  test("a fast boat gets a shorter step so footprints still overlap", () => {
+  test("a fast boat's footprints sweep hulls close enough to touch with no buffer", () => {
     const vessel = { draft: 1, length: 12, beam: 4 };
-    expect(stepFor(3, vessel, DEFAULT_LOOKAHEAD)).toBe(3);
-    const fast = stepFor(20, vessel, DEFAULT_LOOKAHEAD);
-    expect(fast * 20).toBeLessThanOrEqual(12 + 2 * DEFAULT_LOOKAHEAD.positionBuffer);
-    expect(stepFor(0, vessel, DEFAULT_LOOKAHEAD)).toBe(3);
+    expect(sweepFor(3, vessel, DEFAULT_LOOKAHEAD)).toBe(3);
+    const fast = sweepFor(20, vessel, DEFAULT_LOOKAHEAD);
+    expect(fast * 20).toBeLessThanOrEqual(12);
+    expect(sweepFor(0, vessel, DEFAULT_LOOKAHEAD)).toBe(3);
   });
 });

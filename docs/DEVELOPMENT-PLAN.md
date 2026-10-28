@@ -979,13 +979,15 @@ window (`alarmWithin` for `alarm`, `warnWithin` for `warn`, the whole horizon fo
 - **Central member:** constant SOG and ROT.
 - **The other four:** ROT ± σ_ROT and COG ± σ_COG.
 
-Footprint at each step (Δt = 3 s) is a rectangle of hull length × beam, inflated by `σ_pos(t)`.
-Δt shrinks at speed so that consecutive footprints, hull length plus the position buffer at
-both ends, still touch: a fast boat must not skip a rock between two samples. A tick scores at
-most 400 footprints. Δt stays the plan step out to `warnWithin`; when the horizon would need
-more, only the spacing of the coarse footprints beyond it grows, toward the touching limit
-(L + 2 · positionBuffer) / SOG, and may leave the Δt grid. The horizon is cut only past that,
-and Δt itself grows only when `warnWithin` alone would need more than 400 footprints. Growing
+Footprint at each step (Δt = 3 s) is the hull, a rectangle of hull length × beam, swept from
+the step before: the convex hull of the hulls at every sweep time between them, L / SOG apart
+(at most Δt), inflated by `σ_pos(t)`. Hulls that far apart touch with no buffer at all, so a
+fast boat cannot skip a rock between two samples whatever the buffer, and the buffer stands for
+the position's uncertainty alone. A tick scores at most 400 footprints. Δt stays the plan step
+out to `warnWithin`; when the horizon would need more, only the spacing of the coarse footprints
+beyond it grows, up to three hull lengths of track, 3L / SOG, and may leave the Δt grid. The
+horizon is cut only past that, and Δt itself grows only when `warnWithin` alone would need more
+than 400 footprints. Growing
 Δt over the whole horizon would score the alarm and warn windows coarsely too: a 5 NM
 look-ahead at 0.3 m/s would put the footprints at 0 s and 77 s, and a rock 30 s ahead would
 read as a warn 77 s ahead, never an alarm. Configuration caps D at 5 NM and the minimum horizon
@@ -995,7 +997,7 @@ The tracks start at the position fix, which may be up to `staleAfter` (10 s) old
 t seconds from now is placed t + age along them, age being now minus the fix's time, so every
 footprint, the time to shoal and the window checks count from now, and the fan's spread and
 along-track growth since the fix are kept. The footprint at t = 0 is the hull from the fix to
-now, sampled at the touching step: the age includes any skew between the source's clock and the
+now, sampled at the sweep times: the age includes any skew between the source's clock and the
 server's, so the boat may still be at the fix, and a hull only where the age projects it left
 the water just ahead of the bow unread (46 m of it with the server clock 8 s ahead at 8 m/s).
 Escape tracks run straight for that age before they turn, since no turn can start before now.
@@ -1003,22 +1005,41 @@ Escape tracks run straight for that age before they turn, since no turn can star
 **Decision (step rule): coarser steps beyond the warn window.** Footprints are scored every Δt
 out to `warnWithin` (120 s), the widest window `classify` and the hysteresis raise a state in.
 Beyond it only every k-th Δt step is scored, with k the largest whole number for which k·Δt
-still leaves consecutive footprints touching, (L + 2 · positionBuffer) / SOG; footprint length
-and buffer only grow with t, so the union of the coarse footprints still covers the swept hull.
+sweeps at most three hull lengths, 3L / SOG; each footprint sweeps the hulls since the one
+before it, so the coarse footprints still cover the swept hull.
 Where a coarse footprint is the first to reach the warn or alert level or a coverage gap, the
 Δt grid steps between the footprint before it and it are scored (a coarse footprint spaced for
 the budget may lie off the grid), so `timeToShoal` and the reason keep the Δt time. A coarse
 footprint is the convex hull of the hulls of every step it stands for: in a turn the steps
 between two coarse ones bulge outside their hulls, and under graded chart position (§4.3) a tile
 that much farther weighs less, so a coarse tick read up to 0.12 points of P below the plan
-steps. The hull takes in the footprints at every grid time j·Δt after the previous scheduled
-time, the grid the plan steps and `firstTime` use, also where the coarse footprint lies off it,
-so every plan step's footprint is in some coarse hull. The covering hull reads every tile at
+steps. The hull takes in the hulls at every grid time j·Δt and every sweep time after the plan
+step at or before the previous scheduled time, the grids the plan steps and `firstTime` use,
+also where the coarse footprint lies off the Δt grid, so every plan step's footprint is in some
+coarse hull. The covering hull reads every tile at
 least as near, so P is never lower than with every step scored
 (`__tests__/engine/lookahead-cost.test.ts`, and off the grid in a turn with `warnWithin` 30 s,
 `__tests__/engine/coarse-grid.property.test.ts`). At 1 kn a
-tick scores 57 footprints instead of 361. The escape fan scores the same coarse times, so a
-heading's time to shoal beyond 120 s is known to k·Δt.
+tick scores 55 footprints instead of 361 (12 m hull). The escape fan scores the same coarse
+times, so a heading's time to shoal beyond 120 s is known to k·Δt.
+
+**Decision (step rule): footprints sweep the hull; the buffer never sets a time.** Δt used to
+shrink, and the coarse spacing to grow, with (L + 2 · positionBuffer) / SOG, so the gaps between
+samples were closed by the position buffer. The configured buffer then moved the samples
+without changing a footprint's actual buffer, max(positionBuffer, k_p · σ_pos): at 3.4 m/s a
+0.008 m floor spaced the footprints 2.98 s apart and a 2.16 m one 3 s apart, both with a 10 m
+buffer, and near a shoal the narrow buffer's samples read P 1.0002 · 10⁻⁴ higher, past the
+monotonicity test's slack (invariant 2). Now no footprint time and no hull a footprint takes in
+depends on the buffer or σ_pos: Δt is the plan step at any speed, each footprint sweeps the
+hulls since the one before at L / SOG, which touch with no buffer, and coarse footprints sweep at
+most 3L. A wider buffer or a less certain position scores the same footprints wider, and the
+chart walk's own buffer monotonicity carries over to the tick
+(`__tests__/engine/footprint-sweep.property.test.ts`, `__tests__/model/monotonicity.property.test.ts`).
+Within the warn window and below L / Δt (7.8 kn for a 12 m hull) the footprints are the ones
+the old rule scored at the default 10 m buffer. Above that speed a footprint is one swept hull where the old rule scored several
+single hulls, so a fast boat scores fewer footprints, each a little longer; the time to shoal
+keeps the Δt resolution. Three hull lengths keep the old coarse spacing at the default buffer
+on a 10 m hull.
 
 **Output per tick.**
 

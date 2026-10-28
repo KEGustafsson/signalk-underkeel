@@ -71,6 +71,16 @@ All notable changes to signalk-underkeel are documented here.
 - README: what to check before installing on Victron Venus OS, whose Node.js version the
   repository does not record.
 
+### Fixed
+
+- A larger least position buffer could lower the look-ahead's P: the buffer also set how far
+  apart the footprints were scored, so changing it moved the samples even where the footprints
+  kept the same buffer, and one set of samples could read a shoal up to 1e-4 higher (safety
+  invariant 2). Each footprint now sweeps the hull since the step before, at hull positions that
+  touch with no buffer, so no footprint time or shape depends on the buffer or the position's
+  uncertainty. The step stays 3 s at any speed; a fast boat scores fewer, longer footprints.
+  Beyond the warn window a footprint sweeps at most three hull lengths.
+
 ## [0.2.1] - 2026-10-27
 
 ### Fixed

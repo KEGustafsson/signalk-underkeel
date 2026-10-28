@@ -6,20 +6,23 @@ import type { Refine } from "./verdict";
 /** When a tick's footprints are scored (plan §4.8, step rule). */
 
 /**
- * Seconds between footprints. The plan's Δt applies at ordinary speeds; a
- * fast boat would leave gaps between Δt-spaced hulls, so the step shrinks
- * until consecutive footprints (hull length plus the buffer at both ends)
- * still touch.
+ * Seconds between the hulls a footprint sweeps: hull positions this far apart touch with no
+ * buffer at all, so the footprints cover the track at any position buffer and the buffer
+ * stands for the position's uncertainty alone. No time on the schedule, and no hull a
+ * footprint takes in, depends on the buffer, so a wider buffer scores the same footprints
+ * wider and can only raise P (invariant 2).
  */
-export function stepFor(sog: number, vessel: VesselModel, opts: LookaheadOptions): number {
-  const reach = vessel.length + 2 * opts.positionBuffer;
-  return sog > 0 ? Math.min(opts.step, reach / sog) : opts.step;
+export function sweepFor(sog: number, vessel: VesselModel, opts: LookaheadOptions): number {
+  return sog > 0 ? Math.min(opts.step, vessel.length / sog) : opts.step;
 }
 
+/** A coarse footprint beyond the warn window sweeps at most this many hull lengths of track. */
+export const COARSE_SWEEP = 3;
+
 /**
- * Footprints per tick at most. Coarse footprints still touch up to
- * reach / SOG apart, so a long horizon at low speed spaces them wider
- * rather than scoring more; only when that is not enough is the horizon cut.
+ * Footprints per tick at most. A long horizon at low speed spaces the coarse
+ * footprints wider, up to COARSE_SWEEP hull lengths, rather than scoring more;
+ * only when that is not enough is the horizon cut.
  */
 export const MAX_FOOTPRINTS = 400;
 
@@ -30,32 +33,27 @@ export interface Schedule {
 }
 
 /**
- * Every step out to `warnWithin`, the widest window a state is raised in;
- * beyond it every k-th step, the most that still leaves consecutive
- * footprints touching, so a slow boat's long horizon costs tens of
- * footprints instead of hundreds. Footprint length and buffer only grow
- * with t, so the coarse footprints still cover the swept hull. When the
- * horizon would need more than MAX_FOOTPRINTS, only the coarse spacing
- * grows, toward the touching limit and off the step grid: the windows keep
- * the step, so the alarm and warn checks and the time to shoal keep its
- * resolution. The step grows only when the warn window alone would need
- * more. The grid steps a coarse footprint skips can be scored where it
- * decides a time.
+ * Every plan step out to `warnWithin`, the widest window a state is raised in; beyond it every
+ * k-th step, so a coarse footprint sweeps at most COARSE_SWEEP hull lengths and a slow boat's
+ * long horizon costs tens of footprints instead of hundreds. Each footprint sweeps the hulls
+ * since the one before (`sweepFor`), so the footprints cover the track whatever their spacing.
+ * When the horizon would need more than MAX_FOOTPRINTS, only the coarse spacing grows, toward
+ * COARSE_SWEEP hull lengths and off the step grid: the windows keep the step, so the alarm and
+ * warn checks and the time to shoal keep its resolution. The step grows only when the warn
+ * window alone would need more. The grid steps a coarse footprint skips can be scored where it
+ * decides a time. Nothing here depends on the position buffer.
  */
 export function scheduleFor(m: Motion, vessel: VesselModel, opts: LookaheadOptions): Schedule {
-  const gapFree = m.sog > 0 ? (vessel.length + 2 * opts.positionBuffer) / m.sog : opts.step;
+  const coarse = m.sog > 0 ? (COARSE_SWEEP * vessel.length) / m.sog : opts.step;
   const near = Math.min(m.horizon, opts.warnWithin);
-  const step = Math.min(
-    gapFree,
-    Math.max(stepFor(m.sog, vessel, opts), near / (MAX_FOOTPRINTS - 1))
-  );
+  const step = Math.max(opts.step, near / (MAX_FOOTPRINTS - 1));
   const dense = Math.min(MAX_FOOTPRINTS - 1, Math.ceil(near / step - 1e-9));
   // Steps between coarse footprints from the first at or past the window: k, or more
   // and off the grid where the footprints left would not reach the horizon.
   const left = MAX_FOOTPRINTS - 1 - dense;
-  const k = Math.max(1, Math.floor(gapFree / step + 1e-9));
+  const k = Math.max(1, Math.floor(coarse / step + 1e-9));
   const per =
-    left > 0 ? Math.min(gapFree / step, Math.max(k, (m.horizon / step - dense) / left)) : 0;
+    left > 0 ? Math.max(k, Math.min(coarse / step, (m.horizon / step - dense) / left)) : 0;
   const horizon = Math.min(m.horizon, (dense + per * left) * step);
   const times: number[] = [];
   for (let i = 0; i < dense; i++) {
@@ -70,8 +68,9 @@ export function scheduleFor(m: Motion, vessel: VesselModel, opts: LookaheadOptio
 
 /**
  * Scores the footprint at t; `stop` lets its chart walk end at certain land.
- * `from`, the previous scheduled time, is set for a coarse footprint, which
- * then also covers the steps it skipped.
+ * `from`, the time before it, is set for every footprint after t = 0, which
+ * then sweeps the hulls since then: for a coarse footprint also the steps it
+ * skipped.
  */
 export type Score = (t: number, stop: boolean, from?: number) => FootprintResult;
 
@@ -104,7 +103,7 @@ export function scoreSchedule(
       // A coarse footprint may lie off the step grid; the grid steps before it are scored.
       const first = before ? Math.floor(before.t / step + 1e-9) + 1 : 0;
       for (let j = first; j * step < f.t - 1e-9; j++) {
-        if (holds(score(j * step, false))) {
+        if (holds(score(j * step, false, j > 0 ? (j - 1) * step : undefined))) {
           return j * step;
         }
       }
@@ -112,7 +111,10 @@ export function scoreSchedule(
       // plan step sets the time, as when every step is scored. A footprint within one step of
       // the one before is that plan step alone, already scored.
       const single = before === undefined || f.t - before.t <= step + 1e-9;
-      return single || holds(score(f.t, false)) ? f.t : undefined;
+      // Scored as a plan step, sweeping from the grid step before it, also off the grid.
+      return single || holds(score(f.t, false, (Math.ceil(f.t / step - 1e-9) - 1) * step))
+        ? f.t
+        : undefined;
     }
   };
 }
