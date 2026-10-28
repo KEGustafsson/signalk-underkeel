@@ -787,14 +787,13 @@ flowchart TD
   most 8 km ahead, so a slow Raspberry Pi at planing speed is not left at the old box's edge.
 - **Box size at speed:** a box must hold 1.5 times the distance run during a build plus the
   look-ahead and that band. The build time is the last measured one, grown with the build area
-  ((radius + 2 km)²) for a larger box. A box too small for the speed is rebuilt at once at the
-  smallest 0.5 km step that holds 1.25 times the speed, up to **Largest index box at speed**
-  (0: from the RAM the system reports, 10 km at 1 GB, about 19 km on a 4 GB Raspberry Pi 4,
-  about 27 km with 8 GB; WFS boxes 25 km at most). It
-  is kept while the speed needs over 70 % of it and shrinks only at a rebuild due anyway. When
-  no box up to the cap holds the speed, the status says so, for example "chart box 10 km is
-  too small for 15.0 kn with 12 min builds: no box size keeps up". A box larger than the
-  configured radius whose build hits the heap limit lowers the cap by a quarter for the run.
+  for a larger box. A box too small for the speed is rebuilt at once at the smallest size that
+  holds the speed with some headroom, up to **Largest index box at speed**, which by default
+  grows with the RAM the system reports (WFS boxes 25 km at most). A grown box is kept until
+  the speed needs clearly less of it, and shrinks only at a rebuild due anyway. When no box up
+  to the cap holds the speed, the status says so, for example "chart box 10 km is too small
+  for 15.0 kn with 12 min builds: no box size keeps up". A larger box whose build hits the heap
+  limit lowers the cap for the run. The steps, headroom and caps are in `src/box-sizing.ts`.
 - **Outside the box:** the state is what no coverage gives anywhere (`warn`), and the reason
   names the box, for example "no chart coverage at the vessel: outside the chart box, the box
   is rebuilding around the vessel (last build took 5 min)", or "at the chart box edge", or "a
