@@ -108,7 +108,7 @@ export interface LookaheadOptions {
 /** Configurable maxima: each footprint costs a chart query every tick. */
 export const LOOKAHEAD_LIMITS = { distance: 5 * 1852, minHorizon: 600 } as const;
 
-export { MAX_FOOTPRINTS, stepFor } from "./schedule";
+export { COARSE_SWEEP, MAX_FOOTPRINTS, sweepFor } from "./schedule";
 
 export const DEFAULT_LOOKAHEAD: LookaheadOptions = {
   distance: 0.3 * 1852,

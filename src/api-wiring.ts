@@ -75,7 +75,8 @@ export function apiFor(
     waveHeight: () => s.monitor?.nav.waveHeight?.value,
     getRoute: (id) => app.resourcesApi.getResource("routes", id),
     now: () => clock.now(),
-    queue: s.requests
+    queue: s.requests,
+    chartBox: () => s.wfs?.view().bbox
   });
   const withAcks = (fn: (deps: AckServiceDeps) => ApiReply): ApiReply => {
     const m = s.monitor;

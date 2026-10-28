@@ -81,6 +81,30 @@ describe("build process limits", () => {
     expect(Array.from(r.cols ?? [])).toEqual([1.5]);
   });
 
+  test("progress the process posts before its reply goes to the caller, not the result", async () => {
+    const steps = script(
+      'process.once("message", () => {' +
+        ' process.send({ progress: { phase: "cells", done: 0, total: 2 } });' +
+        ' process.send({ progress: { phase: "roots", done: 4, total: 4 } });' +
+        ' process.send({ ok: true, staging: "done" });' +
+        "});"
+    );
+    const seen: unknown[] = [];
+    const r = await runBuildProcess(
+      steps,
+      {},
+      new AbortController().signal,
+      undefined,
+      undefined,
+      (p) => seen.push(p)
+    );
+    expect(r.staging).toBe("done");
+    expect(seen).toEqual([
+      { phase: "cells", done: 0, total: 2 },
+      { phase: "roots", done: 4, total: 4 }
+    ]);
+  });
+
   (process.platform === "win32" ? test.skip : test)(
     "an abort kills the process and the reader it started, and removes their staging",
     async () => {

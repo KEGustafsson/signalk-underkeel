@@ -130,7 +130,7 @@ describe("only the main thread writes the index directory", () => {
       minZoom: fixture.pyramid.minZoom,
       leafZoom: fixture.pyramid.leafZoom,
       cols: pyramidColumns(fixture.pyramid),
-      roots: { built: 1, copied: 0 }
+      roots: { built: 1, copied: 0, nodesCopied: 0 }
     };
   };
 

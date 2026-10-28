@@ -124,6 +124,7 @@ export = function underkeel(
         app.error(acks.error);
       }
       monitor.useAcks(acks);
+      monitor.chartBox = wfs && (() => wfs.view());
       keepBlocksNearVessel(monitor, () => state.load?.index, clock, config.lookahead);
       const livechart = startLivechart(app, clock, config, load.index, monitor);
       monitor.start();

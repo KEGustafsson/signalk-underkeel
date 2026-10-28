@@ -29,7 +29,6 @@ import {
 import { REACH_SLACK } from "./pyramid";
 import { chartPosition, NO_POSITION } from "./build-position";
 import { sigmaFor, SWEPT_SIGMA_D } from "./quality";
-import { bodyColumns } from "./store";
 
 /**
  * Builds the min-depth pyramid top-down (plan §4.3). A tile is subdivided
@@ -369,11 +368,24 @@ function uniformValues(a: Analysis, rect: Rect, opts: BuildOptions): NodeValues 
   };
 }
 
-interface Evaluated {
+export interface Evaluated {
   v: NodeValues;
   /** The node's chart position: widest σ and shallowest survey depth under it. */
   position: ChartPosition;
 }
+
+/**
+ * Puts the nodes of tile (z, x, y) into `store` from elsewhere (`tile-reuse.ts`) and returns
+ * the tile's values, or returns undefined and the tile is evaluated from `items`.
+ */
+export type TakeTile = (
+  store: NodeStore,
+  z: number,
+  x: number,
+  y: number,
+  rect: Rect,
+  items: Item[]
+) => Evaluated | undefined;
 
 /** A local build's box (`BuildOptions.within`) and the area its tiles are built in. */
 interface Box {
@@ -395,9 +407,14 @@ function evaluate(
   z: number,
   x: number,
   y: number,
-  items: Item[]
+  items: Item[],
+  take?: TakeTile
 ): Evaluated {
   const rect = tileRect(z, x, y);
+  const taken = take?.(store, z, x, y, rect, items);
+  if (taken) {
+    return taken;
+  }
   const outside = box !== undefined && !reaches(rect, box.area);
   const all = outside ? [] : classify(items, rect);
   if (!all.some((h) => h.item.f.role === "coverage")) {
@@ -430,7 +447,7 @@ function evaluate(
     [0, 1],
     [1, 1]
   ] as const) {
-    const child = evaluate(store, opts, box, z + 1, 2 * x + dx, 2 * y + dy, passed);
+    const child = evaluate(store, opts, box, z + 1, 2 * x + dx, 2 * y + dy, passed, take);
     v = combine(v, child.v);
     position = joinPosition(position, child.position);
   }
@@ -464,52 +481,22 @@ export function rootRange(items: readonly Item[], minZoom: number): RootRange | 
 /**
  * Evaluates the roots of `range`, column by column. Each root depends only on
  * the items that reach it, so the roots of any part of the range come out as
- * they do in a build of the whole.
+ * they do in a build of the whole. `take` may supply any tile's nodes instead.
  */
-export function buildRoots(items: Item[], opts: BuildOptions, range: RootRange): NodeStore {
+export function buildRoots(
+  items: Item[],
+  opts: BuildOptions,
+  range: RootRange,
+  take?: TakeTile
+): NodeStore {
   const store = new NodeStore(opts.minZoom, opts.leafZoom);
   const box = opts.within && { inner: opts.within, area: buildArea(opts.within) };
   for (let x = range.minX; x <= range.maxX; x++) {
     for (let y = range.minY; y <= range.maxY; y++) {
-      evaluate(store, opts, box, opts.minZoom, x, y, items);
+      evaluate(store, opts, box, opts.minZoom, x, y, items, take);
     }
   }
   return store;
-}
-
-/**
- * The nodes of root (x, y) at the store's minZoom, copied out zoom by zoom
- * in tile-key order: the columns a build of that root alone gives. At zoom
- * z the root holds s = 2^(z − minZoom) tile columns, each a run of s keys.
- */
-export function rootColumns(store: NodeStore, x: number, y: number): NodeColumns {
-  const found: number[] = [];
-  for (let z = store.minZoom; z <= store.leafZoom; z++) {
-    const s = 2 ** (z - store.minZoom);
-    const n = 2 ** z;
-    for (let tx = x * s; tx < (x + 1) * s; tx++) {
-      for (const [key, i] of store.keyRange(z, tx * n + y * s, tx * n + (y + 1) * s)) {
-        found.push(z, key, i);
-      }
-    }
-  }
-  const { cols } = bodyColumns(found.length / 3);
-  for (let at = 0; at < cols.z.length; at++) {
-    const i = found[3 * at + 2] as number;
-    cols.z[at] = found[3 * at] as number;
-    cols.key[at] = found[3 * at + 1] as number;
-    cols.dMin[at] = store.dMin[i] as number;
-    cols.sigmaD[at] = store.sigmaD[i] as number;
-    cols.sigmaP[at] = store.sigmaP[i] as number;
-    cols.surveySigmaP[at] = store.surveySigmaP[i] as number;
-    cols.topoSigmaP[at] = store.topoSigmaP[i] as number;
-    cols.bathyDMin[at] = store.bathyDMin[i] as number;
-    cols.topoDMin[at] = store.topoDMin[i] as number;
-    cols.flags[at] = store.flags[i] as number;
-    cols.cellRef[at] = store.cellRef[i] as number;
-    cols.split[at] = store.split[i] as number;
-  }
-  return cols;
 }
 
 /**

@@ -113,7 +113,9 @@ before it gets there. Up to 32 MB of them are kept. A block that is not read yet
 area without chart coverage, never as clear water.
 
 The status line at the top of the plugin's page shows the engine state and its reason, for
-example `Monitoring: unknown — position stale`.
+example `Monitoring: unknown — position stale`, or `Monitoring: warn — shoal ahead` without the
+seconds to shoal, which `GET /status` gives. It changes when its words change; a change only in
+its numbers, such as an HDOP, shows at most every 30 s.
 
 ## 4. From chart cells to a depth index
 
@@ -201,7 +203,9 @@ so a faulty transducer cannot switch off a hazard. The shallower cells survive a
 index's leaf zoom: each new cell takes the shallowest depth of the old cells it holds. The
 shallower cells are saved to `livechart.json` within 10 s of being marked. Each cell's estimate
 is appended to `cells.ndjson` every 10 minutes, but only for the cells sounded since the last
-save, and the soundings are appended to `soundings.ndjson` every minute. The estimates are
+save, and the soundings are appended to `soundings.ndjson` every minute. Below 1 kn, or without
+a fresh SOG, that file keeps one sounding per cell per minute, so a sounder on a moored boat
+does not wear the storage; every sounding still updates its cell's estimate. The estimates are
 capped: once more than 10 000 cells could be dropped, those sounded longest ago go first, down
 to 9 000. A cell marked shallower, or one still waiting for its chart to be read, is never
 dropped. A cell that has read 1σ shallower than the chart but has not yet had 5 samples over
@@ -318,13 +322,15 @@ not yet loaded. The position σ comes from the GNSS (HDOP × 3 m, 5 m without HD
 is raised by the integrity check in section 7.
 
 The warning window is set by the warning style: 120 s with Balanced, 180 s with Early, 90 s with
-Late. Within it the steps are at most 3 s apart; for a fast boat the step shrinks so neighbouring
-footprints still touch. At 5 kn (2.6 m/s) the Balanced horizon is 214 s. Past the warning
-window, the widest window a state is raised in, only every k-th step is scored, the most that
-still leaves neighbouring footprints touching (every 3rd at 6 kn, every 20th at 1 kn). A tick
-scores at most 400 footprints: a long horizon at low speed spaces the footprints past the window
-wider still, up to where neighbouring footprints would stop touching, and only beyond that is the
-horizon cut; within the window the steps stay 3 s apart. Where a footprint past the window is the
+Late. Within it the steps are 3 s apart. Each footprint sweeps the hull from the step before, so
+for a fast boat it is the hull drawn out along the track rather than one snapshot, and the
+footprints cover the track with no buffer at all; the buffer is left for the position's
+uncertainty, and no footprint moves when the buffer changes. At 5 kn (2.6 m/s) the Balanced
+horizon is 214 s. Past the warning window, the widest window a state is raised in, only every
+k-th step is scored, so that one footprint sweeps at most three hull lengths (every 3rd at 6 kn,
+every 23rd at 1 kn, for a 12 m hull). A tick scores at most 400 footprints: a long horizon at
+low speed spaces the footprints past the window wider still, up to three hull lengths, and only
+beyond that is the horizon cut; within the window the steps stay 3 s apart. Where a footprint past the window is the
 first to reach the warn or alert level or a coverage gap, the steps it skipped are scored too, so the time
 to shoal and the time in the reason are those of the 3 s steps. The look-ahead distance is
 at most 5 NM (9260 m) and the minimum horizon at most 600 s.
@@ -401,8 +407,18 @@ expert settings**, **Look-ahead** overrides any of them:
 
 ![navigation.underKeel in the Data Browser](images/how-it-works/databrowser.png)
 
-Published once a second: `state` and `envelopeRev` on every tick, the other values when they
-change and every 10 s:
+Computed once a second and sent when they change: `state` and `envelopeRev` also every 5 s
+while unchanged, the other values every 10 s. At the dock that is a `state` and an
+`envelopeRev` point every 5 s for a history logger, not every second.
+
+**Liveness.** A client that shows these values treats `state` (or `envelopeRev`) not received
+for 15 s, three missed keep-alives, as stale: it shows the state as unknown and drops the
+numbers, never the last `normal`. A value counts from its own timestamp, so the copy Signal K
+replays on subscribe is stale on arrival once it is over 15 s old. The plugin's status widget
+and its chart runtime do this (`STALE_MS` in `public/ukc-shared.js`); the runtime withdraws
+the look-ahead envelope 15 s after the last `envelopeRev`. When the plugin stops it publishes
+`state` `off`. `notifications.navigation.underKeel` is not a liveness signal: it is sent on a
+change of state, kind of reason or hazard, and its countdown at most every 30 s.
 
 | Path                                         | Unit  | Meaning                                                                                                                                                                                                           |
 | -------------------------------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -757,7 +773,7 @@ flowchart TD
   P[vessel position, checked periodically] --> D{more than half the box radius from<br/>the box centre, or the edge ahead<br/>closer than a rebuild's run?}
   D -- no --> KEEP[keep the current index]
   D -- yes, and no download<br/>in the last minute or so --> W[in a worker thread: download the box<br/>centred ahead along the course<br/>DepthArea_A, DredgedArea_A, Sounding_P]
-  W --> B[rebuild in the same thread the index tiles<br/>about 20 km square that the old or new box reaches;<br/>copy the others from the saved index]
+  W --> B[rebuild the index in the same process, copying from the saved index<br/>the tiles whose chart features and box state are unchanged]
   B --> S[swap the new index in;<br/>the look-ahead keeps running]
   W -- fails --> E[keep the old index, report the error,<br/>retry after a longer back-off]
 ```
@@ -769,6 +785,31 @@ flowchart TD
   (the 500 m position buffer cap plus 1.86 km of chart position reach, counted up to half the
   radius). The new box is centred where the vessel will be when it is ready, at
   most 8 km ahead, so a slow Raspberry Pi at planing speed is not left at the old box's edge.
+- **Box size at speed:** a box must hold 1.5 times the distance run during a build plus the
+  look-ahead and that band. The build time is the last measured one, grown with the build area
+  for a larger box. A box too small for the speed is rebuilt at once at the smallest size that
+  holds the speed with some headroom, up to **Largest index box at speed**, which by default
+  grows with the RAM the system reports (WFS boxes 25 km at most). A grown box is kept until
+  the speed needs clearly less of it, and shrinks only at a rebuild due anyway. When no box up
+  to the cap holds the speed, the status says so, for example "chart box 10 km is too small
+  for 15.0 kn with 12 min builds: no box size keeps up". A larger box whose build hits the heap
+  limit lowers the cap for the run. The steps, headroom and caps are in `src/box-sizing.ts`.
+- **Outside the box:** the state is what no coverage gives anywhere (`warn`), and the reason
+  names the box, for example "no chart coverage at the vessel: outside the chart box, the box
+  is rebuilding around the vessel (last build took 5 min)", or "at the chart box edge", or "a
+  box rebuild is due", or "the box rebuild failed and is retried". No coverage inside the box,
+  more than the 1.86 km chart reach from its edge, keeps the plain reason. A route leg that is
+  `unverified` for no coverage and whose corridor reaches past the box gets a `reason` saying
+  it is outside the chart box; the details panel lists it under the leg table.
+- **Rebuild:** a new box copies from the saved index every tile down to z15 (0.6 km across at
+  53° N) that lies inside both the old and the new box, or in both boxes' 2 km build-area band
+  outside them, and is built from the same chart features: the same cells, compared by their
+  files or bytes, and the same features of them. Tiles a changed cell reaches are built again,
+  so with the WFS on, whose cell is downloaded anew for each box, the tiles its features reach
+  are. The index is byte for byte the one a fresh build makes. A 5 km move of the 10 km
+  Waddenzee box of ENC cells copied 66 % of the tiles' nodes and took 7 s instead of 12 s
+  (x86). With `boxRadiusKm` 0 and the WFS on, a refresh copies the z10 roots (about 20 km
+  square) that neither the old nor the new WFS box reaches.
 - **Priority:** the WFS cell is usage band 1, so any ENC cell wins where both cover.
 - **Land:** the WFS has no land objects. Water that no depth area reaches is land, so a gap in
   the data never reads as open water.
@@ -782,7 +823,14 @@ flowchart TD
   over it are `unverified`, and the overlay draws it `unverified`, never `clear`. Warnings and
   alarms over WFS water are raised as usual.
 - **Status:** `GET /status` has a `wfs` section with the box, its fetch time, the feature counts
-  and the notice; the plugin status line repeats the notice while the source is on.
+  and the notice; the plugin status line repeats the notice while the source is on. Its
+  `chartBox` section (also for a box of ENC cells alone) has `rebuild` while a build runs:
+  `startedAt`, `elapsedMs`, `radiusKm`, the build process's last `phase` (`download`, `cells`,
+  `roots`, `save`) with `done`/`total`, and `estimateMs` from the last build; `sizing` with the
+  next box's `radiusKm`, `enough`, `neededKm`, `capKm` and `sog`; and `summary`, the line the
+  plugin status and the details panel show, such as "chart box rebuilding (10 km): building
+  roots 12/40, started 2 min ago, last build took 5 min". The build process posts progress at
+  each phase's start and end and at most every 2 s between.
 
 ## 13. In Freeboard
 

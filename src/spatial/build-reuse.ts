@@ -3,6 +3,7 @@ import path from "path";
 import { writeFileDurable } from "../foundation/durable-file";
 import type { Rect } from "../foundation/geo";
 import { currentInfo, sourceName } from "../ingest/cell-source";
+import { boxRect, readBox } from "./build-box";
 import type { CellInfo } from "../ingest/cells";
 import type { DepthFeature } from "../ingest/features";
 import type { CellReach } from "./build-items";
@@ -10,8 +11,9 @@ import { DEFAULT_BUILD } from "./build-items";
 import { loadChartIndex } from "./chart-index";
 import type { NodeColumns, NodeStore } from "./node-store";
 import type { RootRange } from "./pyramid-build";
-import { rootColumns } from "./pyramid-build";
 import { cellsReaching } from "./pyramid-regions";
+import type { RegionSaved, SavedTiles, TileDigest } from "./tile-reuse";
+import { boxReuse, readTiles, rootColumns } from "./tile-reuse";
 
 /**
  * Reuse of a saved index's roots when only some cells changed (plan §4.3). A
@@ -57,6 +59,10 @@ export interface SavedIndex {
   /** Named hazards by catalogue index, in feature order. */
   hazards: Map<number, DepthFeature[]>;
   pyramid: NodeStore;
+  /** For each source of the build, the saved catalogue index of the cell of its name. */
+  refs: (number | undefined)[];
+  /** A box index's tiles file (`tile-reuse.ts`). */
+  tiles?: SavedTiles;
 }
 
 /** JSON drops undefined fields, and a parsed catalogue spells out some a cell's DSID leaves out. */
@@ -90,6 +96,40 @@ export function savedIndex(
   dirs: readonly string[],
   leafZoom: number
 ): SavedIndex | undefined {
+  const saved = loadSaved(indexDir, leafZoom);
+  const names = dirs.map(sourceName);
+  if (!saved || names.join("\n") !== saved.cells.map((c) => c.name).join("\n")) {
+    return undefined;
+  }
+  return { ...saved, refs: dirs.map((_, i) => i) };
+}
+
+/**
+ * The index saved in `indexDir` when it was built in a box at `leafZoom` and
+ * its tiles file belongs to it (`readTiles`); otherwise undefined and nothing
+ * is reused. Its cells are matched to `dirs` by name.
+ */
+export function savedBoxIndex(
+  indexDir: string,
+  dirs: readonly string[],
+  leafZoom: number
+): SavedIndex | undefined {
+  const box = readBox(indexDir);
+  const saved = box?.leafZoom === leafZoom ? loadSaved(indexDir, leafZoom) : undefined;
+  const tiles =
+    saved && readTiles(indexDir, { minZoom: saved.pyramid.minZoom, leafZoom }, saved.cells.length);
+  if (!box || !saved || !tiles || !rectsEqual(tiles.box, boxRect(box.bbox))) {
+    return undefined;
+  }
+  const at = new Map(saved.cells.map((c, j) => [c.name, j]));
+  return { ...saved, refs: dirs.map((d) => at.get(sourceName(d))), tiles };
+}
+
+const rectsEqual = (a: Rect, b: Rect): boolean =>
+  a.minX === b.minX && a.minY === b.minY && a.maxX === b.maxX && a.maxY === b.maxY;
+
+/** The index saved in `indexDir` with each cell's reach, when built at `leafZoom`. */
+function loadSaved(indexDir: string, leafZoom: number): Omit<SavedIndex, "refs"> | undefined {
   let saved: ReturnType<typeof loadChartIndex>;
   let reaches: CellReach[];
   try {
@@ -100,12 +140,7 @@ export function savedIndex(
     return undefined;
   }
   const { pyramid, catalogue } = saved;
-  const names = dirs.map(sourceName);
-  if (
-    pyramid.minZoom !== DEFAULT_BUILD.minZoom ||
-    pyramid.leafZoom !== leafZoom ||
-    names.join("\n") !== catalogue.cells.map((c) => c.name).join("\n")
-  ) {
+  if (pyramid.minZoom !== DEFAULT_BUILD.minZoom || pyramid.leafZoom !== leafZoom) {
     return undefined;
   }
   const hazards = new Map<number, DepthFeature[]>();
@@ -141,4 +176,45 @@ export function copiedRoots(
     }
   });
   return out;
+}
+
+/** What a build takes from the saved index, by position in its roots. */
+export interface ReusePlan {
+  /** Roots copied whole. */
+  copies: Map<number, NodeColumns>;
+  /** The digests of a box build's roots copied whole. */
+  digests: TileDigest[];
+  /** What each other root's region job may copy, in a box build. */
+  regions: Map<number, RegionSaved>;
+}
+
+/**
+ * The roots a build copies: in a whole-set build those no changed cell
+ * reaches (`copiedRoots`), in a box build those `boxReuse` finds; `now`
+ * holds the new cells' reaches and, in a box build, the box and the cells'
+ * identities by catalogue index.
+ */
+export function reusePlan(
+  saved: SavedIndex | undefined,
+  now: { reaches: CellReach[]; changed: number[]; box?: { box: Rect; ids: string[] } },
+  roots: RootRange[]
+): ReusePlan {
+  const none: ReusePlan = { copies: new Map(), digests: [], regions: new Map() };
+  if (!saved) {
+    return none;
+  }
+  if (!saved.tiles) {
+    const changed = now.changed.flatMap((i) => [now.reaches[i], saved.reaches[i]] as CellReach[]);
+    return { ...none, copies: copiedRoots(saved, changed, roots) };
+  }
+  if (!now.box) {
+    return none;
+  }
+  const { pyramid, reaches, tiles } = saved;
+  const reuse = boxReuse({ pyramid, reaches, tiles }, { ...now.box, reaches: now.reaches }, roots);
+  return {
+    copies: new Map([...reuse.roots].map(([k, r]) => [k, r.cols])),
+    digests: [...reuse.roots.values()].flatMap((r) => r.digests),
+    regions: reuse.regions
+  };
 }

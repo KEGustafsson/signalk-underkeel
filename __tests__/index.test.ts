@@ -5,7 +5,7 @@ import { buildManifest } from "../src/api/manifest";
 import * as loader from "../src/index-loader";
 import { loadOrBuildIndex } from "../src/index-loader";
 import { parseConfig } from "../src/config";
-import { stepFor, DEFAULT_LOOKAHEAD } from "../src/engine/lookahead";
+import { sweepFor, DEFAULT_LOOKAHEAD } from "../src/engine/lookahead";
 import underkeel = require("../src/index");
 import { tileAt, toMercator } from "../src/foundation/geo";
 import type { BuildJob } from "../src/spatial/build-worker";
@@ -665,8 +665,10 @@ describe("plugin lifecycle", () => {
     expect(list).toHaveLength(1);
     expect(list[0]?.measured).toBeLessThan(list[0]?.charted as number);
     expect(notes[0]).toMatch(/^notes\/underkeel-shoal-/);
+    // At 0.3 m/s, under 1 kn: the cell has all six soundings, the CSB log one per pass.
+    expect(list[0]).toMatchObject({ samples: 6 });
     const csb = call("/v1/livechart/csb.geojson").body as { features: unknown[] };
-    expect(csb.features).toHaveLength(6);
+    expect(csb.features).toHaveLength(2);
     plugin.stop();
     expect(fs.existsSync(path.join(dataDir, "livechart.json"))).toBe(true);
   });
@@ -1104,11 +1106,11 @@ describe("manifest and step", () => {
     expect(m?.buttons[0]?.action).toEqual({ type: "togglePanel", panel: "details" });
   });
 
-  test("a fast boat gets a shorter step so footprints still overlap", () => {
+  test("a fast boat's footprints sweep hulls close enough to touch with no buffer", () => {
     const vessel = { draft: 1, length: 12, beam: 4 };
-    expect(stepFor(3, vessel, DEFAULT_LOOKAHEAD)).toBe(3);
-    const fast = stepFor(20, vessel, DEFAULT_LOOKAHEAD);
-    expect(fast * 20).toBeLessThanOrEqual(12 + 2 * DEFAULT_LOOKAHEAD.positionBuffer);
-    expect(stepFor(0, vessel, DEFAULT_LOOKAHEAD)).toBe(3);
+    expect(sweepFor(3, vessel, DEFAULT_LOOKAHEAD)).toBe(3);
+    const fast = sweepFor(20, vessel, DEFAULT_LOOKAHEAD);
+    expect(fast * 20).toBeLessThanOrEqual(12);
+    expect(sweepFor(0, vessel, DEFAULT_LOOKAHEAD)).toBe(3);
   });
 });

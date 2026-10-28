@@ -227,7 +227,8 @@ signalk-underkeel/
   down to three folders deep under the cells directory (an exchange set's `ENC_ROOT` included),
   and six below a folder holding a `CATALOG.031` (Rijkswaterstaat's Inland ENC sets nest
   `ENC_ROOT/1R/7/<cell>/<cell>.000`), and writes
-  nothing beside them and no intermediate files; only the built index is saved. GDAL runs only
+  nothing beside them and no intermediate files; the built index and the cell cache below are
+  saved in the plugin's data. GDAL runs only
   in a short-lived child of the index build process (`src/ingest/enc-read-process.ts`): it
   reads each cell once per build and sends its layers as GeoJSON, one message per cell, which
   the build holds in one SharedArrayBuffer per cell that the region threads read without a
@@ -244,6 +245,21 @@ signalk-underkeel/
   it replaces needed `signalk-container` and an export step per cell. The 12
   NOAA cells around Miami (6.8 MB) build in 19 s at leaf zoom 18 on x86; reading US5FL61M
   (1.5 MB) takes 1.6 s of that.
+- Decision: the read layers and extents of each S-57 cell are kept between builds in
+  `<data dir>/cell-cache` (`src/ingest/cell-cache.ts`), never in the index directory, which a
+  commit replaces whole, and never beside the cells. An entry is filed under the cell's resolved
+  path, its files' hash above, the plugin's and gdal3.js's versions and the driver options and
+  layers read; a cell whose hash differs is read with GDAL again (invariant 3). Entries are
+  Brotli-compressed (quality 4; the 20 Waddenzee cells' 281 MB of GeoJSON as 34 MB), written
+  once per cell edition through an fsynced rename and carry a SHA-256 of themselves, so a torn
+  or damaged entry is read from the cell, not used. The cache keeps at most 512 MB, dropping
+  the entries a build does not use, written longest ago first, and writes nothing that would
+  leave less than 512 MB free; entries of cells no longer present go when a build opens it.
+  With every cell kept no reader process starts: the 10 km Waddenzee box built in 12–15 s
+  instead of 30–34 s (x86). Box selection reads each cell's extent from `extents.json` there
+  unless its files changed. A build parses each cell's layers once for the survey and keeps
+  up to a sixteenth of its heap of parsed cells for the regions, those used next soonest, so a
+  cell reaching several roots is not parsed for each.
 - Must run on a Raspberry Pi 4 as well as on the Jetson Orin. Budget: index RAM under 150 MB,
   look-ahead CPU under 5 % of one core.
 
@@ -289,6 +305,47 @@ cell's stamp out of its comparison, so the saved box index, which still holds th
 depths, is loaded meanwhile. With the WFS on, its box is the one the ENC cells are built in.
 `boxRadiusKm: 0` keeps the whole build (an index built in a box is then rebuilt whole); a radius
 between 0 and 2 km is raised to 2.
+
+**Box refresh copies unchanged tiles (decision, 2026-10-27).** A z10 root is 23 km across at
+53° N, wider than a 10 km box, so copying whole roots as the whole-set refresh does would copy
+none. `evaluate` reads the box only in its tests of each tile against the box and its build
+area, and every tile under a tile wholly inside the box (by 1 m), or wholly in the build area
+with no ground in the box, takes them the same way (`boxState`). A box build therefore
+records, for each tile from z10 to z15 in either state, a SHA-256 of that state and the items
+the tile is evaluated from, in order: each item's cell by content (`sourceIdentity`: an S-57
+cell's name and files' hash, a directory's layer bytes), its index among the cell's features
+and its inherited `full` flag (`tiles.json`, with the box, each cell's identity, the plugin
+version, `PYRAMID_VERSION` and a SHA-256 of `pyramid.bin`). The next box build copies a tile's
+saved subtree when the tile is in the same state in both boxes and its digest matches, and a
+whole root when it is in the same state in both and the same cells by identity, in the same
+order, reach it; copied cell references are moved to the new catalogue by identity. The
+digest covers every input of the subtree, the parents' pruning included, so a changed cell or
+one only one build read is built again. A copied node's float32 columns are what the build
+stored; parents take maxima and minima of them, which commute with that rounding, so the
+result is byte-identical to a fresh build: a property test over random moves, resizes, a cell
+missing from the saved build and a changed cell, and five moves of the 10 km Waddenzee box
+(pyramid, hazards, cells and reach files). Nothing is copied with another leaf zoom, stamp or
+pyramid, or with no readable `tiles.json`. On the Waddenzee box (x86, warm cell cache, one
+thread) a 5 km move east copied 66 % of the nodes and built in 6.9–7.2 s instead of
+11.6–11.7 s; 8 km east 54 %, 6.4–6.9 s instead of 10.4–11.6 s; 5 km north 43 %, 9.1–9.5 s
+instead of 13.3–13.6 s; 8 km south 42 %, 8.1–9.2 s instead of 11.5–12.5 s. Parsing the cells
+and preparing their items stays: the digests need the items. No root lies inside a 10 km
+box; one can lie inside a box whose radius exceeds half a root's width (12 km at 53° N), as
+the cap allows at speed.
+
+**Box size and rebuild status (2026-10-27).** A box must hold SOG × 1.5 × the build time plus
+the look-ahead's reach and the 2.36 km band; the build time is the last measured one grown by
+((R + 2 km) / (R_measured + 2 km))², never shortened (`box-sizing.ts`). A box too small for
+the speed is due at once, rebuilt at the smallest 0.5 km step holding 1.25 × SOG, between
+`boxRadiusKm` and `boxMaxRadiusKm` (0: 10 km × √(build heap / 256 MB), at most 50 km; WFS 25
+km); it is kept while the speed needs over 70 % of it. Under this growth law a 10 km box
+rarely grows: past the radius where 1.5 × SOG × build time is half the box, a larger box adds
+less reach than its longer build costs, and the status says no size keeps up. A heap-limit
+failure of a grown box lowers the cap by a quarter for the run. No coverage at or past the box
+edge keeps its state (`warn`, with sound) and its reason gains the box's part ("outside the
+chart box, the box is rebuilding around the vessel"); route legs left `unverified` by no
+coverage past the box get a `reason`. The build process posts its phase and counts over IPC
+(at most every 2 s), shown in `/status` `chartBox.rebuild` and the status line.
 
 **Sources, in priority order:**
 
@@ -617,7 +674,10 @@ class drawn over it` still tests.
   roots of the ENC cells). Every root is built when the saved
   index holds other cells or another order, another leaf zoom, no `reach.json`, or fails to
   read. As at start, a cell with the same DSID edition, update, issue date and datum areas is
-  taken as unchanged.
+  taken as unchanged. A box build copies tiles instead (§4.2, `tiles.json`).
+- `tiles.json` (box indexes) holds the digests a box refresh copies tiles by (§4.2); 64 KB for
+  the 10 km Waddenzee box. `cells.json` is written as `parseCatalogue` reads it back, so a
+  cell's entry taken from the saved catalogue has the bytes of one read from the cell.
 - The index is built in a child process, at start as for a new WFS box (§4.2), and posted
   to the main thread up to 1 000 000 pyramid nodes (`HELD_WHOLE_NODES`; a larger one is read
   back from the committed files block by block); until the process hands it over the
@@ -919,13 +979,15 @@ window (`alarmWithin` for `alarm`, `warnWithin` for `warn`, the whole horizon fo
 - **Central member:** constant SOG and ROT.
 - **The other four:** ROT ± σ_ROT and COG ± σ_COG.
 
-Footprint at each step (Δt = 3 s) is a rectangle of hull length × beam, inflated by `σ_pos(t)`.
-Δt shrinks at speed so that consecutive footprints, hull length plus the position buffer at
-both ends, still touch: a fast boat must not skip a rock between two samples. A tick scores at
-most 400 footprints. Δt stays the plan step out to `warnWithin`; when the horizon would need
-more, only the spacing of the coarse footprints beyond it grows, toward the touching limit
-(L + 2 · positionBuffer) / SOG, and may leave the Δt grid. The horizon is cut only past that,
-and Δt itself grows only when `warnWithin` alone would need more than 400 footprints. Growing
+Footprint at each step (Δt = 3 s) is the hull, a rectangle of hull length × beam, swept from
+the step before: the convex hull of the hulls at every sweep time between them, L / SOG apart
+(at most Δt), inflated by `σ_pos(t)`. Hulls that far apart touch with no buffer at all, so a
+fast boat cannot skip a rock between two samples whatever the buffer, and the buffer stands for
+the position's uncertainty alone. A tick scores at most 400 footprints. Δt stays the plan step
+out to `warnWithin`; when the horizon would need more, only the spacing of the coarse footprints
+beyond it grows, up to three hull lengths of track, 3L / SOG, and may leave the Δt grid. The
+horizon is cut only past that, and Δt itself grows only when `warnWithin` alone would need more
+than 400 footprints. Growing
 Δt over the whole horizon would score the alarm and warn windows coarsely too: a 5 NM
 look-ahead at 0.3 m/s would put the footprints at 0 s and 77 s, and a rock 30 s ahead would
 read as a warn 77 s ahead, never an alarm. Configuration caps D at 5 NM and the minimum horizon
@@ -935,7 +997,7 @@ The tracks start at the position fix, which may be up to `staleAfter` (10 s) old
 t seconds from now is placed t + age along them, age being now minus the fix's time, so every
 footprint, the time to shoal and the window checks count from now, and the fan's spread and
 along-track growth since the fix are kept. The footprint at t = 0 is the hull from the fix to
-now, sampled at the touching step: the age includes any skew between the source's clock and the
+now, sampled at the sweep times: the age includes any skew between the source's clock and the
 server's, so the boat may still be at the fix, and a hull only where the age projects it left
 the water just ahead of the bow unread (46 m of it with the server clock 8 s ahead at 8 m/s).
 Escape tracks run straight for that age before they turn, since no turn can start before now.
@@ -943,22 +1005,41 @@ Escape tracks run straight for that age before they turn, since no turn can star
 **Decision (step rule): coarser steps beyond the warn window.** Footprints are scored every Δt
 out to `warnWithin` (120 s), the widest window `classify` and the hysteresis raise a state in.
 Beyond it only every k-th Δt step is scored, with k the largest whole number for which k·Δt
-still leaves consecutive footprints touching, (L + 2 · positionBuffer) / SOG; footprint length
-and buffer only grow with t, so the union of the coarse footprints still covers the swept hull.
+sweeps at most three hull lengths, 3L / SOG; each footprint sweeps the hulls since the one
+before it, so the coarse footprints still cover the swept hull.
 Where a coarse footprint is the first to reach the warn or alert level or a coverage gap, the
 Δt grid steps between the footprint before it and it are scored (a coarse footprint spaced for
 the budget may lie off the grid), so `timeToShoal` and the reason keep the Δt time. A coarse
 footprint is the convex hull of the hulls of every step it stands for: in a turn the steps
 between two coarse ones bulge outside their hulls, and under graded chart position (§4.3) a tile
 that much farther weighs less, so a coarse tick read up to 0.12 points of P below the plan
-steps. The hull takes in the footprints at every grid time j·Δt after the previous scheduled
-time, the grid the plan steps and `firstTime` use, also where the coarse footprint lies off it,
-so every plan step's footprint is in some coarse hull. The covering hull reads every tile at
+steps. The hull takes in the hulls at every grid time j·Δt and every sweep time after the plan
+step at or before the previous scheduled time, the grids the plan steps and `firstTime` use,
+also where the coarse footprint lies off the Δt grid, so every plan step's footprint is in some
+coarse hull. The covering hull reads every tile at
 least as near, so P is never lower than with every step scored
 (`__tests__/engine/lookahead-cost.test.ts`, and off the grid in a turn with `warnWithin` 30 s,
 `__tests__/engine/coarse-grid.property.test.ts`). At 1 kn a
-tick scores 57 footprints instead of 361. The escape fan scores the same coarse times, so a
-heading's time to shoal beyond 120 s is known to k·Δt.
+tick scores 55 footprints instead of 361 (12 m hull). The escape fan scores the same coarse
+times, so a heading's time to shoal beyond 120 s is known to k·Δt.
+
+**Decision (step rule): footprints sweep the hull; the buffer never sets a time.** Δt used to
+shrink, and the coarse spacing to grow, with (L + 2 · positionBuffer) / SOG, so the gaps between
+samples were closed by the position buffer. The configured buffer then moved the samples
+without changing a footprint's actual buffer, max(positionBuffer, k_p · σ_pos): at 3.4 m/s a
+0.008 m floor spaced the footprints 2.98 s apart and a 2.16 m one 3 s apart, both with a 10 m
+buffer, and near a shoal the narrow buffer's samples read P 1.0002 · 10⁻⁴ higher, past the
+monotonicity test's slack (invariant 2). Now no footprint time and no hull a footprint takes in
+depends on the buffer or σ_pos: Δt is the plan step at any speed, each footprint sweeps the
+hulls since the one before at L / SOG, which touch with no buffer, and coarse footprints sweep at
+most 3L. A wider buffer or a less certain position scores the same footprints wider, and the
+chart walk's own buffer monotonicity carries over to the tick
+(`__tests__/engine/footprint-sweep.property.test.ts`, `__tests__/model/monotonicity.property.test.ts`).
+Within the warn window and below L / Δt (7.8 kn for a 12 m hull) the footprints are the ones
+the old rule scored at the default 10 m buffer. Above that speed a footprint is one swept hull where the old rule scored several
+single hulls, so a fast boat scores fewer footprints, each a little longer; the time to shoal
+keeps the Δt resolution. Three hull lengths keep the old coarse spacing at the default buffer
+on a 10 m hull.
 
 **Output per tick.**
 
@@ -1095,8 +1176,11 @@ fired, the notification holds until SOG stays above 0.5 m/s for 10 s.
 ### 4.10 Signal K data model and REST API
 
 **Deltas.** These are published by the plugin, use plugin-scoped units in SI, and are
-proposed for the Signal K spec later. `state` and `envelopeRev` go out every tick; the other
-values when they change and at least every 10 s, and the plugin status when its text changes.
+proposed for the Signal K spec later. Each value goes out when it changes; unchanged, `state`
+and `envelopeRev` at least every 5 s and the other values every 10 s. A client treats a `state`
+or `envelopeRev` not received for 15 s as stale and shows unknown (HOW-IT-WORKS, Liveness). The
+plugin status goes out when its words change, without the seconds to shoal, and with only its
+numbers changed at most every 30 s.
 `notifications.navigation.underKeel` goes out at once on a new state, kind of reason or named
 hazard, and with only its countdown or terms changed at most every 30 s.
 `notifications.navigation.positionIntegrity` follows the same rule (`NOTIFY_REFRESH_MS`): at once
@@ -1457,6 +1541,14 @@ appended to `soundings.ndjson`, one per line, every minute; once the file would 
 10 minutes, and within 10 s of an adjustment being added or moving a 5 cm depth or 1 cm σ step;
 everything is saved on stop.
 
+Decision (PL1 amendment, 2026-10-27): the CSB export log is thinned at low speed. A 10 Hz
+sounder on a moored boat logged 36 000 soundings an hour, so the 40 000-line file was rewritten
+every 33 minutes. Below 1 kn SOG, or with no fresh SOG, `soundings.ndjson` keeps one sounding per
+cell per minute (`src/livechart/csb-thin.ts`); at 1 kn and above it keeps every one. Every
+accepted sounding still updates its cell posterior, so discrepancies and lowered depths are
+unchanged (safety invariant 5; `__tests__/livechart/csb-thin.test.ts`). `GET /status` counts the
+soundings left out of the log as `livechart.csbThinned`.
+
 Decision (PL1 amendment, 2026-10-24): the cells are appended and bounded. With every cell
 rewritten at each save and none ever dropped, a boat at anchor rewrote every cell it had ever
 sounded every 10 minutes, and a start read a chart prior for each of them, which for a long
@@ -1584,11 +1676,11 @@ copied from `signalk-plotterext-bus` into `public/vendor/` at build time.
 
 | Contribution                       | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| background `live` (runtime.html)   | fetches `/envelope` on each new `envelopeRev`, clears it after 10 s without one, on `off`/`unknown` or a failed fetch, and polls every 3 s without a Signal K stream or when subscribing to it fails; checks the routes on the chart on each `route.*` event (debounced 1 s), every 60 s and after a plugin restart, one route at a time with a 30 s timeout and again after `Retry-After` when the server answers 503 busy, drops the results of routes the host no longer lists and, for a hidden route, a re-check queued behind the running one, and writes the results to host state in compact form (per leg index, status, minimum UKC and P) once per re-check of all routes, the overlay still drawn when that write fails; refreshes the `ukc` tiles the plugin's change list names, polled every 15 s and after each 1 cm water-level move, all of them when the state enters or leaves `off`/`unknown` and after a restart, and while the list does not answer all of them on a 1 cm fall or 10 cm rise of the water level or a change of its source; fetches nothing while the page is hidden, and on return withdraws the envelope until a current one arrives and asks for tile changes and route checks at once |
+| background `live` (runtime.html)   | fetches `/envelope` on each new `envelopeRev`, clears it after 15 s without one, on `off`/`unknown` or a failed fetch, and polls every 3 s without a Signal K stream or when subscribing to it fails; checks the routes on the chart on each `route.*` event (debounced 1 s), every 60 s and after a plugin restart, one route at a time with a 30 s timeout and again after `Retry-After` when the server answers 503 busy, drops the results of routes the host no longer lists and, for a hidden route, a re-check queued behind the running one, and writes the results to host state in compact form (per leg index, status, minimum UKC and P) once per re-check of all routes, the overlay still drawn when that write fails; refreshes the `ukc` tiles the plugin's change list names, polled every 15 s and after each 1 cm water-level move, all of them when the state enters or leaves `off`/`unknown` and after a restart, and while the list does not answer all of them on a 1 cm fall or 10 cm rise of the water level or a change of its source; fetches nothing while the page is hidden, and on return withdraws the envelope until a current one arrives and asks for tile changes and route checks at once |
 | overlay `lookahead`                | envelope fill, outline, dashed central track and the worst footprint, coloured by state                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | overlay `routecheck`               | route legs coloured `ok` / `marginal` / `fail` / `unverified`; every leg of a result older than 3 min, or without a receipt time, `unverified`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | overlay `ukc`                      | the M3 UKC tiles, off by default                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| widget `status` (2×1)              | state colour, minimum clearance in the host's depth unit, time to shoal and the reason; a tap opens the panel                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| widget `status` (2×1)              | state colour, minimum clearance in the host's depth unit, time to shoal and the reason, Unknown with no numbers 15 s after the last `state`; a tap opens the panel                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | panel `details`                    | advisory note, state, water level, the WFS notice when that source is on, and a leg table per route with its age and re-check; a result older than 3 min reads "out of date"; **Open setup** loads `setup.html?from=details` in the same panel, with a link back (§4.15)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | button `open-details` (mapToolbar) | toggles the panel                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 

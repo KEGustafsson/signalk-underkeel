@@ -63,6 +63,8 @@ export interface Item {
   shape: PolygonIndex[] | undefined;
   /** The feature contains an ancestor tile, and so every tile below it. */
   full?: boolean;
+  /** The feature's position in the list it was prepared from (`tile-reuse.ts` digests). */
+  ord: number;
 }
 
 interface Zone {
@@ -246,7 +248,13 @@ export function prepareItems(features: ChartFeature[], opts: BuildOptions, keep?
       reach.shape ?? (f.geom.type === "polygon" ? f.geom.polygons.map(indexPolygon) : undefined);
     // Only coverage and quality rings are read again; an area's live on in `shape` alone.
     const rings = !shape || f.role === "coverage" || f.role === "quality";
-    out.push({ f: rings ? f : ({ ...f, geom: NO_RINGS } as ChartFeature), bbox, radius, shape });
+    out.push({
+      f: rings ? f : ({ ...f, geom: NO_RINGS } as ChartFeature),
+      bbox,
+      radius,
+      shape,
+      ord: i
+    });
   });
   return out;
 }

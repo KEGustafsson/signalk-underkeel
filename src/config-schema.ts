@@ -231,13 +231,15 @@ const LOOKAHEAD = {
     distance: {
       type: "number",
       title: "Look-ahead distance (m)",
-      description: FOLLOWS_STYLE,
+      description: `${FOLLOWS_STYLE} Each second the look-ahead scores footprints out to this distance, at most 400; a longer one costs more CPU per tick, which counts on a Raspberry Pi 3 or Cerbo GX.`,
       minimum: 0,
       maximum: LOOKAHEAD_LIMITS.distance
     },
     minHorizon: {
       type: "number",
       title: "Minimum horizon (s)",
+      description:
+        "The look-ahead reaches at least this far in time at speed. A longer horizon scores more footprints each second, at most 400, so more CPU per tick.",
       default: 60,
       minimum: 0,
       maximum: LOOKAHEAD_LIMITS.minHorizon
@@ -269,6 +271,11 @@ const LOOKAHEAD = {
   }
 };
 
+/** A chart box half-width field, km. */
+const BOX_KM = { type: "number", minimum: 0, maximum: 50 };
+const boxKm = (title: string, def: number, description: string): Json =>
+  Object.assign({ title, description, default: def }, BOX_KM);
+
 const CHART_INDEX = {
   indexDir: {
     type: "string",
@@ -276,17 +283,32 @@ const CHART_INDEX = {
     description:
       "Where the depth index built from the cells is kept between restarts. Default: <plugin data dir>/index"
   },
-  rebuildIndex: { type: "boolean", title: "Rebuild index at start", default: false },
-  leafZoom: { type: "number", title: "Index leaf zoom", default: 20, minimum: 14, maximum: 22 },
-  boxRadiusKm: {
-    type: "number",
-    title: "Index box around the vessel (km)",
+  rebuildIndex: {
+    type: "boolean",
+    title: "Rebuild index at start",
     description:
-      "Half-width of the area the index is built in around the vessel; it is rebuilt as the vessel moves. Outside it the plugin reports no coverage. 0 indexes every cell (slow for large chart sets); a radius under 2 km is raised to 2. With the Traficom WFS on, its radius is used.",
-    default: 10,
-    minimum: 0,
-    maximum: 50
-  }
+      "Builds the index again at every start, with the CPU, memory and flash writes of a first build. The index is rebuilt anyway when a cell changes; leave this off.",
+    default: false
+  },
+  leafZoom: {
+    type: "number",
+    title: "Index leaf zoom",
+    description:
+      "Size of the smallest index tile: about 19 m across at 20 and 38 m at 19 at 60° N. Each step down needs fewer tiles, so less memory, disk and build time. A tile keeps the shallowest depth inside it, so a coarser index warns more, never less. Consider 19 on a 1 GB Raspberry Pi 3 or Cerbo GX. Changing it rebuilds the index.",
+    default: 20,
+    minimum: 14,
+    maximum: 22
+  },
+  boxRadiusKm: boxKm(
+    "Index box around the vessel (km)",
+    10,
+    "Half-width of the area the index is built in around the vessel; it is rebuilt as the vessel moves. Outside it the plugin reports no coverage, and the reason says the vessel is outside the chart box. At speed the box grows past this radius, up to the largest index box, so the vessel cannot reach its edge, less the look-ahead, before the next box is built: a box must hold 1.5 times the distance run during the last build (grown with the build area) plus the look-ahead and a 2.4 km band. It grows at once when too small, and shrinks only at the next rebuild once the speed needs under 70% of it. 0 indexes every cell (slow for large chart sets); a radius under 2 km is raised to 2. With the Traficom WFS on, its radius is used, and the box grows to 25 km at most."
+  ),
+  boxMaxRadiusKm: boxKm(
+    "Largest index box at speed (km)",
+    0,
+    "The box around the vessel grows up to this half-width at speed. 0 sizes it from the RAM the system reports: 10 km on a 1 GB Raspberry Pi or Cerbo GX, about 19 km on a 4 GB Raspberry Pi 4, about 27 km with 8 GB. The status says when even this box is too small for the speed and build time."
+  )
 };
 
 const EXPERT = {

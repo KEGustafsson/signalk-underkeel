@@ -1,4 +1,5 @@
 import UKC = require("../../public/ukc-shared.js");
+import { LIVENESS_KEEP_ALIVE_MS, LIVENESS_STALE_MS } from "../../src/tick-publisher";
 
 describe("extension display logic", () => {
   test("depths follow the user's unit and refuse non-numbers", () => {
@@ -43,6 +44,44 @@ describe("extension display logic", () => {
       state: "UKC Unknown",
       reason: "no data from the under-keel plugin"
     });
+  });
+
+  test("the pages' stale limit is three of the plugin's liveness keep-alives", () => {
+    expect(UKC.STALE_MS).toBe(LIVENESS_STALE_MS);
+    expect(UKC.STALE_MS).toBe(3 * LIVENESS_KEEP_ALIVE_MS);
+  });
+
+  test("only a fresh state keeps the widget current; an old normal reads unknown", () => {
+    const now = Date.parse("2026-10-19T12:00:00Z");
+    const at = (s: number) => new Date(now + s * 1000).toISOString();
+    const fresh = UKC.freshness(UKC.STALE_MS);
+    const view: Record<string, unknown> = { state: "unknown", clearance: null, stale: true };
+    // A state 10 s old, replayed on subscribe, is current for 5 s more.
+    expect(UKC.widgetValue(view, "state", "normal", fresh("s", at(-10), now), now)).toBe(5000);
+    expect(UKC.widgetView(view, "m", now + 4999).state).toBe("UKC Normal");
+    // A clearance keep-alive arrives, but no state: the view still ages out with the state.
+    expect(UKC.widgetValue(view, "clearance", 3.1, fresh("c", at(4), now + 4000), now + 4000)).toBe(
+      null
+    );
+    expect(UKC.widgetView(view, "m", now + 5000)).toMatchObject({
+      state: "UKC Unknown",
+      line: "min —"
+    });
+    // A state older than the limit is not shown at all.
+    const old: Record<string, unknown> = { state: "unknown", stale: true };
+    expect(UKC.widgetValue(old, "state", "normal", fresh("s2", at(-16), now), now)).toBe(null);
+    expect(old.state).toBe("unknown");
+    expect(UKC.widgetView(old, "m", now).state).toBe("UKC Unknown");
+    // Keep-alives every 5 s hold the view current with room for two missed ones.
+    const live: Record<string, unknown> = { state: "unknown", stale: true };
+    const f2 = UKC.freshness(UKC.STALE_MS);
+    for (let s = 0; s <= 60; s += LIVENESS_KEEP_ALIVE_MS / 1000) {
+      UKC.widgetValue(live, "state", "normal", f2("s", at(s), now + s * 1000), now + s * 1000);
+    }
+    expect(UKC.widgetView(live, "m", now + 60_000 + 2 * LIVENESS_KEEP_ALIVE_MS).state).toBe(
+      "UKC Normal"
+    );
+    expect(UKC.widgetView(live, "m", now + 60_000 + UKC.STALE_MS).state).toBe("UKC Unknown");
   });
 
   test("an unknown state shows as unknown, never as normal", () => {
@@ -307,5 +346,21 @@ describe("extension display logic", () => {
       )
     ).toEqual(["Water level 0.4 m (fmi:forecast)", "N"]);
     expect(UKC.statusLines({ waterLevel: null }, "m")).toEqual([]);
+  });
+
+  test("the panel shows the chart box rebuild, and why a leg outside the box is unverified", () => {
+    const summary =
+      "chart box rebuilding (10 km): building roots 3/10, started 2 min ago, first build";
+    expect(UKC.statusLines({ chartBox: { summary } }, "m")).toEqual([summary]);
+    expect(UKC.statusLines({ chartBox: { summary: null } }, "m")).toEqual([]);
+    const reason = "the leg reaches outside the chart box around the vessel";
+    const legs = [
+      { index: 0, status: "unverified", minUkc: null, risk: 0, flags: ["NO_COVERAGE"], reason },
+      { index: 1, status: "ok", minUkc: 2, risk: 0, flags: [] }
+    ];
+    expect(UKC.compactResult({ name: "A", legs }).legs).toEqual([
+      { index: 0, status: "unverified", minUkc: null, risk: 0, reason },
+      { index: 1, status: "ok", minUkc: 2, risk: 0 }
+    ]);
   });
 });

@@ -1,7 +1,7 @@
 import type { Rect } from "../foundation/geo";
 import { shiftRect, tileRange, tileRect, worldShifts } from "../foundation/geo";
-import type { Geom } from "../foundation/geometry";
-import { geomRectDistance, shiftGeom } from "../foundation/geometry";
+import type { Geom, MeasuredGeom } from "../foundation/geometry";
+import { measuredRectDistance, measureGeom, shiftGeom } from "../foundation/geometry";
 import { normalCdf } from "../foundation/stats";
 import { chartWeight, FLAG_SIGMAS, MAX_CHART_SIGMA } from "./chart-position";
 import type { NodeStore } from "./node-store";
@@ -43,6 +43,8 @@ export interface Shadow {
   sigmaP: number;
 }
 
+const UNSHADED: Shadow = Object.freeze({ ratio: 0, distance: 0, sigmaP: 0 });
+
 /** S(r) rises to `sigma` for r beyond `at` ground metres. */
 interface Step {
   at: number;
@@ -81,6 +83,10 @@ export class SurveyShadow {
   private level = 0;
   /** Every tile nearer than this has been read. */
   private searched = 0;
+  /** The last answer of `at`, for `lastG`. */
+  private lastG = NaN;
+  private last: Shadow = UNSHADED;
+  private readonly measured: MeasuredGeom[];
 
   /**
    * @param geoms the footprint, and its copies one world over where its reach crosses ±180°
@@ -90,11 +96,12 @@ export class SurveyShadow {
    */
   constructor(
     private readonly store: NodeStore,
-    private readonly geoms: readonly Geom[],
+    geoms: readonly Geom[],
     reaches: readonly Rect[],
     private readonly ground: (mercator: number) => number,
     private readonly limit: number
   ) {
+    this.measured = geoms.map(measureGeom);
     for (const reach of reaches) {
       const range = tileRange(store.minZoom, reach);
       for (let x = range.minX; x <= range.maxX; x++) {
@@ -109,8 +116,8 @@ export class SurveyShadow {
   private offer(z: number, x: number, y: number): void {
     const rect = tileRect(z, x, y);
     let d = Infinity;
-    for (const g of this.geoms) {
-      d = Math.min(d, geomRectDistance(g, rect, this.limit));
+    for (const g of this.measured) {
+      d = Math.min(d, measuredRectDistance(g, rect, this.limit));
     }
     if (d <= this.limit) {
       this.push({ d: this.ground(d), z, x, y });
@@ -146,15 +153,25 @@ export class SurveyShadow {
     this.searched = Infinity;
   }
 
-  /** ρ(g) for a tile `g` ground metres beyond the buffer, and the water that set it. */
+  /**
+   * ρ(g) for a tile `g` ground metres beyond the buffer, and the water that set
+   * it. The steps change only in a search, which runs before an answer and
+   * never twice for one g, so a g asked again straight after reads the answer
+   * kept, as a walk does for each tile. Callers must not change it.
+   */
   at(g: number): Shadow {
     if (!(g > 0)) {
-      return { ratio: 0, distance: 0, sigmaP: 0 };
+      return UNSHADED;
     }
     if (this.searched < g) {
       this.extend(g);
     }
-    let best: Shadow = { ratio: 0, distance: 0, sigmaP: 0 };
+    if (g === this.lastG) {
+      return this.last;
+    }
+    let ratio = 0;
+    let distance = 0;
+    let sigmaP = 0;
     let sigma = MAX_CHART_SIGMA;
     for (let k = 0; k < this.steps.length; k++) {
       const step = this.steps[k] as Step;
@@ -165,16 +182,23 @@ export class SurveyShadow {
       const next = this.steps[k + 1];
       // S(r) = sigma on (step.at, end]: r/S(r) is largest at the end.
       const end = next !== undefined && next.at < g ? next.at : g;
-      if (end / sigma > best.ratio) {
-        best = { ratio: end / sigma, distance: end, sigmaP: sigma };
+      if (end / sigma > ratio) {
+        ratio = end / sigma;
+        distance = end;
+        sigmaP = sigma;
       }
     }
     // No tile nearer than g at all: the water in between is not modelled.
     if (this.steps.length === 0 || (this.steps[0] as Step).at >= g) {
-      const ratio = g / sigma;
-      return ratio > best.ratio ? { ratio, distance: g, sigmaP: sigma } : best;
+      if (g / sigma > ratio) {
+        ratio = g / sigma;
+        distance = g;
+        sigmaP = sigma;
+      }
     }
-    return best;
+    this.lastG = g;
+    this.last = { ratio, distance, sigmaP };
+    return this.last;
   }
 
   private push(e: Entry): void {
@@ -272,6 +296,23 @@ export function shadedWeight(
     return { risk, weight };
   }
   return { risk: p * cap, weight: cap, shadow: { distance: s.distance, sigmaP: s.sigmaP } };
+}
+
+/** The risk `shadedWeight` returns, without its explanation. */
+export function shadedRisk(
+  shadow: ShadowOf | undefined,
+  ground: number,
+  sigma: number,
+  p: number,
+  floor: number
+): number {
+  const weight = chartWeight(ground, sigma);
+  const risk = p * weight;
+  if (!shadow || ground <= 0 || risk <= floor) {
+    return risk;
+  }
+  const cap = normalCdf(-shadow().at(ground).ratio);
+  return cap >= weight ? risk : p * cap;
 }
 
 /**

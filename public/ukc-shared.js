@@ -133,6 +133,32 @@
     return Math.max(0, Math.min(staleMs, staleMs - (now - t)));
   }
 
+  /**
+   * The plugin sends `navigation.underKeel.state` and `.envelopeRev` when they change and at
+   * least every 5 s (LIVENESS_KEEP_ALIVE_MS in src/tick-publisher.ts): one not seen for three
+   * of those is no longer current, and the pages show Unknown and withdraw the envelope.
+   */
+  const STALE_MS = 15000;
+
+  /**
+   * Applies one Signal K value to the status widget's view: `left` is what freshFor gave
+   * for it. Only the state keeps the view current, so a clearance that arrives without a
+   * state cannot hold an old `normal` on screen. Returns how long the view now stays
+   * current (to arm a timer), or null when that did not change.
+   */
+  function widgetValue(view, key, value, left, now) {
+    if (left <= 0) {
+      return null;
+    }
+    view[key] = value;
+    if (key !== "state") {
+      return null;
+    }
+    view.stale = false;
+    view.freshUntil = now + left;
+    return left;
+  }
+
   /** freshFor with the latest timestamp seen per path kept for the caller. */
   function freshness(staleMs) {
     const seen = {};
@@ -290,6 +316,10 @@
     if (status && status.wfs && status.wfs.notice) {
       parts.push(status.wfs.notice);
     }
+    // The chart box rebuild in progress, or a box too small for the speed.
+    if (status && status.chartBox && status.chartBox.summary) {
+      parts.push(status.chartBox.summary);
+    }
     return parts;
   }
 
@@ -320,7 +350,11 @@
       name: r.name,
       rev: r.rev,
       legs: (r.legs || []).map(function (leg) {
-        return { index: leg.index, status: leg.status, minUkc: leg.minUkc, risk: leg.risk };
+        const row = { index: leg.index, status: leg.status, minUkc: leg.minUkc, risk: leg.risk };
+        if (leg.reason) {
+          row.reason = leg.reason;
+        }
+        return row;
       })
     };
     ["receivedAt", "checkedAt", "error", "pending"].forEach(function (k) {
@@ -386,6 +420,8 @@
     legRow: legRow,
     oneAtATime: oneAtATime,
     retryAfterMs: retryAfterMs,
+    STALE_MS: STALE_MS,
+    widgetValue: widgetValue,
     freshFor: freshFor,
     freshness: freshness,
     routeBadge: routeBadge,

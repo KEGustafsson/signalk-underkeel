@@ -89,6 +89,16 @@ Restart the server, then enable **Under-Keel Awareness** under _Server → Plugi
 Signal K admin UI. Its one runtime dependency is gdal3.js (about 40 MB), which reads the S-57
 cells.
 
+**Victron Venus OS (Cerbo GX).** `package.json` asks for Node.js 22 or newer (`engines`), and CI
+tests Node 22 and 24 only. Venus OS runs Signal K on the Node.js it ships, and this repository
+does not record which version that is: check with `node --version` over SSH on the device before
+installing. On an older Node, npm prints an `EBADENGINE` warning and installs anyway unless
+`engine-strict` is set, and the plugin runs untested.
+
+On a 1 GB machine such as a Raspberry Pi 3 or a Cerbo GX, keep the index box (the default
+10 km) rather than indexing every cell, and consider **Index leaf zoom** 19. The setup check
+shows the RAM and CPUs it finds and says the same; it never changes a setting.
+
 ## Prepare the charts
 
 The plugin reads unencrypted S-57 ENC cells as they are delivered: each `.000` base cell with
@@ -114,7 +124,12 @@ The index covers a box around the vessel, **Index box around the vessel (km)** (
 each way), and is rebuilt off the event loop as the vessel moves, so a large exchange set such
 as NOAA's 698 East and Gulf coast cells is never indexed whole: only the cells reaching the box
 are read (21 of them around Miami, 22 s at leaf zoom 20 on x86). Outside the box the plugin
-reports no coverage, never clear water; a radius under 2 km is raised to 2. Until the first position arrives the engine is `off`
+reports no coverage, never clear water, and the reason says the vessel is outside the chart box
+and whether it is being rebuilt; the plugin status and the details panel show the rebuild's
+phase, start and the last build's duration. At speed the box grows past its radius, up to
+**Largest index box at speed** (0 sizes it from the RAM), so the vessel cannot reach the edge
+before the next box is built (docs/HOW-IT-WORKS.md §12). A radius under 2 km is raised to 2.
+Until the first position arrives the engine is `off`
 with the reason `waiting for the vessel position to build the chart box`. Set the box to 0 to
 index every cell.
 
@@ -125,7 +140,11 @@ with the reason `building chart index`. The 12 NOAA cells around Miami (6.8 MB o
 updates) build in 19 s at leaf zoom 18 on x86. Later starts load the saved index, 0.1 s for
 those cells, and rebuild it when a cell was added or removed, or a cell's `.000` or update files
 changed; `GET /status` names the cells that caused the rebuild. **Rebuild index at start**
-forces a rebuild on every start. A cell folder may be a symbolic link.
+forces a rebuild on every start. A cell folder may be a symbolic link. What the build read
+from each cell is kept, compressed, in `cell-cache` in the plugin data directory (at most 512 MB), so a
+chart box refresh reads again only the cells whose files changed: the 10 km Waddenzee box
+rebuilds in 12–15 s instead of 30–34 s on x86. Deleting the folder is safe; the cells are then
+read again.
 
 Folders of GeoJSON layers exported by `scripts/enc-to-geojson.sh` for earlier versions are no
 longer read: point **ENC cells directory** at the original `.000` cells instead. Such a folder
@@ -140,7 +159,8 @@ There are two places to set the plugin up, and both write the same configuration
   level and warnings, in the same panel with a link back to the details. Drag the keel, the margin
   line and the sounder on a side view of the hull, or type the numbers. The page shows the draft
   Signal K already states, the vertical datum of your charts with the water-level source that fits
-  it, and a setup check. **Save and restart** needs a Signal K admin login.
+  it, and a setup check, which also lists the machine's RAM and CPUs with advice on the index
+  settings. **Save and restart** needs a Signal K admin login.
 - The plugin's page in the admin UI. It asks for the same essentials first; **Show expert
   settings** opens the rest, and an optional feature's fields appear once it is enabled. Admin
   UIs older than Signal K 2.32 show every field at once.
@@ -257,7 +277,9 @@ screenshots, including the plugin layers in the chart list and the setup steps i
 | `notifications.grounding`                    | only from the optional grounding detector, when the boat has gone aground                       |
 
 Any Signal K app can show these; the status line on the plugin's admin page reads, for
-example, `Monitoring: unknown — position stale`.
+example, `Monitoring: unknown — position stale`. Each value is sent when it changes; `state` and
+`envelopeRev` at least every 5 s, the others every 10 s. A display that shows them should read a
+`state` older than 15 s as unknown, as the plugin's own widget does.
 
 ## Optional features
 

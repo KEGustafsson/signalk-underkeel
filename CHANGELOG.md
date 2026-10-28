@@ -20,9 +20,67 @@ All notable changes to signalk-underkeel are documented here.
 - Index builds test soundings against survey zones through a zone grid, and coverage through
   the edge grids, with results identical to before: the 10 km Waddenzee box built in 31.6 s
   instead of 57.2 s, the whole set in 147 s instead of 216 s (x86, one thread).
+- The look-ahead's chart walk measures footprint-to-tile distances with exact pre-checks and
+  allocates less: ticks on the Waddenzee index take 13–18 ms instead of 22–28 ms (median, x86),
+  with every result byte-identical.
 - UKC overlay tiles are kept encoded (4 MiB) beside their geometry (24 MiB, about 41 % of its
   former size, source edges stored as float32 rounded outward), and gzipped off the event
   loop. A 40-tile viewport redrawn unchanged takes about 0 ms instead of 1.4–2.1 s (x86).
+- While the chart box is rebuilding, or the vessel is outside it, the no-coverage reason says
+  so ("outside the chart box, the box is rebuilding around the vessel (last build took 5
+  min)"); the state stays `warn`. `GET /status` `chartBox` reports the rebuild's phase,
+  progress and estimate, and the panel shows it. The box grows with speed and the measured
+  build time up to `boxMaxRadiusKm` (by default from the build heap: 10 km on 1 GB, about 19 km on a
+  4 GB Raspberry Pi 4) and says when no size keeps up. Route legs left unverified past the box say why.
+- `navigation.underKeel.state` and `.envelopeRev` are sent when they change and at least every
+  5 s, no longer every second: at the dock a history logger stored two points a second. Over
+  240 stationary ticks the plugin sent 626 values in 242 deltas, now 242 in 74. A display should
+  read a `state` not received for 15 s as unknown; the status widget does, and only a fresh
+  `state` keeps it current, and the chart runtime withdraws the envelope 15 s after the last
+  `envelopeRev` (it was 10 s). Notifications are unchanged.
+- The plugin status no longer carries the seconds to shoal (`GET /status` still has them), and a
+  status that differs only in its numbers is set at most every 30 s: through the warn zone of a
+  240 s approach the status was set 67 times, now 5.
+- Below 1 kn, or without a fresh SOG, the living chart's CSB export log (`soundings.ndjson`)
+  keeps one sounding per cell per minute. A 10 Hz sounder on a moored boat rewrote the
+  40 000-line file every 33 minutes. Every accepted sounding still updates its cell, so
+  discrepancies are found as before. `GET /status` counts the left-out soundings as
+  `livechart.csbThinned`.
+
+- An index build keeps each S-57 cell's read layers and extent in `cell-cache` in the plugin
+  data directory (at most 512 MB) and reads with GDAL only the cells it holds no valid entry
+  for: changed cells, and cells whose entry is missing or was evicted. The
+  10 km Waddenzee chart box rebuilt in 12–15 s instead of 30–34 s, with no 300–370 MB reader
+  process; the whole 20-cell set in 78–90 s instead of 141 s on one thread (x86). A torn or
+  damaged entry is read from the cell again. The built index is byte for byte the same.
+- A chart box refresh copies from the saved box index each tile down to z15 that lies inside
+  both boxes, or in both boxes' build-area band outside them, and is evaluated from the same
+  cell inputs in both builds; `tiles.json` beside the index holds
+  the digests. On the 10 km Waddenzee box (x86, warm cell cache) a 5 km move copied 66 % of
+  the nodes and built in 6.9–7.2 s instead of 11.6–11.7 s, an 8 km move 54 % in 6.4–6.9 s
+  instead of 10.4–11.6 s. The index is byte for byte the one a fresh build of the new box
+  makes; a changed cell's tiles, another leaf zoom or plugin version, or a missing or foreign
+  `tiles.json` are built afresh. `cells.json` is written in the field order it is read back.
+
+### Added
+
+- A hardware line in the setup check: CPUs, RAM and free RAM, with advice on 1 GB machines
+  (keep the index box, consider leaf zoom 19), on little free RAM, and on large ones (box 0
+  avoids rebuilds for a small chart set). It changes no setting.
+- Descriptions on **Index leaf zoom**, **Rebuild index at start**, **Look-ahead distance** and
+  **Minimum horizon** saying what each costs in CPU or memory.
+- README: what to check before installing on Victron Venus OS, whose Node.js version the
+  repository does not record.
+
+### Fixed
+
+- A larger least position buffer could lower the look-ahead's P: the buffer also set how far
+  apart the footprints were scored, so changing it moved the samples even where the footprints
+  kept the same buffer, and one set of samples could read a shoal up to 1e-4 higher (safety
+  invariant 2). Each footprint now sweeps the hull since the step before, at hull positions that
+  touch with no buffer, so no footprint time or shape depends on the buffer or the position's
+  uncertainty. The step stays 3 s at any speed; a fast boat scores fewer, longer footprints.
+  Beyond the warn window a footprint sweeps at most three hull lengths.
 
 ## [0.2.1] - 2026-10-27
 

@@ -3,7 +3,8 @@ import path from "path";
 import { writeFileDurable } from "../foundation/durable-file";
 import type { Rect } from "../foundation/geo";
 import { EARTH_RADIUS, toMercator } from "../foundation/geo";
-import { bboxesMeet, encBounds } from "../ingest/enc-bounds";
+import { cellExtents } from "../ingest/cell-cache";
+import { bboxesMeet } from "../ingest/enc-bounds";
 import { isEncFile } from "../ingest/cell-source";
 import type { Bbox } from "../ingest/wfs-fetch";
 
@@ -53,15 +54,17 @@ export function boxRect([w, s, e, n]: Bbox): Rect {
 /**
  * The sources that can reach `bbox`, in their order: every directory (the
  * Traficom WFS cell), and each S-57 cell whose extent meets the box grown by
- * BOX_MARGIN_KM or whose extent could not be read.
+ * BOX_MARGIN_KM or whose extent could not be read. With `cacheDir` the extents
+ * are kept there (`cellExtents`), so only a changed cell is read again.
  */
-export function boxCells(dirs: readonly string[], bbox: Bbox): string[] {
+export function boxCells(dirs: readonly string[], bbox: Bbox, cacheDir?: string): string[] {
   const reach = growBbox(bbox, BOX_MARGIN_KM);
+  const extents = cellExtents(dirs.filter(isEncFile), cacheDir);
   return dirs.filter((d) => {
     if (!isEncFile(d)) {
       return true;
     }
-    const b = encBounds(d);
+    const b = extents.get(d);
     return b === undefined || bboxesMeet(b, reach);
   });
 }

@@ -5,6 +5,7 @@ import type { PluginState } from "./api-wiring";
 import type { PluginConfig, WfsConfig } from "./config";
 import type { Rect } from "./foundation/geo";
 import { toMercator } from "./foundation/geo";
+import { cellCacheDir } from "./index-loader";
 import type { Bbox } from "./ingest/wfs";
 import { WFS_SOURCE } from "./ingest/wfs";
 import { startLivechart } from "./livechart-service";
@@ -12,8 +13,15 @@ import { cellsNear } from "./livechart/rebind";
 import type { FetchLike } from "./model/fmi";
 import type { Clock } from "./monitor";
 import type { ChartIndex } from "./spatial/chart-index";
+import { autoCapKm } from "./box-sizing";
 import type { EncBoxConfig, IndexBuilder } from "./wfs-service";
-import { inThreadRefresher, workerBuilder, workerRefresher, WfsService } from "./wfs-service";
+import {
+  inThreadRefresher,
+  workerBuilder,
+  workerHeapLimitMb,
+  workerRefresher,
+  WfsService
+} from "./wfs-service";
 
 /** What the Traficom WFS box needs from the running plugin. */
 export interface WfsWiring {
@@ -108,6 +116,7 @@ export function startWfs(
     config,
     dir,
     indexDir: w.config.indexDir ?? path.join(w.app.getDataDirPath(), "index"),
+    cacheDir: cellCacheDir(w.app.getDataDirPath()),
     leafZoom: w.config.leafZoom,
     cellsDir: w.config.cellsDir,
     inBox: w.config.boxRadiusKm > 0,
@@ -119,6 +128,7 @@ export function startWfs(
     position: () => w.state.monitor?.nav.position?.value,
     motion: () => freshMotion(w),
     lookahead: w.config.lookahead,
+    maxRadiusKm: w.config.boxMaxRadiusKm || autoCapKm(workerHeapLimitMb()),
     onIndex: (index, changed) => useIndex(w, index, changed),
     error: (m) => {
       w.app.error(m);

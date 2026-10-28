@@ -1,10 +1,11 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
+import * as reader from "../../src/ingest/cell-reader";
 import { readCellDirectory } from "../../src/ingest/cell-reader";
 import { cellReach, DEFAULT_BUILD, prepareItems } from "../../src/spatial/build-items";
-import type { BuildJob } from "../../src/spatial/build-worker";
-import { buildByRegion, regionPool, runRegion } from "../../src/spatial/build-worker";
+import type { BuildJob, RegionResult } from "../../src/spatial/build-worker";
+import { buildByRegion, regionPool, runRegions } from "../../src/spatial/build-worker";
 import { buildChartIndex } from "../../src/spatial/chart-index";
 import type { RegionPart } from "../../src/spatial/pyramid-regions";
 import {
@@ -30,7 +31,7 @@ beforeAll(() => {
 });
 afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
-const inProcess = (j: Parameters<typeof runRegion>[0]) => Promise.resolve(runRegion(j));
+const inProcess = (j: Parameters<typeof runRegions>[0]) => Promise.resolve(runRegions(j));
 
 describe("pyramid built region by region", () => {
   test.each([16, 18])("equals the build of all cells at leaf zoom %i", async (leafZoom) => {
@@ -43,6 +44,22 @@ describe("pyramid built region by region", () => {
     expect(serializePyramid(regions.pyramid).equals(serializePyramid(whole.pyramid))).toBe(true);
     expect(regions.catalogue).toEqual(whole.catalogue);
     expect(regions.hazards.features()).toEqual(whole.hazards.features());
+  });
+
+  test("a cell reaching several roots is parsed once while the budget holds it", async () => {
+    const job: BuildJob = { dirs, leafZoom: 14, indexDir: path.join(tmp, "index"), threads: 1 };
+    const parses = async (keepBytes: number) => {
+      const spy = jest.spyOn(reader, "readCellDirectory");
+      try {
+        await buildByRegion(job, inProcess, undefined, { keepBytes });
+        return spy.mock.calls.length;
+      } finally {
+        spy.mockRestore();
+      }
+    };
+    // The survey parses each cell once; with room, the regions parse each once more.
+    expect(await parses(2 ** 30)).toBe(2 * dirs.length);
+    expect(await parses(0)).toBeGreaterThan(2 * dirs.length);
   });
 
   test("each root reads only the cells that reach it", () => {
@@ -86,9 +103,11 @@ describe("joining region parts", () => {
     const job: BuildJob = { dirs, leafZoom: 14, indexDir: path.join(tmp, "index"), threads: 1 };
     const parts: RegionPart[] = [];
     await buildByRegion(job, async (j) => {
-      const cols = runRegion(j);
-      parts.push({ region: j.region, cols });
-      return cols;
+      const results = runRegions(j);
+      j.regions.forEach(({ region }, k) =>
+        parts.push({ region, cols: (results[k] as RegionResult).cols })
+      );
+      return results;
     });
     expect(() => joinRegions(10, 14, [...parts].reverse())).toThrow(/column and row order/);
     const wide = { ...(parts[0] as RegionPart), region: { minX: 0, minY: 0, maxX: 1, maxY: 0 } };
@@ -97,16 +116,53 @@ describe("joining region parts", () => {
 });
 
 describe("region thread pool", () => {
+  test("threads building a column of roots per job make the pyramid one thread makes", async () => {
+    const worker = path.resolve(__dirname, "..", "..", "lib", "spatial", "build-worker.js");
+    const job: BuildJob = { dirs, leafZoom: 16, indexDir: path.join(tmp, "index"), threads: 1 };
+    const serial = await buildByRegion(job, inProcess);
+    const pool = regionPool(2, worker);
+    try {
+      const sharing = { perColumn: true, keepBytes: 2 ** 20 };
+      const pooled = await buildByRegion(job, pool.run, undefined, sharing);
+      expect(serializePyramid(pooled.pyramid).equals(serializePyramid(serial.pyramid))).toBe(true);
+    } finally {
+      pool.close();
+    }
+  });
+
   test("a thread that dies fails its region and every later one, instead of waiting", async () => {
     const file = path.join(tmp, "crash.js");
     fs.writeFileSync(file, "throw new Error('region thread died');");
     const pool = regionPool(2, file);
     try {
-      const job = { cells: [], leafZoom: 14, region: { minX: 0, minY: 0, maxX: 0, maxY: 0 } };
+      const region = { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+      const job = { cells: [], regions: [{ region, cells: [] }], leafZoom: 14, keepBytes: 0 };
       await expect(pool.run(job)).rejects.toThrow("region thread died");
       await expect(pool.run(job)).rejects.toThrow("region thread died");
     } finally {
       pool.close();
     }
   });
+
+  test("a thread out of memory fails with the heap limit named, so the box cap comes down", async () => {
+    const file = path.join(tmp, "hog.js");
+    // Bounded, so a limit that does not apply fails the test instead of the machine. Arrays of
+    // 8 MB reach the limit in a few collections: small objects thrashed the collector for 7 s,
+    // starving the timing tests that run beside this one.
+    fs.writeFileSync(
+      file,
+      'require("worker_threads").parentPort.once("message", () => {' +
+        "const keep = [];" +
+        "while (process.memoryUsage().heapUsed < 1024 * 2 ** 20) keep.push(new Array(2 ** 20).fill(0));" +
+        "});"
+    );
+    const pool = regionPool(1, file, 64);
+    try {
+      const region = { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+      const job = { cells: [], regions: [{ region, cells: [] }], leafZoom: 14, keepBytes: 0 };
+      await expect(pool.run(job)).rejects.toThrow(/region thread stopped at the 64 MB heap limit/);
+    } finally {
+      pool.close();
+    }
+  }, 30_000);
 });

@@ -71,9 +71,13 @@ describe("chart box service", () => {
     expect(h.statuses).toContain(BOX_WAITING_REASON);
     h.send(navDelta(ROCK[0], ROCK[1], 0, clock.now()));
     clock.advance(10_000);
-    await settle();
-    const status = call("/v1/status").body as { index: { cells: { name: string }[] } };
-    expect(status.index.cells.map((c) => c.name)).toEqual(["FI4SYNTH", "FI5SYNTH"]);
+    const cells = () =>
+      (call("/v1/status").body as { index: { cells: { name: string }[] } }).index.cells;
+    // The build writes the cell cache off the event loop before it hands the index over.
+    for (let i = 0; i < 500 && cells().length === 0; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(cells().map((c) => c.name)).toEqual(["FI4SYNTH", "FI5SYNTH"]);
     h.send(navDelta(ROCK[0], ROCK[1], 0, clock.now()));
     clock.advance(1000);
     expect(lastValue(h.deltas, "navigation.underKeel.state")).not.toBe("off");

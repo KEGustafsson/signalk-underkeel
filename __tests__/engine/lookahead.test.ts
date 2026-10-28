@@ -1,5 +1,6 @@
 import type { FootprintResult, NavState } from "../../src/engine/lookahead";
 import {
+  COARSE_SWEEP,
   DEFAULT_LOOKAHEAD,
   MAX_FOOTPRINTS,
   describe as explain,
@@ -379,17 +380,20 @@ describe("probabilistic look-ahead on the synthetic chart", () => {
     );
     expect(r.footprints.length).toBeLessThanOrEqual(MAX_FOOTPRINTS);
     expect(r.horizon).toBeCloseTo((5 * 1852) / 0.3, 6);
-    const reach = DEEP_KEEL.length + 2 * opts.positionBuffer;
+    const reach = COARSE_SWEEP * DEEP_KEEL.length;
     for (let i = 1; i < r.footprints.length; i++) {
       const dt = (r.footprints[i]?.t as number) - (r.footprints[i - 1]?.t as number);
       expect(dt * 0.3).toBeLessThanOrEqual(reach + 1e-9);
     }
-    // A tiny hull with no buffer would need more steps: the horizon is cut instead.
+    // A tiny hull would need more steps: the horizon is cut instead.
     const dinghy = { draft: 1, length: 3, beam: 1.5 };
-    const cut = evaluateLookahead(nav(22.003, FAIRWAY_LAT, EAST, 0.3), ctx(dinghy), index, NOW, {
-      ...opts,
-      positionBuffer: 0
-    });
+    const cut = evaluateLookahead(
+      nav(22.003, FAIRWAY_LAT, EAST, 0.3),
+      ctx(dinghy),
+      index,
+      NOW,
+      opts
+    );
     expect(cut.footprints.length).toBeLessThanOrEqual(MAX_FOOTPRINTS);
     expect(cut.horizon).toBe(cut.footprints[cut.footprints.length - 1]?.t);
     expect(cut.horizon).toBeLessThan((5 * 1852) / 0.3);
