@@ -22,6 +22,11 @@ function indexes(values: ArrayLike<number>, count: number): IndexArray {
   return count <= 0x10000 ? Uint16Array.from(values) : Uint32Array.from(values);
 }
 
+/** An index array of `length` entries for a table of `count`, to be filled in place. */
+function indexArray(length: number, count: number): IndexArray {
+  return count <= 0x10000 ? new Uint16Array(length) : new Uint32Array(length);
+}
+
 const f32 = new Float32Array(1);
 const f32Bits = new Int32Array(f32.buffer);
 
@@ -374,21 +379,19 @@ function packSources(
     }
   }
   const rect = new Float32Array(4 * sources.length);
-  sources.forEach(({ r }, i) => {
+  const sourceKind = indexArray(sources.length, kinds.count);
+  const sourceSigma = indexArray(sources.length, sigmas.size);
+  sources.forEach(({ k, sigma, r }, i) => {
     rect[4 * i] = floor32(r[0]);
     rect[4 * i + 1] = floor32(r[1]);
     rect[4 * i + 2] = ceil32(r[2]);
     rect[4 * i + 3] = ceil32(r[3]);
+    sourceKind[i] = k;
+    sourceSigma[i] = sigmas.get(sigma) as number;
   });
   return {
-    sourceKind: indexes(
-      sources.map((g) => g.k),
-      kinds.count
-    ),
-    sourceSigma: indexes(
-      sources.map((g) => sigmas.get(g.sigma) as number),
-      sigmas.size
-    ),
+    sourceKind,
+    sourceSigma,
     sigmas: Float64Array.from(sigmas.keys()),
     // reachersOf gives every source of a tile the same perMetre.
     sourceScale: sources[0]?.scale ?? 0,

@@ -402,7 +402,7 @@ describe("narrowed geometry columns", () => {
         );
         expect(ordered).toBe(true);
         expect(geometryBytes(g)).toBeGreaterThan(0);
-        // 16 bytes of edges and two 16-bit indexes a source, where it was 56 bytes of float64.
+        // 16 bytes of float32 edges and two 16-bit indexes a source.
         const perSource =
           g.sourceRect.byteLength + g.sourceKind.byteLength + g.sourceSigma.byteLength;
         expect(perSource).toBe(20 * n);
@@ -463,8 +463,8 @@ describe("narrowed geometry columns", () => {
   });
 });
 
-describe("fixture tiles are the bytes the float64 columns drew", () => {
-  // sha1 of each served tile, drawn by the code before the columns were narrowed.
+describe("fixture tiles are the golden bytes", () => {
+  // sha1 of each served tile: a change to the geometry columns may not change a tile's bytes.
   const GOLDEN: Record<string, string> = {
     "draft 4.6 z11 spot0": "35733d267667",
     "draft 4.6 z11 spot1": "35733d267667",
