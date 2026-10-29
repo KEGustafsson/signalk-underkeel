@@ -27,7 +27,7 @@ import type { IndexBuilder } from "./wfs-service";
 import { workerBuilder } from "./wfs-service";
 import { startBox } from "./wfs-wiring";
 import type { SharedEncWatch } from "./shared-enc";
-import { sharedEncRoot, watchSharedCells, withSharedCells } from "./shared-enc";
+import { watchSharedCells, withSharedCells } from "./shared-enc";
 import fs from "fs";
 import path from "path";
 
@@ -82,18 +82,13 @@ function watchShared(
   collection: string,
   restart: (() => void) | undefined
 ): SharedEncWatch {
-  return watchSharedCells(
-    collection,
-    clock,
-    () => {
-      if (restart) {
-        restart();
-      } else {
-        app.error("the shared ENC cells changed; restart the plugin to index them");
-      }
-    },
-    { startedRoot: sharedEncRoot(app.getDataDirPath()) }
-  );
+  return watchSharedCells(collection, clock, () => {
+    if (restart) {
+      restart();
+    } else {
+      app.error("the shared ENC cells changed; restart the plugin to index them");
+    }
+  });
 }
 
 /**

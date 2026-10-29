@@ -105,11 +105,6 @@ export interface SharedEncWatchOptions {
   /** How often to look for it meanwhile, and for a settled change, ms. */
   pollMs?: number;
   scope?: object;
-  /**
-   * The store root the cells were read from at start. An API that appears later with
-   * another root counts as a change, so the cells are read from where it says.
-   */
-  startedRoot?: string;
 }
 
 export interface SharedEncWatch {
@@ -119,7 +114,10 @@ export interface SharedEncWatch {
 /**
  * Calls `onChange` once the cells of `collection` (any, for ALL_COLLECTIONS) changed and
  * settled. Waits up to `waitMs` for the charts provider to publish its API when it has not
- * yet; without it nothing is watched, and the cells are read as found at start.
+ * yet; without it nothing is watched, and the cells are read as found at start. An API that
+ * appears later counts as a change: the provider may have written cells meanwhile, or keep
+ * its store elsewhere than the default path the cells were read from, and the restart
+ * rebuilds the index only when the cells it finds differ.
  */
 export function watchSharedCells(
   collection: string,
@@ -141,24 +139,21 @@ export function watchSharedCells(
       timer = undefined;
     }
   };
-  const subscribe = (): boolean => {
+  const changed = (): void => {
+    changedAt = clock.now();
+    timer ??= clock.setInterval(tick, pollMs);
+  };
+  const subscribe = (late: boolean): boolean => {
     const api = sharedEncApi(opts.scope);
     if (!api) {
       return false;
     }
-    const changed = (): void => {
-      changedAt = clock.now();
-      timer ??= clock.setInterval(tick, pollMs);
-    };
     unsubscribe = api.onChange((id) => {
       if (collection === ALL_COLLECTIONS || id === collection) {
         changed();
       }
     });
-    if (
-      opts.startedRoot !== undefined &&
-      path.resolve(api.root) !== path.resolve(opts.startedRoot)
-    ) {
+    if (late) {
       changed();
     }
     return true;
@@ -167,7 +162,7 @@ export function watchSharedCells(
     if (stopped) {
       return;
     }
-    if (!unsubscribe && !subscribe() && clock.now() - started >= waitMs) {
+    if (!unsubscribe && !subscribe(true) && clock.now() - started >= waitMs) {
       stopTimer();
       return;
     }
@@ -181,7 +176,7 @@ export function watchSharedCells(
       stopTimer();
     }
   }
-  if (!subscribe()) {
+  if (!subscribe(false)) {
     timer = clock.setInterval(tick, pollMs);
   }
   return {

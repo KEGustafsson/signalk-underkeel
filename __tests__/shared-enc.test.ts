@@ -174,9 +174,11 @@ describe("charts provider ENC store", () => {
     scope.__signalk_chartsProviderEnc = provider.api;
     clock.advance(5000);
     expect(provider.listeners.size).toBe(1);
+    // Starting late counts as a change, and so does what it reports after.
+    expect(changes).toBe(1);
     provider.emit("Any");
     clock.advance(5000);
-    expect(changes).toBe(1);
+    expect(changes).toBe(2);
     watch.stop();
 
     // Never started: it stops looking.
@@ -190,14 +192,15 @@ describe("charts provider ENC store", () => {
     expect(late.listeners.size).toBe(0);
   });
 
-  test("a provider that starts later with another store root counts as a change", () => {
+  test("a provider that starts later counts as a change, one there at start does not", () => {
+    // It may have written cells before this plugin could hear of them, or keep its store
+    // away from the default path read at start; the restart rebuilds only on a difference.
     const clock = fakeClock(T0);
     const provider = fakeProvider("/srv/enc-store");
     const scope: { __signalk_chartsProviderEnc?: unknown } = {};
     let changes = 0;
-    const watch = watchSharedCells("Gulf_of_Finland", clock, () => changes++, {
+    const late = watchSharedCells("Gulf_of_Finland", clock, () => changes++, {
       scope,
-      startedRoot: "/data/enc-store",
       pollMs: 1000,
       settleMs: 2000
     });
@@ -205,20 +208,19 @@ describe("charts provider ENC store", () => {
     clock.advance(1000);
     expect(provider.listeners.size).toBe(1);
     clock.advance(1000);
+    expect(changes).toBe(0);
     clock.advance(1000);
     expect(changes).toBe(1);
-    watch.stop();
+    late.stop();
 
-    // The root read at start: nothing to do.
-    const same = watchSharedCells("Gulf_of_Finland", clock, () => changes++, {
+    const present = watchSharedCells("Gulf_of_Finland", clock, () => changes++, {
       scope,
-      startedRoot: "/srv/enc-store/",
       pollMs: 1000,
       settleMs: 0
     });
-    clock.advance(5000);
+    clock.advance(10_000);
     expect(changes).toBe(1);
-    same.stop();
+    present.stop();
   });
 
   test("the plugin builds from the collection and restarts when its cells change", async () => {
