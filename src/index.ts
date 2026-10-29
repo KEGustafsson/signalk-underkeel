@@ -27,7 +27,7 @@ import type { IndexBuilder } from "./wfs-service";
 import { workerBuilder } from "./wfs-service";
 import { startBox } from "./wfs-wiring";
 import type { SharedEncWatch } from "./shared-enc";
-import { watchSharedCells, withSharedCells } from "./shared-enc";
+import { sharedEncRoot, watchSharedCells, withSharedCells } from "./shared-enc";
 import fs from "fs";
 import path from "path";
 
@@ -70,6 +70,30 @@ function stopPlugin(app: ServerAPI, clock: Clock, state: PluginState): void {
       }
     ]
   });
+}
+
+/**
+ * Restarts the plugin once the shared ENC cells it reads changed: a start compares them with the
+ * saved index and rebuilds it when they did. A server without a restart callback logs instead.
+ */
+function watchShared(
+  app: ServerAPI,
+  clock: Clock,
+  collection: string,
+  restart: (() => void) | undefined
+): SharedEncWatch {
+  return watchSharedCells(
+    collection,
+    clock,
+    () => {
+      if (restart) {
+        restart();
+      } else {
+        app.error("the shared ENC cells changed; restart the plugin to index them");
+      }
+    },
+    { startedRoot: sharedEncRoot(app.getDataDirPath()) }
+  );
 }
 
 /**
@@ -150,14 +174,12 @@ export = function underkeel(
         }
       );
       shared = config.chartsProviderEnc
-        ? watchSharedCells(config.chartsProviderEnc, clock, () => {
-            // A start compares the cells with the saved index and rebuilds it when they changed.
-            if (restart) {
-              restart(migration.config);
-            } else {
-              app.error("the shared ENC cells changed; restart the plugin to index them");
-            }
-          })
+        ? watchShared(
+            app,
+            clock,
+            config.chartsProviderEnc,
+            restart && (() => restart(migration.config))
+          )
         : undefined;
       mountAssets(app);
       app.registerResourceProvider(manifestProvider(VERSION));

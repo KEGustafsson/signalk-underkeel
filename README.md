@@ -109,14 +109,10 @@ so an unzipped Inland ENC download (`<set>/ENC_ROOT/1R/7/1R7WAD07/1R7WAD07.000`)
 at as it is.
 
 Cells downloaded with signalk-charts-provider-simple (2.16.0 or later) are read where that
-plugin shares them, in its ENC store: set **ENC from Charts Provider** to the name of a chart
-set from its **ENC Charts** tab, with spaces as `_` and characters other than A–Z, 0–9, `_` and
-`-` left out (`Gulf of Finland` is `Gulf_of_Finland`), to the name of a converted chart whose
-cells it keeps (its **Keep the ENC cells of converted charts** setting), or to `*` for every
-one; the admin form lists those shared at the moment. It is used instead of **ENC cells
-directory**. When the charts provider writes new editions or updates of those cells, the plugin
-restarts itself and rebuilds the index from them. With `*`, a cell two collections hold is read
-once, from the first by name, and `GET /status` lists the other copy as skipped. The cells are
+plugin shares them, in its ENC store: set **ENC from Charts Provider** to one of the chart sets
+or converted charts the admin form lists as shared, or to `*` for all of them. It is used
+instead of **ENC cells directory**. When the charts provider writes new editions or updates of
+those cells, the plugin restarts itself and rebuilds the index from them. The cells are
 read in place with GDAL compiled to WebAssembly
 (gdal3.js), which the plugin installs with it, and the updates are applied as they are read.
 Nothing is converted or written next to the cells. A cell without an `M_COVR` coverage layer

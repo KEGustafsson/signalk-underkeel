@@ -105,6 +105,11 @@ export interface SharedEncWatchOptions {
   /** How often to look for it meanwhile, and for a settled change, ms. */
   pollMs?: number;
   scope?: object;
+  /**
+   * The store root the cells were read from at start. An API that appears later with
+   * another root counts as a change, so the cells are read from where it says.
+   */
+  startedRoot?: string;
 }
 
 export interface SharedEncWatch {
@@ -141,12 +146,21 @@ export function watchSharedCells(
     if (!api) {
       return false;
     }
+    const changed = (): void => {
+      changedAt = clock.now();
+      timer ??= clock.setInterval(tick, pollMs);
+    };
     unsubscribe = api.onChange((id) => {
       if (collection === ALL_COLLECTIONS || id === collection) {
-        changedAt = clock.now();
-        timer ??= clock.setInterval(tick, pollMs);
+        changed();
       }
     });
+    if (
+      opts.startedRoot !== undefined &&
+      path.resolve(api.root) !== path.resolve(opts.startedRoot)
+    ) {
+      changed();
+    }
     return true;
   };
   function tick(): void {

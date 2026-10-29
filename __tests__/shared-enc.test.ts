@@ -88,7 +88,6 @@ describe("charts provider ENC store", () => {
     expect(sharedCellsDir(dataDir, "Gulf_of_Finland")).toBe(
       path.join("/srv/enc-store", "Gulf_of_Finland")
     );
-    // An API of another version, or not one at all, is not used.
     expect(
       sharedEncApi({ __signalk_chartsProviderEnc: { ...api, apiVersion: 2 } })
     ).toBeUndefined();
@@ -189,6 +188,37 @@ describe("charts provider ENC store", () => {
     empty.__signalk_chartsProviderEnc = late.api;
     clock.advance(5_000);
     expect(late.listeners.size).toBe(0);
+  });
+
+  test("a provider that starts later with another store root counts as a change", () => {
+    const clock = fakeClock(T0);
+    const provider = fakeProvider("/srv/enc-store");
+    const scope: { __signalk_chartsProviderEnc?: unknown } = {};
+    let changes = 0;
+    const watch = watchSharedCells("Gulf_of_Finland", clock, () => changes++, {
+      scope,
+      startedRoot: "/data/enc-store",
+      pollMs: 1000,
+      settleMs: 2000
+    });
+    scope.__signalk_chartsProviderEnc = provider.api;
+    clock.advance(1000);
+    expect(provider.listeners.size).toBe(1);
+    clock.advance(1000);
+    clock.advance(1000);
+    expect(changes).toBe(1);
+    watch.stop();
+
+    // The root read at start: nothing to do.
+    const same = watchSharedCells("Gulf_of_Finland", clock, () => changes++, {
+      scope,
+      startedRoot: "/srv/enc-store/",
+      pollMs: 1000,
+      settleMs: 0
+    });
+    clock.advance(5000);
+    expect(changes).toBe(1);
+    same.stop();
   });
 
   test("the plugin builds from the collection and restarts when its cells change", async () => {
