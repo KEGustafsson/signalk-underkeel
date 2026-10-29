@@ -85,7 +85,9 @@ describe("charts provider ENC store", () => {
     const { api } = fakeProvider("/srv/enc-store");
     (globalThis as { __signalk_chartsProviderEnc?: unknown }).__signalk_chartsProviderEnc = api;
     expect(sharedEncApi()).toBe(api);
-    expect(sharedCellsDir(dataDir, "Gulf_of_Finland")).toBe("/srv/enc-store/Gulf_of_Finland");
+    expect(sharedCellsDir(dataDir, "Gulf_of_Finland")).toBe(
+      path.join("/srv/enc-store", "Gulf_of_Finland")
+    );
     // An API of another version, or not one at all, is not used.
     expect(
       sharedEncApi({ __signalk_chartsProviderEnc: { ...api, apiVersion: 2 } })
@@ -97,7 +99,9 @@ describe("charts provider ENC store", () => {
     const cfg = parseConfig({ cellsDir: "/charts", chartsProviderEnc: " Gulf_of_Finland " });
     expect(cfg.chartsProviderEnc).toBe("Gulf_of_Finland");
     const { api } = fakeProvider("/srv/enc-store");
-    expect(withSharedCells(cfg, dataDir, api).cellsDir).toBe("/srv/enc-store/Gulf_of_Finland");
+    expect(withSharedCells(cfg, dataDir, api).cellsDir).toBe(
+      path.join("/srv/enc-store", "Gulf_of_Finland")
+    );
     expect(withSharedCells(parseConfig({ cellsDir: "/charts" }), dataDir, api).cellsDir).toBe(
       "/charts"
     );
