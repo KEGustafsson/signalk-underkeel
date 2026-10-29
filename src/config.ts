@@ -13,6 +13,7 @@ import { DEFAULT_WFS_URL, WFS_LIMITS } from "./ingest/wfs";
 import type { WarningStyle } from "./config-presets";
 import { WARNING_PRESETS, warningStyle } from "./config-presets";
 import { MAX_BOX_KM } from "./box-sizing";
+import { isCollectionChoice } from "./shared-enc";
 
 export { SCHEMA } from "./config-schema";
 
@@ -27,6 +28,11 @@ export interface PluginConfig {
   indexDir?: string;
   /** Directory of S-57 cells (`.000` with updates, also in sub-folders) to build from. */
   cellsDir?: string;
+  /**
+   * A collection of the ENC cells signalk-charts-provider-simple shares, or `*` for all of
+   * them, read in place of `cellsDir` (`shared-enc.ts`).
+   */
+  chartsProviderEnc?: string;
   /** Rebuild the index from cellsDir at start even when one exists. */
   rebuildIndex: boolean;
   /** Leaf zoom of the pyramid; z20 ≈ 19 m tiles at 60°N. */
@@ -97,6 +103,12 @@ function optionalPositive(v: unknown): number | undefined {
 
 function str(v: unknown): string | undefined {
   return typeof v === "string" && v.trim() !== "" ? v : undefined;
+}
+
+/** A charts provider collection id or `*`, trimmed; anything else is no choice. */
+function collectionChoice(v: unknown): string | undefined {
+  const s = str(v)?.trim();
+  return s !== undefined && isCollectionChoice(s) ? s : undefined;
 }
 
 function record(v: unknown): Record<string, unknown> {
@@ -253,6 +265,7 @@ export function parseConfig(raw: unknown): PluginConfig {
   return {
     indexDir: str(r.indexDir),
     cellsDir: str(r.cellsDir),
+    chartsProviderEnc: collectionChoice(r.chartsProviderEnc),
     rebuildIndex: r.rebuildIndex === true,
     leafZoom: Math.round(num(r.leafZoom, 20, 14, 22)),
     boxRadiusKm: boxRadius(r.boxRadiusKm),

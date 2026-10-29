@@ -26,6 +26,8 @@ import { startLivechart } from "./livechart-service";
 import type { IndexBuilder } from "./wfs-service";
 import { workerBuilder } from "./wfs-service";
 import { startBox } from "./wfs-wiring";
+import type { SharedEncWatch } from "./shared-enc";
+import { watchSharedCells, withSharedCells } from "./shared-enc";
 import fs from "fs";
 import path from "path";
 
@@ -101,6 +103,7 @@ export = function underkeel(
     requests: new RequestQueue()
   };
   let startup: AbortController | undefined;
+  let shared: SharedEncWatch | undefined;
 
   return {
     id: PLUGIN_ID,
@@ -114,7 +117,7 @@ export = function underkeel(
     start(options: unknown, restart?: (config: object) => void): void {
       const migration = migrateConfig(options);
       persistMigration(app, options, migration);
-      const config = parseConfig(migration.config);
+      const config = withSharedCells(parseConfig(migration.config), app.getDataDirPath());
       const wfs = startBox({ app, clock, state, config, fetch, build });
       const plan = planIndex(config, app.getDataDirPath(), wfs?.savedCell() ? [wfs.cellDir] : []);
       const load = "load" in plan ? plan.load : pendingLoad(plan);
@@ -146,11 +149,23 @@ export = function underkeel(
           errors.forEach((e) => app.error(e));
         }
       );
+      shared = config.chartsProviderEnc
+        ? watchSharedCells(config.chartsProviderEnc, clock, () => {
+            // A start compares the cells with the saved index and rebuilds it when they changed.
+            if (restart) {
+              restart(migration.config);
+            } else {
+              app.error("the shared ENC cells changed; restart the plugin to index them");
+            }
+          })
+        : undefined;
       mountAssets(app);
       app.registerResourceProvider(manifestProvider(VERSION));
     },
 
     stop(): void {
+      shared?.stop();
+      shared = undefined;
       startup?.abort();
       startup = undefined;
       stopPlugin(app, clock, state);

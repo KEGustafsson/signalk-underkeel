@@ -2042,11 +2042,14 @@ it is distributed. Needed from the start:
 ## 10. Open questions
 
 1. ~~Can the plugin read `signalk-charts-provider-simple`'s stored `.000` files directly, or is
-   a small "export source cells" API needed from that plugin?~~ Directly: a chart set's cells
-   are kept as `chart-set-cache/<set>/cells/<cell>/raw/<cell>.000` with their updates, hard
-   links or copies, and a cell is renamed into place only once complete (its staging folder
-   starts with `.`, which the cell scan skips). The README says to set the cells directory to
-   the `<set>` folder.
+   a small "export source cells" API needed from that plugin?~~ Both: that plugin (2.16.0 on)
+   shares its cells in an ENC store, `enc-store/<collection>/<CELL>/<CELL>.000` with the
+   updates beside it, one collection per chart set or converted chart, each cell renamed into
+   place whole (work folders start with `.`, which the cell scan skips), and publishes
+   `globalThis.__signalk_chartsProviderEnc` with the store's root and a change listener.
+   **ENC from Charts Provider** names a collection, or `*` for the whole store, as the cells
+   directory (`src/shared-enc.ts`), and a change to it restarts the plugin, whose start
+   rebuilds the index when the cells' stamps changed.
 2. What are the exact FMI WFS stored-query ids and station metadata for sea level? Does FMI
    publish forecast error statistics, or must we calibrate σ ourselves?
 3. Finnish ENC vertical datum coding during the N2000 transition: is `M_VDAT` reliable

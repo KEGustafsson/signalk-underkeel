@@ -106,14 +106,18 @@ its `.001`, `.002`, … updates beside it. Copy the exchange set, for example it
 folder, under one directory and set **ENC cells directory** to it; `.000` files are found down
 to three folders deep, and down to six below a folder holding the exchange set's `CATALOG.031`,
 so an unzipped Inland ENC download (`<set>/ENC_ROOT/1R/7/1R7WAD07/1R7WAD07.000`) can be pointed
-at as it is. A chart set downloaded in signalk-charts-provider-simple's **ENC Charts** tab
-(version 2.14.0 checked) keeps its cells, separately published updates numbered on, under
-`~/.signalk/plugin-config-data/signalk-charts-provider-simple/chart-set-cache/<set>/cells/<cell>/raw/`,
-where `<set>` is the set's name with spaces as `_` and characters other than A–Z, 0–9, `_` and
-`-` left out (`Gulf of Finland` is `Gulf_of_Finland`): set **ENC cells directory** to the
-`<set>` folder. The `chart-set-cache` folder itself is one level too deep: no cell is found
-there, and `GET /status` lists as skipped only the cell folders whose name gives a usage band
-1–6. The cells are read in place with GDAL compiled to WebAssembly
+at as it is.
+
+Cells downloaded with signalk-charts-provider-simple (2.16.0 or later) are read where that
+plugin shares them, in its ENC store: set **ENC from Charts Provider** to the name of a chart
+set from its **ENC Charts** tab, with spaces as `_` and characters other than A–Z, 0–9, `_` and
+`-` left out (`Gulf of Finland` is `Gulf_of_Finland`), to the name of a converted chart whose
+cells it keeps (its **Keep the ENC cells of converted charts** setting), or to `*` for every
+one; the admin form lists those shared at the moment. It is used instead of **ENC cells
+directory**. When the charts provider writes new editions or updates of those cells, the plugin
+restarts itself and rebuilds the index from them. With `*`, a cell two collections hold is read
+once, from the first by name, and `GET /status` lists the other copy as skipped. The cells are
+read in place with GDAL compiled to WebAssembly
 (gdal3.js), which the plugin installs with it, and the updates are applied as they are read.
 Nothing is converted or written next to the cells. A cell without an `M_COVR` coverage layer
 is rejected. A cell's usage band comes from the third character of its name, else from its
@@ -174,13 +178,14 @@ There are two places to set the plugin up, and both write the same configuration
 
 ![The setup steps: boat, water level and warnings](docs/images/how-it-works/setup-panel.png)
 
-| Setting             | What it does                                                                                                                                                                 |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ENC cells directory | where the `.000` cells are                                                                                                                                                   |
-| Boat                | draft (empty uses Signal K `design.draft.maximum`) and safety margin under the keel (0 m); only the keel's lowest point counts, and squat and waves are added on top (below) |
-| Water level         | source (`none`, `manual`, `signalk-tide`, `fmi`, see below); only the chosen source's fields are shown                                                                       |
-| Warnings            | Early, Balanced or Late, in the table below                                                                                                                                  |
-| Optional features   | living chart (own soundings), Traficom WFS depths, grounding detector; each off until enabled                                                                                |
+| Setting                  | What it does                                                                                                                                                                 |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ENC cells directory      | where the `.000` cells are                                                                                                                                                   |
+| ENC from Charts Provider | or a chart set or converted chart whose cells signalk-charts-provider-simple shares, `*` for all of them; used instead of the directory                                      |
+| Boat                     | draft (empty uses Signal K `design.draft.maximum`) and safety margin under the keel (0 m); only the keel's lowest point counts, and squat and waves are added on top (below) |
+| Water level              | source (`none`, `manual`, `signalk-tide`, `fmi`, see below); only the chosen source's fields are shown                                                                       |
+| Warnings                 | Early, Balanced or Late, in the table below                                                                                                                                  |
+| Optional features        | living chart (own soundings), Traficom WFS depths, grounding detector; each off until enabled                                                                                |
 
 | Warning style      | Looks ahead | Alert at | Warn at, within | Alarm at, within | Alarm on negative mean UKC |
 | ------------------ | ----------- | -------- | --------------- | ---------------- | -------------------------- |
