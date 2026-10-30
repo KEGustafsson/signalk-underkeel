@@ -15,6 +15,8 @@ export const CHARTS_PROVIDER_ID = "signalk-charts-provider-simple";
 /** Every collection the charts provider shares. */
 export const ALL_COLLECTIONS = "*";
 const COLLECTION_ID = /^[A-Za-z0-9_-]{1,80}$/;
+/** A collection choice for the admin form, with the space around it that parsing trims. */
+export const COLLECTION_CHOICE_PATTERN = "^\\s*(\\*|[A-Za-z0-9_-]{1,80})?\\s*$";
 
 export interface SharedEncCollection {
   id: string;
@@ -100,10 +102,12 @@ export function collectionsHint(api = sharedEncApi()): string | undefined {
 export interface SharedEncWatchOptions {
   /** A change is acted on once no other came for this long, ms: a chart set writes twice. */
   settleMs?: number;
-  /** How long to wait for the charts provider to start, ms. */
+  /** How long to look for the charts provider every `pollMs` when it has not started, ms. */
   waitMs?: number;
   /** How often to look for it meanwhile, and for a settled change, ms. */
   pollMs?: number;
+  /** How often to look for it after `waitMs`, ms. */
+  slowPollMs?: number;
   scope?: object;
 }
 
@@ -113,11 +117,12 @@ export interface SharedEncWatch {
 
 /**
  * Calls `onChange` once the cells of `collection` (any, for ALL_COLLECTIONS) changed and
- * settled. Waits up to `waitMs` for the charts provider to publish its API when it has not
- * yet; without it nothing is watched, and the cells are read as found at start. An API that
- * appears later counts as a change: the provider may have written cells meanwhile, or keep
- * its store elsewhere than the default path the cells were read from, and the restart
- * rebuilds the index only when the cells it finds differ.
+ * settled. While the charts provider has not published its API, looks for it every `pollMs`,
+ * and after `waitMs` every `slowPollMs` for as long as the watch runs, since it may start any
+ * time; meanwhile the cells are read as found at start. An API that appears later counts as
+ * a change: the provider may have written cells meanwhile, or keep its store elsewhere than
+ * the default path the cells were read from, and the restart rebuilds the index only when
+ * the cells it finds differ.
  */
 export function watchSharedCells(
   collection: string,
@@ -128,11 +133,13 @@ export function watchSharedCells(
   const settleMs = opts.settleMs ?? 5_000;
   const waitMs = opts.waitMs ?? 120_000;
   const pollMs = opts.pollMs ?? 5_000;
+  const slowPollMs = opts.slowPollMs ?? 60_000;
   const started = clock.now();
   let unsubscribe: (() => void) | undefined;
   let changedAt: number | undefined;
   let timer: unknown;
   let stopped = false;
+  let slow = false;
   const stopTimer = (): void => {
     if (timer !== undefined) {
       clock.clearInterval(timer);
@@ -154,6 +161,7 @@ export function watchSharedCells(
       }
     });
     if (late) {
+      stopTimer();
       changed();
     }
     return true;
@@ -162,8 +170,12 @@ export function watchSharedCells(
     if (stopped) {
       return;
     }
-    if (!unsubscribe && !subscribe(true) && clock.now() - started >= waitMs) {
-      stopTimer();
+    if (!unsubscribe && !subscribe(true)) {
+      if (!slow && clock.now() - started >= waitMs) {
+        slow = true;
+        stopTimer();
+        timer = clock.setInterval(tick, slowPollMs);
+      }
       return;
     }
     if (changedAt !== undefined && clock.now() - changedAt >= settleMs) {

@@ -6,6 +6,7 @@ import { scanCellSources } from "../src/ingest/cell-source";
 import type { SharedEncApi } from "../src/shared-enc";
 import {
   ALL_COLLECTIONS,
+  COLLECTION_CHOICE_PATTERN,
   collectionsHint,
   sharedCellsDir,
   sharedEncApi,
@@ -106,6 +107,13 @@ describe("charts provider ENC store", () => {
     );
     expect(parseConfig({ chartsProviderEnc: "../x" }).chartsProviderEnc).toBeUndefined();
     expect(parseConfig({ chartsProviderEnc: "*" }).chartsProviderEnc).toBe("*");
+    // The admin form refuses what parsing would drop, so a mistyped name is not saved.
+    const form = new RegExp(COLLECTION_CHOICE_PATTERN);
+    for (const value of [" Gulf_of_Finland ", "*", "US5MA1AM", "Gulf of Finland", "../x", "a*"]) {
+      expect(form.test(value)).toBe(
+        parseConfig({ chartsProviderEnc: value }).chartsProviderEnc !== undefined
+      );
+    }
   });
 
   test("the cell scan finds a collection's cells, and every collection's in the store", () => {
@@ -158,7 +166,7 @@ describe("charts provider ENC store", () => {
     expect(provider.listeners.size).toBe(0);
   });
 
-  test("waits for the provider to start, for a while", () => {
+  test("looks for the provider until it starts, less often after a while", () => {
     const clock = fakeClock(T0);
     const provider = fakeProvider("/r");
     const scope: { __signalk_chartsProviderEnc?: unknown } = {};
@@ -180,13 +188,35 @@ describe("charts provider ENC store", () => {
     expect(changes).toBe(2);
     watch.stop();
 
+    // One that starts after the wait is looked for less often, but still found.
     const late = fakeProvider("/r");
     const empty: { __signalk_chartsProviderEnc?: unknown } = {};
-    watchSharedCells(ALL_COLLECTIONS, clock, () => changes++, { scope: empty, waitMs: 60_000 });
-    clock.advance(65_000);
-    clock.advance(5_000);
+    const periods: number[] = [];
+    const timed = {
+      ...clock,
+      setInterval: (f: () => void, ms: number) => {
+        periods.push(ms);
+        return clock.setInterval(f, ms);
+      }
+    };
+    const slow = watchSharedCells(ALL_COLLECTIONS, timed, () => changes++, {
+      scope: empty,
+      waitMs: 60_000,
+      pollMs: 5000,
+      slowPollMs: 60_000,
+      settleMs: 0
+    });
+    clock.advance(30_000);
+    expect(periods).toEqual([5000]);
+    clock.advance(35_000);
+    expect(periods).toEqual([5000, 60_000]);
+    clock.advance(600_000);
+    expect(late.listeners.size).toBe(0);
     empty.__signalk_chartsProviderEnc = late.api;
-    clock.advance(5_000);
+    clock.advance(60_000);
+    expect(late.listeners.size).toBe(1);
+    expect(changes).toBe(3);
+    slow.stop();
     expect(late.listeners.size).toBe(0);
   });
 
