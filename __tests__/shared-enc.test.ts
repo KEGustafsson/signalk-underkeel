@@ -188,7 +188,6 @@ describe("charts provider ENC store", () => {
     expect(changes).toBe(2);
     watch.stop();
 
-    // One that starts after the wait is looked for less often, but still found.
     const late = fakeProvider("/r");
     const empty: { __signalk_chartsProviderEnc?: unknown } = {};
     const periods: number[] = [];
