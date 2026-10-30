@@ -23,9 +23,10 @@ function fields(s: Schema, prefix = ""): string[] {
 }
 
 describe("admin form", () => {
-  test("shows nine fields until expert settings or a feature are switched on", () => {
+  test("shows ten fields until expert settings or a feature are switched on", () => {
     expect(fields(adminSchema() as Schema)).toEqual([
       "cellsDir",
+      "chartsProviderEnc",
       "vessel.draft",
       "vessel.margin",
       "waterLevel.source",
@@ -40,7 +41,7 @@ describe("admin form", () => {
   test("the flat schema holds every setting once, without showExpert", () => {
     const all = fields(SCHEMA as Schema);
     expect(new Set(all).size).toBe(all.length);
-    expect(all).toHaveLength(56);
+    expect(all).toHaveLength(57);
     expect(all).not.toContain("showExpert");
     for (const f of [
       "vessel.heelTable",

@@ -1,4 +1,5 @@
 import { LOOKAHEAD_LIMITS } from "./engine/lookahead";
+import { chartFields } from "./config-charts";
 
 /**
  * JSON schema of the plugin configuration, as shown in the Signal K admin UI.
@@ -341,6 +342,8 @@ export interface SchemaHints {
   signalkDraft?: number;
   /** A sentence naming the charts' vertical datums and the source to choose. */
   source?: string;
+  /** A sentence naming the ENC collections signalk-charts-provider-simple shares now. */
+  encCollections?: string;
 }
 
 function draftField(signalkDraft: number | undefined): Json {
@@ -359,12 +362,7 @@ export function adminSchema(hints: SchemaHints = {}): Json {
     type: "object",
     description: `${ADVISORY}${checks}`,
     properties: {
-      cellsDir: {
-        type: "string",
-        title: "ENC cells directory",
-        description:
-          "S-57 ENC cells as delivered: .000 files with their .001, .002 … updates, also in sub-folders such as ENC_ROOT. Read directly with GDAL (WebAssembly); nothing is converted."
-      },
+      ...chartFields(hints.encCollections),
       vessel: {
         ...VESSEL_ESSENTIAL,
         properties: { ...VESSEL_ESSENTIAL.properties, draft: draftField(hints.signalkDraft) }

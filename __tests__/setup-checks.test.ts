@@ -54,7 +54,11 @@ describe("setup check", () => {
   test("nothing set: charts and draft are to do, the engine is not started", () => {
     const s = state({});
     expect(setupChecks(s, setupFacts(app(), s, HOST))).toEqual([
-      { id: "charts", level: "todo", text: "Charts: set the ENC cells directory" },
+      {
+        id: "charts",
+        level: "todo",
+        text: "Charts: set the ENC cells directory or ENC from Charts Provider"
+      },
       { id: "draft", level: "todo", text: "Draft: not set here or in design.draft.maximum" },
       { id: "waterLevel", level: "ok", text: "Water level: none" },
       { id: "lookahead", level: "warn", text: "Look-ahead: plugin not started" },

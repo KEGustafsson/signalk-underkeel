@@ -26,6 +26,8 @@ import { startLivechart } from "./livechart-service";
 import type { IndexBuilder } from "./wfs-service";
 import { workerBuilder } from "./wfs-service";
 import { startBox } from "./wfs-wiring";
+import type { SharedEncWatch } from "./shared-enc";
+import { watchSharedCells, withSharedCells } from "./shared-enc";
 import fs from "fs";
 import path from "path";
 
@@ -71,6 +73,25 @@ function stopPlugin(app: ServerAPI, clock: Clock, state: PluginState): void {
 }
 
 /**
+ * Restarts the plugin once the shared ENC cells it reads changed: a start compares them with the
+ * saved index and rebuilds it when they did. A server without a restart callback logs instead.
+ */
+function watchShared(
+  app: ServerAPI,
+  clock: Clock,
+  collection: string,
+  restart: (() => void) | undefined
+): SharedEncWatch {
+  return watchSharedCells(collection, clock, () => {
+    if (restart) {
+      restart();
+    } else {
+      app.error("the shared ENC cells changed; restart the plugin to index them");
+    }
+  });
+}
+
+/**
  * The admin form for this server: the essentials with expert settings
  * behind a checkbox where the admin UI forwards `dependencies`, every field
  * at once where it does not. The setup checks are decoration: a failure
@@ -101,6 +122,7 @@ export = function underkeel(
     requests: new RequestQueue()
   };
   let startup: AbortController | undefined;
+  let shared: SharedEncWatch | undefined;
 
   return {
     id: PLUGIN_ID,
@@ -114,7 +136,7 @@ export = function underkeel(
     start(options: unknown, restart?: (config: object) => void): void {
       const migration = migrateConfig(options);
       persistMigration(app, options, migration);
-      const config = parseConfig(migration.config);
+      const config = withSharedCells(parseConfig(migration.config), app.getDataDirPath());
       const wfs = startBox({ app, clock, state, config, fetch, build });
       const plan = planIndex(config, app.getDataDirPath(), wfs?.savedCell() ? [wfs.cellDir] : []);
       const load = "load" in plan ? plan.load : pendingLoad(plan);
@@ -146,11 +168,21 @@ export = function underkeel(
           errors.forEach((e) => app.error(e));
         }
       );
+      shared = config.chartsProviderEnc
+        ? watchShared(
+            app,
+            clock,
+            config.chartsProviderEnc,
+            restart && (() => restart(migration.config))
+          )
+        : undefined;
       mountAssets(app);
       app.registerResourceProvider(manifestProvider(VERSION));
     },
 
     stop(): void {
+      shared?.stop();
+      shared = undefined;
       startup?.abort();
       startup = undefined;
       stopPlugin(app, clock, state);

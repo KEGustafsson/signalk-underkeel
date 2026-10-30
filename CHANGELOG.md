@@ -2,6 +2,16 @@
 
 All notable changes to signalk-underkeel are documented here.
 
+## [Unreleased]
+
+### Added
+
+- **ENC from Charts Provider** reads the ENC cells signalk-charts-provider-simple (2.16.0 or
+  later) shares in its ENC store: one chart set's or converted chart's cells by name, or all
+  of them with `*`, in place of **ENC cells directory**. The plugin restarts itself and
+  rebuilds the index when the charts provider writes new editions or updates of those cells,
+  and the admin form names the collections shared at the moment.
+
 ## [0.3.0] - 2026-10-28
 
 ### Changed
