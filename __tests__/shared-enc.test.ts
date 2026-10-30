@@ -104,7 +104,6 @@ describe("charts provider ENC store", () => {
     expect(withSharedCells(parseConfig({ cellsDir: "/charts" }), dataDir, api).cellsDir).toBe(
       "/charts"
     );
-    // A name that is not a collection id is no choice.
     expect(parseConfig({ chartsProviderEnc: "../x" }).chartsProviderEnc).toBeUndefined();
     expect(parseConfig({ chartsProviderEnc: "*" }).chartsProviderEnc).toBe("*");
   });
@@ -181,7 +180,6 @@ describe("charts provider ENC store", () => {
     expect(changes).toBe(2);
     watch.stop();
 
-    // Never started: it stops looking.
     const late = fakeProvider("/r");
     const empty: { __signalk_chartsProviderEnc?: unknown } = {};
     watchSharedCells(ALL_COLLECTIONS, clock, () => changes++, { scope: empty, waitMs: 60_000 });

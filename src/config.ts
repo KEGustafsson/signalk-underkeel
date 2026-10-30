@@ -105,7 +105,10 @@ function str(v: unknown): string | undefined {
   return typeof v === "string" && v.trim() !== "" ? v : undefined;
 }
 
-/** A charts provider collection id or `*`, trimmed; anything else is no choice. */
+/**
+ * A charts provider collection id or `*`, trimmed. Anything else, a path out of the store
+ * among them, is no choice, and the ENC cells directory stays in use.
+ */
 function collectionChoice(v: unknown): string | undefined {
   const s = str(v)?.trim();
   return s !== undefined && isCollectionChoice(s) ? s : undefined;
