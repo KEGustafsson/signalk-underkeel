@@ -88,8 +88,8 @@ function syncDirectory(dir: string): void {
 }
 
 /**
- * The files an index directory holds: these three, the build's reach and box
- * (`build-reuse.ts`, `build-box.ts`) beside them, and `hazards.json` of an
+ * The files an index directory holds: these three, the build's reach, box and
+ * source (`build-reuse.ts`, `build-box.ts`, `build-source.ts`) beside them, and `hazards.json` of an
  * index saved before `hazards.bin`, which a rebuild replaces.
  */
 const INDEX_FILES = new Set([
@@ -97,6 +97,7 @@ const INDEX_FILES = new Set([
   "hazards.json",
   "reach.json",
   "box.json",
+  "source.json",
   "tiles.json"
 ]);
 
@@ -203,9 +204,21 @@ export function commitChartIndex(dir: string, staging: string): void {
   }
 }
 
-export function saveChartIndex(dir: string, index: ChartIndex): void {
+/** Saves `index` in `dir`, `extra` adding files to the staged copy first. */
+export function saveChartIndex(
+  dir: string,
+  index: ChartIndex,
+  extra?: (staging: string) => void
+): void {
   dir = path.resolve(dir);
-  commitChartIndex(dir, stageChartIndex(dir, index));
+  const staging = stageChartIndex(dir, index);
+  try {
+    extra?.(staging);
+  } catch (err) {
+    fs.rmSync(staging, { recursive: true, force: true });
+    throw err;
+  }
+  commitChartIndex(dir, staging);
 }
 
 function isCompleteIndex(dir: string): boolean {

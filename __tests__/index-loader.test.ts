@@ -11,7 +11,9 @@ import {
 } from "../src/index-loader";
 import * as encWasm from "../src/ingest/enc-wasm";
 import { boxAround, toCellLayers, writeCell } from "../src/ingest/wfs";
+import { indexSource } from "../src/index-source";
 import { BOX_FILE, readBox } from "../src/spatial/build-box";
+import { readSource, SOURCE_FILE } from "../src/spatial/build-source";
 import { runBuild } from "../src/spatial/build-worker";
 import { commitChartIndex, loadChartIndex, loadChartIndexAsync } from "../src/spatial/chart-index";
 import { gunzipSync } from "zlib";
@@ -122,6 +124,108 @@ describe("cell directories", () => {
     expect(names(r)).toEqual(["FI4SYNTH"]);
     expect(r.built).toBe(false);
     expect(r.reason).toBe(`no S-57 cell found in ${cellsDir}; using the saved index`);
+  });
+
+  test("the index records the source it was built from", async () => {
+    copyCell("FI4SYNTH");
+    await load();
+    expect(readSource(path.join(dataDir, "index"))).toBe(`dir:${path.resolve(cellsDir)}`);
+    await load({ chartsProviderEnc: "Gulf_of_Finland" });
+    expect(indexSource(parseConfig({ cellsDir, chartsProviderEnc: "Gulf_of_Finland" }))).toBe(
+      "charts-provider:Gulf_of_Finland"
+    );
+  });
+
+  test("a source chosen since, with no cells yet, does not keep another source's index", async () => {
+    copyCell("FI4SYNTH");
+    await load();
+    const other = path.join(tmp, "other");
+    fs.mkdirSync(other);
+    const r = await loadOrBuildIndex(
+      parseConfig({ cellsDir: other, boxRadiusKm: 0, leafZoom: 16 }),
+      dataDir
+    );
+    expect(r.index).toBeUndefined();
+    expect(r.reason).toContain(
+      `no S-57 cell found in ${other}; not using the saved index: the saved index was built from ${path.resolve(cellsDir)}`
+    );
+    // Gone, as a drive not yet mounted: the same.
+    fs.rmSync(other, { recursive: true });
+    const gone = await loadOrBuildIndex(
+      parseConfig({ cellsDir: other, boxRadiusKm: 0, leafZoom: 16 }),
+      dataDir
+    );
+    expect(gone.index).toBeUndefined();
+    expect(gone.reason).toMatch(/not found; not using the saved index/);
+  });
+
+  test("in a box too, a source chosen since does not keep another source's index", () => {
+    const other = path.join(tmp, "other");
+    fs.mkdirSync(other);
+    copyCell("FI4SYNTH");
+    const box = (dir: string) => parseConfig({ cellsDir: dir, boxRadiusKm: 2, leafZoom: 16 });
+    const p = planIndex(box(cellsDir), dataDir);
+    if (!("build" in p)) {
+      // No position yet: the box waits; save one as the box service would.
+      expect(p).toEqual({ load: expect.objectContaining({ reason: BOX_WAITING_REASON }) });
+    }
+    return runBuild({
+      dirs: cellSources(cellsDir),
+      leafZoom: 16,
+      indexDir: path.join(dataDir, "index"),
+      threads: 1,
+      source: `dir:${path.resolve(cellsDir)}`,
+      box: { bbox: boxAround(ROCK, 2), sources: sourceKeys(cellSources(cellsDir)) }
+    }).then((r) => {
+      commitChartIndex(path.join(dataDir, "index"), r.staging);
+      expect(planIndex(box(other), dataDir)).toEqual({
+        load: expect.objectContaining({
+          built: false,
+          reason: expect.stringContaining(
+            `no S-57 cell found in ${other}; not using the saved index: the saved index was built from ${path.resolve(cellsDir)}`
+          )
+        })
+      });
+      // The source it was built from keeps it, as an unmounted drive does.
+      fs.rmSync(path.join(cellsDir, "FI4SYNTH"), { recursive: true });
+      expect(planIndex(box(cellsDir), dataDir)).toEqual({
+        load: expect.objectContaining({
+          index: expect.anything(),
+          reason: `no S-57 cell found in ${cellsDir}; using the saved index`
+        })
+      });
+    });
+  });
+
+  test("a collection is its source wherever its store is, so an unmounted store keeps its index", async () => {
+    const store = path.join(tmp, "store", "Gulf_of_Finland");
+    copyCell("FI4SYNTH", store);
+    const shared = (dir: string) =>
+      loadOrBuildIndex(
+        {
+          ...parseConfig({ chartsProviderEnc: "Gulf_of_Finland", boxRadiusKm: 0, leafZoom: 16 }),
+          cellsDir: dir
+        },
+        dataDir
+      );
+    await shared(store);
+    // The store read at another path, as the default one while the provider starts.
+    const r = await shared(path.join(tmp, "default", "Gulf_of_Finland"));
+    expect(names(r)).toEqual(["FI4SYNTH"]);
+    expect(r.reason).toMatch(/not found; using the saved index/);
+  });
+
+  test("an index saved before sources were recorded is kept as before", async () => {
+    copyCell("FI4SYNTH");
+    await load();
+    fs.rmSync(path.join(dataDir, "index", SOURCE_FILE));
+    const other = path.join(tmp, "other");
+    const r = await loadOrBuildIndex(
+      parseConfig({ cellsDir: other, boxRadiusKm: 0, leafZoom: 16 }),
+      dataDir
+    );
+    expect(names(r)).toEqual(["FI4SYNTH"]);
+    expect(r.reason).toMatch(/not found; using the saved index/);
   });
 });
 

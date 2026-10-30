@@ -108,6 +108,13 @@ the index reason in `/status` names the cells.
 whose index format differs is rebuilt too, and so is one whose files cannot be read, as a power
 cut during a save can leave them; the reason then names the read error.
 
+A cells directory that is gone, or holds no cell while the saved index holds S-57 cells, most
+likely sits on a drive that is not mounted: the saved index stays in use, and the reason says
+so. The index records the source it was built from (`source.json`: the cells directory, or the
+Charts Provider collection by its id, wherever its store is), so this holds only for that
+source. A source chosen since that has no cells yet does not keep another source's index: the
+engine reports that source's cells as not found until they arrive.
+
 Only the coarse part of the depth pyramid stays in memory; its fine tiles are read from the
 saved file, a few kilometres square at a time, when the look-ahead, a route check, a query or
 a map tile first reaches them, and the blocks around the boat and ahead on its course are read

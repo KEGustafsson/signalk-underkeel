@@ -7,6 +7,7 @@ import { BOX_WAITING_REASON } from "../src/index-loader";
 import { boxAround } from "../src/ingest/wfs";
 import { runBuild } from "../src/spatial/build-worker";
 import { commitChartIndex, loadChartIndex } from "../src/spatial/chart-index";
+import { readSource } from "../src/spatial/build-source";
 import type { IndexBuilder, WfsBox } from "../src/wfs-service";
 import underkeel = require("../src/index");
 import { CELLS, prepareFixtureIndex, ROCK } from "./helpers/fixture-index";
@@ -78,6 +79,8 @@ describe("chart box service", () => {
       await new Promise((r) => setTimeout(r, 10));
     }
     expect(cells().map((c) => c.name)).toEqual(["FI4SYNTH", "FI5SYNTH"]);
+    // A box build records the source too.
+    expect(readSource(path.join(dir, "index"))).toBe(`dir:${path.resolve(CELLS)}`);
     h.send(navDelta(ROCK[0], ROCK[1], 0, clock.now()));
     clock.advance(1000);
     expect(lastValue(h.deltas, "navigation.underKeel.state")).not.toBe("off");

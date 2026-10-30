@@ -81,6 +81,8 @@ export interface WfsServiceDeps {
   indexDir: string;
   /** The cell cache the builds use (`BuildJob.cacheDir`); none when absent. */
   cacheDir?: string;
+  /** The ENC source the cells come from (`BuildJob.source`); none when absent. */
+  source?: string;
   leafZoom: number;
   /**
    * The S-57 cells directory, scanned by the refresh off the event loop; its cells are built
@@ -427,6 +429,7 @@ export class WfsService {
             leafZoom: this.deps.leafZoom,
             indexDir: this.deps.indexDir,
             ...(this.deps.cacheDir === undefined ? {} : { cacheDir: this.deps.cacheDir }),
+            source: this.deps.source,
             ...(inBox ? {} : { changed: [this.cellDir] })
           }
         },

@@ -3,6 +3,7 @@ import os from "os";
 import path from "path";
 import { parseConfig } from "../src/config";
 import { scanCellSources } from "../src/ingest/cell-source";
+import { readSource } from "../src/spatial/build-source";
 import type { SharedEncApi } from "../src/shared-enc";
 import {
   ALL_COLLECTIONS,
@@ -260,9 +261,12 @@ describe("charts provider ENC store", () => {
     const clock = fakeClock(T0);
     const dirs: string[][] = [];
     const build = inlineBuilder;
+    const builds: Promise<unknown>[] = [];
     const plugin = underkeel(f.app, clock, globalThis.fetch, (job, signal) => {
       dirs.push(job.dirs.map((d) => path.relative(root, d).split(path.sep).join("/")));
-      return build(job, signal);
+      const built = build(job, signal);
+      builds.push(built);
+      return built;
     });
     const options = { chartsProviderEnc: "Gulf_of_Finland", boxRadiusKm: 0, leafZoom: 18 };
     const restarts: object[] = [];
@@ -277,6 +281,7 @@ describe("charts provider ENC store", () => {
     expect(restarts[0]).toMatchObject(options);
     plugin.stop();
     expect(provider.listeners.size).toBe(0);
-    await new Promise((r) => setImmediate(r));
+    await Promise.all(builds);
+    expect(readSource(path.join(dataDir, "index"))).toBe("charts-provider:Gulf_of_Finland");
   });
 });

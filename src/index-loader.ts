@@ -1,6 +1,8 @@
 import fs from "fs";
 import path from "path";
 import type { PluginConfig } from "./config";
+import { cellsNow, indexSource } from "./index-source";
+import { writeSource } from "./spatial/build-source";
 import { CACHE_DIR } from "./ingest/cell-cache";
 import type { CellInfo } from "./ingest/cells";
 import { parseCatalogue } from "./ingest/cells";
@@ -198,7 +200,8 @@ async function settle(p: IndexPlan): Promise<IndexLoad> {
       cells.push(await readCell(d, i));
     }
     const index = buildChartIndex(cells, { leafZoom: p.build.leafZoom });
-    saveChartIndex(p.indexDir, index);
+    const { source } = p.build;
+    saveChartIndex(p.indexDir, index, source ? (dir) => writeSource(dir, source) : undefined);
     return builtLoad(p, index);
   } catch (err) {
     return failedLoad(p.indexDir, err);
@@ -257,7 +260,7 @@ function plan(
     stale
       ? { load: { indexDir, built: false, reason: missingReason(cfg, indexDir, true) } }
       : savedPlan(indexDir, notes, unreadable, syncLoadBytes);
-  const found = scanCells(cfg.cellsDir, saved);
+  const found = cellsNow(scanCells(cfg.cellsDir, saved), cfg, indexDir);
   if ("away" in found) {
     return fromSaved([`${found.away}; using the saved index`], (err) => ({
       load: failedLoad(indexDir, err)
@@ -268,7 +271,8 @@ function plan(
   let stamps: string[] | undefined;
   const encKeys = (): string[] => (stamps ??= scan.sources.map(sourceKey));
   const change = cellsChange(cfg.cellsDir, saved, encKeys);
-  const notes = [...(change ? [change] : []), ...skippedNote(cfg.cellsDir, scan)];
+  const away = found.note === undefined ? [] : [found.note];
+  const notes = [...away, ...(change ? [change] : []), ...skippedNote(cfg.cellsDir, scan)];
   const sources = Boolean(cfg.cellsDir) || extraDirs.length > 0;
   const dirs = [...scan.sources, ...extraDirs];
   const keys = (): string[] => [...encKeys(), ...extraDirs.map(sourceKey)].sort();
@@ -291,7 +295,7 @@ function plan(
     return boxPlan(cfg, indexDir, dirs, keys, {
       mismatch,
       fromSaved: (why) => fromSaved(why, unreadable),
-      notes: skippedNote(cfg.cellsDir, scan)
+      notes: [...away, ...skippedNote(cfg.cellsDir, scan)]
     });
   }
   // With no index saved, `mismatch` says so.
@@ -419,7 +423,8 @@ function buildPlan(
   if (refused !== undefined) {
     return { load: failedLoad(indexDir, new Error(refused)) };
   }
-  const build: BuildJob = { dirs, leafZoom: cfg.leafZoom, indexDir };
+  const source = indexSource(cfg);
+  const build: BuildJob = { dirs, leafZoom: cfg.leafZoom, indexDir, ...(source ? { source } : {}) };
   return { build: box ? { ...build, box } : build, indexDir, notes };
 }
 

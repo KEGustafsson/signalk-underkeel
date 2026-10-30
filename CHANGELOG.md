@@ -12,6 +12,14 @@ All notable changes to signalk-underkeel are documented here.
   rebuilds the index when the charts provider writes new editions or updates of those cells,
   and the admin form names the collections shared at the moment.
 
+### Changed
+
+- The index records the ENC source it was built from: the cells directory, or the Charts
+  Provider collection by its id. A cells directory that is gone or empty keeps the saved index
+  only when that index was built from it, as an unmounted drive leaves it; switching to a
+  source with no cells yet no longer keeps using the previous source's index, and the reason
+  says why. An index saved by an earlier version, which records no source, is kept as before.
+
 ## [0.3.0] - 2026-10-28
 
 ### Changed
