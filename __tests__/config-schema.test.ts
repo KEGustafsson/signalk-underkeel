@@ -41,7 +41,7 @@ describe("admin form", () => {
   test("the flat schema holds every setting once, without showExpert", () => {
     const all = fields(SCHEMA as Schema);
     expect(new Set(all).size).toBe(all.length);
-    expect(all).toHaveLength(57);
+    expect(all).toHaveLength(58);
     expect(all).not.toContain("showExpert");
     for (const f of [
       "vessel.heelTable",
@@ -54,7 +54,8 @@ describe("admin form", () => {
       "routeCheck.probability",
       "mooringZones",
       "leafZoom",
-      "boxMaxRadiusKm"
+      "boxMaxRadiusKm",
+      "chartsProviderArea"
     ]) {
       expect(all).toContain(f);
     }

@@ -93,7 +93,9 @@ The plugin reads unencrypted S-57 cells as delivered, each `.000` with its updat
 compiled to WebAssembly; **ENC cells directory** points at the folder that holds them, such as
 an exchange set's `ENC_ROOT`, or **ENC from Charts Provider** names a chart set whose cells
 signalk-charts-provider-simple shares (the [README](../README.md#prepare-the-charts) has the
-details).
+details). With `*`, each index box can ask that plugin for the free ENC cells of its area
+(**Ask Charts Provider for the ENC around the vessel**); the cells it downloads are shared
+like any chart set's, and their arrival rebuilds the index.
 The draft comes from **Boat**, or else from Signal K `design.draft.maximum`; length and beam fall back to `design.length.overall` and
 `design.beam`. Without a draft the engine stays `unknown`. The water level comes from the
 source picked under **Water level** (section 8).

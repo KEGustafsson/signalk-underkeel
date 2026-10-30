@@ -9,7 +9,10 @@ import {
   ALL_COLLECTIONS,
   COLLECTION_CHOICE_PATTERN,
   collectionsHint,
+  noteSharedCells,
+  requestSharedArea,
   sharedCellsDir,
+  sharedCellsNote,
   sharedEncApi,
   sharedEncRoot,
   watchSharedCells,
@@ -140,6 +143,66 @@ describe("charts provider ENC store", () => {
     expect(collectionsHint(fakeProvider("/r").api)).toBe(
       "Shared now: Gulf_of_Finland (chart set, 2 cells), US5MA1AM (converted chart, 1 cells)."
     );
+  });
+
+  test("says why the collection in use has no cells, as the provider tells it", () => {
+    const { api } = fakeProvider("/r");
+    const states: Record<string, { state: string; detail?: string }> = {
+      Gulf_of_Finland: { state: "ready" },
+      Writing: { state: "writing" },
+      Fetching: { state: "pending", detail: "downloading" },
+      Waiting: { state: "pending", detail: "not downloaded yet" }
+    };
+    const told = { ...api, state: (id: string) => states[id] ?? { state: "absent" } };
+    expect(sharedCellsNote("Gulf_of_Finland", told)).toBeUndefined();
+    expect(sharedCellsNote("Writing", told)).toMatch(/is writing the cells of Writing/);
+    expect(sharedCellsNote("Fetching", told)).toMatch(/is downloading Fetching/);
+    expect(sharedCellsNote("Waiting", told)).toMatch(/not downloaded yet: download it/);
+    expect(sharedCellsNote("Nope", told)).toMatch(/shares no Nope/);
+    // An older provider cannot tell; nor can one that is not running.
+    expect(sharedCellsNote("Nope", api)).toBeUndefined();
+    expect(sharedCellsNote("Nope", undefined)).toBeUndefined();
+    expect(sharedCellsNote(ALL_COLLECTIONS, { ...told, collections: () => [] })).toMatch(
+      /shares no ENC cells yet/
+    );
+    expect(sharedCellsNote(ALL_COLLECTIONS, told)).toBeUndefined();
+
+    const reason = "no cells in /r/Waiting";
+    expect(noteSharedCells({ reason }, { chartsProviderEnc: "Waiting" }, told).reason).toBe(
+      `${reason}; Waiting is a Charts Provider chart set not downloaded yet: download it in its ENC Charts tab`
+    );
+    // Nothing amiss, or another source: unchanged.
+    expect(noteSharedCells({}, { chartsProviderEnc: "Waiting" }, told)).toEqual({});
+    expect(noteSharedCells({ reason }, {}, told)).toEqual({ reason });
+  });
+
+  test("asks the provider for an area, when it can be asked", () => {
+    const { api } = fakeProvider("/r");
+    const asked: unknown[] = [];
+    const answer = { accepted: true, started: true, reason: "downloading the area" };
+    const bbox = [20, 59, 21, 60] as const;
+    expect(requestSharedArea(bbox, api)).toBeUndefined();
+    expect(
+      requestSharedArea(bbox, {
+        ...api,
+        requestArea: (b, requester) => {
+          asked.push([b, requester]);
+          return answer;
+        }
+      })
+    ).toBe(answer);
+    expect(asked).toEqual([[bbox, "signalk-underkeel"]]);
+    const failing = {
+      ...api,
+      requestArea: () => {
+        throw new Error("store gone");
+      }
+    };
+    expect(requestSharedArea(bbox, failing)).toEqual({
+      accepted: false,
+      started: false,
+      reason: "store gone"
+    });
   });
 
   test("a change to the collection in use is acted on once it settles", () => {

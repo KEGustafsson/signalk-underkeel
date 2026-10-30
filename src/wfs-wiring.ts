@@ -7,6 +7,7 @@ import type { Rect } from "./foundation/geo";
 import { toMercator } from "./foundation/geo";
 import { cellCacheDir } from "./index-loader";
 import { indexSource } from "./index-source";
+import { requestSharedArea } from "./shared-enc";
 import type { Bbox } from "./ingest/wfs";
 import { WFS_SOURCE } from "./ingest/wfs";
 import { startLivechart } from "./livechart-service";
@@ -26,7 +27,7 @@ import {
 
 /** What the Traficom WFS box needs from the running plugin. */
 export interface WfsWiring {
-  app: Pick<ServerAPI, "getDataDirPath" | "resourcesApi" | "error">;
+  app: Pick<ServerAPI, "getDataDirPath" | "resourcesApi" | "error" | "debug">;
   clock: Clock;
   state: PluginState;
   config: PluginConfig;
@@ -106,6 +107,26 @@ export function startBox(w: WfsWiring): WfsService | undefined {
     : undefined;
 }
 
+/** Asks the charts provider for each box's cells, logging its answer when it changes. */
+function askForArea(app: Pick<ServerAPI, "error" | "debug">): (bbox: Bbox) => void {
+  let last: string | undefined;
+  return (bbox) => {
+    const answer = requestSharedArea(bbox);
+    const line =
+      answer === undefined
+        ? "Charts Provider cannot be asked for the ENC around the vessel: it is not running, or too old"
+        : `Charts Provider, asked for the ENC around the vessel: ${answer.reason}`;
+    if (line !== last) {
+      last = line;
+      if (answer?.accepted === true) {
+        app.debug(line);
+      } else {
+        app.error(line);
+      }
+    }
+  };
+}
+
 export function startWfs(
   w: WfsWiring,
   config: WfsConfig | EncBoxConfig,
@@ -120,6 +141,10 @@ export function startWfs(
     cacheDir: cellCacheDir(w.app.getDataDirPath()),
     leafZoom: w.config.leafZoom,
     source: indexSource(w.config),
+    onBox:
+      w.config.chartsProviderArea && w.config.chartsProviderEnc !== undefined
+        ? askForArea(w.app)
+        : undefined,
     cellsDir: w.config.cellsDir,
     inBox: w.config.boxRadiusKm > 0,
     index: () => w.state.load?.index,

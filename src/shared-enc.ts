@@ -25,12 +25,28 @@ export interface SharedEncCollection {
   cellCount: number;
 }
 
-/** The part of the charts provider's `globalThis.__signalk_chartsProviderEnc` used here. */
+/** What `requestArea` answers. */
+export interface SharedAreaAnswer {
+  accepted: boolean;
+  started: boolean;
+  reason: string;
+}
+
+/**
+ * The part of the charts provider's `globalThis.__signalk_chartsProviderEnc` used here.
+ * `state` and `requestArea` came after the API's first release: an older charts provider
+ * lacks them.
+ */
 export interface SharedEncApi {
   apiVersion: number;
   root: string;
   collections: () => SharedEncCollection[];
   onChange: (listener: (collectionId: string) => void) => () => void;
+  state?: (id: string) => { state: string; detail?: string };
+  requestArea?: (
+    bbox: readonly [number, number, number, number],
+    requester: string
+  ) => SharedAreaAnswer;
 }
 
 /** A collection's id, or ALL_COLLECTIONS. */
@@ -97,6 +113,64 @@ export function collectionsHint(api = sharedEncApi()): string | undefined {
             `${c.id} (${c.kind === "chart-set" ? "chart set" : "converted chart"}, ${c.cellCount} cells)`
         )
         .join(", ")}.`;
+}
+
+/**
+ * Why the charts provider's `collection` holds no cells to read, as it tells it; undefined
+ * when it is ready, or the provider cannot tell.
+ */
+export function sharedCellsNote(collection: string, api = sharedEncApi()): string | undefined {
+  if (!api) {
+    return undefined;
+  }
+  if (collection === ALL_COLLECTIONS) {
+    return collectionsHint(api)?.startsWith("Charts Provider shares no")
+      ? "Charts Provider shares no ENC cells yet: download an ENC Charts set there"
+      : undefined;
+  }
+  let found: { state: string; detail?: string } | undefined;
+  try {
+    found = api.state?.(collection);
+  } catch {
+    return undefined;
+  }
+  switch (found?.state) {
+    case "writing":
+      return `Charts Provider is writing the cells of ${collection}; the index is built once they are in place`;
+    case "pending":
+      return found.detail === "downloading"
+        ? `Charts Provider is downloading ${collection}; the index is built once its cells are shared`
+        : `${collection} is a Charts Provider chart set not downloaded yet: download it in its ENC Charts tab`;
+    case "absent":
+      return `Charts Provider shares no ${collection}: check ENC from Charts Provider`;
+    default:
+      return undefined;
+  }
+}
+
+/** `load` with the charts provider's word on why the collection in use has no cells. */
+export function noteSharedCells<T extends { reason?: string }>(
+  load: T,
+  cfg: Pick<PluginConfig, "chartsProviderEnc">,
+  api = sharedEncApi()
+): T {
+  const note =
+    load.reason !== undefined && cfg.chartsProviderEnc !== undefined
+      ? sharedCellsNote(cfg.chartsProviderEnc, api)
+      : undefined;
+  return note === undefined ? load : { ...load, reason: `${load.reason ?? ""}; ${note}` };
+}
+
+/** Asks the charts provider for the cells around `bbox`; undefined when it cannot be asked. */
+export function requestSharedArea(
+  bbox: readonly [number, number, number, number],
+  api = sharedEncApi()
+): SharedAreaAnswer | undefined {
+  try {
+    return api?.requestArea?.(bbox, "signalk-underkeel");
+  } catch (err) {
+    return { accepted: false, started: false, reason: (err as Error).message };
+  }
 }
 
 export interface SharedEncWatchOptions {

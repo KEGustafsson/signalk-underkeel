@@ -83,6 +83,8 @@ export interface WfsServiceDeps {
   cacheDir?: string;
   /** The ENC source the cells come from (`BuildJob.source`); none when absent. */
   source?: string;
+  /** Told of each box a refresh starts building, as the charts provider is asked for its cells. */
+  onBox?: (bbox: Bbox) => void;
   leafZoom: number;
   /**
    * The S-57 cells directory, scanned by the refresh off the event loop; its cells are built
@@ -380,6 +382,10 @@ export class WfsService {
     }
   }
 
+  private announce(bbox: Bbox): void {
+    this.deps.onBox?.(bbox);
+  }
+
   /** Where the vessel will be when a refresh started now is handed over, kept inside the box. */
   private centreAhead(pos: LonLat, radiusKm: number, refreshMs: number): LonLat {
     const m = this.deps.motion();
@@ -405,6 +411,7 @@ export class WfsService {
     try {
       const centre = this.centreAhead(pos, radiusKm, run.estimateMs ?? this.refreshMs());
       const bbox = boxAround(centre, radiusKm);
+      this.announce(bbox);
       const config = this.deps.config;
       const { inBox, cellsDir } = this.deps;
       // With WFS depths alone in use an empty cells directory loses nothing.

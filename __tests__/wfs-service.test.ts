@@ -117,6 +117,23 @@ describe("WFS box around the vessel", () => {
     expect(fs.existsSync(path.join(TMP, "box.json"))).toBe(true);
   });
 
+  test("each box a refresh builds is announced, and builds record their source", async () => {
+    const boxes: Bbox[] = [];
+    const jobs: (string | undefined)[] = [];
+    const h = harness(okReply, { onBox: (b) => boxes.push(b), source: "charts-provider:*" });
+    const build = h.builder.build;
+    h.builder.build = (job, signal, progress) => {
+      jobs.push(job.source);
+      return build(job, signal, progress);
+    };
+    await h.service.check();
+    expect(boxes).toEqual([]);
+    h.t.pos = [22.08, 60.07];
+    await h.service.check();
+    expect(boxes).toEqual([h.service.status().box?.bbox]);
+    expect(jobs).toEqual(["charts-provider:*"]);
+  });
+
   test("the rebuild reuses the saved index's roots that the WFS cell does not reach", async () => {
     const h = harness();
     const changed: (string[] | undefined)[] = [];
