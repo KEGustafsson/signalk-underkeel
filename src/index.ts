@@ -27,7 +27,7 @@ import type { IndexBuilder } from "./wfs-service";
 import { workerBuilder } from "./wfs-service";
 import { startBox } from "./wfs-wiring";
 import type { SharedEncWatch } from "./shared-enc";
-import { watchSharedCells, withSharedCells } from "./shared-enc";
+import { noteSharedCells, watchSharedCells, withSharedCells } from "./shared-enc";
 import fs from "fs";
 import path from "path";
 
@@ -139,7 +139,7 @@ export = function underkeel(
       const config = withSharedCells(parseConfig(migration.config), app.getDataDirPath());
       const wfs = startBox({ app, clock, state, config, fetch, build });
       const plan = planIndex(config, app.getDataDirPath(), wfs?.savedCell() ? [wfs.cellDir] : []);
-      const load = "load" in plan ? plan.load : pendingLoad(plan);
+      const load = "load" in plan ? noteSharedCells(plan.load, config) : pendingLoad(plan);
       const monitor = new Monitor(app, PLUGIN_ID, config, load.index, load.reason, clock, fetch);
       const acks = new AckStore(path.join(app.getDataDirPath(), "acks.json"));
       if (acks.error) {

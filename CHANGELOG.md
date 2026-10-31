@@ -11,6 +11,24 @@ All notable changes to signalk-underkeel are documented here.
   of them with `*`, in place of **ENC cells directory**. The plugin restarts itself and
   rebuilds the index when the charts provider writes new editions or updates of those cells,
   and the admin form names the collections shared at the moment.
+- When the Charts Provider collection in use has no cells, the reason says why, as
+  signalk-charts-provider-simple tells it: a chart set not downloaded yet or downloading, its
+  cells being written, or no such collection.
+- **Ask Charts Provider for the ENC around the vessel** (expert, off by default): while all
+  of the charts provider's shared ENC is read, each new index box asks it to download the free
+  ENC cells of that area, when the charts provider allows such downloads. The cells arrive in
+  a chart set of their own and the index is rebuilt with them. An answer that may change
+  without the box changing is asked again later.
+
+### Changed
+
+- The index records the ENC source it was built from: the cells directory, or the Charts
+  Provider collection by its id. A cells directory that is gone or empty keeps the saved index
+  only when that index was built from it, as an unmounted drive leaves it; switching to a
+  source with no cells yet no longer keeps using the previous source's index, and the reason
+  says why. Clearing the ENC source leaves no index in use rather than the previous source's,
+  again with the reason. An index saved by an earlier version, which records no source, is
+  kept as before.
 
 ## [0.3.0] - 2026-10-28
 

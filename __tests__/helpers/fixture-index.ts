@@ -3,6 +3,7 @@ import { cellSources } from "../../src/index-loader";
 import { readCellDirectory } from "../../src/ingest/cell-reader";
 import { readCell } from "../../src/ingest/cell-source";
 import type { ChartIndex } from "../../src/spatial/chart-index";
+import { writeSource } from "../../src/spatial/build-source";
 import { buildChartIndex, loadChartIndex, saveChartIndex } from "../../src/spatial/chart-index";
 import type { IndexBuilder } from "../../src/wfs-service";
 
@@ -44,9 +45,11 @@ async function readAll(sources: readonly string[]) {
 
 /** The build worker's job run in-process: ts-jest has no compiled worker file. */
 export const inlineBuilder: IndexBuilder = async (job) => {
+  const { source } = job;
   saveChartIndex(
     job.indexDir,
-    buildChartIndex(await readAll(job.dirs), { leafZoom: job.leafZoom })
+    buildChartIndex(await readAll(job.dirs), { leafZoom: job.leafZoom }),
+    source === undefined ? undefined : (staging) => writeSource(staging, source)
   );
   return loadChartIndex(job.indexDir);
 };

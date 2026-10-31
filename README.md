@@ -112,7 +112,13 @@ Cells downloaded with signalk-charts-provider-simple (2.16.0 or later) are read 
 plugin shares them, in its ENC store: set **ENC from Charts Provider** to one of the chart sets
 or converted charts the admin form lists as shared, or to `*` for all of them. It is used
 instead of **ENC cells directory**. When the charts provider writes new editions or updates of
-those cells, the plugin restarts itself and rebuilds the index from them. The cells are
+those cells, the plugin restarts itself and rebuilds the index from them. When the collection
+has no cells yet, the reason says why, as the charts provider tells it: a chart set not
+downloaded or still downloading, cells being written, or no such collection. With `*` and
+**Ask Charts Provider for the ENC around the vessel** on (an expert setting, off by default),
+each new index box asks the charts provider to download the free ENC cells of that area, when
+its **Download the ENC cells around the vessel** is on too; they arrive in its chart set
+"Around the vessel" and the index is rebuilt with them. The cells are
 read in place with GDAL compiled to WebAssembly
 (gdal3.js), which the plugin installs with it, and the updates are applied as they are read.
 Nothing is converted or written next to the cells. A cell without an `M_COVR` coverage layer
@@ -208,7 +214,7 @@ Expert settings, with their defaults:
 
 | Group        | Settings                                                                                                                                                                                                                               |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Chart index  | index directory, rebuild at start, index leaf zoom (20), box around the vessel (10 km)                                                                                                                                                 |
+| Chart index  | index directory, rebuild at start, index leaf zoom (20), box around the vessel (10 km), ask Charts Provider for the ENC around the vessel                                                                                              |
 | Boat         | length, beam (fallback: Signal K `design.*`); draft σ (0.05 m); block coefficient and heel effect (none, fin keel or a table); double squat in narrow channels; wave allowance factor (0.4 × Hs)                                       |
 | Look-ahead   | minimum horizon (60 s); position buffer (10 m, 2σ); fan spread (COG 5°, rate of turn 0.1°/s); escape-heading rate of turn (3°/s); and the distance, probabilities and windows of the warning style, each overriding the style when set |
 | Water level  | manual height and σ; FMI refresh (600 s); chart-datum mappings for FMI                                                                                                                                                                 |
