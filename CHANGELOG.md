@@ -14,13 +14,11 @@ All notable changes to signalk-underkeel are documented here.
 - When the Charts Provider collection in use has no cells, the reason says why, as
   signalk-charts-provider-simple tells it: a chart set not downloaded yet or downloading, its
   cells being written, or no such collection.
-- **Ask Charts Provider for the ENC around the vessel** (expert, off by default): with **ENC
-  from Charts Provider** set to `*`, each new index box asks the charts provider to download
-  the free ENC cells of that area, which it does with its own **Download the ENC cells around
-  the vessel** on. The cells arrive in its chart set "Around the vessel" and the index is
-  rebuilt with them. Its answer is logged when it changes. While the charts provider is not
-  running yet, or answers that it is loading its ENC index or busy converting, the same box
-  is asked about again after a bounded delay.
+- **Ask Charts Provider for the ENC around the vessel** (expert, off by default): while all
+  of the charts provider's shared ENC is read, each new index box asks it to download the free
+  ENC cells of that area, when the charts provider allows such downloads. The cells arrive in
+  a chart set of their own and the index is rebuilt with them. An answer that may change
+  without the box changing is asked again later.
 
 ### Changed
 
