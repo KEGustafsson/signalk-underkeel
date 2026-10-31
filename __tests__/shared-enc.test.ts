@@ -19,6 +19,7 @@ import {
   withSharedCells
 } from "../src/shared-enc";
 import underkeel = require("../src/index");
+import { areaRequests } from "../src/wfs-wiring";
 import { CELLS, inlineBuilder } from "./helpers/fixture-index";
 import { fakeApp, fakeClock, T0 } from "./helpers/plugin-harness";
 
@@ -203,6 +204,38 @@ describe("charts provider ENC store", () => {
       started: false,
       reason: "store gone"
     });
+  });
+
+  test("each box asks for its area only with the setting on and the source *", () => {
+    const logged: string[] = [];
+    const app = {
+      error: (m: string) => logged.push(`error ${m}`),
+      debug: (m: string) => logged.push(`debug ${m}`)
+    } as unknown as Parameters<typeof areaRequests>[1];
+    expect(
+      areaRequests({ chartsProviderArea: true, chartsProviderEnc: "Gulf_of_Finland" }, app)
+    ).toBeUndefined();
+    expect(
+      areaRequests({ chartsProviderArea: false, chartsProviderEnc: ALL_COLLECTIONS }, app)
+    ).toBeUndefined();
+    expect(areaRequests({ chartsProviderArea: true }, app)).toBeUndefined();
+    const ask = areaRequests({ chartsProviderArea: true, chartsProviderEnc: ALL_COLLECTIONS }, app);
+    expect(ask).toBeDefined();
+    const { api } = fakeProvider("/r");
+    let answer = { accepted: true, started: true, reason: "downloading the area" };
+    (globalThis as { __signalk_chartsProviderEnc?: unknown }).__signalk_chartsProviderEnc = {
+      ...api,
+      requestArea: () => answer
+    };
+    ask?.([20, 59, 21, 60]);
+    ask?.([20, 59, 21, 60]);
+    answer = { accepted: false, started: false, reason: "turn it on" };
+    ask?.([20, 59, 21, 60]);
+    // Logged once each time the answer changes.
+    expect(logged).toEqual([
+      "debug Charts Provider, asked for the ENC around the vessel: downloading the area",
+      "error Charts Provider, asked for the ENC around the vessel: turn it on"
+    ]);
   });
 
   test("a change to the collection in use is acted on once it settles", () => {

@@ -79,7 +79,6 @@ describe("chart box service", () => {
       await new Promise((r) => setTimeout(r, 10));
     }
     expect(cells().map((c) => c.name)).toEqual(["FI4SYNTH", "FI5SYNTH"]);
-    // A box build records the source too.
     expect(readSource(path.join(dir, "index"))).toBe(`dir:${path.resolve(CELLS)}`);
     h.send(navDelta(ROCK[0], ROCK[1], 0, clock.now()));
     clock.advance(1000);

@@ -25,7 +25,6 @@ export interface SharedEncCollection {
   cellCount: number;
 }
 
-/** What `requestArea` answers. */
 export interface SharedAreaAnswer {
   accepted: boolean;
   started: boolean;

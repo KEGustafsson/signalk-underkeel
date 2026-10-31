@@ -7,7 +7,7 @@ import type { Rect } from "./foundation/geo";
 import { toMercator } from "./foundation/geo";
 import { cellCacheDir } from "./index-loader";
 import { indexSource } from "./index-source";
-import { requestSharedArea } from "./shared-enc";
+import { ALL_COLLECTIONS, requestSharedArea } from "./shared-enc";
 import type { Bbox } from "./ingest/wfs";
 import { WFS_SOURCE } from "./ingest/wfs";
 import { startLivechart } from "./livechart-service";
@@ -107,6 +107,19 @@ export function startBox(w: WfsWiring): WfsService | undefined {
     : undefined;
 }
 
+/**
+ * What each new box tells the charts provider: asks for its cells with `chartsProviderArea`
+ * on, and only while the source is `*`, as they arrive in a chart set of their own.
+ */
+export function areaRequests(
+  config: Pick<PluginConfig, "chartsProviderArea" | "chartsProviderEnc">,
+  app: Pick<ServerAPI, "error" | "debug">
+): ((bbox: Bbox) => void) | undefined {
+  return config.chartsProviderArea && config.chartsProviderEnc === ALL_COLLECTIONS
+    ? askForArea(app)
+    : undefined;
+}
+
 /** Asks the charts provider for each box's cells, logging its answer when it changes. */
 function askForArea(app: Pick<ServerAPI, "error" | "debug">): (bbox: Bbox) => void {
   let last: string | undefined;
@@ -141,10 +154,7 @@ export function startWfs(
     cacheDir: cellCacheDir(w.app.getDataDirPath()),
     leafZoom: w.config.leafZoom,
     source: indexSource(w.config),
-    onBox:
-      w.config.chartsProviderArea && w.config.chartsProviderEnc !== undefined
-        ? askForArea(w.app)
-        : undefined,
+    onBox: areaRequests(w.config, w.app),
     cellsDir: w.config.cellsDir,
     inBox: w.config.boxRadiusKm > 0,
     index: () => w.state.load?.index,
