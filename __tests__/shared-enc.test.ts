@@ -231,7 +231,6 @@ describe("charts provider ENC store", () => {
     ask?.([20, 59, 21, 60]);
     answer = { accepted: false, started: false, reason: "turn it on" };
     ask?.([20, 59, 21, 60]);
-    // Logged once each time the answer changes.
     expect(logged).toEqual([
       "debug Charts Provider, asked for the ENC around the vessel: downloading the area",
       "error Charts Provider, asked for the ENC around the vessel: turn it on"
