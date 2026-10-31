@@ -255,7 +255,6 @@ describe("charts provider ENC store", () => {
     expect(ask?.([20, 59, 21, 60])).toBeUndefined();
     answer = { accepted: true, started: false, reason: "index loading", retryAfterMs: 90_000 };
     expect(ask?.([20, 59, 21, 60])).toBe(90_000);
-    // Kept between a minute and half an hour, whatever the provider says.
     answer = { ...answer, retryAfterMs: 5 };
     expect(ask?.([20, 59, 21, 60])).toBe(AREA_ASK_MIN_MS);
     answer = { ...answer, retryAfterMs: 24 * 3_600_000 };

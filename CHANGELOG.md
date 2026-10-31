@@ -20,7 +20,7 @@ All notable changes to signalk-underkeel are documented here.
   the vessel** on. The cells arrive in its chart set "Around the vessel" and the index is
   rebuilt with them. Its answer is logged when it changes. While the charts provider is not
   running yet, or answers that it is loading its ENC index or busy converting, the same box
-  is asked about again later, between a minute and half an hour on.
+  is asked about again after a bounded delay.
 
 ### Changed
 
