@@ -1,6 +1,8 @@
 import fs from "fs";
 import path from "path";
 import type { PluginConfig } from "./config";
+import { cellsNow, indexSource, sourceDropped } from "./index-source";
+import { writeSource } from "./spatial/build-source";
 import { CACHE_DIR } from "./ingest/cell-cache";
 import type { CellInfo } from "./ingest/cells";
 import { parseCatalogue } from "./ingest/cells";
@@ -198,7 +200,8 @@ async function settle(p: IndexPlan): Promise<IndexLoad> {
       cells.push(await readCell(d, i));
     }
     const index = buildChartIndex(cells, { leafZoom: p.build.leafZoom });
-    saveChartIndex(p.indexDir, index);
+    const { source } = p.build;
+    saveChartIndex(p.indexDir, index, source ? (dir) => writeSource(dir, source) : undefined);
     return builtLoad(p, index);
   } catch (err) {
     return failedLoad(p.indexDir, err);
@@ -252,12 +255,12 @@ function plan(
   syncLoadBytes: number
 ): IndexPlan {
   const { cells: saved, error } = readSaved(indexDir);
-  const { stale, mismatch } = savedMatches(cfg, indexDir, saved, extraDirs);
+  const { refused, mismatch } = savedMatches(cfg, indexDir, saved, extraDirs);
   const fromSaved = (notes: string[], unreadable: (err: unknown) => IndexPlan): IndexPlan =>
-    stale
-      ? { load: { indexDir, built: false, reason: missingReason(cfg, indexDir, true) } }
-      : savedPlan(indexDir, notes, unreadable, syncLoadBytes);
-  const found = scanCells(cfg.cellsDir, saved);
+    refused === undefined
+      ? savedPlan(indexDir, notes, unreadable, syncLoadBytes)
+      : { load: { indexDir, built: false, reason: refused } };
+  const found = cellsNow(scanCells(cfg.cellsDir, saved), cfg, indexDir);
   if ("away" in found) {
     return fromSaved([`${found.away}; using the saved index`], (err) => ({
       load: failedLoad(indexDir, err)
@@ -268,7 +271,8 @@ function plan(
   let stamps: string[] | undefined;
   const encKeys = (): string[] => (stamps ??= scan.sources.map(sourceKey));
   const change = cellsChange(cfg.cellsDir, saved, encKeys);
-  const notes = [...(change ? [change] : []), ...skippedNote(cfg.cellsDir, scan)];
+  const away = found.note === undefined ? [] : [found.note];
+  const notes = [...away, ...(change ? [change] : []), ...skippedNote(cfg.cellsDir, scan)];
   const sources = Boolean(cfg.cellsDir) || extraDirs.length > 0;
   const dirs = [...scan.sources, ...extraDirs];
   const keys = (): string[] => [...encKeys(), ...extraDirs.map(sourceKey)].sort();
@@ -291,7 +295,7 @@ function plan(
     return boxPlan(cfg, indexDir, dirs, keys, {
       mismatch,
       fromSaved: (why) => fromSaved(why, unreadable),
-      notes: skippedNote(cfg.cellsDir, scan)
+      notes: [...away, ...skippedNote(cfg.cellsDir, scan)]
     });
   }
   // With no index saved, `mismatch` says so.
@@ -306,7 +310,7 @@ function plan(
     ]);
   }
   if (!saved) {
-    return { load: { indexDir, built: false, reason: missingReason(cfg, indexDir, false) } };
+    return { load: { indexDir, built: false, reason: missingReason(cfg, indexDir) } };
   }
   return fromSaved(notes, unreadable);
 }
@@ -419,30 +423,31 @@ function buildPlan(
   if (refused !== undefined) {
     return { load: failedLoad(indexDir, new Error(refused)) };
   }
-  const build: BuildJob = { dirs, leafZoom: cfg.leafZoom, indexDir };
+  const source = indexSource(cfg);
+  const build: BuildJob = { dirs, leafZoom: cfg.leafZoom, indexDir, ...(source ? { source } : {}) };
   return { build: box ? { ...build, box } : build, indexDir, notes };
 }
 
-function missingReason(cfg: PluginConfig, indexDir: string, stale: boolean): string {
-  if (stale) {
-    return "the saved index holds Traficom WFS depths and that source is off; set cellsDir";
-  }
+function missingReason(cfg: PluginConfig, indexDir: string): string {
   return cfg.wfs ? WFS_WAITING_REASON : `no chart index in ${indexDir}; set cellsDir`;
 }
 
 /**
- * `stale`: the saved index holds WFS depths and the source is off. `mismatch`, why the saved
- * index is not used as is: none is saved, that, the source is on and the saved index lacks
- * its cell, or the index was saved by an older version of its pyramid or hazard file.
+ * `refused`, why the saved index is not used even with nothing to build another from: it holds
+ * WFS depths and that source is off, or it records an ENC source and none is set now.
+ * `mismatch`, why the saved index is not used as is: none is saved, those, the source is on
+ * and the saved index lacks its cell, or the index was saved by an older version of its
+ * pyramid or hazard file.
  */
 function savedMatches(
   cfg: PluginConfig,
   indexDir: string,
   saved: readonly CellInfo[] | undefined,
   extraDirs: string[]
-): { stale: boolean; mismatch: string | undefined } {
+): { refused: string | undefined; mismatch: string | undefined } {
   const holds = saved?.some((c) => c.source === WFS_SOURCE) ?? false;
   const stale = holds && !cfg.wfs;
+  const dropped = saved && sourceDropped(cfg, indexDir);
   const mismatch =
     saved === undefined
       ? `no index saved in ${indexDir}`
@@ -452,8 +457,13 @@ function savedMatches(
           ? "the saved one is from an older index version or its header is damaged"
           : extraDirs.length > 0 && !holds
             ? "the saved one lacks the Traficom WFS cell"
-            : undefined;
-  return { stale, mismatch };
+            : dropped;
+  const refused = stale
+    ? "the saved index holds Traficom WFS depths and that source is off; set cellsDir"
+    : dropped && extraDirs.length === 0
+      ? `not using the saved index: ${dropped}; set cellsDir`
+      : undefined;
+  return { refused, mismatch };
 }
 
 function savedCells(indexDir: string): CellInfo[] {

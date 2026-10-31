@@ -33,6 +33,8 @@ export interface PluginConfig {
    * them, read in place of `cellsDir` (`shared-enc.ts`).
    */
   chartsProviderEnc?: string;
+  /** Ask the charts provider for the cells around each index box (`shared-enc.ts`). */
+  chartsProviderArea: boolean;
   /** Rebuild the index from cellsDir at start even when one exists. */
   rebuildIndex: boolean;
   /** Leaf zoom of the pyramid; z20 ≈ 19 m tiles at 60°N. */
@@ -269,6 +271,7 @@ export function parseConfig(raw: unknown): PluginConfig {
     indexDir: str(r.indexDir),
     cellsDir: str(r.cellsDir),
     chartsProviderEnc: collectionChoice(r.chartsProviderEnc),
+    chartsProviderArea: r.chartsProviderArea === true,
     rebuildIndex: r.rebuildIndex === true,
     leafZoom: Math.round(num(r.leafZoom, 20, 14, 22)),
     boxRadiusKm: boxRadius(r.boxRadiusKm),

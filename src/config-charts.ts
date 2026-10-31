@@ -22,3 +22,14 @@ export function chartFields(sharedNow: string | undefined): Record<string, unkno
     }
   };
 }
+
+/** The expert field asking Charts Provider for the cells around the vessel (`shared-enc.ts`). */
+export const CHART_AREA_FIELD = {
+  chartsProviderArea: {
+    type: "boolean",
+    title: "Ask Charts Provider for the ENC around the vessel",
+    description:
+      'With ENC from Charts Provider set to * and Charts Provider\'s "Download the ENC cells around the vessel" on, each new index box asks it to download the free ENC cells of that area; they arrive in its chart set "Around the vessel" and the index is rebuilt with them. Off: only the cells already shared are read.',
+    default: false
+  }
+};

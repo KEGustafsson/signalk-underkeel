@@ -3,18 +3,23 @@ import os from "os";
 import path from "path";
 import { parseConfig } from "../src/config";
 import { scanCellSources } from "../src/ingest/cell-source";
-import type { SharedEncApi } from "../src/shared-enc";
+import { readSource } from "../src/spatial/build-source";
+import type { SharedAreaAnswer, SharedEncApi } from "../src/shared-enc";
 import {
   ALL_COLLECTIONS,
   COLLECTION_CHOICE_PATTERN,
   collectionsHint,
+  noteSharedCells,
+  requestSharedArea,
   sharedCellsDir,
+  sharedCellsNote,
   sharedEncApi,
   sharedEncRoot,
   watchSharedCells,
   withSharedCells
 } from "../src/shared-enc";
 import underkeel = require("../src/index");
+import { AREA_ASK_MAX_MS, AREA_ASK_MIN_MS, areaRequests } from "../src/wfs-wiring";
 import { CELLS, inlineBuilder } from "./helpers/fixture-index";
 import { fakeApp, fakeClock, T0 } from "./helpers/plugin-harness";
 
@@ -141,6 +146,122 @@ describe("charts provider ENC store", () => {
     );
   });
 
+  test("says why the collection in use has no cells, as the provider tells it", () => {
+    const { api } = fakeProvider("/r");
+    const states: Record<string, { state: string; detail?: string }> = {
+      Gulf_of_Finland: { state: "ready" },
+      Writing: { state: "writing" },
+      Fetching: { state: "pending", detail: "downloading" },
+      Waiting: { state: "pending", detail: "not downloaded yet" }
+    };
+    const told = { ...api, state: (id: string) => states[id] ?? { state: "absent" } };
+    expect(sharedCellsNote("Gulf_of_Finland", told)).toBeUndefined();
+    expect(sharedCellsNote("Writing", told)).toMatch(/is writing the cells of Writing/);
+    expect(sharedCellsNote("Fetching", told)).toMatch(/is downloading Fetching/);
+    expect(sharedCellsNote("Waiting", told)).toMatch(/not downloaded yet: download it/);
+    expect(sharedCellsNote("Nope", told)).toMatch(/shares no Nope/);
+    // An older provider cannot tell; nor can one that is not running.
+    expect(sharedCellsNote("Nope", api)).toBeUndefined();
+    expect(sharedCellsNote("Nope", undefined)).toBeUndefined();
+    expect(sharedCellsNote(ALL_COLLECTIONS, { ...told, collections: () => [] })).toMatch(
+      /shares no ENC cells yet/
+    );
+    expect(sharedCellsNote(ALL_COLLECTIONS, told)).toBeUndefined();
+
+    const reason = "no cells in /r/Waiting";
+    expect(noteSharedCells({ reason }, { chartsProviderEnc: "Waiting" }, told).reason).toBe(
+      `${reason}; Waiting is a Charts Provider chart set not downloaded yet: download it in its ENC Charts tab`
+    );
+    // Nothing amiss, or another source: unchanged.
+    expect(noteSharedCells({}, { chartsProviderEnc: "Waiting" }, told)).toEqual({});
+    expect(noteSharedCells({ reason }, {}, told)).toEqual({ reason });
+  });
+
+  test("asks the provider for an area, when it can be asked", () => {
+    const { api } = fakeProvider("/r");
+    const asked: unknown[] = [];
+    const answer = { accepted: true, started: true, reason: "downloading the area" };
+    const bbox = [20, 59, 21, 60] as const;
+    expect(requestSharedArea(bbox, api)).toBeUndefined();
+    expect(
+      requestSharedArea(bbox, {
+        ...api,
+        requestArea: (b, requester) => {
+          asked.push([b, requester]);
+          return answer;
+        }
+      })
+    ).toBe(answer);
+    expect(asked).toEqual([[bbox, "signalk-underkeel"]]);
+    const failing = {
+      ...api,
+      requestArea: () => {
+        throw new Error("store gone");
+      }
+    };
+    expect(requestSharedArea(bbox, failing)).toEqual({
+      accepted: false,
+      started: false,
+      reason: "store gone"
+    });
+  });
+
+  test("each box asks for its area only with the setting on and the source *", () => {
+    const logged: string[] = [];
+    const app = {
+      error: (m: string) => logged.push(`error ${m}`),
+      debug: (m: string) => logged.push(`debug ${m}`)
+    } as unknown as Parameters<typeof areaRequests>[1];
+    expect(
+      areaRequests({ chartsProviderArea: true, chartsProviderEnc: "Gulf_of_Finland" }, app)
+    ).toBeUndefined();
+    expect(
+      areaRequests({ chartsProviderArea: false, chartsProviderEnc: ALL_COLLECTIONS }, app)
+    ).toBeUndefined();
+    expect(areaRequests({ chartsProviderArea: true }, app)).toBeUndefined();
+    const ask = areaRequests({ chartsProviderArea: true, chartsProviderEnc: ALL_COLLECTIONS }, app);
+    expect(ask).toBeDefined();
+    const { api } = fakeProvider("/r");
+    let answer = { accepted: true, started: true, reason: "downloading the area" };
+    (globalThis as { __signalk_chartsProviderEnc?: unknown }).__signalk_chartsProviderEnc = {
+      ...api,
+      requestArea: () => answer
+    };
+    ask?.([20, 59, 21, 60]);
+    ask?.([20, 59, 21, 60]);
+    answer = { accepted: false, started: false, reason: "turn it on" };
+    ask?.([20, 59, 21, 60]);
+    expect(logged).toEqual([
+      "debug Charts Provider, asked for the ENC around the vessel: downloading the area",
+      "error Charts Provider, asked for the ENC around the vessel: turn it on"
+    ]);
+  });
+
+  test("a box is asked about again when Charts Provider says when, or is not running", () => {
+    const app = { error: () => undefined, debug: () => undefined } as unknown as Parameters<
+      typeof areaRequests
+    >[1];
+    const ask = areaRequests({ chartsProviderArea: true, chartsProviderEnc: ALL_COLLECTIONS }, app);
+    const scope = globalThis as { __signalk_chartsProviderEnc?: unknown };
+    delete scope.__signalk_chartsProviderEnc;
+    expect(ask?.([20, 59, 21, 60])).toBe(5 * 60_000);
+    const { api } = fakeProvider("/r");
+    let answer: SharedAreaAnswer = {
+      accepted: true,
+      started: true,
+      reason: "downloading the area"
+    };
+    scope.__signalk_chartsProviderEnc = { ...api, requestArea: () => answer };
+    expect(ask?.([20, 59, 21, 60])).toBeUndefined();
+    answer = { accepted: true, started: false, reason: "index loading", retryAfterMs: 90_000 };
+    expect(ask?.([20, 59, 21, 60])).toBe(90_000);
+    answer = { ...answer, retryAfterMs: 5 };
+    expect(ask?.([20, 59, 21, 60])).toBe(AREA_ASK_MIN_MS);
+    answer = { ...answer, retryAfterMs: 24 * 3_600_000 };
+    expect(ask?.([20, 59, 21, 60])).toBe(AREA_ASK_MAX_MS);
+    delete scope.__signalk_chartsProviderEnc;
+  });
+
   test("a change to the collection in use is acted on once it settles", () => {
     const clock = fakeClock(T0);
     const provider = fakeProvider("/r");
@@ -260,9 +381,12 @@ describe("charts provider ENC store", () => {
     const clock = fakeClock(T0);
     const dirs: string[][] = [];
     const build = inlineBuilder;
+    const builds: Promise<unknown>[] = [];
     const plugin = underkeel(f.app, clock, globalThis.fetch, (job, signal) => {
       dirs.push(job.dirs.map((d) => path.relative(root, d).split(path.sep).join("/")));
-      return build(job, signal);
+      const built = build(job, signal);
+      builds.push(built);
+      return built;
     });
     const options = { chartsProviderEnc: "Gulf_of_Finland", boxRadiusKm: 0, leafZoom: 18 };
     const restarts: object[] = [];
@@ -277,6 +401,7 @@ describe("charts provider ENC store", () => {
     expect(restarts[0]).toMatchObject(options);
     plugin.stop();
     expect(provider.listeners.size).toBe(0);
-    await new Promise((r) => setImmediate(r));
+    await Promise.all(builds);
+    expect(readSource(path.join(dataDir, "index"))).toBe("charts-provider:Gulf_of_Finland");
   });
 });

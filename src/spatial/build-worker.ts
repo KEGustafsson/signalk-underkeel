@@ -25,6 +25,7 @@ import { storeOnBody } from "./store";
 import { tileRange } from "../foundation/geo";
 import type { BuildBox } from "./build-box";
 import { boxCells, boxRect, writeBox } from "./build-box";
+import { writeSource } from "./build-source";
 import type { ProgressMessage } from "./build-progress";
 import { reportProgress, reportProgressTo, throttled } from "./build-progress";
 import { keptParsedBytes, ParsedCells } from "./parsed-cells";
@@ -73,6 +74,8 @@ export interface BuildJob {
    * with `changed`.
    */
   box?: BuildBox;
+  /** The ENC source the cells come from (`index-source.ts`), recorded with the index. */
+  source?: string;
   /**
    * The plugin's cell cache (`cell-cache.ts`): S-57 cells' layers and extents are kept there
    * between builds and read from the cells only when their files changed. None when absent.
@@ -301,6 +304,9 @@ function stage(job: BuildJob, index: BuiltIndex): { staging: string; index: Inde
     writeReach(staging, index.reaches);
     if (job.box) {
       writeBox(staging, { ...job.box, leafZoom: job.leafZoom });
+    }
+    if (job.source !== undefined) {
+      writeSource(staging, job.source);
     }
     if (job.box && index.tiles) {
       const { minZoom, leafZoom } = index.pyramid;

@@ -93,7 +93,9 @@ The plugin reads unencrypted S-57 cells as delivered, each `.000` with its updat
 compiled to WebAssembly; **ENC cells directory** points at the folder that holds them, such as
 an exchange set's `ENC_ROOT`, or **ENC from Charts Provider** names a chart set whose cells
 signalk-charts-provider-simple shares (the [README](../README.md#prepare-the-charts) has the
-details).
+details). With `*`, each index box can ask that plugin for the free ENC cells of its area
+(**Ask Charts Provider for the ENC around the vessel**); the cells it downloads are shared
+like any chart set's, and their arrival rebuilds the index.
 The draft comes from **Boat**, or else from Signal K `design.draft.maximum`; length and beam fall back to `design.length.overall` and
 `design.beam`. Without a draft the engine stays `unknown`. The water level comes from the
 source picked under **Water level** (section 8).
@@ -107,6 +109,13 @@ the index reason in `/status` names the cells.
 **Rebuild index at start** rebuilds it on every start. An index saved by an older plugin version
 whose index format differs is rebuilt too, and so is one whose files cannot be read, as a power
 cut during a save can leave them; the reason then names the read error.
+
+A cells directory that is gone, or holds no cell while the saved index holds S-57 cells, most
+likely sits on a drive that is not mounted: the saved index stays in use, and the reason says
+so. The index records the source it was built from (`source.json`: the cells directory, or the
+Charts Provider collection by its id, wherever its store is), so this holds only for that
+source. A source chosen since that has no cells yet does not keep another source's index: the
+engine reports that source's cells as not found until they arrive.
 
 Only the coarse part of the depth pyramid stays in memory; its fine tiles are read from the
 saved file, a few kilometres square at a time, when the look-ahead, a route check, a query or

@@ -81,6 +81,13 @@ export interface WfsServiceDeps {
   indexDir: string;
   /** The cell cache the builds use (`BuildJob.cacheDir`); none when absent. */
   cacheDir?: string;
+  /** The ENC source the cells come from (`BuildJob.source`); none when absent. */
+  source?: string;
+  /**
+   * Told of each box a refresh starts building, as the charts provider is asked for its cells;
+   * returns after how long, ms, to tell it of the same box again, when the answer may change.
+   */
+  onBox?: (bbox: Bbox) => number | undefined;
   leafZoom: number;
   /**
    * The S-57 cells directory, scanned by the refresh off the event loop; its cells are built
@@ -146,6 +153,8 @@ export class WfsService {
   private indexed?: boolean;
   /** The box of the last index this service handed over in this run. */
   private handed?: Bbox;
+  /** The box `onBox` is to be told of again, and when. */
+  private again?: { bbox: Bbox; at: number };
   /** The saved WFS cell was missing or unreadable at start: the box is downloaded again. */
   private cellLost = false;
   private busy = false;
@@ -378,6 +387,17 @@ export class WfsService {
     }
   }
 
+  private announce(bbox: Bbox, now: number): void {
+    const ms = this.deps.onBox?.(bbox);
+    this.again = ms === undefined ? undefined : { bbox, at: now + ms };
+  }
+
+  private announceAgain(now: number): void {
+    if (this.again && now >= this.again.at) {
+      this.announce(this.again.bbox, now);
+    }
+  }
+
   /** Where the vessel will be when a refresh started now is handed over, kept inside the box. */
   private centreAhead(pos: LonLat, radiusKm: number, refreshMs: number): LonLat {
     const m = this.deps.motion();
@@ -391,6 +411,7 @@ export class WfsService {
   async check(): Promise<void> {
     const pos = this.deps.position();
     const now = this.deps.clock.now();
+    this.announceAgain(now);
     if (!pos || !this.due(pos, now) || this.refused(now)) {
       return;
     }
@@ -403,6 +424,7 @@ export class WfsService {
     try {
       const centre = this.centreAhead(pos, radiusKm, run.estimateMs ?? this.refreshMs());
       const bbox = boxAround(centre, radiusKm);
+      this.announce(bbox, now);
       const config = this.deps.config;
       const { inBox, cellsDir } = this.deps;
       // With WFS depths alone in use an empty cells directory loses nothing.
@@ -427,6 +449,7 @@ export class WfsService {
             leafZoom: this.deps.leafZoom,
             indexDir: this.deps.indexDir,
             ...(this.deps.cacheDir === undefined ? {} : { cacheDir: this.deps.cacheDir }),
+            source: this.deps.source,
             ...(inBox ? {} : { changed: [this.cellDir] })
           }
         },

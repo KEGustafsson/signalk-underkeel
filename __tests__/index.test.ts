@@ -1073,7 +1073,12 @@ describe("index loader", () => {
       const again = await loadOrBuildIndex(cfg, dir);
       expect(again.built).toBe(true);
       expect(again.index?.hazards.size).toBe(json.length);
-      expect(fs.readdirSync(index).sort()).toEqual(["cells.json", "hazards.bin", "pyramid.bin"]);
+      expect(fs.readdirSync(index).sort()).toEqual([
+        "cells.json",
+        "hazards.bin",
+        "pyramid.bin",
+        "source.json"
+      ]);
       expect((await loadOrBuildIndex(cfg, dir)).built).toBe(false);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });

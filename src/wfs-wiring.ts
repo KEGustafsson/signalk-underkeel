@@ -6,6 +6,8 @@ import type { PluginConfig, WfsConfig } from "./config";
 import type { Rect } from "./foundation/geo";
 import { toMercator } from "./foundation/geo";
 import { cellCacheDir } from "./index-loader";
+import { indexSource } from "./index-source";
+import { ALL_COLLECTIONS, requestSharedArea } from "./shared-enc";
 import type { Bbox } from "./ingest/wfs";
 import { WFS_SOURCE } from "./ingest/wfs";
 import { startLivechart } from "./livechart-service";
@@ -25,7 +27,7 @@ import {
 
 /** What the Traficom WFS box needs from the running plugin. */
 export interface WfsWiring {
-  app: Pick<ServerAPI, "getDataDirPath" | "resourcesApi" | "error">;
+  app: Pick<ServerAPI, "getDataDirPath" | "resourcesApi" | "error" | "debug">;
   clock: Clock;
   state: PluginState;
   config: PluginConfig;
@@ -105,6 +107,51 @@ export function startBox(w: WfsWiring): WfsService | undefined {
     : undefined;
 }
 
+/**
+ * What each new box tells the charts provider: asks for its cells with `chartsProviderArea`
+ * on, and only while the source is `*`, as they arrive in a chart set of their own.
+ */
+export function areaRequests(
+  config: Pick<PluginConfig, "chartsProviderArea" | "chartsProviderEnc">,
+  app: Pick<ServerAPI, "error" | "debug">
+): ((bbox: Bbox) => number | undefined) | undefined {
+  return config.chartsProviderArea && config.chartsProviderEnc === ALL_COLLECTIONS
+    ? askForArea(app)
+    : undefined;
+}
+
+/** How soon, and how late, a box is asked about again: Charts Provider starting, or busy. */
+export const AREA_ASK_MIN_MS = 60_000;
+export const AREA_ASK_MAX_MS = 30 * 60_000;
+const ASK_STARTING_MS = 5 * 60_000;
+
+/**
+ * Asks the charts provider for each box's cells, logging its answer when it changes, and says
+ * when to ask again: when the provider says so, or is not running yet.
+ */
+function askForArea(app: Pick<ServerAPI, "error" | "debug">): (bbox: Bbox) => number | undefined {
+  let last: string | undefined;
+  return (bbox) => {
+    const answer = requestSharedArea(bbox);
+    const line =
+      answer === undefined
+        ? "Charts Provider cannot be asked for the ENC around the vessel: it is not running, or too old"
+        : `Charts Provider, asked for the ENC around the vessel: ${answer.reason}`;
+    if (line !== last) {
+      last = line;
+      if (answer?.accepted === true) {
+        app.debug(line);
+      } else {
+        app.error(line);
+      }
+    }
+    const ms = answer === undefined ? ASK_STARTING_MS : answer.retryAfterMs;
+    return typeof ms === "number" && Number.isFinite(ms)
+      ? Math.min(AREA_ASK_MAX_MS, Math.max(AREA_ASK_MIN_MS, ms))
+      : undefined;
+  };
+}
+
 export function startWfs(
   w: WfsWiring,
   config: WfsConfig | EncBoxConfig,
@@ -118,6 +165,8 @@ export function startWfs(
     indexDir: w.config.indexDir ?? path.join(w.app.getDataDirPath(), "index"),
     cacheDir: cellCacheDir(w.app.getDataDirPath()),
     leafZoom: w.config.leafZoom,
+    source: indexSource(w.config),
+    onBox: areaRequests(w.config, w.app),
     cellsDir: w.config.cellsDir,
     inBox: w.config.boxRadiusKm > 0,
     index: () => w.state.load?.index,
