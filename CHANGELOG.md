@@ -18,7 +18,9 @@ All notable changes to signalk-underkeel are documented here.
   from Charts Provider** set to `*`, each new index box asks the charts provider to download
   the free ENC cells of that area, which it does with its own **Download the ENC cells around
   the vessel** on. The cells arrive in its chart set "Around the vessel" and the index is
-  rebuilt with them. Its answer is logged when it changes.
+  rebuilt with them. Its answer is logged when it changes. While the charts provider is not
+  running yet, or answers that it is loading its ENC index or busy converting, the same box
+  is asked about again later, between a minute and half an hour on.
 
 ### Changed
 
@@ -26,7 +28,9 @@ All notable changes to signalk-underkeel are documented here.
   Provider collection by its id. A cells directory that is gone or empty keeps the saved index
   only when that index was built from it, as an unmounted drive leaves it; switching to a
   source with no cells yet no longer keeps using the previous source's index, and the reason
-  says why. An index saved by an earlier version, which records no source, is kept as before.
+  says why. Clearing the ENC source leaves no index in use rather than the previous source's,
+  again with the reason. An index saved by an earlier version, which records no source, is
+  kept as before.
 
 ## [0.3.0] - 2026-10-28
 

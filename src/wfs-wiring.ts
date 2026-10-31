@@ -114,14 +114,22 @@ export function startBox(w: WfsWiring): WfsService | undefined {
 export function areaRequests(
   config: Pick<PluginConfig, "chartsProviderArea" | "chartsProviderEnc">,
   app: Pick<ServerAPI, "error" | "debug">
-): ((bbox: Bbox) => void) | undefined {
+): ((bbox: Bbox) => number | undefined) | undefined {
   return config.chartsProviderArea && config.chartsProviderEnc === ALL_COLLECTIONS
     ? askForArea(app)
     : undefined;
 }
 
-/** Asks the charts provider for each box's cells, logging its answer when it changes. */
-function askForArea(app: Pick<ServerAPI, "error" | "debug">): (bbox: Bbox) => void {
+/** How soon, and how late, a box is asked about again: Charts Provider starting, or busy. */
+export const AREA_ASK_MIN_MS = 60_000;
+export const AREA_ASK_MAX_MS = 30 * 60_000;
+const ASK_STARTING_MS = 5 * 60_000;
+
+/**
+ * Asks the charts provider for each box's cells, logging its answer when it changes, and says
+ * when to ask again: when the provider says so, or is not running yet.
+ */
+function askForArea(app: Pick<ServerAPI, "error" | "debug">): (bbox: Bbox) => number | undefined {
   let last: string | undefined;
   return (bbox) => {
     const answer = requestSharedArea(bbox);
@@ -137,6 +145,10 @@ function askForArea(app: Pick<ServerAPI, "error" | "debug">): (bbox: Bbox) => vo
         app.error(line);
       }
     }
+    const ms = answer === undefined ? ASK_STARTING_MS : answer.retryAfterMs;
+    return typeof ms === "number" && Number.isFinite(ms)
+      ? Math.min(AREA_ASK_MAX_MS, Math.max(AREA_ASK_MIN_MS, ms))
+      : undefined;
   };
 }
 

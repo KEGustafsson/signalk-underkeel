@@ -215,6 +215,20 @@ describe("cell directories", () => {
     expect(r.reason).toMatch(/not found; using the saved index/);
   });
 
+  test("with the source cleared, an index that records one is not used", async () => {
+    copyCell("FI4SYNTH");
+    await load();
+    const r = await loadOrBuildIndex(parseConfig({ boxRadiusKm: 0, leafZoom: 16 }), dataDir);
+    expect(r.index).toBeUndefined();
+    expect(r.reason).toBe(
+      `not using the saved index: the saved index was built from ${path.resolve(cellsDir)}, not the cells now set; set cellsDir`
+    );
+    // An index saved before sources were recorded is loaded as before.
+    fs.rmSync(path.join(dataDir, "index", SOURCE_FILE));
+    const old = await loadOrBuildIndex(parseConfig({ boxRadiusKm: 0, leafZoom: 16 }), dataDir);
+    expect(names(old)).toEqual(["FI4SYNTH"]);
+  });
+
   test("an index saved before sources were recorded is kept as before", async () => {
     copyCell("FI4SYNTH");
     await load();
@@ -343,6 +357,8 @@ describe("a saved index that cannot be read", () => {
     copyCell("FI4SYNTH");
     await load();
     halve("pyramid.bin");
+    // With no source set, only an index that records none is read.
+    fs.rmSync(path.join(dataDir, "index", SOURCE_FILE));
     const r = await loadOrBuildIndex(parseConfig({ leafZoom: 16 }), dataDir);
     expect(r.index).toBeUndefined();
     expect(r.reason).toMatch(/chart index failed: .*truncated/);
@@ -400,6 +416,7 @@ describe("a saved index too large to load on the event loop", () => {
       build: { dirs: [path.join(cellsDir, "FI4SYNTH", "FI4SYNTH.000")] },
       notes: [expect.stringMatching(/could not be read \(pyramid file is truncated\)/)]
     });
+    fs.rmSync(path.join(dataDir, "index", SOURCE_FILE));
     const none = planIndex(parseConfig({ leafZoom: 16 }), dataDir, [], 0);
     expect("read" in none && none.unreadable(err)).toEqual({
       load: {

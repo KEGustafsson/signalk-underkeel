@@ -63,3 +63,14 @@ export function cellsNow(
       }
     : found;
 }
+
+/**
+ * Why the index in `indexDir` is not this configuration's when `cfg` sets no ENC source at
+ * all, as when the source is cleared, though the index records one; undefined otherwise.
+ */
+export function sourceDropped(
+  cfg: Pick<PluginConfig, "cellsDir" | "chartsProviderEnc">,
+  indexDir: string
+): string | undefined {
+  return indexSource(cfg) === undefined ? sourceChanged(cfg, indexDir) : undefined;
+}

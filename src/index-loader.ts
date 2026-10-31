@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import type { PluginConfig } from "./config";
-import { cellsNow, indexSource } from "./index-source";
+import { cellsNow, indexSource, sourceDropped } from "./index-source";
 import { writeSource } from "./spatial/build-source";
 import { CACHE_DIR } from "./ingest/cell-cache";
 import type { CellInfo } from "./ingest/cells";
@@ -255,11 +255,11 @@ function plan(
   syncLoadBytes: number
 ): IndexPlan {
   const { cells: saved, error } = readSaved(indexDir);
-  const { stale, mismatch } = savedMatches(cfg, indexDir, saved, extraDirs);
+  const { refused, mismatch } = savedMatches(cfg, indexDir, saved, extraDirs);
   const fromSaved = (notes: string[], unreadable: (err: unknown) => IndexPlan): IndexPlan =>
-    stale
-      ? { load: { indexDir, built: false, reason: missingReason(cfg, indexDir, true) } }
-      : savedPlan(indexDir, notes, unreadable, syncLoadBytes);
+    refused === undefined
+      ? savedPlan(indexDir, notes, unreadable, syncLoadBytes)
+      : { load: { indexDir, built: false, reason: refused } };
   const found = cellsNow(scanCells(cfg.cellsDir, saved), cfg, indexDir);
   if ("away" in found) {
     return fromSaved([`${found.away}; using the saved index`], (err) => ({
@@ -310,7 +310,7 @@ function plan(
     ]);
   }
   if (!saved) {
-    return { load: { indexDir, built: false, reason: missingReason(cfg, indexDir, false) } };
+    return { load: { indexDir, built: false, reason: missingReason(cfg, indexDir) } };
   }
   return fromSaved(notes, unreadable);
 }
@@ -428,26 +428,26 @@ function buildPlan(
   return { build: box ? { ...build, box } : build, indexDir, notes };
 }
 
-function missingReason(cfg: PluginConfig, indexDir: string, stale: boolean): string {
-  if (stale) {
-    return "the saved index holds Traficom WFS depths and that source is off; set cellsDir";
-  }
+function missingReason(cfg: PluginConfig, indexDir: string): string {
   return cfg.wfs ? WFS_WAITING_REASON : `no chart index in ${indexDir}; set cellsDir`;
 }
 
 /**
- * `stale`: the saved index holds WFS depths and the source is off. `mismatch`, why the saved
- * index is not used as is: none is saved, that, the source is on and the saved index lacks
- * its cell, or the index was saved by an older version of its pyramid or hazard file.
+ * `refused`, why the saved index is not used even with nothing to build another from: it holds
+ * WFS depths and that source is off, or it records an ENC source and none is set now.
+ * `mismatch`, why the saved index is not used as is: none is saved, those, the source is on
+ * and the saved index lacks its cell, or the index was saved by an older version of its
+ * pyramid or hazard file.
  */
 function savedMatches(
   cfg: PluginConfig,
   indexDir: string,
   saved: readonly CellInfo[] | undefined,
   extraDirs: string[]
-): { stale: boolean; mismatch: string | undefined } {
+): { refused: string | undefined; mismatch: string | undefined } {
   const holds = saved?.some((c) => c.source === WFS_SOURCE) ?? false;
   const stale = holds && !cfg.wfs;
+  const dropped = saved && sourceDropped(cfg, indexDir);
   const mismatch =
     saved === undefined
       ? `no index saved in ${indexDir}`
@@ -457,8 +457,13 @@ function savedMatches(
           ? "the saved one is from an older index version or its header is damaged"
           : extraDirs.length > 0 && !holds
             ? "the saved one lacks the Traficom WFS cell"
-            : undefined;
-  return { stale, mismatch };
+            : dropped;
+  const refused = stale
+    ? "the saved index holds Traficom WFS depths and that source is off; set cellsDir"
+    : dropped && extraDirs.length === 0
+      ? `not using the saved index: ${dropped}; set cellsDir`
+      : undefined;
+  return { refused, mismatch };
 }
 
 function savedCells(indexDir: string): CellInfo[] {

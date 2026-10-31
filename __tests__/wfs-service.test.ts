@@ -120,7 +120,13 @@ describe("WFS box around the vessel", () => {
   test("each box a refresh builds is announced, and builds record their source", async () => {
     const boxes: Bbox[] = [];
     const jobs: (string | undefined)[] = [];
-    const h = harness(okReply, { onBox: (b) => boxes.push(b), source: "charts-provider:*" });
+    const h = harness(okReply, {
+      onBox: (b) => {
+        boxes.push(b);
+        return undefined;
+      },
+      source: "charts-provider:*"
+    });
     const build = h.builder.build;
     h.builder.build = (job, signal, progress) => {
       jobs.push(job.source);
@@ -132,6 +138,30 @@ describe("WFS box around the vessel", () => {
     await h.service.check();
     expect(boxes).toEqual([h.service.status().box?.bbox]);
     expect(jobs).toEqual(["charts-provider:*"]);
+  });
+
+  test("a box is announced again when the answer says when, and only then", async () => {
+    const boxes: Bbox[] = [];
+    let again: number | undefined = 60_000;
+    const h = harness(okReply, {
+      onBox: (b) => {
+        boxes.push(b);
+        return again;
+      }
+    });
+    h.t.pos = [22.08, 60.07];
+    await h.service.check();
+    expect(boxes).toHaveLength(1);
+    h.t.now += 30_000;
+    await h.service.check();
+    expect(boxes).toHaveLength(1);
+    again = undefined;
+    h.t.now += 30_000;
+    await h.service.check();
+    expect(boxes).toEqual([boxes[0], boxes[0]]);
+    h.t.now += 60_000;
+    await h.service.check();
+    expect(boxes).toHaveLength(2);
   });
 
   test("the rebuild reuses the saved index's roots that the WFS cell does not reach", async () => {

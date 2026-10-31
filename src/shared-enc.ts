@@ -29,6 +29,8 @@ export interface SharedAreaAnswer {
   accepted: boolean;
   started: boolean;
   reason: string;
+  /** Ask again after this long, ms, though the area is the same; a newer charts provider's. */
+  retryAfterMs?: number;
 }
 
 /**

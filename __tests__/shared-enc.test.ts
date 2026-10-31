@@ -4,7 +4,7 @@ import path from "path";
 import { parseConfig } from "../src/config";
 import { scanCellSources } from "../src/ingest/cell-source";
 import { readSource } from "../src/spatial/build-source";
-import type { SharedEncApi } from "../src/shared-enc";
+import type { SharedAreaAnswer, SharedEncApi } from "../src/shared-enc";
 import {
   ALL_COLLECTIONS,
   COLLECTION_CHOICE_PATTERN,
@@ -19,7 +19,7 @@ import {
   withSharedCells
 } from "../src/shared-enc";
 import underkeel = require("../src/index");
-import { areaRequests } from "../src/wfs-wiring";
+import { AREA_ASK_MAX_MS, AREA_ASK_MIN_MS, areaRequests } from "../src/wfs-wiring";
 import { CELLS, inlineBuilder } from "./helpers/fixture-index";
 import { fakeApp, fakeClock, T0 } from "./helpers/plugin-harness";
 
@@ -235,6 +235,32 @@ describe("charts provider ENC store", () => {
       "debug Charts Provider, asked for the ENC around the vessel: downloading the area",
       "error Charts Provider, asked for the ENC around the vessel: turn it on"
     ]);
+  });
+
+  test("a box is asked about again when Charts Provider says when, or is not running", () => {
+    const app = { error: () => undefined, debug: () => undefined } as unknown as Parameters<
+      typeof areaRequests
+    >[1];
+    const ask = areaRequests({ chartsProviderArea: true, chartsProviderEnc: ALL_COLLECTIONS }, app);
+    const scope = globalThis as { __signalk_chartsProviderEnc?: unknown };
+    delete scope.__signalk_chartsProviderEnc;
+    expect(ask?.([20, 59, 21, 60])).toBe(5 * 60_000);
+    const { api } = fakeProvider("/r");
+    let answer: SharedAreaAnswer = {
+      accepted: true,
+      started: true,
+      reason: "downloading the area"
+    };
+    scope.__signalk_chartsProviderEnc = { ...api, requestArea: () => answer };
+    expect(ask?.([20, 59, 21, 60])).toBeUndefined();
+    answer = { accepted: true, started: false, reason: "index loading", retryAfterMs: 90_000 };
+    expect(ask?.([20, 59, 21, 60])).toBe(90_000);
+    // Kept between a minute and half an hour, whatever the provider says.
+    answer = { ...answer, retryAfterMs: 5 };
+    expect(ask?.([20, 59, 21, 60])).toBe(AREA_ASK_MIN_MS);
+    answer = { ...answer, retryAfterMs: 24 * 3_600_000 };
+    expect(ask?.([20, 59, 21, 60])).toBe(AREA_ASK_MAX_MS);
+    delete scope.__signalk_chartsProviderEnc;
   });
 
   test("a change to the collection in use is acted on once it settles", () => {
