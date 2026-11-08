@@ -203,7 +203,14 @@ export function sharedCellsIn(
   }
 }
 
-/** Asks the charts provider for the cells around `bbox`; undefined when it cannot be asked. */
+/** When to ask again after the charts provider failed to answer, ms: it may recover. */
+export const AREA_ERROR_RETRY_MS = 5 * 60_000;
+
+/**
+ * Asks the charts provider for the cells around `bbox`; undefined when it cannot be asked. A
+ * request that throws is a refusal asked again after AREA_ERROR_RETRY_MS, unlike one it
+ * refuses on purpose, which stays until the area changes.
+ */
 export function requestSharedArea(
   bbox: readonly [number, number, number, number],
   api = sharedEncApi()
@@ -211,7 +218,12 @@ export function requestSharedArea(
   try {
     return api?.requestArea?.(bbox, "signalk-underkeel");
   } catch (err) {
-    return { accepted: false, started: false, reason: (err as Error).message };
+    return {
+      accepted: false,
+      started: false,
+      reason: (err as Error).message,
+      retryAfterMs: AREA_ERROR_RETRY_MS
+    };
   }
 }
 

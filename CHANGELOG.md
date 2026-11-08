@@ -23,10 +23,18 @@ All notable changes to signalk-underkeel are documented here.
   Charts Provider settings, chooses the charts provider when a collection was named, and
   keeps the version 2 configuration as `config-v2.json` in the plugin data directory.
 
+- Of a cell two charts provider collections hold, the index reads the copy of the newest
+  edition and update, as the cell's DSID and its update files give them, rather than the first
+  in path order.
+- An index saved from one Charts Provider collection is the whole charts provider's, so it
+  stays in use after the upgrade while the charts provider's store is away.
+- With no index yet, a failed box build's reason adds what the charts provider said of the
+  box, such as that it is downloading the area.
+
 ### Fixed
 
 - A failing area request to the charts provider is logged and no longer fails the box
-  refresh that made it.
+  refresh that made it, and is asked again after 5 minutes rather than when the box moves.
 
 ## [0.4.0] - 2026-11-02
 

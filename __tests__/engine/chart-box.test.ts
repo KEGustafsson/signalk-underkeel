@@ -98,7 +98,6 @@ describe("no-coverage reasons at the chart box", () => {
     expect(boxCoverage("no chart coverage at the vessel", [fp(0, east(12_000))], told)).toMatch(
       /^no chart coverage at the vessel: outside the chart box, /
     );
-    // Other reasons are left alone.
     expect(boxCoverage("position stale", [fp(0, east(1000))], told)).toBe("position stale");
   });
 

@@ -201,6 +201,7 @@ export function startWfs(
 ): WfsService {
   const dir = path.join(w.app.getDataDirPath(), dirName);
   fs.mkdirSync(dir, { recursive: true });
+  const area = areaRequests(w.config, w.app);
   return new WfsService({
     config,
     dir,
@@ -208,7 +209,7 @@ export function startWfs(
     cacheDir: cellCacheDir(w.app.getDataDirPath()),
     leafZoom: w.config.leafZoom,
     source: indexSource(w.config),
-    area: areaRequests(w.config, w.app),
+    area,
     cellsDir: w.config.cellsDir,
     inBox: w.config.boxRadiusKm > 0,
     index: () => w.state.load?.index,
@@ -223,11 +224,14 @@ export function startWfs(
     onIndex: (index, changed) => useIndex(w, index, changed),
     error: (m) => {
       w.app.error(m);
-      // With no index in use the failure is why the look-ahead is off: an error, not "waiting".
+      // With no index in use the failure is why the look-ahead is off: an error, not "waiting",
+      // with what the charts provider said of the box, as when it is downloading its cells.
       const { load, monitor } = w.state;
       if (load && !load.index) {
-        w.state.load = { ...load, reason: m };
-        monitor?.noIndex(m);
+        const note = area?.note();
+        const reason = note === undefined ? m : `${m}; ${note}`;
+        w.state.load = { ...load, reason };
+        monitor?.noIndex(reason);
       }
     }
   });

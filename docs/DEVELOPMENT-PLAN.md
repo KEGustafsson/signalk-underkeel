@@ -1797,7 +1797,9 @@ version 2 configuration as `config-v2.json`.
   above); version 1 to 2
   drops the look-ahead values equal to the version 1 form defaults, unless the configuration
   already names a style. Over generated version 1 configurations the
-  parsed options are identical before and after (`__tests__/config-migrate.test.ts`). The
+  parsed look-ahead and vessel options are identical before and after
+  (`__tests__/config-migrate.test.ts`); the ENC source is not, since version 2 to 3 drops a
+  cells directory, whose cells are read again once converted in the charts provider. The
   first migration from a version keeps the original as `config-v<version>.json` in the plugin
   data directory and
   saves the result with `savePluginOptions`, which writes without a restart; a backup that

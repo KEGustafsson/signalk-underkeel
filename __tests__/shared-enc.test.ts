@@ -7,6 +7,7 @@ import { readSource } from "../src/spatial/build-source";
 import type { SharedAreaAnswer, SharedEncApi } from "../src/shared-enc";
 import {
   ALL_COLLECTIONS,
+  AREA_ERROR_RETRY_MS,
   CHARTS_PROVIDER_ID,
   collectionsHint,
   noteSharedCells,
@@ -125,12 +126,53 @@ describe("charts provider ENC store", () => {
       "Gulf_of_Finland/FI5SYNTH/FI5SYNTH.000"
     ]);
     const all = scanCellSources(root);
-    // A cell two collections share is read once, from the first in name order.
+    // A cell two collections share in the same version is read once, from the first in name order.
     expect(all.sources.map((s) => path.relative(root, s).split(path.sep).join("/"))).toEqual([
       "Gulf_of_Finland/FI4SYNTH/FI4SYNTH.000",
       "Gulf_of_Finland/FI5SYNTH/FI5SYNTH.000"
     ]);
     expect(all.skipped).toEqual([path.join("Other", "FI5SYNTH", "FI5SYNTH.000")]);
+  });
+
+  test("of a cell two collections share, the newest edition and update is read", () => {
+    const root = path.join(tmp, "enc-store");
+    const put = (collection: string, cell: string, from: string, updates = 0) => {
+      const dir = path.join(root, collection, cell);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.copyFileSync(path.join(CELLS, `${from}.000`), path.join(dir, `${cell}.000`));
+      for (let u = 1; u <= updates; u++) {
+        fs.writeFileSync(path.join(dir, `${cell}.${String(u).padStart(3, "0")}`), "");
+      }
+    };
+    const read = () => {
+      const scan = scanCellSources(root);
+      const rel = (s: string) => path.relative(root, s).split(path.sep).join("/");
+      const slash = (s: string) => s.split(path.sep).join("/");
+      return { sources: scan.sources.map(rel), skipped: scan.skipped.map(slash) };
+    };
+    // FI5SYNTH is edition 3, FI4SYNTH edition 7: a copy of the latter under the former's name
+    // is a newer edition, here in the collection later in name order.
+    put("A_set", "FI5SYNTH", "FI5SYNTH");
+    put("B_set", "FI5SYNTH", "FI4SYNTH");
+    expect(read()).toEqual({
+      sources: ["B_set/FI5SYNTH/FI5SYNTH.000"],
+      skipped: ["A_set/FI5SYNTH/FI5SYNTH.000"]
+    });
+    // The same edition: the copy with the later update.
+    fs.rmSync(root, { recursive: true });
+    put("A_set", "FI4SYNTH", "FI4SYNTH", 1);
+    put("B_set", "FI4SYNTH", "FI4SYNTH", 2);
+    put("C_set", "FI4SYNTH", "FI4SYNTH");
+    expect(read()).toEqual({
+      sources: ["B_set/FI4SYNTH/FI4SYNTH.000"],
+      skipped: ["A_set/FI4SYNTH/FI4SYNTH.000", "C_set/FI4SYNTH/FI4SYNTH.000"]
+    });
+    // A copy whose edition cannot be read ranks below one whose edition can.
+    fs.rmSync(root, { recursive: true });
+    fs.mkdirSync(path.join(root, "A_set", "FI4SYNTH"), { recursive: true });
+    fs.writeFileSync(path.join(root, "A_set", "FI4SYNTH", "FI4SYNTH.000"), "not S-57");
+    put("B_set", "FI4SYNTH", "FI4SYNTH");
+    expect(read().sources).toEqual(["B_set/FI4SYNTH/FI4SYNTH.000"]);
   });
 
   test("the admin form names the collections shared now", () => {
@@ -199,10 +241,12 @@ describe("charts provider ENC store", () => {
         throw new Error("store gone");
       }
     };
+    // A failure, unlike a refusal, is asked about again: the provider may recover.
     expect(requestSharedArea(bbox, failing)).toEqual({
       accepted: false,
       started: false,
-      reason: "store gone"
+      reason: "store gone",
+      retryAfterMs: AREA_ERROR_RETRY_MS
     });
   });
 
@@ -305,6 +349,16 @@ describe("charts provider ENC store", () => {
     expect(ask?.([20, 59, 21, 60])).toBe(AREA_ASK_MIN_MS);
     answer = { ...answer, retryAfterMs: 24 * 3_600_000 };
     expect(ask?.([20, 59, 21, 60])).toBe(AREA_ASK_MAX_MS);
+    // A refusal on purpose waits for the area to change; a failure is asked about again.
+    answer = { accepted: false, started: false, reason: "turned off" };
+    expect(ask?.([20, 59, 21, 60])).toBeUndefined();
+    scope.__signalk_chartsProviderEnc = {
+      ...api,
+      requestArea: () => {
+        throw new Error("store gone");
+      }
+    };
+    expect(ask?.([20, 59, 21, 60])).toBe(AREA_ERROR_RETRY_MS);
     delete scope.__signalk_chartsProviderEnc;
   });
 

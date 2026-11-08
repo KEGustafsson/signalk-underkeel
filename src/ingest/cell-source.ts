@@ -5,7 +5,7 @@ import type { ReadCell } from "./cell-reader";
 import { readCellDirectory, readCellInfo } from "./cell-reader";
 import type { CellInfo } from "./cells";
 import { usageBandFromName } from "./cells";
-import { encStamp, readEncCell } from "./enc-wasm";
+import { baseEdition, encFiles, encStamp, readEncCell } from "./enc-wasm";
 
 /**
  * Where a cell is read from: an S-57 base cell (`.000`, its updates beside
@@ -61,10 +61,23 @@ export function readCell(source: string, cellRef: number): Promise<ReadCell> {
     : Promise.resolve(readCellDirectory(source, cellRef));
 }
 
+/**
+ * A copy's edition and update as one comparable number, from its DSID and the updates beside
+ * it; -1 when its edition cannot be read.
+ */
+export function cellVersionRank(file: string): number {
+  const edition = baseEdition(file);
+  if (edition === undefined) {
+    return -1;
+  }
+  const last = encFiles(file).at(-1) ?? file;
+  return edition * 100_000 + Number(path.extname(last).slice(1));
+}
+
 export interface CellScan {
   /** S-57 base cells in path order. */
   sources: string[];
-  /** Entries named like a cell that hold none the scan read, or a cell name met twice. */
+  /** Entries named like a cell that hold none the scan read, or an older copy of a cell. */
   skipped: string[];
 }
 
@@ -92,8 +105,10 @@ function isDirectory(p: string): boolean {
 /**
  * The S-57 cells under `cellsDir`: every `.000` file down to MAX_DEPTH, such
  * as in an ENC_ROOT exchange set, and down to EXCHANGE_SET_DEPTH below any
- * directory holding a CATALOG.031 within it. A name met twice keeps its first
- * file in path order; one file met again through a link counts once. A
+ * directory holding a CATALOG.031 within it. A name met twice, as one cell in two charts
+ * provider collections, keeps the copy of the newest edition and update; between copies of
+ * the same version, or whose edition cannot be read, the first in path order. One file met
+ * again through a link counts once. A
  * directory is read again only when reached with more depth left than
  * before, and never from within itself, so a linked loop ends where it comes
  * back.
@@ -103,7 +118,8 @@ export function scanCellSources(cellsDir: string | undefined): CellScan {
   if (!cellsDir) {
     return scan;
   }
-  const seen = new Set<string>();
+  /** Each cell name's index in `scan.sources`, and the version of the copy kept there. */
+  const seen = new Map<string, { at: number; rank?: number }>();
   const files = new Set<string>();
   /** Folders named like a cell, by real path: skipped unless a cell is read from under one. */
   const named = new Map<string, string>();
@@ -117,11 +133,20 @@ export function scanCellSources(cellsDir: string | undefined): CellScan {
     }
     files.add(real);
     const name = sourceName(source);
-    if (seen.has(name)) {
-      scan.skipped.push(path.relative(cellsDir, source));
+    const kept = seen.get(name);
+    if (kept) {
+      // Versions are read only for a name met twice: one header each, not a scan of every cell.
+      kept.rank ??= cellVersionRank(scan.sources[kept.at] as string);
+      const rank = cellVersionRank(source);
+      const older = rank > kept.rank ? (scan.sources[kept.at] as string) : source;
+      if (older !== source) {
+        scan.sources[kept.at] = source;
+        kept.rank = rank;
+      }
+      scan.skipped.push(path.relative(cellsDir, older));
       return;
     }
-    seen.add(name);
+    seen.set(name, { at: scan.sources.length });
     scan.sources.push(source);
   };
   /** Depth left when each real directory was read, and those being read now. */

@@ -218,6 +218,31 @@ describe("cell directories", () => {
     expect(r.reason).toMatch(/not found; using the saved index/);
   });
 
+  test("an index of one collection, saved before configuration version 3, is the whole store's", async () => {
+    const store = path.join(tmp, "store");
+    copyCell("FI4SYNTH", path.join(store, "Gulf_of_Finland"));
+    const config = { boxRadiusKm: 0, leafZoom: 16 };
+    await loadOrBuildIndex(
+      {
+        ...cellsConfig({ ...config, cellsDir: path.join(store, "Gulf_of_Finland") }),
+        chartsProviderEnc: "Gulf_of_Finland"
+      },
+      dataDir
+    );
+    expect(readSource(path.join(dataDir, "index"))).toBe("charts-provider:Gulf_of_Finland");
+    // Upgraded while the store is away: the saved index stays in use.
+    const r = await loadOrBuildIndex(
+      cellsConfig({
+        ...config,
+        chartsProvider: CHARTS_PROVIDER_ID,
+        cellsDir: path.join(tmp, "default")
+      }),
+      dataDir
+    );
+    expect(names(r)).toEqual(["FI4SYNTH"]);
+    expect(r.reason).toMatch(/not found; using the saved index/);
+  });
+
   test("with the source cleared, an index that records one is not used", async () => {
     copyCell("FI4SYNTH");
     await load();
@@ -239,6 +264,31 @@ describe("cell directories", () => {
     const other = path.join(tmp, "other");
     const r = await loadOrBuildIndex(
       cellsConfig({ cellsDir: other, boxRadiusKm: 0, leafZoom: 16 }),
+      dataDir
+    );
+    expect(names(r)).toEqual(["FI4SYNTH"]);
+    expect(r.reason).toMatch(/not found; using the saved index/);
+  });
+
+  test("an index of one collection, saved before configuration version 3, is the whole store's", async () => {
+    const store = path.join(tmp, "store");
+    copyCell("FI4SYNTH", path.join(store, "Gulf_of_Finland"));
+    const config = { boxRadiusKm: 0, leafZoom: 16 };
+    await loadOrBuildIndex(
+      {
+        ...cellsConfig({ ...config, cellsDir: path.join(store, "Gulf_of_Finland") }),
+        chartsProviderEnc: "Gulf_of_Finland"
+      },
+      dataDir
+    );
+    expect(readSource(path.join(dataDir, "index"))).toBe("charts-provider:Gulf_of_Finland");
+    // Upgraded while the store is away: the saved index stays in use.
+    const r = await loadOrBuildIndex(
+      cellsConfig({
+        ...config,
+        chartsProvider: CHARTS_PROVIDER_ID,
+        cellsDir: path.join(tmp, "default")
+      }),
       dataDir
     );
     expect(names(r)).toEqual(["FI4SYNTH"]);

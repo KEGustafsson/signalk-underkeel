@@ -225,9 +225,12 @@ Expert settings, with their defaults:
 The saved configuration carries a version, `configVersion`. At the first start after an update
 from a configuration without one, the plugin keeps a copy as `config-v1.json` in its data
 directory, removes the look-ahead values the old admin form had filled in with their
-defaults, so the warning style can set them, and saves the result. The plugin then
-behaves exactly as before; a value that differed from its default stays and overrides the
-style.
+defaults, so the warning style can set them, and saves the result. The warnings then
+behave exactly as before; a value that differed from its default stays and overrides the
+style. A configuration of version 2 is kept as `config-v2.json` and loses its ENC settings:
+one that named a Charts Provider collection reads the whole charts provider from then on,
+and one with an ENC cells directory reads no ENC until its cells are converted in the
+charts provider and **Charts provider** is chosen, which the setup check asks for.
 
 ## Water level
 

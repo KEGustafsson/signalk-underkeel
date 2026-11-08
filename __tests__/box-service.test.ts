@@ -9,6 +9,7 @@ import { runBuild } from "../src/spatial/build-worker";
 import { commitChartIndex, loadChartIndex } from "../src/spatial/chart-index";
 import { readSource } from "../src/spatial/build-source";
 import type { IndexBuilder, WfsBox } from "../src/wfs-service";
+import type { SharedAreaAnswer } from "../src/shared-enc";
 import underkeel = require("../src/index");
 import { CELLS, prepareFixtureIndex, ROCK } from "./helpers/fixture-index";
 import { fakeApp, fakeClock, fakeRouter, lastValue, navDelta, T0 } from "./helpers/plugin-harness";
@@ -43,14 +44,14 @@ const settle = async () => {
   }
 };
 
-function startPlugin(cellsDir: string) {
+function startPlugin(cellsDir: string, answer?: () => SharedAreaAnswer) {
   const clock = fakeClock(T0);
   const h = fakeApp(dir);
   const plugin = underkeel(h.app, clock, globalThis.fetch, boxBuilder);
   plugin.start(
     {
       vessel: { draft: 2, length: 12, beam: 4 },
-      ...chartsProviderAt(cellsDir),
+      ...chartsProviderAt(cellsDir, answer),
       leafZoom: LEAF,
       boxRadiusKm: 2
     },
@@ -95,11 +96,19 @@ describe("chart box service", () => {
   test("with no index in use a failed build is the reason, published as an error", async () => {
     const empty = path.join(dir, "cells");
     fs.mkdirSync(empty);
-    const { clock, h, plugin, call } = startPlugin(empty);
+    const { clock, h, plugin, call } = startPlugin(empty, () => ({
+      accepted: true,
+      started: true,
+      reason: "downloading the area"
+    }));
     h.send(navDelta(ROCK[0], ROCK[1], 0, clock.now()));
     clock.advance(10_000);
     await settle();
-    const why = `chart box around the vessel: no S-57 cell found in ${empty}`;
+    const failure = `chart box around the vessel: no S-57 cell found in ${empty}`;
+    // With no index yet, the charts provider's word on the box is part of the reason.
+    const why = `${failure}; Charts Provider is downloading the ENC around the vessel`;
+    // The server log has the failure as the box service met it.
+    expect(h.errors).toContain(failure);
     h.errors.length = 0;
     h.statuses.length = 0;
     clock.advance(1000);
