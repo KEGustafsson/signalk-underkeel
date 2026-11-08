@@ -240,6 +240,16 @@ describe("S-57 cells read with gdal3.js", () => {
     );
     expect(baseVersion(huge)).toBeUndefined();
     expect(baseEdition(huge)).toBeUndefined();
+    // A directory entry of size 0 is refused, not walked forever.
+    const zero = path.join(tmp, "FI5ZERO1.000");
+    const cell = Buffer.from(fs.readFileSync(CELL));
+    const dr = Number(cell.toString("latin1", 0, 5));
+    for (const at of [dr + 20, dr + 21, dr + 23]) {
+      cell[at] = 0x30;
+    }
+    fs.writeFileSync(zero, cell);
+    expect(baseVersion(zero)).toBeUndefined();
+    expect(baseEdition(zero)).toBeUndefined();
     const bad = path.join(tmp, "FI5BAD01.000");
     fs.writeFileSync(bad, "not a cell");
     expect(baseEdition(bad)).toBeUndefined();

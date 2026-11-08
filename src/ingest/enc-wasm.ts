@@ -273,7 +273,12 @@ function dsidFields(file: string): { edition?: number; update?: number } {
     }
     const base = dr + num(dr + 12, 5);
     const [lenSize, posSize, tagSize] = [num(dr + 20, 1), num(dr + 21, 1), num(dr + 23, 1)];
-    for (let e = dr + 24; head[e] !== 0x1e && e < base; e += tagSize + lenSize + posSize) {
+    // A size of 0, or not a digit, would leave the directory walk where it is.
+    if (![lenSize, posSize, tagSize].every((n) => Number.isInteger(n) && n > 0)) {
+      return {};
+    }
+    const entry = tagSize + lenSize + posSize;
+    for (let e = dr + 24; head[e] !== 0x1e && e < base; e += entry) {
       if (head.toString("latin1", e, e + tagSize) === "DSID") {
         // RCNM (1 byte), RCID (4), EXPP (1), INTU (1), then DSNM, EDTN and UPDN, each ended by
         // 0x1f, then UADT and ISDT, 8 characters each with no separator, all within the field.
