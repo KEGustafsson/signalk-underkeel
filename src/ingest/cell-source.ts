@@ -5,7 +5,7 @@ import type { ReadCell } from "./cell-reader";
 import { readCellDirectory, readCellInfo } from "./cell-reader";
 import type { CellInfo } from "./cells";
 import { usageBandFromName } from "./cells";
-import { baseEdition, encFiles, encStamp, readEncCell } from "./enc-wasm";
+import { baseVersion, encFiles, encStamp, readEncCell } from "./enc-wasm";
 
 /**
  * Where a cell is read from: an S-57 base cell (`.000`, its updates beside
@@ -62,16 +62,29 @@ export function readCell(source: string, cellRef: number): Promise<ReadCell> {
 }
 
 /**
- * A copy's edition and update as one comparable number, from its DSID and the updates beside
- * it; -1 when its edition cannot be read.
+ * A copy's edition and update as one comparable number: the edition and update of its base
+ * cell's DSID, raised by each update file beside it that follows on without a gap, as only
+ * those apply. -1 when its edition cannot be read, or its files cannot be.
  */
 export function cellVersionRank(file: string): number {
-  const edition = baseEdition(file);
-  if (edition === undefined) {
+  try {
+    const version = baseVersion(file);
+    if (version === undefined) {
+      return -1;
+    }
+    let update = version.update;
+    for (const f of encFiles(file).slice(1)) {
+      const n = Number(path.extname(f).slice(1));
+      if (n === update + 1) {
+        update = n;
+      } else if (n > update + 1) {
+        break;
+      }
+    }
+    return version.edition * 100_000 + update;
+  } catch {
     return -1;
   }
-  const last = encFiles(file).at(-1) ?? file;
-  return edition * 100_000 + Number(path.extname(last).slice(1));
 }
 
 export interface CellScan {
@@ -136,6 +149,7 @@ export function scanCellSources(cellsDir: string | undefined): CellScan {
     const kept = seen.get(name);
     if (kept) {
       // Versions are read only for a name met twice: one header each, not a scan of every cell.
+      // A copy that cannot be read ranks -1 and never displaces one that can.
       kept.rank ??= cellVersionRank(scan.sources[kept.at] as string);
       const rank = cellVersionRank(source);
       const older = rank > kept.rank ? (scan.sources[kept.at] as string) : source;

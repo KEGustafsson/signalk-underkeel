@@ -252,12 +252,12 @@ export async function readEncParts(file: string): Promise<Map<string, Uint8Array
 }
 
 /**
- * The edition number in the base cell's DSID record, read from the ISO 8211
- * file itself. GDAL reports the last update's DSID_EDTN once updates are
- * applied, and NOAA updates carry 0 there: US5FL65M, edition 38, read as
- * edition 0 with its three updates.
+ * The edition and update numbers in the base cell's DSID record, read from the ISO 8211 file
+ * itself. GDAL reports the last update's DSID_EDTN once updates are applied, and NOAA updates
+ * carry 0 there: US5FL65M, edition 38, read as edition 0 with its three updates. A base cell
+ * re-issued with its updates applied carries their number in UPDN.
  */
-export function baseEdition(file: string): number | undefined {
+export function baseVersion(file: string): { edition: number; update: number } | undefined {
   const fd = fs.openSync(file, "r");
   try {
     const head = Buffer.alloc(65_536);
@@ -272,18 +272,27 @@ export function baseEdition(file: string): number | undefined {
     const [lenSize, posSize, tagSize] = [num(dr + 20, 1), num(dr + 21, 1), num(dr + 23, 1)];
     for (let e = dr + 24; head[e] !== 0x1e && e < base; e += tagSize + lenSize + posSize) {
       if (head.toString("latin1", e, e + tagSize) === "DSID") {
-        // RCNM (1 byte), RCID (4), EXPP (1), INTU (1), then DSNM and EDTN, each ended by 0x1f.
+        // RCNM (1 byte), RCID (4), EXPP (1), INTU (1), then DSNM, EDTN and UPDN, each ended by 0x1f.
         const dsnm = base + num(e + tagSize + lenSize, posSize) + 7;
         const edtn = head.indexOf(0x1f, dsnm) + 1;
-        const end = head.indexOf(0x1f, edtn);
-        const n = edtn > 0 && end > edtn ? Number(head.toString("latin1", edtn, end)) : NaN;
-        return Number.isInteger(n) && n > 0 ? n : undefined;
+        const updn = edtn > 0 ? head.indexOf(0x1f, edtn) + 1 : 0;
+        const end = updn > 0 ? head.indexOf(0x1f, updn) : -1;
+        const edition = updn > edtn ? Number(head.toString("latin1", edtn, updn - 1)) : NaN;
+        const update = end >= updn ? Number(head.toString("latin1", updn, end) || "0") : NaN;
+        return Number.isInteger(edition) && edition > 0
+          ? { edition, update: Number.isInteger(update) && update >= 0 ? update : 0 }
+          : undefined;
       }
     }
     return undefined;
   } finally {
     fs.closeSync(fd);
   }
+}
+
+/** The edition number in the base cell's DSID record (`baseVersion`). */
+export function baseEdition(file: string): number | undefined {
+  return baseVersion(file)?.edition;
 }
 
 /** The cell `readEncLayers` read from `file`, parsed as `readCellDirectory` parses an export. */

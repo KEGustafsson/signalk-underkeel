@@ -2,7 +2,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { parseConfig } from "../src/config";
-import { scanCellSources } from "../src/ingest/cell-source";
+import { cellVersionRank, scanCellSources } from "../src/ingest/cell-source";
 import { readSource } from "../src/spatial/build-source";
 import type { SharedAreaAnswer, SharedEncApi } from "../src/shared-enc";
 import {
@@ -167,12 +167,46 @@ describe("charts provider ENC store", () => {
       sources: ["B_set/FI4SYNTH/FI4SYNTH.000"],
       skipped: ["A_set/FI4SYNTH/FI4SYNTH.000", "C_set/FI4SYNTH/FI4SYNTH.000"]
     });
-    // A copy whose edition cannot be read ranks below one whose edition can.
+    // A copy whose edition cannot be read ranks below one whose edition can, either way round.
     fs.rmSync(root, { recursive: true });
     fs.mkdirSync(path.join(root, "A_set", "FI4SYNTH"), { recursive: true });
     fs.writeFileSync(path.join(root, "A_set", "FI4SYNTH", "FI4SYNTH.000"), "not S-57");
     put("B_set", "FI4SYNTH", "FI4SYNTH");
     expect(read().sources).toEqual(["B_set/FI4SYNTH/FI4SYNTH.000"]);
+    fs.mkdirSync(path.join(root, "C_set", "FI4SYNTH"), { recursive: true });
+    fs.writeFileSync(path.join(root, "C_set", "FI4SYNTH", "FI4SYNTH.000"), "not S-57");
+    expect(read().sources).toEqual(["B_set/FI4SYNTH/FI4SYNTH.000"]);
+  });
+
+  test("a copy's version counts its base cell's update and only the updates that follow on", () => {
+    const dir = path.join(tmp, "cells");
+    fs.mkdirSync(dir);
+    const cell = (name: string, updn?: number, updates: number[] = []) => {
+      const file = path.join(dir, name, "FI4SYNTH.000");
+      fs.mkdirSync(path.dirname(file));
+      const bytes = fs.readFileSync(path.join(CELLS, "FI4SYNTH.000"));
+      if (updn !== undefined) {
+        // EDTN 7 then UPDN 0 in the DSID, each ended by 0x1f: re-issued with `updn` applied.
+        const at = bytes.indexOf(Buffer.from([0x1f, 0x37, 0x1f, 0x30, 0x1f]));
+        expect(at).toBeGreaterThan(0);
+        bytes[at + 3] = 0x30 + updn;
+      }
+      fs.writeFileSync(file, bytes);
+      for (const u of updates) {
+        fs.writeFileSync(file.replace(/000$/, String(u).padStart(3, "0")), "");
+      }
+      return file;
+    };
+    expect(cellVersionRank(cell("plain"))).toBe(700_000);
+    // A re-issue carrying update 3 outranks a copy with updates 1 and 2 beside it.
+    expect(cellVersionRank(cell("reissued", 3))).toBe(700_003);
+    expect(cellVersionRank(cell("two", undefined, [1, 2]))).toBe(700_002);
+    // Updates up to the base cell's are in it already; the next one follows on.
+    expect(cellVersionRank(cell("reissued-on", 3, [2, 3, 4]))).toBe(700_004);
+    // An update after a gap does not apply, nor do those after it.
+    expect(cellVersionRank(cell("gap", undefined, [1, 3, 4]))).toBe(700_001);
+    // A file that cannot be read ranks below every copy that can.
+    expect(cellVersionRank(path.join(dir, "gone", "FI4SYNTH.000"))).toBe(-1);
   });
 
   test("the admin form names the collections shared now", () => {

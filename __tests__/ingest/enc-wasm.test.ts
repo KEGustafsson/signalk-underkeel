@@ -4,6 +4,7 @@ import path from "path";
 import { readCell, scanCellSources } from "../../src/ingest/cell-source";
 import {
   baseEdition,
+  baseVersion,
   encCell,
   encFiles,
   encStamp,
@@ -223,6 +224,7 @@ describe("S-57 cells read with gdal3.js", () => {
 
   test("the edition comes from the base cell's DSID record, which updates leave alone", () => {
     expect(baseEdition(CELL)).toBe(1);
+    expect(baseVersion(CELL)).toEqual({ edition: 1, update: 0 });
     const bad = path.join(tmp, "FI5BAD01.000");
     fs.writeFileSync(bad, "not a cell");
     expect(baseEdition(bad)).toBeUndefined();
