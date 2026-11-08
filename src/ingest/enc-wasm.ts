@@ -257,7 +257,8 @@ const MAX_UPDATE = 999;
 
 /**
  * The EDTN and UPDN fields of the base cell's DSID record, read from the ISO 8211 file itself;
- * each undefined when it is missing, not all digits, or out of range.
+ * each undefined when it is missing, not all digits, or out of range, and both when the record
+ * is not laid out as S-57 sets it, as a separator lost or misplaced leaves it.
  */
 function dsidFields(file: string): { edition?: number; update?: number } {
   const fd = fs.openSync(file, "r");
@@ -274,18 +275,29 @@ function dsidFields(file: string): { edition?: number; update?: number } {
     const [lenSize, posSize, tagSize] = [num(dr + 20, 1), num(dr + 21, 1), num(dr + 23, 1)];
     for (let e = dr + 24; head[e] !== 0x1e && e < base; e += tagSize + lenSize + posSize) {
       if (head.toString("latin1", e, e + tagSize) === "DSID") {
-        // RCNM (1 byte), RCID (4), EXPP (1), INTU (1), then DSNM, EDTN and UPDN, each ended by 0x1f.
-        const dsnm = base + num(e + tagSize + lenSize, posSize) + 7;
-        const edtn = head.indexOf(0x1f, dsnm) + 1;
-        const updn = edtn > 0 ? head.indexOf(0x1f, edtn) + 1 : 0;
-        const end = updn > 0 ? head.indexOf(0x1f, updn) : -1;
+        // RCNM (1 byte), RCID (4), EXPP (1), INTU (1), then DSNM, EDTN and UPDN, each ended by
+        // 0x1f, then UADT and ISDT, 8 characters each with no separator, all within the field.
+        const start = base + num(e + tagSize + lenSize, posSize);
+        const stop = Math.min(size, start + num(e + tagSize, lenSize));
+        const after = (from: number): number => {
+          const at = head.indexOf(0x1f, from);
+          return at >= 0 && at < stop ? at : -1;
+        };
+        const dsnmEnd = after(start + 7);
+        const edtnEnd = dsnmEnd < 0 ? -1 : after(dsnmEnd + 1);
+        const updnEnd = edtnEnd < 0 ? -1 : after(edtnEnd + 1);
+        // A separator lost or misplaced leaves no two dates where they belong.
+        const dates = head.toString("latin1", updnEnd + 1, updnEnd + 17);
+        if (updnEnd < 0 || updnEnd + 17 > stop || !/^[\d ]{16}$/.test(dates)) {
+          return {};
+        }
         const field = (from: number, to: number, max: number): number | undefined => {
           const text = head.toString("latin1", from, to);
           const n = /^\d{1,5}$/.test(text) ? Number(text) : NaN;
           return n <= max ? n : undefined;
         };
-        const edition = updn > edtn ? field(edtn, updn - 1, MAX_EDITION) : undefined;
-        const update = end >= updn && updn > 0 ? field(updn, end, MAX_UPDATE) : undefined;
+        const edition = field(dsnmEnd + 1, edtnEnd, MAX_EDITION);
+        const update = field(edtnEnd + 1, updnEnd, MAX_UPDATE);
         return {
           ...(edition !== undefined && edition > 0 ? { edition } : {}),
           ...(update === undefined ? {} : { update })

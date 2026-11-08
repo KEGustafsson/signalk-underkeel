@@ -233,6 +233,13 @@ describe("charts provider ENC store", () => {
       ]);
     });
     expect(cellVersionRank(newline)).toBe(-1);
+    // A separator lost from the record joins UPDN to the dates after it, and the record no
+    // longer reads as S-57 lays it out: no version, and no edition either.
+    const lost = patched("lost", (bytes, at) =>
+      Buffer.concat([bytes.subarray(0, at + 4), bytes.subarray(at + 5)])
+    );
+    expect(cellVersionRank(lost)).toBe(-1);
+    expect(baseEdition(lost)).toBeUndefined();
     // The edition reads still, as the update count of a cell read with GDAL needs it.
     expect(baseEdition(newline)).toBe(7);
     // A file that cannot be read ranks below every copy that can.
