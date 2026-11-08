@@ -225,6 +225,21 @@ describe("S-57 cells read with gdal3.js", () => {
   test("the edition comes from the base cell's DSID record, which updates leave alone", () => {
     expect(baseEdition(CELL)).toBe(1);
     expect(baseVersion(CELL)).toEqual({ edition: 1, update: 0 });
+    // An edition or update too large to be one is not known: it would outrank every copy.
+    const huge = path.join(tmp, "FI5HUGE1.000");
+    const bytes = fs.readFileSync(CELL);
+    const at = bytes.indexOf(Buffer.from([0x1f, 0x31, 0x1f, 0x30, 0x1f]));
+    expect(at).toBeGreaterThan(0);
+    fs.writeFileSync(
+      huge,
+      Buffer.concat([
+        bytes.subarray(0, at + 1),
+        Buffer.from("9".repeat(400)),
+        bytes.subarray(at + 2)
+      ])
+    );
+    expect(baseVersion(huge)).toBeUndefined();
+    expect(baseEdition(huge)).toBeUndefined();
     const bad = path.join(tmp, "FI5BAD01.000");
     fs.writeFileSync(bad, "not a cell");
     expect(baseEdition(bad)).toBeUndefined();

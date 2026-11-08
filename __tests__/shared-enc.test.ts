@@ -3,6 +3,7 @@ import os from "os";
 import path from "path";
 import { parseConfig } from "../src/config";
 import { cellVersionRank, scanCellSources } from "../src/ingest/cell-source";
+import { baseEdition } from "../src/ingest/enc-wasm";
 import { readSource } from "../src/spatial/build-source";
 import type { SharedAreaAnswer, SharedEncApi } from "../src/shared-enc";
 import {
@@ -208,6 +209,32 @@ describe("charts provider ENC store", () => {
     // A UPDN that is not a number leaves the version unknown, not update 0: such a copy ranks
     // below every copy whose version is known, as the charts provider ranks it.
     expect(cellVersionRank(cell("malformed", "x", [1, 2]))).toBe(-1);
+    // Nor when its separator is gone, so UPDN runs on into the digits after it, or when it
+    // ends in a newline: neither may read as a known update.
+    const patched = (name: string, edit: (bytes: Buffer, at: number) => Buffer) => {
+      const file = cell(name);
+      const bytes = fs.readFileSync(file);
+      const at = bytes.indexOf(Buffer.from([0x1f, 0x37, 0x1f, 0x30, 0x1f]));
+      expect(at).toBeGreaterThan(0);
+      fs.writeFileSync(file, edit(bytes, at));
+      return file;
+    };
+    const runOn = patched("run-on", (bytes, at) => {
+      bytes[at + 4] = 0x30;
+      return bytes;
+    });
+    expect(cellVersionRank(runOn)).toBe(-1);
+    const newline = patched("newline", (bytes, at) => {
+      bytes[at + 3] = 0x31;
+      return Buffer.concat([
+        bytes.subarray(0, at + 4),
+        Buffer.from([0x0a]),
+        bytes.subarray(at + 4)
+      ]);
+    });
+    expect(cellVersionRank(newline)).toBe(-1);
+    // The edition reads still, as the update count of a cell read with GDAL needs it.
+    expect(baseEdition(newline)).toBe(7);
     // A file that cannot be read ranks below every copy that can.
     expect(cellVersionRank(path.join(dir, "gone", "FI4SYNTH.000"))).toBe(-1);
   });

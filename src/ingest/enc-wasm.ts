@@ -251,14 +251,15 @@ export async function readEncParts(file: string): Promise<Map<string, Uint8Array
   return parts;
 }
 
+/** The highest edition and update numbers read as known: an update has a 3-digit file. */
+const MAX_EDITION = 9_999;
+const MAX_UPDATE = 999;
+
 /**
- * The edition and update numbers in the base cell's DSID record, read from the ISO 8211 file
- * itself. GDAL reports the last update's DSID_EDTN once updates are applied, and NOAA updates
- * carry 0 there: US5FL65M, edition 38, read as edition 0 with its three updates. A base cell
- * re-issued with its updates applied carries their number in UPDN. Undefined when either is
- * not a number, as a version that cannot be read is not known.
+ * The EDTN and UPDN fields of the base cell's DSID record, read from the ISO 8211 file itself;
+ * each undefined when it is missing, not all digits, or out of range.
  */
-export function baseVersion(file: string): { edition: number; update: number } | undefined {
+function dsidFields(file: string): { edition?: number; update?: number } {
   const fd = fs.openSync(file, "r");
   try {
     const head = Buffer.alloc(65_536);
@@ -267,7 +268,7 @@ export function baseVersion(file: string): { edition: number; update: number } |
     // The data descriptive record comes first; the DSID is in the first data record after it.
     const dr = num(0, 5);
     if (!(dr > 0) || dr + 24 > size) {
-      return undefined;
+      return {};
     }
     const base = dr + num(dr + 12, 5);
     const [lenSize, posSize, tagSize] = [num(dr + 20, 1), num(dr + 21, 1), num(dr + 23, 1)];
@@ -278,25 +279,40 @@ export function baseVersion(file: string): { edition: number; update: number } |
         const edtn = head.indexOf(0x1f, dsnm) + 1;
         const updn = edtn > 0 ? head.indexOf(0x1f, edtn) + 1 : 0;
         const end = updn > 0 ? head.indexOf(0x1f, updn) : -1;
-        const field = (from: number, to: number): number => {
+        const field = (from: number, to: number, max: number): number | undefined => {
           const text = head.toString("latin1", from, to);
-          return /^\d+$/.test(text) ? Number(text) : NaN;
+          const n = /^\d{1,5}$/.test(text) ? Number(text) : NaN;
+          return n <= max ? n : undefined;
         };
-        const edition = updn > edtn ? field(edtn, updn - 1) : NaN;
-        const update = end >= updn ? field(updn, end) : NaN;
-        // A version that does not read as numbers is not known, not update 0.
-        return edition > 0 && update >= 0 ? { edition, update } : undefined;
+        const edition = updn > edtn ? field(edtn, updn - 1, MAX_EDITION) : undefined;
+        const update = end >= updn && updn > 0 ? field(updn, end, MAX_UPDATE) : undefined;
+        return {
+          ...(edition !== undefined && edition > 0 ? { edition } : {}),
+          ...(update === undefined ? {} : { update })
+        };
       }
     }
-    return undefined;
+    return {};
   } finally {
     fs.closeSync(fd);
   }
 }
 
-/** The edition number in the base cell's DSID record (`baseVersion`). */
+/**
+ * The edition and update numbers in the base cell's DSID record. GDAL reports the last
+ * update's DSID_EDTN once updates are applied, and NOAA updates carry 0 there: US5FL65M,
+ * edition 38, read as edition 0 with its three updates. A base cell re-issued with its updates
+ * applied carries their number in UPDN. Undefined unless both read as numbers in range, as a
+ * version that cannot be read is not known.
+ */
+export function baseVersion(file: string): { edition: number; update: number } | undefined {
+  const { edition, update } = dsidFields(file);
+  return edition !== undefined && update !== undefined ? { edition, update } : undefined;
+}
+
+/** The edition number in the base cell's DSID record, whatever its UPDN holds. */
 export function baseEdition(file: string): number | undefined {
-  return baseVersion(file)?.edition;
+  return dsidFields(file).edition;
 }
 
 /** The cell `readEncLayers` read from `file`, parsed as `readCellDirectory` parses an export. */
