@@ -255,7 +255,8 @@ export async function readEncParts(file: string): Promise<Map<string, Uint8Array
  * The edition and update numbers in the base cell's DSID record, read from the ISO 8211 file
  * itself. GDAL reports the last update's DSID_EDTN once updates are applied, and NOAA updates
  * carry 0 there: US5FL65M, edition 38, read as edition 0 with its three updates. A base cell
- * re-issued with its updates applied carries their number in UPDN.
+ * re-issued with its updates applied carries their number in UPDN. Undefined when either is
+ * not a number, as a version that cannot be read is not known.
  */
 export function baseVersion(file: string): { edition: number; update: number } | undefined {
   const fd = fs.openSync(file, "r");
@@ -277,11 +278,14 @@ export function baseVersion(file: string): { edition: number; update: number } |
         const edtn = head.indexOf(0x1f, dsnm) + 1;
         const updn = edtn > 0 ? head.indexOf(0x1f, edtn) + 1 : 0;
         const end = updn > 0 ? head.indexOf(0x1f, updn) : -1;
-        const edition = updn > edtn ? Number(head.toString("latin1", edtn, updn - 1)) : NaN;
-        const update = end >= updn ? Number(head.toString("latin1", updn, end) || "0") : NaN;
-        return Number.isInteger(edition) && edition > 0
-          ? { edition, update: Number.isInteger(update) && update >= 0 ? update : 0 }
-          : undefined;
+        const field = (from: number, to: number): number => {
+          const text = head.toString("latin1", from, to);
+          return /^\d+$/.test(text) ? Number(text) : NaN;
+        };
+        const edition = updn > edtn ? field(edtn, updn - 1) : NaN;
+        const update = end >= updn ? field(updn, end) : NaN;
+        // A version that does not read as numbers is not known, not update 0.
+        return edition > 0 && update >= 0 ? { edition, update } : undefined;
       }
     }
     return undefined;

@@ -181,7 +181,7 @@ describe("charts provider ENC store", () => {
   test("a copy's version counts its base cell's update and only the updates that follow on", () => {
     const dir = path.join(tmp, "cells");
     fs.mkdirSync(dir);
-    const cell = (name: string, updn?: number, updates: number[] = []) => {
+    const cell = (name: string, updn?: number | string, updates: number[] = []) => {
       const file = path.join(dir, name, "FI4SYNTH.000");
       fs.mkdirSync(path.dirname(file));
       const bytes = fs.readFileSync(path.join(CELLS, "FI4SYNTH.000"));
@@ -189,7 +189,7 @@ describe("charts provider ENC store", () => {
         // EDTN 7 then UPDN 0 in the DSID, each ended by 0x1f: re-issued with `updn` applied.
         const at = bytes.indexOf(Buffer.from([0x1f, 0x37, 0x1f, 0x30, 0x1f]));
         expect(at).toBeGreaterThan(0);
-        bytes[at + 3] = 0x30 + updn;
+        bytes[at + 3] = typeof updn === "number" ? 0x30 + updn : updn.charCodeAt(0);
       }
       fs.writeFileSync(file, bytes);
       for (const u of updates) {
@@ -205,6 +205,9 @@ describe("charts provider ENC store", () => {
     expect(cellVersionRank(cell("reissued-on", 3, [2, 3, 4]))).toBe(700_004);
     // An update after a gap does not apply, nor do those after it.
     expect(cellVersionRank(cell("gap", undefined, [1, 3, 4]))).toBe(700_001);
+    // A UPDN that is not a number leaves the version unknown, not update 0: such a copy ranks
+    // below every copy whose version is known, as the charts provider ranks it.
+    expect(cellVersionRank(cell("malformed", "x", [1, 2]))).toBe(-1);
     // A file that cannot be read ranks below every copy that can.
     expect(cellVersionRank(path.join(dir, "gone", "FI4SYNTH.000"))).toBe(-1);
   });
