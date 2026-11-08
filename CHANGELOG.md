@@ -2,6 +2,32 @@
 
 All notable changes to signalk-underkeel are documented here.
 
+## [Unreleased]
+
+### Changed
+
+- **Breaking:** ENC cells come only from a chart provider service. **ENC cells directory**,
+  **ENC from Charts Provider** and **Ask Charts Provider for the ENC around the vessel** are
+  replaced by one pulldown, **Charts provider**, which chooses the service:
+  signalk-charts-provider-simple. Every ENC cell it shares is read, and the pulldown marks it
+  when it is not running and says what it shares. Cells of your own reach the index by
+  converting them in the charts provider with its **Keep the ENC cells of converted charts**
+  on.
+- Each new index box asks the chosen charts provider for the ENC cells of its area, without a
+  setting of its own; its **Download the ENC cells around the vessel** decides whether it
+  downloads them (signalk-charts-provider-simple 2.18.0 or later).
+- Where the vessel has no chart coverage, the reason adds what the charts provider answered
+  for the box: it is downloading the area, it has no ENC for this area (by the cells it has
+  stored there, with its reason), it is not running, or it is too old to be asked.
+- The configuration moves to version 3. The migration drops the cells directory and the two
+  Charts Provider settings, chooses the charts provider when a collection was named, and
+  keeps the version 2 configuration as `config-v2.json` in the plugin data directory.
+
+### Fixed
+
+- A failing area request to the charts provider is logged and no longer fails the box
+  refresh that made it.
+
 ## [0.4.0] - 2026-11-02
 
 ### Added

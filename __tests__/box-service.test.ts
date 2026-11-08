@@ -12,6 +12,7 @@ import type { IndexBuilder, WfsBox } from "../src/wfs-service";
 import underkeel = require("../src/index");
 import { CELLS, prepareFixtureIndex, ROCK } from "./helpers/fixture-index";
 import { fakeApp, fakeClock, fakeRouter, lastValue, navDelta, T0 } from "./helpers/plugin-harness";
+import { chartsProviderAt } from "./helpers/charts-provider";
 
 /**
  * The chart box service in the running plugin: it builds whenever no index of its box is in
@@ -47,7 +48,12 @@ function startPlugin(cellsDir: string) {
   const h = fakeApp(dir);
   const plugin = underkeel(h.app, clock, globalThis.fetch, boxBuilder);
   plugin.start(
-    { vessel: { draft: 2, length: 12, beam: 4 }, cellsDir, leafZoom: LEAF, boxRadiusKm: 2 },
+    {
+      vessel: { draft: 2, length: 12, beam: 4 },
+      ...chartsProviderAt(cellsDir),
+      leafZoom: LEAF,
+      boxRadiusKm: 2
+    },
     () => undefined
   );
   const { router, call } = fakeRouter();
@@ -79,7 +85,7 @@ describe("chart box service", () => {
       await new Promise((r) => setTimeout(r, 10));
     }
     expect(cells().map((c) => c.name)).toEqual(["FI4SYNTH", "FI5SYNTH"]);
-    expect(readSource(path.join(dir, "index"))).toBe(`dir:${path.resolve(CELLS)}`);
+    expect(readSource(path.join(dir, "index"))).toBe("charts-provider:*");
     h.send(navDelta(ROCK[0], ROCK[1], 0, clock.now()));
     clock.advance(1000);
     expect(lastValue(h.deltas, "navigation.underKeel.state")).not.toBe("off");

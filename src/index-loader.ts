@@ -120,7 +120,7 @@ function skippedNote(cellsDir: string | undefined, scan: CellScan): string[] {
   return scan.skipped.length === 0
     ? []
     : [
-        `skipped ${scan.skipped.join(", ")} in ${cellsDir ?? "cellsDir"}: ` +
+        `skipped ${scan.skipped.join(", ")} in ${cellsDir ?? "the charts provider's ENC"}: ` +
           "no S-57 cell (.000) in it, a dangling link, or a cell name met twice"
       ];
 }
@@ -244,7 +244,7 @@ function scanCells(
   }
   const scan = scanCellSources(cellsDir);
   return cellsMissing(cellsDir, scan.sources, saved)
-    ? { away: `no S-57 cell found in ${cellsDir ?? "cellsDir"}` }
+    ? { away: `no S-57 cell found in ${cellsDir ?? "the charts provider's ENC"}` }
     : { scan };
 }
 
@@ -385,7 +385,7 @@ function boxPlan(
     : (p.mismatch ??
       (sameCells
         ? `leaf zoom ${cfg.leafZoom} differs from the saved ${box.leafZoom ?? "?"}`
-        : `cells in ${cfg.cellsDir ?? "cellsDir"} changed since it was saved`));
+        : `cells in ${cfg.cellsDir ?? "the charts provider's ENC"} changed since it was saved`));
   const notes = [...(why ? [`rebuilt the index: ${why}`] : []), ...p.notes];
   return buildPlan(cfg, indexDir, dirs, notes, { bbox: box.bbox, sources });
 }
@@ -415,7 +415,11 @@ function buildPlan(
   box?: BuildBox
 ): IndexPlan {
   if (dirs.length === 0) {
-    const none = { indexDir, built: false, reason: `no cells in ${cfg.cellsDir ?? "cellsDir"}` };
+    const none = {
+      indexDir,
+      built: false,
+      reason: `no cells in ${cfg.cellsDir ?? "the charts provider's ENC"}`
+    };
     return { load: withNotes(none, notes) };
   }
   // The build would be refused only once it is done: minutes on a Pi 4.
@@ -429,7 +433,7 @@ function buildPlan(
 }
 
 function missingReason(cfg: PluginConfig, indexDir: string): string {
-  return cfg.wfs ? WFS_WAITING_REASON : `no chart index in ${indexDir}; set cellsDir`;
+  return cfg.wfs ? WFS_WAITING_REASON : `no chart index in ${indexDir}; choose the charts provider`;
 }
 
 /**
@@ -459,9 +463,9 @@ function savedMatches(
             ? "the saved one lacks the Traficom WFS cell"
             : dropped;
   const refused = stale
-    ? "the saved index holds Traficom WFS depths and that source is off; set cellsDir"
+    ? "the saved index holds Traficom WFS depths and that source is off; choose the charts provider"
     : dropped && extraDirs.length === 0
-      ? `not using the saved index: ${dropped}; set cellsDir`
+      ? `not using the saved index: ${dropped}; choose the charts provider`
       : undefined;
   return { refused, mismatch };
 }

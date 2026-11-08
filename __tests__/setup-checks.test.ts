@@ -1,6 +1,7 @@
 import type { ServerAPI } from "@signalk/server-api";
 import type { PluginState } from "../src/api-wiring";
 import { parseConfig } from "../src/config";
+import { CHARTS_PROVIDER_ID } from "../src/shared-enc";
 import { createStatus } from "../src/foundation/state";
 import { RequestQueue } from "../src/route-service";
 import type { HostFacts } from "../src/setup-checks";
@@ -57,7 +58,7 @@ describe("setup check", () => {
       {
         id: "charts",
         level: "todo",
-        text: "Charts: set the ENC cells directory or ENC from Charts Provider"
+        text: "Charts: choose the charts provider"
       },
       { id: "draft", level: "todo", text: "Draft: not set here or in design.draft.maximum" },
       { id: "waterLevel", level: "ok", text: "Water level: none" },
@@ -66,14 +67,23 @@ describe("setup check", () => {
     ]);
   });
 
-  test("a cells directory without an index names why, without the server path", () => {
-    const s = state({ cellsDir: "/c" }, undefined, 0, "cannot read /srv/charts/x");
+  test("a charts provider without an index names why, without the server path", () => {
+    const s = state(
+      { chartsProvider: CHARTS_PROVIDER_ID },
+      undefined,
+      0,
+      "cannot read /srv/charts/x"
+    );
     expect(setupChecks(s, setupFacts(app(), s, HOST))[0]?.level).toBe("warn");
     expect(setupChecks(s, setupFacts(app(), s, HOST))[0]?.text).not.toMatch(/\/srv\/charts/);
   });
 
   test("own draft, an index, mean-water charts without a source and a running engine", () => {
-    const s = state({ cellsDir: "/c", vessel: { draft: 1.8 } }, monitor(undefined, meanWater), 2);
+    const s = state(
+      { chartsProvider: CHARTS_PROVIDER_ID, vessel: { draft: 1.8 } },
+      monitor(undefined, meanWater),
+      2
+    );
     const facts = setupFacts(app(), s, HOST);
     expect(facts.datums).toEqual([{ verdat: 3, cells: 2, lowWater: false, fmi: true }]);
     expect(setupChecks(s, facts)).toEqual([
@@ -139,7 +149,7 @@ describe("hardware advice", () => {
   const big: HostFacts = { memory: 8 * GIB, available: 6 * GIB, cpus: 8 };
 
   test("on 1 GB, box 0 and leaf zoom 20 are advised against", () => {
-    const c = hardware({ cellsDir: "/c", boxRadiusKm: 0, leafZoom: 20 }, pi3);
+    const c = hardware({ chartsProvider: CHARTS_PROVIDER_ID, boxRadiusKm: 0, leafZoom: 20 }, pi3);
     expect(c?.level).toBe("warn");
     expect(c?.text).toMatch(/^Hardware: 4 CPUs, 0\.9 GB RAM, 0\.5 GB free\. /);
     expect(c?.text).toMatch(
@@ -149,7 +159,9 @@ describe("hardware advice", () => {
   });
 
   test("on 1 GB with a box and leaf zoom 19 there is nothing to advise", () => {
-    expect(hardware({ cellsDir: "/c", boxRadiusKm: 10, leafZoom: 19 }, pi3)?.level).toBe("ok");
+    expect(
+      hardware({ chartsProvider: CHARTS_PROVIDER_ID, boxRadiusKm: 10, leafZoom: 19 }, pi3)?.level
+    ).toBe("ok");
     // With the WFS on its own radius sets the box, so box 0 is not the whole set.
     const wfs = hardware({ boxRadiusKm: 0, leafZoom: 19, wfs: { enabled: true } }, pi3);
     expect(wfs?.text).not.toMatch(/Index box 0/);
@@ -157,28 +169,34 @@ describe("hardware advice", () => {
 
   test("the 1 GB advice stops above the small-memory line", () => {
     const at = (memory: number) =>
-      hardware({ cellsDir: "/c", boxRadiusKm: 0, leafZoom: 20 }, { ...pi3, memory })?.level;
+      hardware(
+        { chartsProvider: CHARTS_PROVIDER_ID, boxRadiusKm: 0, leafZoom: 20 },
+        { ...pi3, memory }
+      )?.level;
     expect(at(SMALL_MEMORY)).toBe("warn");
     expect(at(SMALL_MEMORY + 1)).toBe("ok");
   });
 
   test("with plenty of RAM and a box, box 0 is suggested to avoid rebuilds", () => {
-    const c = hardware({ cellsDir: "/c", boxRadiusKm: 10 }, big);
+    const c = hardware({ chartsProvider: CHARTS_PROVIDER_ID, boxRadiusKm: 10 }, big);
     expect(c?.level).toBe("ok");
     expect(c?.text).toMatch(/Index box 0 indexes it once and avoids rebuilds/);
-    expect(hardware({ cellsDir: "/c", boxRadiusKm: 0 }, big)?.text).toBe(
+    expect(hardware({ chartsProvider: CHARTS_PROVIDER_ID, boxRadiusKm: 0 }, big)?.text).toBe(
       "Hardware: 8 CPUs, 8.0 GB RAM, 6.0 GB free"
     );
   });
 
   test("little free memory is a warning whatever the RAM", () => {
-    const c = hardware({ cellsDir: "/c" }, { ...big, available: LOW_AVAILABLE - 2 ** 20 });
+    const c = hardware(
+      { chartsProvider: CHARTS_PROVIDER_ID },
+      { ...big, available: LOW_AVAILABLE - 2 ** 20 }
+    );
     expect(c?.level).toBe("warn");
     expect(c?.text).toMatch(/only 255 MB free: a chart index build may run out of memory/);
   });
 
   test("the advice changes no setting", () => {
-    const raw = { cellsDir: "/c", boxRadiusKm: 0, leafZoom: 20 };
+    const raw = { chartsProvider: CHARTS_PROVIDER_ID, boxRadiusKm: 0, leafZoom: 20 };
     const s = state(raw);
     const before = JSON.stringify(s.config);
     setupChecks(s, setupFacts(app(), s, pi3));

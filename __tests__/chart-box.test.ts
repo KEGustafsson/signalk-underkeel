@@ -2,6 +2,9 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { parseConfig } from "../src/config";
+import type { SharedAreaAnswer } from "../src/shared-enc";
+import { chartsProviderAt } from "./helpers/charts-provider";
+import { cellsConfig } from "./helpers/cells-config";
 import type { LonLat } from "../src/foundation/geo";
 import { BOX_WAITING_REASON, cellSources, planIndex, sourceKeys } from "../src/index-loader";
 import { encBounds } from "../src/ingest/enc-bounds";
@@ -127,7 +130,7 @@ describe("index built in a box", () => {
 
 describe("start plan with a box", () => {
   const config = (extra: object = {}) =>
-    parseConfig({ cellsDir: CELLS, indexDir: path.join(dir, "index"), leafZoom: LEAF, ...extra });
+    cellsConfig({ cellsDir: CELLS, indexDir: path.join(dir, "index"), leafZoom: LEAF, ...extra });
 
   test("with no saved box nothing is built, and the reason says why (invariant 3)", () => {
     const p = planIndex(config(), dir);
@@ -174,6 +177,13 @@ describe("start plan with a box", () => {
   });
 });
 
+/** A charts provider whose cells already cover the vessel's area. */
+const HAS_AREA = (): SharedAreaAnswer => ({
+  accepted: true,
+  started: false,
+  reason: "the area's cells are downloaded"
+});
+
 describe("plugin with the box around the vessel", () => {
   const settle = async () => {
     for (let i = 0; i < 20; i++) {
@@ -188,7 +198,7 @@ describe("plugin with the box around the vessel", () => {
     plugin.start(
       {
         vessel: { draft: 2, length: 12, beam: 4 },
-        cellsDir: CELLS,
+        ...chartsProviderAt(CELLS, HAS_AREA),
         leafZoom: LEAF,
         boxRadiusKm: 2
       },
@@ -243,7 +253,7 @@ describe("plugin with the box around the vessel", () => {
     plugin.start(
       {
         vessel: { draft: 0.5, length: 12, beam: 4 },
-        cellsDir: CELLS,
+        ...chartsProviderAt(CELLS, HAS_AREA),
         leafZoom: LEAF,
         boxRadiusKm: 2
       },

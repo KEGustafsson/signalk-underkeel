@@ -2,6 +2,8 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { parseConfig } from "../src/config";
+import { cellsConfig } from "./helpers/cells-config";
+import { CHARTS_PROVIDER_ID } from "../src/shared-enc";
 import {
   BOX_WAITING_REASON,
   cellSources,
@@ -50,7 +52,7 @@ const names = (r: Awaited<ReturnType<typeof loadOrBuildIndex>>): string[] =>
   r.index?.catalogue.cells.map((c) => c.name) ?? [];
 
 const load = (extra: Record<string, unknown> = {}) =>
-  loadOrBuildIndex(parseConfig({ cellsDir, boxRadiusKm: 0, leafZoom: 16, ...extra }), dataDir);
+  loadOrBuildIndex(cellsConfig({ cellsDir, boxRadiusKm: 0, leafZoom: 16, ...extra }), dataDir);
 
 // A junction on Windows, which needs no symlink privilege; the type is ignored elsewhere.
 const linkDir = (target: string, link: string) => fs.symlinkSync(target, link, "junction");
@@ -106,7 +108,7 @@ describe("cell directories", () => {
   test("an indexDir a save would refuse fails the start before the build, naming it", () => {
     copyCell("FI4SYNTH");
     // The charts' parent: it holds the cells and the plugin's data.
-    const p = planIndex(parseConfig({ cellsDir, indexDir: tmp, boxRadiusKm: 0 }), dataDir);
+    const p = planIndex(cellsConfig({ cellsDir, indexDir: tmp, boxRadiusKm: 0 }), dataDir);
     expect(p).toEqual({
       load: {
         indexDir: tmp,
@@ -130,9 +132,8 @@ describe("cell directories", () => {
     copyCell("FI4SYNTH");
     await load();
     expect(readSource(path.join(dataDir, "index"))).toBe(`dir:${path.resolve(cellsDir)}`);
-    await load({ chartsProviderEnc: "Gulf_of_Finland" });
-    expect(indexSource(parseConfig({ cellsDir, chartsProviderEnc: "Gulf_of_Finland" }))).toBe(
-      "charts-provider:Gulf_of_Finland"
+    expect(indexSource(cellsConfig({ cellsDir, chartsProvider: CHARTS_PROVIDER_ID }))).toBe(
+      "charts-provider:*"
     );
   });
 
@@ -142,7 +143,7 @@ describe("cell directories", () => {
     const other = path.join(tmp, "other");
     fs.mkdirSync(other);
     const r = await loadOrBuildIndex(
-      parseConfig({ cellsDir: other, boxRadiusKm: 0, leafZoom: 16 }),
+      cellsConfig({ cellsDir: other, boxRadiusKm: 0, leafZoom: 16 }),
       dataDir
     );
     expect(r.index).toBeUndefined();
@@ -152,7 +153,7 @@ describe("cell directories", () => {
     // Gone, as a drive not yet mounted: the same.
     fs.rmSync(other, { recursive: true });
     const gone = await loadOrBuildIndex(
-      parseConfig({ cellsDir: other, boxRadiusKm: 0, leafZoom: 16 }),
+      cellsConfig({ cellsDir: other, boxRadiusKm: 0, leafZoom: 16 }),
       dataDir
     );
     expect(gone.index).toBeUndefined();
@@ -163,7 +164,7 @@ describe("cell directories", () => {
     const other = path.join(tmp, "other");
     fs.mkdirSync(other);
     copyCell("FI4SYNTH");
-    const box = (dir: string) => parseConfig({ cellsDir: dir, boxRadiusKm: 2, leafZoom: 16 });
+    const box = (dir: string) => cellsConfig({ cellsDir: dir, boxRadiusKm: 2, leafZoom: 16 });
     const p = planIndex(box(cellsDir), dataDir);
     if (!("build" in p)) {
       // No position yet: the box waits; save one as the box service would.
@@ -197,20 +198,22 @@ describe("cell directories", () => {
     });
   });
 
-  test("a collection is its source wherever its store is, so an unmounted store keeps its index", async () => {
-    const store = path.join(tmp, "store", "Gulf_of_Finland");
-    copyCell("FI4SYNTH", store);
+  test("the charts provider is its source wherever its store is, so an unmounted store keeps its index", async () => {
+    const store = path.join(tmp, "store");
+    copyCell("FI4SYNTH", path.join(store, "Gulf_of_Finland"));
     const shared = (dir: string) =>
       loadOrBuildIndex(
-        {
-          ...parseConfig({ chartsProviderEnc: "Gulf_of_Finland", boxRadiusKm: 0, leafZoom: 16 }),
-          cellsDir: dir
-        },
+        cellsConfig({
+          chartsProvider: CHARTS_PROVIDER_ID,
+          cellsDir: dir,
+          boxRadiusKm: 0,
+          leafZoom: 16
+        }),
         dataDir
       );
     await shared(store);
     // The store read at another path, as the default one while the provider starts.
-    const r = await shared(path.join(tmp, "default", "Gulf_of_Finland"));
+    const r = await shared(path.join(tmp, "default"));
     expect(names(r)).toEqual(["FI4SYNTH"]);
     expect(r.reason).toMatch(/not found; using the saved index/);
   });
@@ -221,7 +224,7 @@ describe("cell directories", () => {
     const r = await loadOrBuildIndex(parseConfig({ boxRadiusKm: 0, leafZoom: 16 }), dataDir);
     expect(r.index).toBeUndefined();
     expect(r.reason).toBe(
-      `not using the saved index: the saved index was built from ${path.resolve(cellsDir)}, not the cells now set; set cellsDir`
+      `not using the saved index: the saved index was built from ${path.resolve(cellsDir)}, not the cells now set; choose the charts provider`
     );
     // An index saved before sources were recorded is loaded as before.
     fs.rmSync(path.join(dataDir, "index", SOURCE_FILE));
@@ -235,7 +238,7 @@ describe("cell directories", () => {
     fs.rmSync(path.join(dataDir, "index", SOURCE_FILE));
     const other = path.join(tmp, "other");
     const r = await loadOrBuildIndex(
-      parseConfig({ cellsDir: other, boxRadiusKm: 0, leafZoom: 16 }),
+      cellsConfig({ cellsDir: other, boxRadiusKm: 0, leafZoom: 16 }),
       dataDir
     );
     expect(names(r)).toEqual(["FI4SYNTH"]);
@@ -384,7 +387,7 @@ describe("a saved index too large to load on the event loop", () => {
   test("is planned as a read, and the read off the loop loads the same index", async () => {
     copyCell("FI4SYNTH");
     await load();
-    const p = planIndex(parseConfig({ cellsDir, boxRadiusKm: 0, leafZoom: 16 }), dataDir, [], 0);
+    const p = planIndex(cellsConfig({ cellsDir, boxRadiusKm: 0, leafZoom: 16 }), dataDir, [], 0);
     expect(p).toMatchObject({ read: path.join(dataDir, "index"), notes: [] });
     if (!("read" in p)) {
       return;
@@ -406,7 +409,7 @@ describe("a saved index too large to load on the event loop", () => {
     await load();
     const file = path.join(dataDir, "index", "pyramid.bin");
     fs.truncateSync(file, Math.floor(fs.statSync(file).size / 2));
-    const p = planIndex(parseConfig({ cellsDir, boxRadiusKm: 0, leafZoom: 16 }), dataDir, [], 0);
+    const p = planIndex(cellsConfig({ cellsDir, boxRadiusKm: 0, leafZoom: 16 }), dataDir, [], 0);
     if (!("read" in p)) {
       throw new Error("expected a read plan");
     }
@@ -432,7 +435,7 @@ describe("a saved index built in a box around the vessel", () => {
   const indexDir = (): string => path.join(dataDir, "index");
   const BOX = boxAround(ROCK, 1);
   const config = (extra: Record<string, unknown> = {}) =>
-    parseConfig({ cellsDir, leafZoom: 16, ...extra });
+    cellsConfig({ cellsDir, leafZoom: 16, ...extra });
   /** Builds and commits the cells around ROCK, as the box service does. */
   const saveBoxIndex = async (): Promise<void> => {
     const dirs = cellSources(cellsDir);

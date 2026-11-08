@@ -7,16 +7,13 @@ import type { Clock } from "./monitor";
  * cells behind its ENC charts as delivered, one folder per collection (an
  * ENC Charts set's cells, or a converted chart's):
  * `<root>/<collection>/<CELL>/<CELL>.000` with the updates beside it. The
- * plugin reads a collection, or the whole store, as its cells directory,
+ * plugin reads a collection, or the whole store, as its only cells directory,
  * and is told when the cells change. See that plugin's docs/enc-store.md.
  */
 
 export const CHARTS_PROVIDER_ID = "signalk-charts-provider-simple";
 /** Every collection the charts provider shares. */
 export const ALL_COLLECTIONS = "*";
-const COLLECTION_ID = /^[A-Za-z0-9_-]{1,80}$/;
-/** A collection choice for the admin form, with the space around it that parsing trims. */
-export const COLLECTION_CHOICE_PATTERN = "^\\s*(\\*|[A-Za-z0-9_-]{1,80})?\\s*$";
 
 export interface SharedEncCollection {
   id: string;
@@ -33,10 +30,18 @@ export interface SharedAreaAnswer {
   retryAfterMs?: number;
 }
 
+/** A stored cell reaching an area, as the charts provider's `cellsIn` gives it. */
+export interface SharedAreaCell {
+  collection: string;
+  cell: string;
+  /** Absolute path of its `.000` file. */
+  base: string;
+}
+
 /**
  * The part of the charts provider's `globalThis.__signalk_chartsProviderEnc` used here.
- * `state` and `requestArea` came after the API's first release: an older charts provider
- * lacks them.
+ * `state`, `cellsIn` and `requestArea` came after the API's first release: an older charts
+ * provider lacks them.
  */
 export interface SharedEncApi {
   apiVersion: number;
@@ -44,15 +49,12 @@ export interface SharedEncApi {
   collections: () => SharedEncCollection[];
   onChange: (listener: (collectionId: string) => void) => () => void;
   state?: (id: string) => { state: string; detail?: string };
+  /** The stored cells reaching `bbox`; reads the whole store, so ask only when the area changes. */
+  cellsIn?: (bbox: readonly [number, number, number, number]) => SharedAreaCell[];
   requestArea?: (
     bbox: readonly [number, number, number, number],
     requester: string
   ) => SharedAreaAnswer;
-}
-
-/** A collection's id, or ALL_COLLECTIONS. */
-export function isCollectionChoice(value: string): boolean {
-  return value === ALL_COLLECTIONS || COLLECTION_ID.test(value);
 }
 
 /** The charts provider's ENC store API, while that plugin runs in this server. */
@@ -84,26 +86,50 @@ export function sharedCellsDir(dataDir: string, collection: string, api = shared
   return collection === ALL_COLLECTIONS ? root : path.join(root, collection);
 }
 
-/** `cfg` reading its cells from the charts provider's collection when it names one. */
+/** `cfg` reading its cells from the charts provider's collection it names; none without one. */
 export function withSharedCells(
   cfg: PluginConfig,
   dataDir: string,
   api = sharedEncApi()
 ): PluginConfig {
+  const { cellsDir: _none, ...rest } = cfg;
   return cfg.chartsProviderEnc === undefined
-    ? cfg
-    : { ...cfg, cellsDir: sharedCellsDir(dataDir, cfg.chartsProviderEnc, api) };
+    ? rest
+    : { ...rest, cellsDir: sharedCellsDir(dataDir, cfg.chartsProviderEnc, api) };
 }
 
-/** One line naming the collections the charts provider shares, for the admin form. */
-export function collectionsHint(api = sharedEncApi()): string | undefined {
+/**
+ * The chart provider services running in this server, by id, and what Charts Provider shares
+ * now, for the admin form.
+ */
+export function runningProviders(scope: object = globalThis): {
+  running: string[];
+  shared?: string;
+} {
+  const api = sharedEncApi(scope);
+  const shared = collectionsHint(api);
+  return {
+    running: api ? [CHARTS_PROVIDER_ID] : [],
+    ...(shared === undefined ? {} : { shared })
+  };
+}
+
+/** The collections the charts provider shares now; undefined while it cannot tell. */
+export function sharedCollections(api = sharedEncApi()): SharedEncCollection[] | undefined {
   if (!api) {
     return undefined;
   }
-  let collections: SharedEncCollection[];
   try {
-    collections = api.collections();
+    return api.collections();
   } catch {
+    return undefined;
+  }
+}
+
+/** One line naming the collections the charts provider shares. */
+export function collectionsHint(api = sharedEncApi()): string | undefined {
+  const collections = sharedCollections(api);
+  if (collections === undefined) {
     return undefined;
   }
   return collections.length === 0
@@ -143,7 +169,7 @@ export function sharedCellsNote(collection: string, api = sharedEncApi()): strin
         ? `Charts Provider is downloading ${collection}; the index is built once its cells are shared`
         : `${collection} is a Charts Provider chart set not downloaded yet: download it in its ENC Charts tab`;
     case "absent":
-      return `Charts Provider shares no ${collection}: check ENC from Charts Provider`;
+      return `Charts Provider shares no ${collection}: check the charts it shares`;
     default:
       return undefined;
   }
@@ -160,6 +186,21 @@ export function noteSharedCells<T extends { reason?: string }>(
       ? sharedCellsNote(cfg.chartsProviderEnc, api)
       : undefined;
   return note === undefined ? load : { ...load, reason: `${load.reason ?? ""}; ${note}` };
+}
+
+/**
+ * The stored cells of the charts provider reaching `bbox`; undefined when it cannot tell: not
+ * running, too old, or failing.
+ */
+export function sharedCellsIn(
+  bbox: readonly [number, number, number, number],
+  api = sharedEncApi()
+): SharedAreaCell[] | undefined {
+  try {
+    return api?.cellsIn?.(bbox);
+  } catch {
+    return undefined;
+  }
 }
 
 /** Asks the charts provider for the cells around `bbox`; undefined when it cannot be asked. */

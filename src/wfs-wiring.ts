@@ -7,7 +7,8 @@ import type { Rect } from "./foundation/geo";
 import { toMercator } from "./foundation/geo";
 import { cellCacheDir } from "./index-loader";
 import { indexSource } from "./index-source";
-import { ALL_COLLECTIONS, requestSharedArea } from "./shared-enc";
+import type { SharedAreaAnswer, SharedAreaCell } from "./shared-enc";
+import { ALL_COLLECTIONS, requestSharedArea, sharedCellsIn, sharedEncApi } from "./shared-enc";
 import type { Bbox } from "./ingest/wfs";
 import { WFS_SOURCE } from "./ingest/wfs";
 import { startLivechart } from "./livechart-service";
@@ -16,7 +17,7 @@ import type { FetchLike } from "./model/fmi";
 import type { Clock } from "./monitor";
 import type { ChartIndex } from "./spatial/chart-index";
 import { autoCapKm } from "./box-sizing";
-import type { EncBoxConfig, IndexBuilder } from "./wfs-service";
+import type { AreaRequests, EncBoxConfig, IndexBuilder } from "./wfs-service";
 import {
   inThreadRefresher,
   workerBuilder,
@@ -108,16 +109,14 @@ export function startBox(w: WfsWiring): WfsService | undefined {
 }
 
 /**
- * What each new box tells the charts provider: asks for its cells with `chartsProviderArea`
- * on, and only while the source is `*`, as they arrive in a chart set of their own.
+ * The asking a configuration does: every new box asks the chosen charts provider for its
+ * cells, which it downloads into a chart set of its own; none without a provider.
  */
 export function areaRequests(
-  config: Pick<PluginConfig, "chartsProviderArea" | "chartsProviderEnc">,
+  config: Pick<PluginConfig, "chartsProviderEnc">,
   app: Pick<ServerAPI, "error" | "debug">
-): ((bbox: Bbox) => number | undefined) | undefined {
-  return config.chartsProviderArea && config.chartsProviderEnc === ALL_COLLECTIONS
-    ? askForArea(app)
-    : undefined;
+): AreaRequests | undefined {
+  return config.chartsProviderEnc === ALL_COLLECTIONS ? askForArea(app) : undefined;
 }
 
 /** How soon, and how late, a box is asked about again: Charts Provider starting, or busy. */
@@ -126,29 +125,72 @@ export const AREA_ASK_MAX_MS = 30 * 60_000;
 const ASK_STARTING_MS = 5 * 60_000;
 
 /**
+ * What the provider said of a box, as the status gives it when the vessel has no chart
+ * coverage: from its answer to the area request and the cells it has stored there (`cells`,
+ * undefined when it cannot tell). Undefined when it has cells there and is not downloading:
+ * a gap at the vessel is then the charts'.
+ */
+export function areaNote(
+  answer: SharedAreaAnswer | undefined,
+  cells: readonly SharedAreaCell[] | undefined,
+  running = sharedEncApi() !== undefined
+): string | undefined {
+  if (answer === undefined) {
+    return unaskedNote(running);
+  }
+  if (answer.started) {
+    return "Charts Provider is downloading the ENC around the vessel";
+  }
+  if (cells === undefined) {
+    return `Charts Provider: ${answer.reason}`;
+  }
+  if (cells.length > 0) {
+    return undefined;
+  }
+  // Accepted and not started: no free ENC covers the area, or its download waits for the
+  // internet connection; the provider's reason says which.
+  return answer.accepted
+    ? `Charts Provider has no ENC for this area: ${answer.reason}`
+    : `Charts Provider has no ENC for this area and does not download it: ${answer.reason}`;
+}
+
+/** Why the charts provider could not be asked: not running, or a version without `requestArea`. */
+function unaskedNote(running: boolean): string {
+  return running
+    ? "Charts Provider is too old to be asked for the ENC around the vessel: update it"
+    : "Charts Provider is not running";
+}
+
+/**
  * Asks the charts provider for each box's cells, logging its answer when it changes, and says
  * when to ask again: when the provider says so, or is not running yet.
  */
-function askForArea(app: Pick<ServerAPI, "error" | "debug">): (bbox: Bbox) => number | undefined {
+function askForArea(app: Pick<ServerAPI, "error" | "debug">): AreaRequests {
   let last: string | undefined;
-  return (bbox) => {
-    const answer = requestSharedArea(bbox);
-    const line =
-      answer === undefined
-        ? "Charts Provider cannot be asked for the ENC around the vessel: it is not running, or too old"
-        : `Charts Provider, asked for the ENC around the vessel: ${answer.reason}`;
-    if (line !== last) {
-      last = line;
-      if (answer?.accepted === true) {
-        app.debug(line);
-      } else {
-        app.error(line);
+  let note: string | undefined;
+  return {
+    note: () => note,
+    ask: (bbox) => {
+      const api = sharedEncApi();
+      const answer = requestSharedArea(bbox, api);
+      note = areaNote(answer, answer === undefined ? undefined : sharedCellsIn(bbox, api), !!api);
+      const line =
+        answer === undefined
+          ? unaskedNote(!!api)
+          : `Charts Provider, asked for the ENC around the vessel: ${answer.reason}`;
+      if (line !== last) {
+        last = line;
+        if (answer?.accepted === true) {
+          app.debug(line);
+        } else {
+          app.error(line);
+        }
       }
+      const ms = answer === undefined ? ASK_STARTING_MS : answer.retryAfterMs;
+      return typeof ms === "number" && Number.isFinite(ms)
+        ? Math.min(AREA_ASK_MAX_MS, Math.max(AREA_ASK_MIN_MS, ms))
+        : undefined;
     }
-    const ms = answer === undefined ? ASK_STARTING_MS : answer.retryAfterMs;
-    return typeof ms === "number" && Number.isFinite(ms)
-      ? Math.min(AREA_ASK_MAX_MS, Math.max(AREA_ASK_MIN_MS, ms))
-      : undefined;
   };
 }
 
@@ -166,7 +208,7 @@ export function startWfs(
     cacheDir: cellCacheDir(w.app.getDataDirPath()),
     leafZoom: w.config.leafZoom,
     source: indexSource(w.config),
-    onBox: areaRequests(w.config, w.app),
+    area: areaRequests(w.config, w.app),
     cellsDir: w.config.cellsDir,
     inBox: w.config.boxRadiusKm > 0,
     index: () => w.state.load?.index,

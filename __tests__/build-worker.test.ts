@@ -12,6 +12,8 @@ import underkeel = require("../src/index");
 import { CELLS, FIXTURES } from "./helpers/fixture-index";
 import { fakeApp, fakeClock, T0 } from "./helpers/plugin-harness";
 import { spreadCells } from "./helpers/shifted-cells";
+import { chartsProviderAt } from "./helpers/charts-provider";
+import { CONFIG_VERSION } from "../src/config-migrate";
 
 /**
  * The off-loop index build behind the Traficom WFS box (plan §4.2, §6). The build runs in a
@@ -176,7 +178,12 @@ describe("workerBuilder (compiled lib/)", () => {
     fs.mkdirSync(dataDir);
     const plugin = underkeel(fakeApp(dataDir).app, fakeClock(T0), globalThis.fetch, build);
     // A current configuration, so no version 1 backup lands in the data directory.
-    const options = { configVersion: 2, cellsDir: CELLS, boxRadiusKm: 0, leafZoom: 18 };
+    const options = {
+      configVersion: CONFIG_VERSION,
+      ...chartsProviderAt(CELLS),
+      boxRadiusKm: 0,
+      leafZoom: 18
+    };
     plugin.start(options, () => undefined);
     await new Promise((resolve) => setImmediate(resolve));
     plugin.stop();

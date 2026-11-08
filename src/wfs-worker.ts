@@ -23,8 +23,9 @@ export interface WfsJob {
   cellsDir?: string;
   /**
    * Finding no S-57 cell in `cellsDir` fails the refresh and keeps the index in use: the
-   * drive holding the cells has most likely been unmounted. Without it the refresh fails so
-   * too while the index saved in `build.indexDir` holds S-57 cells (`cellsMissing`).
+   * charts provider's store is away, as on a drive unmounted. Without it the refresh fails so
+   * too while the index saved in `build.indexDir` holds S-57 cells (`cellsMissing`); with
+   * WFS depths alone, or none, a WFS download builds whatever ENC the provider has.
    */
   cellsRequired?: boolean;
   /** Builds in this box (plan §4.2), not whole. */

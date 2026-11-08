@@ -288,7 +288,8 @@ The box, the cell stamps it was chosen from and the leaf zoom are saved beside t
 (`box.json`). A start loads the saved index while they match and rebuilds in the saved box
 when they do not, also when the saved index cannot be read; it never falls back to a build of
 every cell. With no saved box it stays `off` with "waiting for the vessel position to build
-the chart box" until the first position. The refresh worker scans `cellsDir` and stamps the
+the chart box" until the first position. The refresh worker scans the cells directory (`cellsDir`,
+the charts provider's store, §4.15) and stamps the
 cells off the event loop. A refresh is due, besides the WFS rules, whenever no index of the
 service's box is in use; whether the saved index was built in the saved box is read at the
 first check, after the start plan has moved a crash-left index back or built one, so a
@@ -1761,6 +1762,25 @@ water-level source, warning style and the three optional features; the other fie
 the warning style or keep their defaults, and are edited under **Show
 expert settings**.
 
+**Decision (configuration v3): ENC from a chart provider service only.** Version 3 replaces
+the cells directory, **ENC from Charts Provider** and **Ask Charts Provider for the ENC around
+the vessel** with one pulldown, **Charts provider**, that names a service rather than what it
+holds: choosing signalk-charts-provider-simple reads every cell its ENC store shares
+(`cellsDir` is derived from its `root`, `chartsProviderEnc` is `*`, neither a setting), and
+every index box asks it for the area's cells (`requestArea`), its own **Download the ENC cells
+around the vessel** deciding whether it downloads them. The plugin keeps no ENC of its own,
+so the cells one boat reads come through the provider's checks and listener. The enum is
+static, as the settings patch is checked against `SCHEMA`; the admin form marks a provider not
+running and adds what it shares (`collectionsHint`). Where the vessel has no coverage and no
+box edge explains it, the reason adds the provider's answer for the box (`areaNote` in
+`src/wfs-wiring.ts`): downloading, no ENC for this area by `cellsIn` (with the provider's
+reason), not running, or too old to be asked; the state is the same (invariant 3). The area
+request is advisory: a failure is logged and never stops a box refresh. Traficom WFS
+downloads do not wait for the provider, but keep an index of charted hazards whose cells are
+gone (`cellsMissing`, §4.2). Migration from version 2 drops `cellsDir`, `chartsProviderEnc`
+and `chartsProviderArea`, sets `chartsProvider` when a collection was named, and keeps the
+version 2 configuration as `config-v2.json`.
+
 - **One schema.** `adminSchema()` in `src/config-schema.ts` is written by hand with
   `dependencies`: expert fields behind `showExpert`, a source's fields behind `source`, a
   feature's behind `enabled`, the heel table behind `keel: table`. `SCHEMA` is the same schema
@@ -1773,11 +1793,13 @@ expert settings**.
 - **No default on a preset field.** The admin form writes every default into the saved
   configuration, where it would override the preset. The style's fields have none.
 - **Versioned configuration.** `configVersion` is saved outside the schema, which the form
-  keeps as extra data. `migrateConfig()` runs one step per version at start; version 1 to 2
+  keeps as extra data. `migrateConfig()` runs one step per version at start (version 2 to 3
+  above); version 1 to 2
   drops the look-ahead values equal to the version 1 form defaults, unless the configuration
   already names a style. Over generated version 1 configurations the
   parsed options are identical before and after (`__tests__/config-migrate.test.ts`). The
-  first migration keeps the original as `config-v1.json` in the plugin data directory and
+  first migration from a version keeps the original as `config-v<version>.json` in the plugin
+  data directory and
   saves the result with `savePluginOptions`, which writes without a restart; a backup that
   cannot be written leaves the saved configuration alone. A newer version is read as it is.
 - **Setup lives in the details panel.** **Open setup** in the details panel loads
@@ -2047,9 +2069,11 @@ it is distributed. Needed from the start:
    updates beside it, one collection per chart set or converted chart, each cell renamed into
    place whole (work folders start with `.`, which the cell scan skips), and publishes
    `globalThis.__signalk_chartsProviderEnc` with the store's root and a change listener.
-   **ENC from Charts Provider** names a collection, or `*` for the whole store, as the cells
-   directory (`src/shared-enc.ts`), and a change to it restarts the plugin, whose start
-   rebuilds the index when the cells' stamps changed.
+   **Charts provider** reads the whole store as the cells directory (`src/shared-enc.ts`,
+   §4.15), and a change to it restarts the plugin, whose start rebuilds the index when the
+   cells' stamps changed. From 2.18.0 it also tells a collection's `state`, the stored
+   cells reaching an area (`cellsIn`) and downloads an area's free ENC on request
+   (`requestArea`); the plugin uses each only when present.
 2. What are the exact FMI WFS stored-query ids and station metadata for sea level? Does FMI
    publish forecast error statistics, or must we calibrate σ ourselves?
 3. Finnish ENC vertical datum coding during the N2000 transition: is `M_VDAT` reliable

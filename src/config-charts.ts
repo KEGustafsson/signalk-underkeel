@@ -1,35 +1,46 @@
-import { COLLECTION_CHOICE_PATTERN } from "./shared-enc";
+import { CHARTS_PROVIDER_ID } from "./shared-enc";
 
 /**
- * The admin form's chart fields: a directory of S-57 cells, or the cells
- * signalk-charts-provider-simple shares (`shared-enc.ts`).
+ * The admin form's chart field: the chart provider service whose ENC cells the plugin reads
+ * (`shared-enc.ts`). The plugin reads every cell that service shares, and no ENC of its own.
  */
-export function chartFields(sharedNow: string | undefined): Record<string, unknown> {
+
+/** A chart provider service the plugin can read ENC cells from. */
+export interface ChartProvider {
+  id: string;
+  name: string;
+}
+
+/** The services whose ENC store the plugin reads. */
+export const CHART_PROVIDERS: readonly ChartProvider[] = [
+  { id: CHARTS_PROVIDER_ID, name: "Charts Provider (signalk-charts-provider-simple)" }
+];
+
+/** Which of CHART_PROVIDERS run in this server now, as the admin form lists them. */
+export interface ProviderChoices {
+  running: readonly string[];
+  /** What Charts Provider shares now, in a sentence (`collectionsHint`). */
+  shared?: string;
+}
+
+const DESCRIPTION =
+  "The chart provider service whose ENC cells the index is built from. Every ENC cell it shares is read in place with GDAL, and the index is rebuilt when its cells change. Empty: no charts.";
+
+/**
+ * The chart field: a pulldown of CHART_PROVIDERS. With `choices`, each is marked running or
+ * not, and the description says what Charts Provider shares now.
+ */
+export function chartFields(choices?: ProviderChoices): Record<string, unknown> {
+  const running = new Set(choices?.running ?? []);
   return {
-    cellsDir: {
+    chartsProvider: {
       type: "string",
-      title: "ENC cells directory",
-      description:
-        "S-57 ENC cells as delivered: .000 files with their .001, .002 … updates, also in sub-folders such as ENC_ROOT. Read directly with GDAL (WebAssembly); nothing is converted."
-    },
-    chartsProviderEnc: {
-      type: "string",
-      pattern: COLLECTION_CHOICE_PATTERN,
-      title: "ENC from Charts Provider",
-      description:
-        "Or read the ENC cells signalk-charts-provider-simple keeps: the name of an ENC Charts set there (Gulf of Finland is Gulf_of_Finland) or of a converted chart whose cells it keeps, or * for all of them. Used instead of the ENC cells directory; the index is rebuilt when the cells change." +
-        (sharedNow ? ` ${sharedNow}` : "")
+      title: "Charts provider",
+      description: choices?.shared === undefined ? DESCRIPTION : `${DESCRIPTION} ${choices.shared}`,
+      enum: CHART_PROVIDERS.map((p) => p.id),
+      enumNames: CHART_PROVIDERS.map((p) =>
+        choices === undefined || running.has(p.id) ? p.name : `${p.name}: not running`
+      )
     }
   };
 }
-
-/** The expert field asking Charts Provider for the cells around the vessel (`shared-enc.ts`). */
-export const CHART_AREA_FIELD = {
-  chartsProviderArea: {
-    type: "boolean",
-    title: "Ask Charts Provider for the ENC around the vessel",
-    description:
-      'With ENC from Charts Provider set to * and Charts Provider\'s "Download the ENC cells around the vessel" on, each new index box asks it to download the free ENC cells of that area; they arrive in its chart set "Around the vessel" and the index is rebuilt with them. Off: only the cells already shared are read.',
-    default: false
-  }
-};

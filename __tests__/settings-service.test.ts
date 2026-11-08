@@ -5,9 +5,11 @@ import type { ServerAPI } from "@signalk/server-api";
 import type { ApiProvider } from "../src/api/routes";
 import { registerRoutes } from "../src/api/routes";
 import type { PluginState } from "../src/api-wiring";
-import { migrateConfig } from "../src/config-migrate";
+import { CONFIG_VERSION, migrateConfig } from "../src/config-migrate";
+import { CHARTS_PROVIDER_ID } from "../src/shared-enc";
 import {
   applyPatch,
+  backupName,
   patchErrors,
   persistMigration,
   saveSettings,
@@ -35,7 +37,7 @@ describe("settings patch", () => {
     expect(
       patchErrors(
         {
-          cellsDir: "/charts",
+          chartsProvider: CHARTS_PROVIDER_ID,
           warningStyle: "early",
           vessel: { draft: 2.1, keel: "fin", margin: null },
           waterLevel: { source: "fmi" },
@@ -108,16 +110,13 @@ describe("saving settings", () => {
   test("answers 202 and restarts with the patched configuration after the reply", () => {
     const restarts: object[] = [];
     const later: (() => void)[] = [];
-    const s = state({ cellsDir: "/c", configVersion: 2, vessel: { draft: 2 } }, (c) =>
-      restarts.push(c)
-    );
+    const current = { chartsProvider: CHARTS_PROVIDER_ID, configVersion: CONFIG_VERSION };
+    const s = state({ ...current, vessel: { draft: 2 } }, (c) => restarts.push(c));
     const reply = saveSettings({ vessel: { keel: "fin" } }, s, fail, (f) => later.push(f));
     expect(reply).toEqual({ status: 202, body: { restarting: true } });
     expect(restarts).toEqual([]);
     later.forEach((f) => f());
-    expect(restarts).toEqual([
-      { cellsDir: "/c", configVersion: 2, vessel: { draft: 2, keel: "fin" } }
-    ]);
+    expect(restarts).toEqual([{ ...current, vessel: { draft: 2, keel: "fin" } }]);
   });
 
   test("a bad patch is refused 400 and nothing restarts", () => {
@@ -204,16 +203,26 @@ describe("saving a migrated configuration", () => {
     const { app, saved } = fakeApp();
     const v1 = { cellsDir: "/c", lookahead: { warnRisk: 0.05 } };
     persistMigration(app, v1, migrateConfig(v1));
-    expect(saved).toEqual([{ cellsDir: "/c", lookahead: {}, configVersion: 2 }]);
+    expect(saved).toEqual([{ lookahead: {}, configVersion: CONFIG_VERSION }]);
     const backup = path.join(dataDir, V1_BACKUP);
     expect(JSON.parse(fs.readFileSync(backup, "utf8"))).toEqual(v1);
     persistMigration(app, { other: true }, migrateConfig({ other: true }));
     expect(JSON.parse(fs.readFileSync(backup, "utf8"))).toEqual(v1);
   });
 
+  test("keeps a version 2 configuration once, beside the version 1 backup", () => {
+    const { app, saved } = fakeApp();
+    const v2 = { configVersion: 2, cellsDir: "/c", chartsProviderEnc: "Gulf_of_Finland" };
+    persistMigration(app, v2, migrateConfig(v2));
+    expect(saved).toEqual([{ configVersion: CONFIG_VERSION, chartsProvider: CHARTS_PROVIDER_ID }]);
+    expect(JSON.parse(fs.readFileSync(path.join(dataDir, backupName(2)), "utf8"))).toEqual(v2);
+    expect(fs.existsSync(path.join(dataDir, V1_BACKUP))).toBe(false);
+  });
+
   test("saves nothing for a current configuration", () => {
     const { app, saved } = fakeApp();
-    persistMigration(app, { configVersion: 2 }, migrateConfig({ configVersion: 2 }));
+    const current = { configVersion: CONFIG_VERSION };
+    persistMigration(app, current, migrateConfig(current));
     expect(saved).toEqual([]);
     expect(fs.existsSync(path.join(dataDir, V1_BACKUP))).toBe(false);
   });
