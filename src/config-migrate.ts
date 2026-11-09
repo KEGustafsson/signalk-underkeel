@@ -4,7 +4,9 @@
  * it is and read for the fields this version knows.
  */
 
-export const CONFIG_VERSION = 2;
+import { CHARTS_PROVIDER_ID } from "./shared-enc";
+
+export const CONFIG_VERSION = 3;
 
 type Raw = Record<string, unknown>;
 
@@ -56,8 +58,30 @@ function v1ToV2(c: Raw, dropped: string[]): Raw {
   return out;
 }
 
+/**
+ * Version 3 reads ENC only from a chart provider service, every cell it shares, and asks it
+ * for the cells around the vessel unasked: the cells directory and the asking switch are gone,
+ * and a Charts Provider collection chosen in version 2 becomes the choice of that service.
+ */
+function v2ToV3(c: Raw, dropped: string[]): Raw {
+  const { cellsDir, chartsProviderEnc, chartsProviderArea, ...out } = c;
+  if (cellsDir !== undefined) {
+    dropped.push("cellsDir");
+  }
+  if (chartsProviderArea !== undefined) {
+    dropped.push("chartsProviderArea");
+  }
+  if (chartsProviderEnc !== undefined) {
+    dropped.push("chartsProviderEnc");
+    if (typeof chartsProviderEnc === "string" && chartsProviderEnc.trim() !== "") {
+      out.chartsProvider ??= CHARTS_PROVIDER_ID;
+    }
+  }
+  return out;
+}
+
 /** Step n takes version n to n + 1. */
-const STEPS: Record<number, (c: Raw, dropped: string[]) => Raw> = { 1: v1ToV2 };
+const STEPS: Record<number, (c: Raw, dropped: string[]) => Raw> = { 1: v1ToV2, 2: v2ToV3 };
 
 export interface Migration {
   config: Raw;
@@ -65,7 +89,7 @@ export interface Migration {
   from: number;
   /** Whether `config` differs from what was saved and should be saved. */
   changed: boolean;
-  /** Paths of the fields removed as version 1 form defaults. */
+  /** Paths of the fields removed: version 1 form defaults, and version 2's ENC settings. */
   dropped: string[];
 }
 

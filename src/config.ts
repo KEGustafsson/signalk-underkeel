@@ -13,7 +13,7 @@ import { DEFAULT_WFS_URL, WFS_LIMITS } from "./ingest/wfs";
 import type { WarningStyle } from "./config-presets";
 import { WARNING_PRESETS, warningStyle } from "./config-presets";
 import { MAX_BOX_KM } from "./box-sizing";
-import { isCollectionChoice } from "./shared-enc";
+import { ALL_COLLECTIONS, CHARTS_PROVIDER_ID } from "./shared-enc";
 
 export { SCHEMA } from "./config-schema";
 
@@ -26,16 +26,18 @@ export { SCHEMA } from "./config-schema";
 export interface PluginConfig {
   /** Directory holding a built index (cells.json, pyramid.bin, hazards.bin). */
   indexDir?: string;
-  /** Directory of S-57 cells (`.000` with updates, also in sub-folders) to build from. */
+  /**
+   * Directory of S-57 cells (`.000` with updates, also in sub-folders) to build from: the
+   * charts provider's collection `chartsProviderEnc` names (`withSharedCells`). Not a setting.
+   */
   cellsDir?: string;
   /**
-   * A collection of the ENC cells signalk-charts-provider-simple shares, or `*` for all of
-   * them, read in place of `cellsDir` (`shared-enc.ts`).
+   * The ENC cells signalk-charts-provider-simple shares that the plugin reads: `*`, all of
+   * them, when the `chartsProvider` setting chooses that service; the only ENC the plugin
+   * reads (`shared-enc.ts`).
    */
   chartsProviderEnc?: string;
-  /** Ask the charts provider for the cells around each index box (`shared-enc.ts`). */
-  chartsProviderArea: boolean;
-  /** Rebuild the index from cellsDir at start even when one exists. */
+  /** Rebuild the index from the cells at start even when one exists. */
   rebuildIndex: boolean;
   /** Leaf zoom of the pyramid; z20 ≈ 19 m tiles at 60°N. */
   leafZoom: number;
@@ -105,15 +107,6 @@ function optionalPositive(v: unknown): number | undefined {
 
 function str(v: unknown): string | undefined {
   return typeof v === "string" && v.trim() !== "" ? v : undefined;
-}
-
-/**
- * A charts provider collection id or `*`, trimmed. Anything else, a path out of the store
- * among them, is no choice, and the ENC cells directory stays in use.
- */
-function collectionChoice(v: unknown): string | undefined {
-  const s = str(v)?.trim();
-  return s !== undefined && isCollectionChoice(s) ? s : undefined;
 }
 
 function record(v: unknown): Record<string, unknown> {
@@ -269,9 +262,7 @@ export function parseConfig(raw: unknown): PluginConfig {
   const style = warningStyle(r.warningStyle);
   return {
     indexDir: str(r.indexDir),
-    cellsDir: str(r.cellsDir),
-    chartsProviderEnc: collectionChoice(r.chartsProviderEnc),
-    chartsProviderArea: r.chartsProviderArea === true,
+    chartsProviderEnc: r.chartsProvider === CHARTS_PROVIDER_ID ? ALL_COLLECTIONS : undefined,
     rebuildIndex: r.rebuildIndex === true,
     leafZoom: Math.round(num(r.leafZoom, 20, 14, 22)),
     boxRadiusKm: boxRadius(r.boxRadiusKm),

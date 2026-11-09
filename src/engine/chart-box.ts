@@ -24,6 +24,8 @@ export interface ChartBoxView {
   lastMs?: number;
   /** The box service's status line, when it has something to say. */
   summary?: string;
+  /** What the charts provider last answered when asked for the ENC around the vessel. */
+  providerNote?: string;
 }
 
 /** A duration as the status says it: tens of seconds under 90 s, else whole minutes. */
@@ -66,8 +68,9 @@ function boxState(box: ChartBoxView): string {
 
 /**
  * `reason` with what the chart box has to do with it, when it is a no-coverage reason
- * (`verdict.ts`) and the footprint it names reaches the box edge; otherwise `reason`. The
- * footprint is the first at or after the time the reason gives.
+ * (`verdict.ts`) and the footprint it names reaches the box edge; with what the charts
+ * provider last answered when no box edge explains it; otherwise `reason`. The footprint is
+ * the first at or after the time the reason gives.
  */
 export function boxCoverage(
   reason: string,
@@ -75,13 +78,14 @@ export function boxCoverage(
   box: ChartBoxView
 ): string {
   const m = COVERAGE_REASON.exec(reason);
-  if (!m || !box.bbox) {
+  if (!m) {
     return reason;
   }
   const t = m[1] === undefined ? 0 : Number(m[1]);
   const f = fps.find((x) => x.t >= t - 0.5) ?? fps[fps.length - 1];
-  if (!f || !atEdge(f, box.bbox)) {
-    return reason;
+  if (!f || !box.bbox || !atEdge(f, box.bbox)) {
+    // No box edge explains it: the charts have none there, and the provider may say why.
+    return box.providerNote === undefined ? reason : `${reason}: ${box.providerNote}`;
   }
   const where = insideBox(f.center, box.bbox) ? "at the chart box edge" : "outside the chart box";
   return `${reason}: ${where}, ${boxState(box)}`;

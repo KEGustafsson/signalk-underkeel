@@ -2,6 +2,10 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { parseConfig } from "../src/config";
+import type { SharedAreaAnswer } from "../src/shared-enc";
+import { withSharedCells } from "../src/shared-enc";
+import { chartsProviderAt } from "./helpers/charts-provider";
+import { cellsConfig } from "./helpers/cells-config";
 import type { LonLat } from "../src/foundation/geo";
 import { BOX_WAITING_REASON, cellSources, planIndex, sourceKeys } from "../src/index-loader";
 import { encBounds } from "../src/ingest/enc-bounds";
@@ -127,7 +131,7 @@ describe("index built in a box", () => {
 
 describe("start plan with a box", () => {
   const config = (extra: object = {}) =>
-    parseConfig({ cellsDir: CELLS, indexDir: path.join(dir, "index"), leafZoom: LEAF, ...extra });
+    cellsConfig({ cellsDir: CELLS, indexDir: path.join(dir, "index"), leafZoom: LEAF, ...extra });
 
   test("with no saved box nothing is built, and the reason says why (invariant 3)", () => {
     const p = planIndex(config(), dir);
@@ -158,6 +162,19 @@ describe("start plan with a box", () => {
     expect("build" in again && again.build.box).toEqual(job.box);
   });
 
+  test("with the charts provider chosen, changed cells rebuild in the saved box too", async () => {
+    const job = boxJob(ROCK, 2);
+    await boxBuilder(
+      { ...job, box: { bbox: job.box!.bbox, sources: ["an older cell"] } },
+      new AbortController().signal
+    );
+    const raw = { ...chartsProviderAt(CELLS), indexDir: path.join(dir, "index"), leafZoom: LEAF };
+    const provider = withSharedCells(parseConfig(raw), dir);
+    expect(provider.cellsDir).toBe(CELLS);
+    const p = planIndex(provider, dir);
+    expect("build" in p && p.build.box).toEqual(job.box);
+  });
+
   test("a saved box index built at another leaf zoom is rebuilt", async () => {
     const job = boxJob(ROCK, 2);
     await boxBuilder(job, new AbortController().signal);
@@ -174,6 +191,13 @@ describe("start plan with a box", () => {
   });
 });
 
+/** A charts provider whose cells already cover the vessel's area. */
+const HAS_AREA = (): SharedAreaAnswer => ({
+  accepted: true,
+  started: false,
+  reason: "the area's cells are downloaded"
+});
+
 describe("plugin with the box around the vessel", () => {
   const settle = async () => {
     for (let i = 0; i < 20; i++) {
@@ -188,7 +212,7 @@ describe("plugin with the box around the vessel", () => {
     plugin.start(
       {
         vessel: { draft: 2, length: 12, beam: 4 },
-        cellsDir: CELLS,
+        ...chartsProviderAt(CELLS, HAS_AREA),
         leafZoom: LEAF,
         boxRadiusKm: 2
       },
@@ -243,7 +267,7 @@ describe("plugin with the box around the vessel", () => {
     plugin.start(
       {
         vessel: { draft: 0.5, length: 12, beam: 4 },
-        cellsDir: CELLS,
+        ...chartsProviderAt(CELLS, HAS_AREA),
         leafZoom: LEAF,
         boxRadiusKm: 2
       },

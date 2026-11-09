@@ -1,6 +1,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
+import { AREA_ERROR_RETRY_MS } from "../src/shared-enc";
 import type { LonLat } from "../src/foundation/geo";
 import { haversine, project } from "../src/foundation/geo";
 import type { Bbox, WfsFetch } from "../src/ingest/wfs";
@@ -121,9 +122,12 @@ describe("WFS box around the vessel", () => {
     const boxes: Bbox[] = [];
     const jobs: (string | undefined)[] = [];
     const h = harness(okReply, {
-      onBox: (b) => {
-        boxes.push(b);
-        return undefined;
+      area: {
+        ask: (b) => {
+          boxes.push(b);
+          return undefined;
+        },
+        note: () => "Charts Provider is downloading the ENC around the vessel"
       },
       source: "charts-provider:*"
     });
@@ -138,15 +142,47 @@ describe("WFS box around the vessel", () => {
     await h.service.check();
     expect(boxes).toEqual([h.service.status().box?.bbox]);
     expect(jobs).toEqual(["charts-provider:*"]);
+    // The provider's answer goes into the no-coverage reason as the box view carries it.
+    expect(h.service.view().providerNote).toBe(
+      "Charts Provider is downloading the ENC around the vessel"
+    );
+  });
+
+  test("a failing area request is logged, the box still built, and the box asked about again", async () => {
+    let asks = 0;
+    const h = harness(okReply, {
+      area: {
+        ask: () => {
+          asks++;
+          throw new Error("provider gone");
+        },
+        note: () => undefined
+      }
+    });
+    h.t.pos = [22.08, 60.07];
+    await h.service.check();
+    expect(h.indexes).toHaveLength(1);
+    expect(h.errors).toEqual([
+      "Traficom WFS depths: asking for the area's cells failed: provider gone"
+    ]);
+    h.t.now += AREA_ERROR_RETRY_MS - 1;
+    await h.service.check();
+    expect(asks).toBe(1);
+    h.t.now += 1;
+    await h.service.check();
+    expect(asks).toBe(2);
   });
 
   test("a box is announced again when the answer says when, and only then", async () => {
     const boxes: Bbox[] = [];
     let again: number | undefined = 60_000;
     const h = harness(okReply, {
-      onBox: (b) => {
-        boxes.push(b);
-        return again;
+      area: {
+        ask: (b) => {
+          boxes.push(b);
+          return again;
+        },
+        note: () => undefined
       }
     });
     h.t.pos = [22.08, 60.07];

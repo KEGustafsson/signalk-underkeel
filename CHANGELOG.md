@@ -2,6 +2,47 @@
 
 All notable changes to signalk-underkeel are documented here.
 
+## [0.5.0] - 2026-11-09
+
+### Changed
+
+- **Breaking:** ENC cells come only from a chart provider service. **ENC cells directory**,
+  **ENC from Charts Provider** and **Ask Charts Provider for the ENC around the vessel** are
+  replaced by one pulldown, **Charts provider**, which chooses the service:
+  signalk-charts-provider-simple. Every ENC cell it shares is read, and the pulldown marks it
+  when it is not running and says what it shares. Cells of your own reach the index by
+  converting them in the charts provider with its **Keep the ENC cells of converted charts**
+  on.
+- Each new index box asks the chosen charts provider for the ENC cells of its area, without a
+  setting of its own; its **Download the ENC cells around the vessel** decides whether it
+  downloads them (signalk-charts-provider-simple 2.18.0 or later).
+- Where the vessel has no chart coverage, the reason adds what the charts provider answered
+  for the box: it is downloading the area, it has no ENC for this area (by the cells it has
+  stored there, with its reason), it is not running, or it is too old to be asked.
+- The configuration moves to version 3. The migration drops the cells directory and the two
+  Charts Provider settings, chooses the charts provider when a collection was named, and
+  keeps the version 2 configuration as `config-v2.json` in the plugin data directory. When it
+  drops a cells directory and no charts provider takes its place, the server log says so, and
+  the setup check says no ENC is read until one is chosen.
+
+- Of a cell two charts provider collections hold, the index reads the copy of the newest
+  edition and update, as the cell's DSID and its update files give them, rather than the first
+  in path order. A copy counts only the updates GDAL applies to it, and a copy GDAL cannot
+  read ranks below every copy it can.
+- An index saved from one Charts Provider collection is the whole charts provider's, so it
+  stays in use after the upgrade while the charts provider's store is away.
+- With no index yet, a failed box build's reason adds what the charts provider said of the
+  box, such as that it is downloading the area.
+
+### Fixed
+
+- A failing area request to the charts provider is logged and no longer fails the box
+  refresh that made it, and is asked again after 5 minutes rather than when the box moves.
+  An area request that fails in the plugin itself is asked again after 5 minutes too.
+- The no-coverage reason says the charts provider is not running once it stops, rather than
+  repeating its last answer; and with no index, the reason says so when it was not running at
+  start.
+
 ## [0.4.0] - 2026-11-02
 
 ### Added

@@ -7,7 +7,7 @@ import { publicReason } from "./foundation/public-text";
 import type { DatumUse } from "./ingest/datum";
 import { isLowWaterDatum } from "./model/water-level";
 import { selfValue } from "./nav-inputs";
-import { collectionsHint } from "./shared-enc";
+import { runningProviders } from "./shared-enc";
 
 /**
  * What the plugin can see of the boat and the charts, and what is left to
@@ -112,13 +112,18 @@ export function suggestedSource(datums: readonly DatumFact[]): "fmi" | "signalk-
 
 function chartsCheck(s: PluginState, facts: SetupFacts): SetupCheck {
   if (facts.cells > 0) {
-    return { id: "charts", level: "ok", text: `Charts: ${facts.cells} cells indexed` };
+    // With no provider chosen no ENC is read, as a cells directory dropped by the version 3
+    // migration leaves it: said for as long as none is chosen.
+    const only = s.config?.chartsProviderEnc
+      ? ""
+      : "; no charts provider chosen, so no ENC is read: choose the charts provider";
+    return { id: "charts", level: "ok", text: `Charts: ${facts.cells} cells indexed${only}` };
   }
-  if (!s.config?.cellsDir && !s.config?.wfs) {
+  if (!s.config?.chartsProviderEnc && !s.config?.wfs) {
     return {
       id: "charts",
       level: "todo",
-      text: "Charts: set the ENC cells directory or ENC from Charts Provider"
+      text: "Charts: choose the charts provider"
     };
   }
   const reason = publicReason(s.load?.reason) ?? "no chart index loaded";
@@ -249,6 +254,6 @@ export function schemaHints(app: Pick<ServerAPI, "getSelfPath">, s: PluginState)
     checks: setupChecks(s, facts).map((c) => `${MARK[c.level]} ${c.text}`),
     signalkDraft: facts.signalk.draft,
     source: sourceHint(facts),
-    encCollections: collectionsHint()
+    enc: runningProviders()
   };
 }

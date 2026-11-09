@@ -21,6 +21,7 @@ import {
   WFS_SOURCE
 } from "./ingest/wfs";
 import type { Clock } from "./monitor";
+import { AREA_ERROR_RETRY_MS } from "./shared-enc";
 import { readBox } from "./spatial/build-box";
 import { MAX_CHART_BUFFER } from "./spatial/chart-position";
 import type { ChartIndex } from "./spatial/chart-index";
@@ -84,10 +85,10 @@ export interface WfsServiceDeps {
   /** The ENC source the cells come from (`BuildJob.source`); none when absent. */
   source?: string;
   /**
-   * Told of each box a refresh starts building, as the charts provider is asked for its cells;
-   * returns after how long, ms, to tell it of the same box again, when the answer may change.
+   * The charts provider, asked for the cells of each box a refresh starts building, and what
+   * it last answered (`wfs-wiring.ts`).
    */
-  onBox?: (bbox: Bbox) => number | undefined;
+  area?: AreaRequests;
   leafZoom: number;
   /**
    * The S-57 cells directory, scanned by the refresh off the event loop; its cells are built
@@ -140,6 +141,14 @@ const EDGE_BAND = MAX_POSITION_BUFFER + MAX_CHART_BUFFER;
 const sameBbox = (a: Bbox | undefined, b: Bbox | undefined): boolean =>
   a !== undefined && b !== undefined && a.every((v, i) => v === b[i]);
 
+/** Asks the charts provider for each new box's cells, and says what it last answered. */
+export interface AreaRequests {
+  /** Asks for `bbox`'s cells; says when to ask about it again, ms, or undefined for never. */
+  ask: (bbox: Bbox) => number | undefined;
+  /** What the provider last said, as a no-coverage reason gives it; undefined before asking. */
+  note: () => string | undefined;
+}
+
 const OUT_OF_MEMORY = /heap limit/;
 
 export class WfsService {
@@ -153,7 +162,7 @@ export class WfsService {
   private indexed?: boolean;
   /** The box of the last index this service handed over in this run. */
   private handed?: Bbox;
-  /** The box `onBox` is to be told of again, and when. */
+  /** The box the charts provider is to be asked about again, and when. */
   private again?: { bbox: Bbox; at: number };
   /** The saved WFS cell was missing or unreadable at start: the box is downloaded again. */
   private cellLost = false;
@@ -244,12 +253,14 @@ export class WfsService {
   view(): ChartBoxView {
     const bbox = this.handed ?? this.box?.bbox;
     const lastMs = this.box?.durationMs;
+    const note = this.deps.area?.note();
     return {
       ...(bbox ? { bbox } : {}),
       rebuilding: this.busy,
       failed: !this.busy && this.lastError !== undefined,
       ...(lastMs === undefined ? {} : { lastMs }),
-      summary: this.status().summary
+      summary: this.status().summary,
+      ...(note === undefined ? {} : { providerNote: note })
     };
   }
 
@@ -387,8 +398,20 @@ export class WfsService {
     }
   }
 
+  /**
+   * Tells the charts provider of the box; advisory, so a failure never stops the refresh. A
+   * failed ask is tried again later, as a provider that failed to answer may recover.
+   */
   private announce(bbox: Bbox, now: number): void {
-    const ms = this.deps.onBox?.(bbox);
+    let ms: number | undefined;
+    try {
+      ms = this.deps.area?.ask(bbox);
+    } catch (err) {
+      this.deps.error(
+        `${this.label}: asking for the area's cells failed: ${(err as Error).message}`
+      );
+      ms = AREA_ERROR_RETRY_MS;
+    }
     this.again = ms === undefined ? undefined : { bbox, at: now + ms };
   }
 
@@ -442,6 +465,8 @@ export class WfsService {
                 }
               : undefined,
           cellsDir,
+          // WFS depths are built whatever ENC the charts provider has, but an index of
+          // charted hazards is kept while its cells are away, not replaced by depths alone.
           cellsRequired: !("url" in config) || cells === true,
           box: inBox ? bbox : undefined,
           build: {

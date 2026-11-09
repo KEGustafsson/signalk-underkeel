@@ -2,15 +2,18 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { parseConfig } from "../src/config";
-import { scanCellSources } from "../src/ingest/cell-source";
+import { cellVersionRank, scanCellSources } from "../src/ingest/cell-source";
+import { baseEdition } from "../src/ingest/enc-wasm";
 import { readSource } from "../src/spatial/build-source";
 import type { SharedAreaAnswer, SharedEncApi } from "../src/shared-enc";
 import {
   ALL_COLLECTIONS,
-  COLLECTION_CHOICE_PATTERN,
+  AREA_ERROR_RETRY_MS,
+  CHARTS_PROVIDER_ID,
   collectionsHint,
   noteSharedCells,
   requestSharedArea,
+  runningProviders,
   sharedCellsDir,
   sharedCellsNote,
   sharedEncApi,
@@ -21,6 +24,7 @@ import {
 import underkeel = require("../src/index");
 import { AREA_ASK_MAX_MS, AREA_ASK_MIN_MS, areaRequests } from "../src/wfs-wiring";
 import { CELLS, inlineBuilder } from "./helpers/fixture-index";
+import { withDsidVersion } from "./helpers/dsid";
 import { fakeApp, fakeClock, T0 } from "./helpers/plugin-harness";
 
 /**
@@ -100,25 +104,18 @@ describe("charts provider ENC store", () => {
     expect(sharedEncApi({ __signalk_chartsProviderEnc: "x" })).toBeUndefined();
   });
 
-  test("a configured collection is read in place of the cells directory", () => {
-    const cfg = parseConfig({ cellsDir: "/charts", chartsProviderEnc: " Gulf_of_Finland " });
-    expect(cfg.chartsProviderEnc).toBe("Gulf_of_Finland");
+  test("choosing Charts Provider reads every cell it shares, and nothing else is read", () => {
+    const cfg = parseConfig({ chartsProvider: CHARTS_PROVIDER_ID });
+    expect(cfg.chartsProviderEnc).toBe(ALL_COLLECTIONS);
     const { api } = fakeProvider("/srv/enc-store");
-    expect(withSharedCells(cfg, dataDir, api).cellsDir).toBe(
-      path.join("/srv/enc-store", "Gulf_of_Finland")
-    );
-    expect(withSharedCells(parseConfig({ cellsDir: "/charts" }), dataDir, api).cellsDir).toBe(
-      "/charts"
-    );
-    expect(parseConfig({ chartsProviderEnc: "../x" }).chartsProviderEnc).toBeUndefined();
-    expect(parseConfig({ chartsProviderEnc: "*" }).chartsProviderEnc).toBe("*");
-    // The admin form refuses what parsing would drop, so a mistyped name is not saved.
-    const form = new RegExp(COLLECTION_CHOICE_PATTERN);
-    for (const value of [" Gulf_of_Finland ", "*", "US5MA1AM", "Gulf of Finland", "../x", "a*"]) {
-      expect(form.test(value)).toBe(
-        parseConfig({ chartsProviderEnc: value }).chartsProviderEnc !== undefined
-      );
-    }
+    expect(withSharedCells(cfg, dataDir, api).cellsDir).toBe("/srv/enc-store");
+    // A cells directory, or a collection, is no setting of its own: no ENC is read without
+    // a chosen provider.
+    const own = parseConfig({ cellsDir: "/charts", chartsProviderEnc: "Gulf_of_Finland" });
+    expect(own.cellsDir).toBeUndefined();
+    expect(own.chartsProviderEnc).toBeUndefined();
+    expect(withSharedCells(own, dataDir, api).cellsDir).toBeUndefined();
+    expect(parseConfig({ chartsProvider: "another-provider" }).chartsProviderEnc).toBeUndefined();
   });
 
   test("the cell scan finds a collection's cells, and every collection's in the store", () => {
@@ -131,7 +128,7 @@ describe("charts provider ENC store", () => {
       "Gulf_of_Finland/FI5SYNTH/FI5SYNTH.000"
     ]);
     const all = scanCellSources(root);
-    // A cell two collections share is read once, from the first in name order.
+    // A cell two collections share in the same version is read once, from the first in name order.
     expect(all.sources.map((s) => path.relative(root, s).split(path.sep).join("/"))).toEqual([
       "Gulf_of_Finland/FI4SYNTH/FI4SYNTH.000",
       "Gulf_of_Finland/FI5SYNTH/FI5SYNTH.000"
@@ -139,11 +136,158 @@ describe("charts provider ENC store", () => {
     expect(all.skipped).toEqual([path.join("Other", "FI5SYNTH", "FI5SYNTH.000")]);
   });
 
+  test("of a cell two collections share, the newest edition and update is read", () => {
+    const root = path.join(tmp, "enc-store");
+    const put = (collection: string, cell: string, from: string, updates = 0) => {
+      const dir = path.join(root, collection, cell);
+      fs.mkdirSync(dir, { recursive: true });
+      const bytes = fs.readFileSync(path.join(CELLS, `${from}.000`));
+      fs.writeFileSync(path.join(dir, `${cell}.000`), bytes);
+      const edition = String(baseEdition(path.join(dir, `${cell}.000`)));
+      for (let u = 1; u <= updates; u++) {
+        const update = withDsidVersion(bytes, edition, String(u));
+        fs.writeFileSync(path.join(dir, `${cell}.${String(u).padStart(3, "0")}`), update);
+      }
+    };
+    const read = () => {
+      const scan = scanCellSources(root);
+      const rel = (s: string) => path.relative(root, s).split(path.sep).join("/");
+      const slash = (s: string) => s.split(path.sep).join("/");
+      return { sources: scan.sources.map(rel), skipped: scan.skipped.map(slash) };
+    };
+    // FI5SYNTH is edition 3, FI4SYNTH edition 7: a copy of the latter under the former's name
+    // is a newer edition, here in the collection later in name order.
+    put("A_set", "FI5SYNTH", "FI5SYNTH");
+    put("B_set", "FI5SYNTH", "FI4SYNTH");
+    expect(read()).toEqual({
+      sources: ["B_set/FI5SYNTH/FI5SYNTH.000"],
+      skipped: ["A_set/FI5SYNTH/FI5SYNTH.000"]
+    });
+    // The same edition: the copy with the later update.
+    fs.rmSync(root, { recursive: true });
+    put("A_set", "FI4SYNTH", "FI4SYNTH", 1);
+    put("B_set", "FI4SYNTH", "FI4SYNTH", 2);
+    put("C_set", "FI4SYNTH", "FI4SYNTH");
+    expect(read()).toEqual({
+      sources: ["B_set/FI4SYNTH/FI4SYNTH.000"],
+      skipped: ["A_set/FI4SYNTH/FI4SYNTH.000", "C_set/FI4SYNTH/FI4SYNTH.000"]
+    });
+    // A copy whose edition cannot be read ranks below one whose edition can, either way round.
+    fs.rmSync(root, { recursive: true });
+    fs.mkdirSync(path.join(root, "A_set", "FI4SYNTH"), { recursive: true });
+    fs.writeFileSync(path.join(root, "A_set", "FI4SYNTH", "FI4SYNTH.000"), "not S-57");
+    put("B_set", "FI4SYNTH", "FI4SYNTH");
+    expect(read().sources).toEqual(["B_set/FI4SYNTH/FI4SYNTH.000"]);
+    fs.mkdirSync(path.join(root, "C_set", "FI4SYNTH"), { recursive: true });
+    fs.writeFileSync(path.join(root, "C_set", "FI4SYNTH", "FI4SYNTH.000"), "not S-57");
+    expect(read().sources).toEqual(["B_set/FI4SYNTH/FI4SYNTH.000"]);
+  });
+
+  test("a copy's version counts its base cell's update and the updates GDAL applies after it", () => {
+    const updateOf = (file: string, u: number) => file.replace(/000$/, String(u).padStart(3, "0"));
+    const dir = path.join(tmp, "cells");
+    fs.mkdirSync(dir);
+    const cell = (name: string, updn?: number | string, updates: number[] = []) => {
+      const file = path.join(dir, name, "FI4SYNTH.000");
+      fs.mkdirSync(path.dirname(file));
+      const bytes = fs.readFileSync(path.join(CELLS, "FI4SYNTH.000"));
+      if (updn !== undefined) {
+        // EDTN 7 then UPDN 0 in the DSID, each ended by 0x1f: re-issued with `updn` applied.
+        const at = bytes.indexOf(Buffer.from([0x1f, 0x37, 0x1f, 0x30, 0x1f]));
+        expect(at).toBeGreaterThan(0);
+        bytes[at + 3] = typeof updn === "number" ? 0x30 + updn : updn.charCodeAt(0);
+      }
+      fs.writeFileSync(file, bytes);
+      for (const u of updates) {
+        fs.writeFileSync(updateOf(file, u), withDsidVersion(bytes, "7", String(u)));
+      }
+      return file;
+    };
+    expect(cellVersionRank(cell("plain"))).toBe(700_000);
+    // A re-issue carrying update 3 outranks a copy with updates 1 and 2 beside it.
+    expect(cellVersionRank(cell("reissued", 3))).toBe(700_003);
+    expect(cellVersionRank(cell("two", undefined, [1, 2]))).toBe(700_002);
+    // The reader looks for .001 first, whatever the base cell carries: without it, a re-issue
+    // at update 3 applies no update beside it, and with it, the reader gives up on the cell.
+    expect(cellVersionRank(cell("reissued-on", 3, [4]))).toBe(700_003);
+    expect(cellVersionRank(cell("reissued-all", 3, [1, 2, 3, 4]))).toBe(-1);
+    // An update after a gap does not apply, nor do those after it.
+    expect(cellVersionRank(cell("gap", undefined, [1, 3, 4]))).toBe(700_001);
+    // Nor after a file that is not S-57: the reader stops applying updates there.
+    const damaged = cell("damaged", undefined, [1, 2, 3]);
+    fs.writeFileSync(updateOf(damaged, 2), "not S-57");
+    expect(cellVersionRank(damaged)).toBe(700_001);
+    const other = cell("other-edition", undefined, [1, 2]);
+    fs.writeFileSync(updateOf(other, 2), withDsidVersion(fs.readFileSync(other), "8", "2"));
+    // An update of another edition, or one whose DSID names another update than the next,
+    // makes the reader give up on the cell: no version.
+    expect(cellVersionRank(other)).toBe(-1);
+    // NOAA updates carry edition 0 in their DSID: they follow on all the same.
+    const noaa = cell("noaa", undefined, [1, 2]);
+    fs.writeFileSync(updateOf(noaa, 1), withDsidVersion(fs.readFileSync(noaa), "0", "1"));
+    fs.writeFileSync(updateOf(noaa, 2), withDsidVersion(fs.readFileSync(noaa), "0", "2"));
+    expect(cellVersionRank(noaa)).toBe(700_002);
+    const misnamed = cell("misnamed", undefined, [1, 2]);
+    fs.writeFileSync(updateOf(misnamed, 2), withDsidVersion(fs.readFileSync(misnamed), "7", "5"));
+    expect(cellVersionRank(misnamed)).toBe(-1);
+    // So does an S-57 update whose UPDN is not a number: it is no file GDAL skips.
+    const unnumbered = cell("unnumbered", undefined, [1, 2]);
+    fs.writeFileSync(
+      updateOf(unnumbered, 2),
+      withDsidVersion(fs.readFileSync(unnumbered), "7", "x")
+    );
+    expect(cellVersionRank(unnumbered)).toBe(-1);
+    // A UPDN that is not a number leaves the version unknown, not update 0: such a copy ranks
+    // below every copy whose version is known, as the charts provider ranks it.
+    expect(cellVersionRank(cell("malformed", "x", [1, 2]))).toBe(-1);
+    // Nor when its separator is gone, so UPDN runs on into the digits after it, or when it
+    // ends in a newline: neither may read as a known update.
+    const patched = (name: string, edit: (bytes: Buffer, at: number) => Buffer) => {
+      const file = cell(name);
+      const bytes = fs.readFileSync(file);
+      const at = bytes.indexOf(Buffer.from([0x1f, 0x37, 0x1f, 0x30, 0x1f]));
+      expect(at).toBeGreaterThan(0);
+      fs.writeFileSync(file, edit(bytes, at));
+      return file;
+    };
+    const runOn = patched("run-on", (bytes, at) => {
+      bytes[at + 4] = 0x30;
+      return bytes;
+    });
+    expect(cellVersionRank(runOn)).toBe(-1);
+    const newline = patched("newline", (bytes, at) => {
+      bytes[at + 3] = 0x31;
+      return Buffer.concat([
+        bytes.subarray(0, at + 4),
+        Buffer.from([0x0a]),
+        bytes.subarray(at + 4)
+      ]);
+    });
+    expect(cellVersionRank(newline)).toBe(-1);
+    // A separator lost from the record joins UPDN to the dates after it, and the record no
+    // longer reads as S-57 lays it out: no version, and no edition either.
+    const lost = patched("lost", (bytes, at) =>
+      Buffer.concat([bytes.subarray(0, at + 4), bytes.subarray(at + 5)])
+    );
+    expect(cellVersionRank(lost)).toBe(-1);
+    expect(baseEdition(lost)).toBeUndefined();
+    // The edition reads still, as the update count of a cell read with GDAL needs it.
+    expect(baseEdition(newline)).toBe(7);
+    // A file that cannot be read ranks below every copy that can.
+    expect(cellVersionRank(path.join(dir, "gone", "FI4SYNTH.000"))).toBe(-1);
+  });
+
   test("the admin form names the collections shared now", () => {
     expect(collectionsHint(undefined)).toBeUndefined();
     expect(collectionsHint(fakeProvider("/r").api)).toBe(
       "Shared now: Gulf_of_Finland (chart set, 2 cells), US5MA1AM (converted chart, 1 cells)."
     );
+    expect(runningProviders({})).toEqual({ running: [] });
+    expect(runningProviders({ __signalk_chartsProviderEnc: fakeProvider("/r").api })).toEqual({
+      running: [CHARTS_PROVIDER_ID],
+      shared:
+        "Shared now: Gulf_of_Finland (chart set, 2 cells), US5MA1AM (converted chart, 1 cells)."
+    });
   });
 
   test("says why the collection in use has no cells, as the provider tells it", () => {
@@ -162,7 +306,8 @@ describe("charts provider ENC store", () => {
     expect(sharedCellsNote("Nope", told)).toMatch(/shares no Nope/);
     // An older provider cannot tell; nor can one that is not running.
     expect(sharedCellsNote("Nope", api)).toBeUndefined();
-    expect(sharedCellsNote("Nope", undefined)).toBeUndefined();
+    expect(sharedCellsNote("Nope", undefined)).toBe("Charts Provider is not running");
+    expect(sharedCellsNote(ALL_COLLECTIONS, undefined)).toBe("Charts Provider is not running");
     expect(sharedCellsNote(ALL_COLLECTIONS, { ...told, collections: () => [] })).toMatch(
       /shares no ENC cells yet/
     );
@@ -199,41 +344,94 @@ describe("charts provider ENC store", () => {
         throw new Error("store gone");
       }
     };
+    // A failure, unlike a refusal, is asked about again: the provider may recover.
     expect(requestSharedArea(bbox, failing)).toEqual({
       accepted: false,
       started: false,
-      reason: "store gone"
+      reason: "store gone",
+      retryAfterMs: AREA_ERROR_RETRY_MS
     });
   });
 
-  test("each box asks for its area only with the setting on and the source *", () => {
+  test("each box asks the chosen provider for its area, and the answer is kept for the status", () => {
     const logged: string[] = [];
     const app = {
       error: (m: string) => logged.push(`error ${m}`),
       debug: (m: string) => logged.push(`debug ${m}`)
     } as unknown as Parameters<typeof areaRequests>[1];
-    expect(
-      areaRequests({ chartsProviderArea: true, chartsProviderEnc: "Gulf_of_Finland" }, app)
-    ).toBeUndefined();
-    expect(
-      areaRequests({ chartsProviderArea: false, chartsProviderEnc: ALL_COLLECTIONS }, app)
-    ).toBeUndefined();
-    expect(areaRequests({ chartsProviderArea: true }, app)).toBeUndefined();
-    const ask = areaRequests({ chartsProviderArea: true, chartsProviderEnc: ALL_COLLECTIONS }, app);
-    expect(ask).toBeDefined();
+    expect(areaRequests({}, app)).toBeUndefined();
+    const area = areaRequests({ chartsProviderEnc: ALL_COLLECTIONS }, app);
+    expect(area?.note()).toBe("Charts Provider is not running");
     const { api } = fakeProvider("/r");
-    let answer = { accepted: true, started: true, reason: "downloading the area" };
-    (globalThis as { __signalk_chartsProviderEnc?: unknown }).__signalk_chartsProviderEnc = {
-      ...api,
-      requestArea: () => answer
+    const scope = globalThis as { __signalk_chartsProviderEnc?: unknown };
+    const box: [number, number, number, number] = [20, 59, 21, 60];
+    let answer: SharedAreaAnswer = {
+      accepted: true,
+      started: true,
+      reason: "downloading the area"
     };
-    ask?.([20, 59, 21, 60]);
-    ask?.([20, 59, 21, 60]);
+    scope.__signalk_chartsProviderEnc = { ...api, requestArea: () => answer };
+    area?.ask(box);
+    area?.ask(box);
+    expect(area?.note()).toBe("Charts Provider is downloading the ENC around the vessel");
+    // A provider stopped since it answered is not running now, asked again or not.
+    const running = scope.__signalk_chartsProviderEnc;
+    delete scope.__signalk_chartsProviderEnc;
+    expect(area?.note()).toBe("Charts Provider is not running");
+    scope.__signalk_chartsProviderEnc = running;
+    // A provider without cellsIn cannot say whether it has cells there: its reason is the note.
     answer = { accepted: false, started: false, reason: "turn it on" };
-    ask?.([20, 59, 21, 60]);
+    area?.ask(box);
+    expect(area?.note()).toBe("Charts Provider: turn it on");
+
+    // With cellsIn, asked once a box: whether any stored cell reaches the area.
+    let cells: { collection: string; cell: string; base: string }[] = [];
+    const asked: unknown[] = [];
+    scope.__signalk_chartsProviderEnc = {
+      ...api,
+      requestArea: () => answer,
+      cellsIn: (b: unknown) => {
+        asked.push(b);
+        return cells;
+      }
+    };
+    area?.ask(box);
+    expect(area?.note()).toBe(
+      "Charts Provider has no ENC for this area and does not download it: turn it on"
+    );
+    answer = { accepted: true, started: false, reason: "no free ENC covers the area" };
+    area?.ask(box);
+    expect(area?.note()).toBe(
+      "Charts Provider has no ENC for this area: no free ENC covers the area"
+    );
+    cells = [{ collection: "Gulf_of_Finland", cell: "FI4SYNTH", base: "/r/FI4SYNTH.000" }];
+    area?.ask(box);
+    expect(area?.note()).toBeUndefined();
+    expect(asked).toEqual([box, box, box]);
+    scope.__signalk_chartsProviderEnc = {
+      ...api,
+      requestArea: () => answer,
+      cellsIn: () => {
+        throw new TypeError("bbox must be [west, south, east, north] in degrees");
+      }
+    };
+    area?.ask(box);
+    expect(area?.note()).toBe("Charts Provider: no free ENC covers the area");
+
+    scope.__signalk_chartsProviderEnc = api;
+    area?.ask(box);
+    expect(area?.note()).toBe(
+      "Charts Provider is too old to be asked for the ENC around the vessel: update it"
+    );
+    delete scope.__signalk_chartsProviderEnc;
+    area?.ask(box);
+    expect(area?.note()).toBe("Charts Provider is not running");
     expect(logged).toEqual([
       "debug Charts Provider, asked for the ENC around the vessel: downloading the area",
-      "error Charts Provider, asked for the ENC around the vessel: turn it on"
+      "error Charts Provider, asked for the ENC around the vessel: turn it on",
+      "debug Charts Provider, asked for the ENC around the vessel: no free ENC covers the area",
+      "error Charts Provider is too old to be asked for the ENC around the vessel: update it",
+      "error Charts Provider is not running"
     ]);
   });
 
@@ -241,7 +439,7 @@ describe("charts provider ENC store", () => {
     const app = { error: () => undefined, debug: () => undefined } as unknown as Parameters<
       typeof areaRequests
     >[1];
-    const ask = areaRequests({ chartsProviderArea: true, chartsProviderEnc: ALL_COLLECTIONS }, app);
+    const ask = areaRequests({ chartsProviderEnc: ALL_COLLECTIONS }, app)?.ask;
     const scope = globalThis as { __signalk_chartsProviderEnc?: unknown };
     delete scope.__signalk_chartsProviderEnc;
     expect(ask?.([20, 59, 21, 60])).toBe(5 * 60_000);
@@ -259,6 +457,16 @@ describe("charts provider ENC store", () => {
     expect(ask?.([20, 59, 21, 60])).toBe(AREA_ASK_MIN_MS);
     answer = { ...answer, retryAfterMs: 24 * 3_600_000 };
     expect(ask?.([20, 59, 21, 60])).toBe(AREA_ASK_MAX_MS);
+    // A refusal on purpose waits for the area to change; a failure is asked about again.
+    answer = { accepted: false, started: false, reason: "turned off" };
+    expect(ask?.([20, 59, 21, 60])).toBeUndefined();
+    scope.__signalk_chartsProviderEnc = {
+      ...api,
+      requestArea: () => {
+        throw new Error("store gone");
+      }
+    };
+    expect(ask?.([20, 59, 21, 60])).toBe(AREA_ERROR_RETRY_MS);
     delete scope.__signalk_chartsProviderEnc;
   });
 
@@ -371,7 +579,7 @@ describe("charts provider ENC store", () => {
     present.stop();
   });
 
-  test("the plugin builds from the collection and restarts when its cells change", async () => {
+  test("the plugin builds from every shared cell and restarts when they change", async () => {
     const root = path.join(tmp, "enc-store");
     writeStore(root);
     const provider = fakeProvider(root);
@@ -388,7 +596,7 @@ describe("charts provider ENC store", () => {
       builds.push(built);
       return built;
     });
-    const options = { chartsProviderEnc: "Gulf_of_Finland", boxRadiusKm: 0, leafZoom: 18 };
+    const options = { chartsProvider: CHARTS_PROVIDER_ID, boxRadiusKm: 0, leafZoom: 18 };
     const restarts: object[] = [];
     plugin.start(options, (config) => restarts.push(config));
     expect(dirs).toEqual([
@@ -402,6 +610,6 @@ describe("charts provider ENC store", () => {
     plugin.stop();
     expect(provider.listeners.size).toBe(0);
     await Promise.all(builds);
-    expect(readSource(path.join(dataDir, "index"))).toBe("charts-provider:Gulf_of_Finland");
+    expect(readSource(path.join(dataDir, "index"))).toBe("charts-provider:*");
   });
 });

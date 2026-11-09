@@ -23,11 +23,16 @@ type Raw = Record<string, unknown>;
 /** Where the version 1 configuration is kept when it is first migrated. */
 export const V1_BACKUP = "config-v1.json";
 
+/** Where a configuration of version `from` is kept when it is first migrated. */
+export function backupName(from: number): string {
+  return `config-v${from}.json`;
+}
+
 function isObject(v: unknown): v is Raw {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-/** Saves a migrated configuration, after keeping a version 1 one beside the plugin data. */
+/** Saves a migrated configuration, after keeping the one it replaces beside the plugin data. */
 export function persistMigration(
   app: Pick<ServerAPI, "getDataDirPath" | "savePluginOptions" | "error">,
   saved: unknown,
@@ -36,9 +41,16 @@ export function persistMigration(
   if (!m.changed) {
     return;
   }
-  const backup = path.join(app.getDataDirPath(), V1_BACKUP);
+  const dir = isObject(saved) ? saved.cellsDir : undefined;
+  if (typeof dir === "string" && dir.trim() !== "" && m.config.chartsProvider === undefined) {
+    app.error(
+      "the ENC cells directory setting is gone: ENC now comes only from a charts provider; " +
+        `choose it under Charts provider (the earlier settings are kept in ${backupName(m.from)})`
+    );
+  }
+  const backup = path.join(app.getDataDirPath(), backupName(m.from));
   try {
-    if (m.from === 1 && !fs.existsSync(backup)) {
+    if (!fs.existsSync(backup)) {
       fs.writeFileSync(backup, JSON.stringify(saved ?? {}, null, 2));
     }
   } catch (err) {

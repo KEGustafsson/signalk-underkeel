@@ -81,6 +81,8 @@ look-ahead, a corridor around each leg for a route check, or a map tile for the 
 
 ![Plugin configuration in the Signal K admin UI](images/how-it-works/config.png)
 
+This screenshot is from before 0.5.0: since then the **Charts provider** pulldown stands where it shows **ENC cells directory**.
+
 The setup steps, opened with **Open setup** in Freeboard's Under-keel details panel, ask for the
 same essentials in three steps:
 the boat on a side view whose keel, margin line and sounder can be dragged, the water-level
@@ -90,12 +92,17 @@ asks for them first too and shows the rest under **Show expert settings**.
 ![The setup steps: boat, water level and warnings](images/how-it-works/setup-panel.png)
 
 The plugin reads unencrypted S-57 cells as delivered, each `.000` with its updates, with GDAL
-compiled to WebAssembly; **ENC cells directory** points at the folder that holds them, such as
-an exchange set's `ENC_ROOT`, or **ENC from Charts Provider** names a chart set whose cells
-signalk-charts-provider-simple shares (the [README](../README.md#prepare-the-charts) has the
-details). With `*`, each index box can ask that plugin for the free ENC cells of its area
-(**Ask Charts Provider for the ENC around the vessel**); the cells it downloads are shared
-like any chart set's, and their arrival rebuilds the index.
+compiled to WebAssembly, from the chart provider service chosen in **Charts provider**:
+every cell signalk-charts-provider-simple shares in its ENC store, where its ENC Charts sets
+and the charts it converted keep their cells (the [README](../README.md#prepare-the-charts)
+has the details). The plugin has no cells directory of its own. Each index box asks that
+plugin for the ENC cells of its area: with its area downloads on, it downloads the free ENC
+there, the cells are shared like any chart set's, and their arrival rebuilds the index. Where
+the vessel has no coverage and the charts provider explains it, the reason adds what it
+answered: downloading, no ENC for this area, not running, or too old to ask. Where it holds
+cells reaching the box but none at the vessel, and is not downloading, the gap is the
+charts' and the reason names no charts provider answer. The Traficom WFS depths do not depend
+on it.
 The draft comes from **Boat**, or else from Signal K `design.draft.maximum`; length and beam fall back to `design.length.overall` and
 `design.beam`. Without a draft the engine stays `unknown`. The water level comes from the
 source picked under **Water level** (section 8).
@@ -110,12 +117,15 @@ the index reason in `/status` names the cells.
 whose index format differs is rebuilt too, and so is one whose files cannot be read, as a power
 cut during a save can leave them; the reason then names the read error.
 
-A cells directory that is gone, or holds no cell while the saved index holds S-57 cells, most
-likely sits on a drive that is not mounted: the saved index stays in use, and the reason says
-so. The index records the source it was built from (`source.json`: the cells directory, or the
-Charts Provider collection by its id, wherever its store is), so this holds only for that
-source. A source chosen since that has no cells yet does not keep another source's index: the
-engine reports that source's cells as not found until they arrive.
+A charts provider store that is gone, or holds no cell while the saved index holds S-57
+cells, most likely sits on a drive that is not mounted: the saved index stays in use, and the
+reason says so. A Traficom WFS refresh then keeps that index too, rather than replace its
+charted hazards with WFS depths alone; with an index of WFS depths alone, or none, it builds
+without ENC. The index records the source it was built from (`source.json`: the charts
+provider, wherever its store is), so this holds only for that source. A source chosen since that has no cells yet does not keep another source's index: the
+engine reports that source's cells as not found until they arrive. An index saved without a
+readable `source.json`, as plugin versions before 0.4.0 saved it, records no source and is taken
+as the current source's.
 
 Only the coarse part of the depth pyramid stays in memory; its fine tiles are read from the
 saved file, a few kilometres square at a time, when the look-ahead, a route check, a query or

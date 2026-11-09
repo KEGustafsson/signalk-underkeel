@@ -12,6 +12,8 @@ import { workerBuilder, workerHeapLimitMb } from "../src/wfs-service";
 import underkeel = require("../src/index");
 import { CELLS, FIXTURES, fixtureIndex, ROCK } from "./helpers/fixture-index";
 import { fakeApp, fakeClock, fakeRouter, lastValue, navDelta, T0 } from "./helpers/plugin-harness";
+import { chartsProviderAt } from "./helpers/charts-provider";
+import { CONFIG_VERSION } from "../src/config-migrate";
 
 /** Process ids no system hands out (pid_max is at most 2^22), so no real process is signalled. */
 const FAKE_PID = 5_000_000;
@@ -228,7 +230,12 @@ test("a build process that crashes at start leaves the engine off with the error
     const plugin = underkeel(f.app, clock, globalThis.fetch, workerBuilder);
     const { router, call } = fakeRouter();
     plugin.registerWithRouter?.(router as never);
-    const options = { configVersion: 2, cellsDir: CELLS, boxRadiusKm: 0, leafZoom: 18 };
+    const options = {
+      configVersion: CONFIG_VERSION,
+      ...chartsProviderAt(CELLS),
+      boxRadiusKm: 0,
+      leafZoom: 18
+    };
     plugin.start({ ...options, rebuildIndex: true }, () => undefined);
     await settle();
     expect(mockChildren).toHaveLength(1);

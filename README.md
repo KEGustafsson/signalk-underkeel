@@ -102,23 +102,24 @@ shows the RAM and CPUs it finds and says the same; it never changes a setting.
 ## Prepare the charts
 
 The plugin reads unencrypted S-57 ENC cells as they are delivered: each `.000` base cell with
-its `.001`, `.002`, … updates beside it. Copy the exchange set, for example its `ENC_ROOT`
-folder, under one directory and set **ENC cells directory** to it; `.000` files are found down
-to three folders deep, and down to six below a folder holding the exchange set's `CATALOG.031`,
-so an unzipped Inland ENC download (`<set>/ENC_ROOT/1R/7/1R7WAD07/1R7WAD07.000`) can be pointed
-at as it is.
+its `.001`, `.002`, … updates beside it. It reads them from a chart provider service, chosen in
+**Charts provider**: signalk-charts-provider-simple, which keeps the cells behind its ENC
+charts in its ENC store (2.16.0 or later; 2.18.0 or later for the area requests below). Every
+cell it shares is read: its ENC Charts sets, and the charts it converted from an upload or a
+folder on the server while its **Keep the ENC cells of converted charts** is on, so an
+exchange set or an Inland ENC download goes in by converting it there. The plugin keeps no
+cells directory of its own. The pulldown marks a provider that is not running and says what
+it shares now. When the charts provider writes new editions or updates of those cells, the
+plugin restarts itself and rebuilds the index from them.
 
-Cells downloaded with signalk-charts-provider-simple (2.16.0 or later) are read where that
-plugin shares them, in its ENC store: set **ENC from Charts Provider** to one of the chart sets
-or converted charts the admin form lists as shared, or to `*` for all of them. It is used
-instead of **ENC cells directory**. When the charts provider writes new editions or updates of
-those cells, the plugin restarts itself and rebuilds the index from them. When the collection
-has no cells yet, the reason says why, as the charts provider tells it: a chart set not
-downloaded or still downloading, cells being written, or no such collection. With `*` and
-**Ask Charts Provider for the ENC around the vessel** on (an expert setting, off by default),
-each new index box asks the charts provider to download the free ENC cells of that area, when
-its **Download the ENC cells around the vessel** is on too; they arrive in its chart set
-"Around the vessel" and the index is rebuilt with them. The cells are
+Each new index box asks the charts provider for the ENC cells of its area. With its
+**Download the ENC cells around the vessel** on, it downloads the free ENC cells there into its
+chart set "Around the vessel" and the index is rebuilt with them. Where the vessel has no
+chart coverage, the reason says what the charts provider answered: it is downloading the
+area, it has no ENC for this area (with its reason, such as no free ENC covering it), it is
+not running, or it is too old to be asked. Traficom WFS depths (below) are downloaded
+whatever ENC the charts provider has, and with none at all.
+The cells are
 read in place with GDAL compiled to WebAssembly
 (gdal3.js), which the plugin installs with it, and the updates are applied as they are read.
 Nothing is converted or written next to the cells. A cell without an `M_COVR` coverage layer
@@ -160,7 +161,7 @@ rebuilds in 12–15 s instead of 30–34 s on x86. Deleting the folder is safe; 
 read again.
 
 Folders of GeoJSON layers exported by `scripts/enc-to-geojson.sh` for earlier versions are no
-longer read: point **ENC cells directory** at the original `.000` cells instead. Such a folder
+longer read: convert the original `.000` cells in the charts provider instead. Such a folder
 named like a cell is listed in `GET /status` as skipped.
 
 ## Settings
@@ -180,14 +181,13 @@ There are two places to set the plugin up, and both write the same configuration
 
 ![The setup steps: boat, water level and warnings](docs/images/how-it-works/setup-panel.png)
 
-| Setting                  | What it does                                                                                                                                                                 |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ENC cells directory      | where the `.000` cells are                                                                                                                                                   |
-| ENC from Charts Provider | or a chart set or converted chart whose cells signalk-charts-provider-simple shares, `*` for all of them; used instead of the directory                                      |
-| Boat                     | draft (empty uses Signal K `design.draft.maximum`) and safety margin under the keel (0 m); only the keel's lowest point counts, and squat and waves are added on top (below) |
-| Water level              | source (`none`, `manual`, `signalk-tide`, `fmi`, see below); only the chosen source's fields are shown                                                                       |
-| Warnings                 | Early, Balanced or Late, in the table below                                                                                                                                  |
-| Optional features        | living chart (own soundings), Traficom WFS depths, grounding detector; each off until enabled                                                                                |
+| Setting           | What it does                                                                                                                                                                 |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Charts provider   | the chart provider service whose ENC cells are read: signalk-charts-provider-simple; empty: no ENC                                                                           |
+| Boat              | draft (empty uses Signal K `design.draft.maximum`) and safety margin under the keel (0 m); only the keel's lowest point counts, and squat and waves are added on top (below) |
+| Water level       | source (`none`, `manual`, `signalk-tide`, `fmi`, see below); only the chosen source's fields are shown                                                                       |
+| Warnings          | Early, Balanced or Late, in the table below                                                                                                                                  |
+| Optional features | living chart (own soundings), Traficom WFS depths, grounding detector; each off until enabled                                                                                |
 
 | Warning style      | Looks ahead | Alert at | Warn at, within | Alarm at, within | Alarm on negative mean UKC |
 | ------------------ | ----------- | -------- | --------------- | ---------------- | -------------------------- |
@@ -214,7 +214,7 @@ Expert settings, with their defaults:
 
 | Group        | Settings                                                                                                                                                                                                                               |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Chart index  | index directory, rebuild at start, index leaf zoom (20), box around the vessel (10 km), ask Charts Provider for the ENC around the vessel                                                                                              |
+| Chart index  | index directory, rebuild at start, index leaf zoom (20), box around the vessel (10 km)                                                                                                                                                 |
 | Boat         | length, beam (fallback: Signal K `design.*`); draft σ (0.05 m); block coefficient and heel effect (none, fin keel or a table); double squat in narrow channels; wave allowance factor (0.4 × Hs)                                       |
 | Look-ahead   | minimum horizon (60 s); position buffer (10 m, 2σ); fan spread (COG 5°, rate of turn 0.1°/s); escape-heading rate of turn (3°/s); and the distance, probabilities and windows of the warning style, each overriding the style when set |
 | Water level  | manual height and σ; FMI refresh (600 s); chart-datum mappings for FMI                                                                                                                                                                 |
@@ -225,9 +225,12 @@ Expert settings, with their defaults:
 The saved configuration carries a version, `configVersion`. At the first start after an update
 from a configuration without one, the plugin keeps a copy as `config-v1.json` in its data
 directory, removes the look-ahead values the old admin form had filled in with their
-defaults, so the warning style can set them, and saves the result. The plugin then
-behaves exactly as before; a value that differed from its default stays and overrides the
-style.
+defaults, so the warning style can set them, and saves the result. The warnings then
+behave exactly as before; a value that differed from its default stays and overrides the
+style. A configuration of version 2 is kept as `config-v2.json` and loses its ENC settings:
+one that named a Charts Provider collection reads the whole charts provider from then on,
+and one with an ENC cells directory reads no ENC until its cells are converted in the
+charts provider and **Charts provider** is chosen, which the setup check asks for.
 
 ## Water level
 
@@ -351,13 +354,13 @@ datum mapping. Absolute paths in its reasons, in 5xx replies and in notification
 as `<path>` (an S-57 cell file keeps its name); the plugin status line and the server log keep
 them whole.
 
-| Reason shown                                                  | Cause and fix                                                          |
-| ------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `vessel draft not configured`                                 | set **Draft** under Boat, or `design.draft.maximum` in Signal K        |
-| `position stale`                                              | no recent `navigation.position`; check the GNSS source                 |
-| `course or speed stale: only the current position is checked` | no recent COG or SOG                                                   |
-| `no chart index loaded`                                       | set the cells directory; an index error is shown as the plugin's error |
-| `no chart coverage`                                           | the boat or its footprints are outside every ENC cell                  |
+| Reason shown                                                  | Cause and fix                                                             |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `vessel draft not configured`                                 | set **Draft** under Boat, or `design.draft.maximum` in Signal K           |
+| `position stale`                                              | no recent `navigation.position`; check the GNSS source                    |
+| `course or speed stale: only the current position is checked` | no recent COG or SOG                                                      |
+| `no chart index loaded`                                       | choose the charts provider; an index error is shown as the plugin's error |
+| `no chart coverage`                                           | the boat or its footprints are outside every ENC cell                     |
 
 # For developers
 

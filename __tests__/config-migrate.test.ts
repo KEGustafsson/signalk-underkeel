@@ -1,6 +1,7 @@
 import fc from "fast-check";
 import { parseConfig } from "../src/config";
 import { CONFIG_VERSION, migrateConfig } from "../src/config-migrate";
+import { CHARTS_PROVIDER_ID } from "../src/shared-enc";
 
 /**
  * Version 1 configurations carry every look-ahead and squat default the old
@@ -34,6 +35,7 @@ describe("configuration migration", () => {
     expect(m.config.configVersion).toBe(CONFIG_VERSION);
     expect(m.dropped.sort()).toEqual(
       [
+        "cellsDir",
         "lookahead.alarmRisk",
         "lookahead.alarmWithin",
         "lookahead.alertRisk",
@@ -97,7 +99,24 @@ describe("configuration migration", () => {
     expect(migrateConfig(raw).config).toMatchObject(raw);
   });
 
-  test("version 2 and a newer version are left alone", () => {
+  test("version 2 reads its ENC from the charts provider, without a directory of its own", () => {
+    const from = (raw: Record<string, unknown>) => migrateConfig({ configVersion: 2, ...raw });
+    const shared = from({ chartsProviderEnc: "Gulf_of_Finland", chartsProviderArea: true });
+    expect(shared).toMatchObject({ from: 2, changed: true });
+    expect(shared.config).toEqual({
+      configVersion: CONFIG_VERSION,
+      chartsProvider: CHARTS_PROVIDER_ID
+    });
+    expect(shared.dropped.sort()).toEqual(["chartsProviderArea", "chartsProviderEnc"]);
+    // A directory of its own is dropped: its cells are read from the provider once chosen.
+    const own = from({ cellsDir: "/c", vessel: { draft: 2 } });
+    expect(own.config).toEqual({ configVersion: CONFIG_VERSION, vessel: { draft: 2 } });
+    expect(own.dropped).toEqual(["cellsDir"]);
+    expect(from({ chartsProviderEnc: " " }).config).toEqual({ configVersion: CONFIG_VERSION });
+    expect(from({}).config).toEqual({ configVersion: CONFIG_VERSION });
+  });
+
+  test("the current version and a newer one are left alone", () => {
     for (const configVersion of [CONFIG_VERSION, CONFIG_VERSION + 1]) {
       const raw = { configVersion, lookahead: { warnRisk: 0.05 } };
       const m = migrateConfig(raw);
@@ -112,7 +131,7 @@ describe("configuration migration", () => {
     expect(migrateConfig(once)).toMatchObject({ config: once, changed: false });
   });
 
-  test("nothing saved migrates to an empty version 2 configuration", () => {
+  test("nothing saved migrates to an empty current configuration", () => {
     for (const raw of [undefined, null, "x", []]) {
       expect(migrateConfig(raw).config).toEqual({ configVersion: CONFIG_VERSION });
     }

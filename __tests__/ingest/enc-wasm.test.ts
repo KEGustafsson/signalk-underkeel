@@ -1,9 +1,11 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { readCell, scanCellSources } from "../../src/ingest/cell-source";
+import { cellVersionRank, readCell, scanCellSources } from "../../src/ingest/cell-source";
+import { withDsidVersion } from "../helpers/dsid";
 import {
   baseEdition,
+  baseVersion,
   encCell,
   encFiles,
   encStamp,
@@ -223,9 +225,120 @@ describe("S-57 cells read with gdal3.js", () => {
 
   test("the edition comes from the base cell's DSID record, which updates leave alone", () => {
     expect(baseEdition(CELL)).toBe(1);
+    expect(baseVersion(CELL)).toEqual({ edition: 1, update: 0 });
+    // An edition or update too large to be one is not known: it would outrank every copy.
+    const huge = path.join(tmp, "FI5HUGE1.000");
+    const bytes = fs.readFileSync(CELL);
+    const at = bytes.indexOf(Buffer.from([0x1f, 0x31, 0x1f, 0x30, 0x1f]));
+    expect(at).toBeGreaterThan(0);
+    fs.writeFileSync(
+      huge,
+      Buffer.concat([
+        bytes.subarray(0, at + 1),
+        Buffer.from("9".repeat(400)),
+        bytes.subarray(at + 2)
+      ])
+    );
+    expect(baseVersion(huge)).toBeUndefined();
+    expect(baseEdition(huge)).toBeUndefined();
+    // Records laid out as S-57 lays them out: the largest edition and update are known, one
+    // past either is not, and an update past its limit leaves the edition known.
+    const version = (edition: string, update: string) => {
+      const file = path.join(tmp, "FI5VERS1.000");
+      fs.writeFileSync(file, withDsidVersion(fs.readFileSync(CELL), edition, update));
+      return { version: baseVersion(file), edition: baseEdition(file) };
+    };
+    expect(version("9999", "999")).toEqual({
+      version: { edition: 9999, update: 999 },
+      edition: 9999
+    });
+    expect(version("10000", "0")).toEqual({ version: undefined, edition: undefined });
+    // Edition 0, as NOAA update files carry it, is no base cell's edition.
+    expect(version("0", "0")).toEqual({ version: undefined, edition: undefined });
+    expect(version("1", "1000")).toEqual({ version: undefined, edition: 1 });
+    // A directory entry of size 0 is refused, not walked forever.
+    const zero = path.join(tmp, "FI5ZERO1.000");
+    const cell = Buffer.from(fs.readFileSync(CELL));
+    const dr = Number(cell.toString("latin1", 0, 5));
+    for (const at of [dr + 20, dr + 21, dr + 23]) {
+      cell[at] = 0x30;
+    }
+    fs.writeFileSync(zero, cell);
+    expect(baseVersion(zero)).toBeUndefined();
+    expect(baseEdition(zero)).toBeUndefined();
     const bad = path.join(tmp, "FI5BAD01.000");
     fs.writeFileSync(bad, "not a cell");
     expect(baseEdition(bad)).toBeUndefined();
+  });
+
+  test("a copy's rank is the update GDAL applies, and -1 where GDAL gives up on the cell", async () => {
+    const bytes = fs.readFileSync(CELL);
+    const copy = (name: string, updn: string, updates: [number, string, string][]) => {
+      const dir = path.join(tmp, name);
+      fs.mkdirSync(dir);
+      const file = path.join(dir, "FI5SYNTH.000");
+      fs.writeFileSync(file, withDsidVersion(bytes, "1", updn));
+      for (const [n, edition, update] of updates) {
+        const updateFile = file.replace(/000$/, String(n).padStart(3, "0"));
+        fs.writeFileSync(updateFile, withDsidVersion(bytes, edition, update));
+      }
+      return file;
+    };
+    const applied = async (file: string) => (await readEncCell(file, 0)).info.update;
+    const chain = copy("chain", "0", [
+      [1, "1", "1"],
+      [2, "0", "2"]
+    ]);
+    expect(await applied(chain)).toBe(2);
+    expect(cellVersionRank(chain)).toBe(100_002);
+    const reissue = copy("reissue", "3", [[4, "1", "4"]]);
+    expect(await applied(reissue)).toBe(3);
+    expect(cellVersionRank(reissue)).toBe(100_003);
+    const misnamed = copy("misnamed", "0", [
+      [1, "1", "1"],
+      [2, "1", "5"]
+    ]);
+    await expect(readEncCell(misnamed, 0)).rejects.toThrow(/GDAL cannot read/);
+    expect(cellVersionRank(misnamed)).toBe(-1);
+    const unnumbered = copy("unnumbered", "0", [[1, "1", "x"]]);
+    await expect(readEncCell(unnumbered, 0)).rejects.toThrow(/GDAL cannot read/);
+    expect(cellVersionRank(unnumbered)).toBe(-1);
+    // A file beside the cell that is not ISO 8211 ends the updates GDAL applies.
+    const ended = copy("ended", "0", [[1, "1", "1"]]);
+    fs.writeFileSync(ended.replace(/000$/, "002"), "not S-57");
+    expect(await applied(ended)).toBe(1);
+    expect(cellVersionRank(ended)).toBe(100_001);
+    // So does one whose leader reads but whose header record is cut short.
+    const cut = copy("cut", "0", [[1, "1", "1"]]);
+    fs.writeFileSync(cut.replace(/000$/, "002"), withDsidVersion(bytes, "1", "2").subarray(0, 40));
+    expect(await applied(cut)).toBe(1);
+    expect(cellVersionRank(cut)).toBe(100_001);
+    // And so does a directory in an update's place: GDAL's Open refuses it.
+    const folder = copy("folder", "0", [[1, "1", "1"]]);
+    fs.mkdirSync(folder.replace(/000$/, "002"));
+    expect(await applied(folder)).toBe(1);
+    expect(cellVersionRank(folder)).toBe(100_001);
+    // As does an update that cannot be opened, as one without read access cannot.
+    const locked = copy("locked", "0", [
+      [1, "1", "1"],
+      [2, "1", "2"]
+    ]);
+    const lockedUpdate = locked.replace(/000$/, "002");
+    const openSync = fs.openSync;
+    const spy = jest.spyOn(fs, "openSync").mockImplementation(((
+      p: fs.PathLike,
+      ...rest: unknown[]
+    ) => {
+      if (p === lockedUpdate) {
+        throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
+      }
+      return (openSync as (...a: unknown[]) => number)(p, ...rest);
+    }) as typeof fs.openSync);
+    try {
+      expect(cellVersionRank(locked)).toBe(100_001);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   test("a file that is not S-57 is refused with GDAL's reason", async () => {

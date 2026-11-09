@@ -11,6 +11,7 @@ import {
   seedFixtureIndex
 } from "./helpers/fixture-index";
 import { fakeApp, fakeClock, fakeRouter, lastValue, navDelta, T0 } from "./helpers/plugin-harness";
+import { chartsProviderAt } from "./helpers/charts-provider";
 
 beforeAll(prepareFixtureIndex);
 
@@ -34,7 +35,7 @@ describe("after stop", () => {
       plugin.registerWithRouter?.(router as never);
       seedFixtureIndex(dataDir);
       plugin.start(
-        { cellsDir: CELLS, boxRadiusKm: 0, leafZoom: 18, livechart: { enabled: true } },
+        { ...chartsProviderAt(CELLS), boxRadiusKm: 0, leafZoom: 18, livechart: { enabled: true } },
         () => undefined
       );
       plugin.stop();
@@ -54,7 +55,7 @@ describe("after stop", () => {
     seedFixtureIndex(dataDir);
     plugin.start(
       {
-        cellsDir: CELLS,
+        ...chartsProviderAt(CELLS),
         boxRadiusKm: 0,
         leafZoom: 18,
         waterLevel: { source: "manual", height: -1.5, sigma: 0.05 }
@@ -100,7 +101,7 @@ describe("after stop", () => {
     seedFixtureIndex(dataDir);
     plugin.start(
       {
-        cellsDir: CELLS,
+        ...chartsProviderAt(CELLS),
         boxRadiusKm: 0,
         leafZoom: 18,
         waterLevel: { source: "manual", height: 0.4 }
@@ -169,7 +170,7 @@ describe("restart", () => {
     app.setPluginError = (m: string) => reports.push(["error", m]);
     const clock = fakeClock(T0);
     const plugin = underkeel(f.app, clock);
-    plugin.start({ cellsDir: "/nonexistent/cells", boxRadiusKm: 0 }, () => undefined);
+    plugin.start({ ...chartsProviderAt("/nonexistent/cells"), boxRadiusKm: 0 }, () => undefined);
     clock.advance(1000);
     clock.advance(1000);
     expect(reports.length).toBeGreaterThanOrEqual(1);
@@ -186,7 +187,7 @@ describe("restart", () => {
     plugin.registerWithRouter?.(router as never);
     const run = (lon: number) => {
       seedFixtureIndex(dataDir);
-      plugin.start({ cellsDir: CELLS, boxRadiusKm: 0, leafZoom: 18 }, () => undefined);
+      plugin.start({ ...chartsProviderAt(CELLS), boxRadiusKm: 0, leafZoom: 18 }, () => undefined);
       f.send(navDelta(lon, ROCK[1], 3, clock.now()));
       clock.advance(1000);
       return lastValue(f.deltas, "navigation.underKeel.envelopeRev") as number;

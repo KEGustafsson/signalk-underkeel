@@ -2,6 +2,9 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import underkeel = require("../src/index");
+import { CONFIG_VERSION } from "../src/config-migrate";
+import { CHARTS_PROVIDER_ID } from "../src/shared-enc";
+import { chartsProviderAt } from "./helpers/charts-provider";
 import { V1_BACKUP } from "../src/settings-service";
 import { suggestedSource } from "../src/setup-checks";
 import { CELLS, prepareFixtureIndex, seedFixtureIndex } from "./helpers/fixture-index";
@@ -49,7 +52,7 @@ describe("settings in the running plugin", () => {
     const { f, r, plugin } = started(v1);
     try {
       expect(f.savedOptions).toEqual([
-        { cellsDir: CELLS, boxRadiusKm: 0, leafZoom: 18, lookahead: { kp: 2 }, configVersion: 2 }
+        { boxRadiusKm: 0, leafZoom: 18, lookahead: { kp: 2 }, configVersion: CONFIG_VERSION }
       ]);
       expect(JSON.parse(fs.readFileSync(path.join(dataDir, V1_BACKUP), "utf8"))).toEqual(v1);
       const s = r.call("/v1/settings").body as Settings;
@@ -61,8 +64,8 @@ describe("settings in the running plugin", () => {
 
   test("GET /settings reports what the plugin sees and what is left to set", () => {
     const { r, plugin } = started({
-      configVersion: 2,
-      cellsDir: CELLS,
+      configVersion: CONFIG_VERSION,
+      ...chartsProviderAt(CELLS),
       boxRadiusKm: 0,
       leafZoom: 18
     });
@@ -91,7 +94,11 @@ describe("settings in the running plugin", () => {
   });
 
   test("POST /settings restarts the plugin through the server with the patched configuration", async () => {
-    const { r, plugin, restarts } = started({ configVersion: 2, cellsDir: CELLS, leafZoom: 18 });
+    const { r, plugin, restarts } = started({
+      configVersion: CONFIG_VERSION,
+      ...chartsProviderAt(CELLS),
+      leafZoom: 18
+    });
     try {
       const reply = await r.post("/v1/settings", {
         warningStyle: "early",
@@ -101,8 +108,8 @@ describe("settings in the running plugin", () => {
       await new Promise((resolve) => setImmediate(resolve));
       expect(restarts).toEqual([
         {
-          configVersion: 2,
-          cellsDir: CELLS,
+          configVersion: CONFIG_VERSION,
+          chartsProvider: CHARTS_PROVIDER_ID,
           leafZoom: 18,
           warningStyle: "early",
           vessel: { margin: 0.2 }
@@ -115,8 +122,8 @@ describe("settings in the running plugin", () => {
 
   test("the admin form is flat on an unknown server and conditional from Signal K 2.32", () => {
     const { f, plugin } = started({
-      configVersion: 2,
-      cellsDir: CELLS,
+      configVersion: CONFIG_VERSION,
+      ...chartsProviderAt(CELLS),
       boxRadiusKm: 0,
       leafZoom: 18
     });

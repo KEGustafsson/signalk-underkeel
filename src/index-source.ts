@@ -11,15 +11,24 @@ import { readSource } from "./spatial/build-source";
  * used meanwhile, while a source the user chose since was never the saved index's.
  *
  * A collection is recorded by its id, not the directory it resolves to: the charts provider
- * may keep its store elsewhere than the default path read while it is still starting.
+ * may keep its store elsewhere than the default path read while it is still starting. The
+ * whole store holds every collection, so an index of one collection, as saved before version
+ * 3 of the configuration, is the whole store's too.
  */
+
+const PROVIDER = "charts-provider:";
+
+/** Whether an index saved from `saved` was built from the cells `now` names. */
+function sameSource(saved: string, now: string | undefined): boolean {
+  return saved === now || (now === `${PROVIDER}*` && saved.startsWith(PROVIDER));
+}
 
 /** The source `cfg` reads its S-57 cells from; undefined without one. */
 export function indexSource(
   cfg: Pick<PluginConfig, "cellsDir" | "chartsProviderEnc">
 ): string | undefined {
   if (cfg.chartsProviderEnc !== undefined) {
-    return `charts-provider:${cfg.chartsProviderEnc}`;
+    return `${PROVIDER}${cfg.chartsProviderEnc}`;
   }
   return cfg.cellsDir ? `dir:${path.resolve(cfg.cellsDir)}` : undefined;
 }
@@ -34,14 +43,14 @@ export function sourceChanged(
 ): string | undefined {
   const saved = readSource(indexDir);
   const now = indexSource(cfg);
-  return saved !== undefined && saved !== now
+  return saved !== undefined && !sameSource(saved, now)
     ? `the saved index was built from ${describe(saved)}, not ${now === undefined ? "the cells now set" : describe(now)}`
     : undefined;
 }
 
 function describe(source: string): string {
-  return source.startsWith("charts-provider:")
-    ? `Charts Provider's ${source.slice("charts-provider:".length)}`
+  return source.startsWith(PROVIDER)
+    ? `Charts Provider's ${source.slice(PROVIDER.length)}`
     : source.slice(source.indexOf(":") + 1);
 }
 

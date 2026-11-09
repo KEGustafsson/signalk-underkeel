@@ -85,6 +85,22 @@ describe("no-coverage reasons at the chart box", () => {
     );
   });
 
+  test("where the charts have none, the charts provider's word is added; at the edge the box's", () => {
+    const note = "Charts Provider has no ENC for this area: no free ENC covers the area";
+    const told = { ...REBUILDING, providerNote: note };
+    expect(boxCoverage("no chart coverage at the vessel", [fp(0, east(1000))], told)).toBe(
+      `no chart coverage at the vessel: ${note}`
+    );
+    // No box yet, as before the first build: the provider still tells why.
+    expect(boxCoverage("no chart coverage at the vessel", [], { ...told, bbox: undefined })).toBe(
+      `no chart coverage at the vessel: ${note}`
+    );
+    expect(boxCoverage("no chart coverage at the vessel", [fp(0, east(12_000))], told)).toMatch(
+      /^no chart coverage at the vessel: outside the chart box, /
+    );
+    expect(boxCoverage("position stale", [fp(0, east(1000))], told)).toBe("position stale");
+  });
+
   test("with no rebuild running the reason says whether one failed or is due", () => {
     const fps = [fp(0, east(12_000))];
     const idle = { bbox: BBOX, rebuilding: false, failed: false };

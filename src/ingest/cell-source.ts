@@ -5,7 +5,7 @@ import type { ReadCell } from "./cell-reader";
 import { readCellDirectory, readCellInfo } from "./cell-reader";
 import type { CellInfo } from "./cells";
 import { usageBandFromName } from "./cells";
-import { encStamp, readEncCell } from "./enc-wasm";
+import { baseVersion, dsidVersion, encFiles, encStamp, isIso8211, readEncCell } from "./enc-wasm";
 
 /**
  * Where a cell is read from: an S-57 base cell (`.000`, its updates beside
@@ -61,10 +61,54 @@ export function readCell(source: string, cellRef: number): Promise<ReadCell> {
     : Promise.resolve(readCellDirectory(source, cellRef));
 }
 
+/**
+ * A copy's edition and update as one comparable number, as GDAL's S-57 reader (3.8) applies
+ * its updates: from `.001` on, one file after another until one is missing or does not open as
+ * ISO 8211, whatever update the base cell's DSID carries. Each update's DSID must name the edition the
+ * reader holds, or 0 (as NOAA's do), and the update after the one it holds; otherwise the
+ * reader gives up on the whole cell, as it does on a cell re-issued at update 3 with a `.001`
+ * beside it. -1 when the copy would not be read so, or its edition or files cannot be read.
+ */
+export function cellVersionRank(file: string): number {
+  try {
+    const version = baseVersion(file);
+    if (version === undefined) {
+      return -1;
+    }
+    const updates = new Map(
+      encFiles(file)
+        .slice(1)
+        .map((f) => [Number(path.extname(f).slice(1)), f] as const)
+    );
+    let { edition, update } = version;
+    for (let n = 1; ; n++) {
+      const f = updates.get(n);
+      // A file missing, or one that does not open as ISO 8211, ends the updates GDAL applies.
+      if (f === undefined || !isIso8211(f)) {
+        break;
+      }
+      // One that opens but whose DSID gives no edition and update in step makes it give up.
+      const own = dsidVersion(f);
+      if (
+        own.edition === undefined ||
+        own.update !== update + 1 ||
+        (own.edition !== 0 && own.edition !== edition)
+      ) {
+        return -1;
+      }
+      edition = own.edition;
+      update = own.update;
+    }
+    return version.edition * 100_000 + update;
+  } catch {
+    return -1;
+  }
+}
+
 export interface CellScan {
   /** S-57 base cells in path order. */
   sources: string[];
-  /** Entries named like a cell that hold none the scan read, or a cell name met twice. */
+  /** Entries named like a cell that hold none the scan read, or an older copy of a cell. */
   skipped: string[];
 }
 
@@ -92,8 +136,10 @@ function isDirectory(p: string): boolean {
 /**
  * The S-57 cells under `cellsDir`: every `.000` file down to MAX_DEPTH, such
  * as in an ENC_ROOT exchange set, and down to EXCHANGE_SET_DEPTH below any
- * directory holding a CATALOG.031 within it. A name met twice keeps its first
- * file in path order; one file met again through a link counts once. A
+ * directory holding a CATALOG.031 within it. A name met twice, as one cell in two charts
+ * provider collections, keeps the copy of the newest edition and update; between copies of
+ * the same version, or whose edition cannot be read, the first in path order. One file met
+ * again through a link counts once. A
  * directory is read again only when reached with more depth left than
  * before, and never from within itself, so a linked loop ends where it comes
  * back.
@@ -103,7 +149,8 @@ export function scanCellSources(cellsDir: string | undefined): CellScan {
   if (!cellsDir) {
     return scan;
   }
-  const seen = new Set<string>();
+  /** Each cell name's index in `scan.sources`, and the version of the copy kept there. */
+  const seen = new Map<string, { at: number; rank?: number }>();
   const files = new Set<string>();
   /** Folders named like a cell, by real path: skipped unless a cell is read from under one. */
   const named = new Map<string, string>();
@@ -117,11 +164,21 @@ export function scanCellSources(cellsDir: string | undefined): CellScan {
     }
     files.add(real);
     const name = sourceName(source);
-    if (seen.has(name)) {
-      scan.skipped.push(path.relative(cellsDir, source));
+    const kept = seen.get(name);
+    if (kept) {
+      // Versions are read only for a name met twice: one header each, not a scan of every cell.
+      // A copy that cannot be read ranks -1 and never displaces one that can.
+      kept.rank ??= cellVersionRank(scan.sources[kept.at] as string);
+      const rank = cellVersionRank(source);
+      const older = rank > kept.rank ? (scan.sources[kept.at] as string) : source;
+      if (older !== source) {
+        scan.sources[kept.at] = source;
+        kept.rank = rank;
+      }
+      scan.skipped.push(path.relative(cellsDir, older));
       return;
     }
-    seen.add(name);
+    seen.set(name, { at: scan.sources.length });
     scan.sources.push(source);
   };
   /** Depth left when each real directory was read, and those being read now. */

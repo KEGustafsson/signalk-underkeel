@@ -1,4 +1,5 @@
 import { parseConfig } from "../src/config";
+import { ALL_COLLECTIONS, CHARTS_PROVIDER_ID } from "../src/shared-enc";
 import {
   adminSchema,
   flatten,
@@ -25,8 +26,7 @@ function fields(s: Schema, prefix = ""): string[] {
 describe("admin form", () => {
   test("shows ten fields until expert settings or a feature are switched on", () => {
     expect(fields(adminSchema() as Schema)).toEqual([
-      "cellsDir",
-      "chartsProviderEnc",
+      "chartsProvider",
       "vessel.draft",
       "vessel.margin",
       "waterLevel.source",
@@ -41,7 +41,7 @@ describe("admin form", () => {
   test("the flat schema holds every setting once, without showExpert", () => {
     const all = fields(SCHEMA as Schema);
     expect(new Set(all).size).toBe(all.length);
-    expect(all).toHaveLength(58);
+    expect(all).toHaveLength(56);
     expect(all).not.toContain("showExpert");
     for (const f of [
       "vessel.heelTable",
@@ -54,8 +54,7 @@ describe("admin form", () => {
       "routeCheck.probability",
       "mooringZones",
       "leafZoom",
-      "boxMaxRadiusKm",
-      "chartsProviderArea"
+      "boxMaxRadiusKm"
     ]) {
       expect(all).toContain(f);
     }
@@ -105,6 +104,42 @@ describe("admin form", () => {
     expect(s.properties?.waterLevel?.properties?.source?.description).toMatch(
       /^Your charts are not on low water.*none: chart datum/
     );
+  });
+});
+
+describe("charts provider field", () => {
+  type Field = { enum: string[]; enumNames: string[]; type: string };
+  const field = (s: unknown): Field =>
+    (s as { properties: { chartsProvider: Field } }).properties.chartsProvider;
+
+  test("is a pulldown of chart provider services, marked by whether each runs", () => {
+    expect(field(SCHEMA)).toMatchObject({
+      type: "string",
+      enum: [CHARTS_PROVIDER_ID],
+      enumNames: ["Charts Provider (signalk-charts-provider-simple)"]
+    });
+    expect(field(adminSchema({ enc: { running: [] } })).enumNames).toEqual([
+      "Charts Provider (signalk-charts-provider-simple): not running"
+    ]);
+    expect(field(adminSchema({ enc: { running: [CHARTS_PROVIDER_ID] } })).enumNames).toEqual([
+      "Charts Provider (signalk-charts-provider-simple)"
+    ]);
+    const shared = "Shared now: Gulf_of_Finland (chart set, 2 cells).";
+    const told = field(adminSchema({ enc: { running: [CHARTS_PROVIDER_ID], shared } }));
+    expect((told as unknown as { description: string }).description).toMatch(
+      / Shared now: Gulf_of_Finland/
+    );
+  });
+
+  test("choosing it reads every cell the provider shares; anything else reads none", () => {
+    expect(parseConfig({ chartsProvider: CHARTS_PROVIDER_ID }).chartsProviderEnc).toBe(
+      ALL_COLLECTIONS
+    );
+    for (const raw of [{}, { chartsProvider: "" }, { chartsProvider: "elsewhere" }]) {
+      expect(parseConfig(raw).chartsProviderEnc).toBeUndefined();
+    }
+    // A cells directory of its own is not a setting any more.
+    expect(parseConfig({ cellsDir: "/c" }).cellsDir).toBeUndefined();
   });
 });
 

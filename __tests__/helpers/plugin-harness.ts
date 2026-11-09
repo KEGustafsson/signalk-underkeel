@@ -87,6 +87,7 @@ export function fakeApp(dataDir: string, self: Record<string, unknown> = {}) {
     setPluginStatus: (msg: string) => statuses.push(msg),
     setPluginError: (msg: string) => errors.push(msg),
     error: (msg: string) => errors.push(msg),
+    debug: () => undefined,
     getDataDirPath: () => dataDir,
     getSelfPath: (p: string) => self[p],
     registerResourceProvider: (p: unknown) => providers.push(p),

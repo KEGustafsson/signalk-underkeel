@@ -27,7 +27,7 @@ import type { IndexBuilder } from "./wfs-service";
 import { workerBuilder } from "./wfs-service";
 import { startBox } from "./wfs-wiring";
 import type { SharedEncWatch } from "./shared-enc";
-import { noteSharedCells, watchSharedCells, withSharedCells } from "./shared-enc";
+import { noteSharedCells, runningProviders, watchSharedCells, withSharedCells } from "./shared-enc";
 import fs from "fs";
 import path from "path";
 
@@ -105,6 +105,8 @@ function formSchema(app: ServerAPI, state: PluginState): object {
   } catch (err) {
     app.error(`setup checks failed: ${(err as Error).message}`);
   }
+  // The chart pulldown lists what Charts Provider shares also while this plugin is off.
+  hints.enc ??= runningProviders();
   const schema = adminSchema(hints);
   const version = (app as { config?: { version?: unknown } }).config?.version;
   return formsFollowDependencies(version) ? schema : flatten(schema);
