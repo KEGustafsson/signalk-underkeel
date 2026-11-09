@@ -143,12 +143,13 @@ export function collectionsHint(api = sharedEncApi()): string | undefined {
 }
 
 /**
- * Why the charts provider's `collection` holds no cells to read, as it tells it; undefined
- * when it is ready, or the provider cannot tell.
+ * Why the charts provider's `collection` holds no cells to read, as it tells it, or that it is
+ * not running; undefined when it is ready, or cannot tell. A provider started later restarts
+ * the plugin (`watchShared`), so the note is read again then.
  */
 export function sharedCellsNote(collection: string, api = sharedEncApi()): string | undefined {
   if (!api) {
-    return undefined;
+    return "Charts Provider is not running";
   }
   if (collection === ALL_COLLECTIONS) {
     return collectionsHint(api)?.startsWith("Charts Provider shares no")

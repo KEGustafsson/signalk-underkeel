@@ -3,6 +3,7 @@ import os from "os";
 import path from "path";
 import { parseConfig } from "../src/config";
 import type { SharedAreaAnswer } from "../src/shared-enc";
+import { withSharedCells } from "../src/shared-enc";
 import { chartsProviderAt } from "./helpers/charts-provider";
 import { cellsConfig } from "./helpers/cells-config";
 import type { LonLat } from "../src/foundation/geo";
@@ -159,6 +160,19 @@ describe("start plan with a box", () => {
     await boxBuilder(job, new AbortController().signal);
     const again = planIndex(config({ rebuildIndex: true }), dir);
     expect("build" in again && again.build.box).toEqual(job.box);
+  });
+
+  test("with the charts provider chosen, changed cells rebuild in the saved box too", async () => {
+    const job = boxJob(ROCK, 2);
+    await boxBuilder(
+      { ...job, box: { bbox: job.box!.bbox, sources: ["an older cell"] } },
+      new AbortController().signal
+    );
+    const raw = { ...chartsProviderAt(CELLS), indexDir: path.join(dir, "index"), leafZoom: LEAF };
+    const provider = withSharedCells(parseConfig(raw), dir);
+    expect(provider.cellsDir).toBe(CELLS);
+    const p = planIndex(provider, dir);
+    expect("build" in p && p.build.box).toEqual(job.box);
   });
 
   test("a saved box index built at another leaf zoom is rebuilt", async () => {

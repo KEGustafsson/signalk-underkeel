@@ -2,6 +2,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { readCell, scanCellSources } from "../../src/ingest/cell-source";
+import { withDsidVersion } from "../helpers/dsid";
 import {
   baseEdition,
   baseVersion,
@@ -240,6 +241,19 @@ describe("S-57 cells read with gdal3.js", () => {
     );
     expect(baseVersion(huge)).toBeUndefined();
     expect(baseEdition(huge)).toBeUndefined();
+    // Records laid out as S-57 lays them out: the largest edition and update are known, one
+    // past either is not, and an update past its limit leaves the edition known.
+    const version = (edition: string, update: string) => {
+      const file = path.join(tmp, "FI5VERS1.000");
+      fs.writeFileSync(file, withDsidVersion(fs.readFileSync(CELL), edition, update));
+      return { version: baseVersion(file), edition: baseEdition(file) };
+    };
+    expect(version("9999", "999")).toEqual({
+      version: { edition: 9999, update: 999 },
+      edition: 9999
+    });
+    expect(version("10000", "0")).toEqual({ version: undefined, edition: undefined });
+    expect(version("1", "1000")).toEqual({ version: undefined, edition: 1 });
     // A directory entry of size 0 is refused, not walked forever.
     const zero = path.join(tmp, "FI5ZERO1.000");
     const cell = Buffer.from(fs.readFileSync(CELL));

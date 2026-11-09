@@ -200,10 +200,15 @@ describe("saving a migrated configuration", () => {
   };
 
   test("keeps the version 1 configuration once and saves the migrated one", () => {
-    const { app, saved } = fakeApp();
+    const { app, saved, errors } = fakeApp();
     const v1 = { cellsDir: "/c", lookahead: { warnRisk: 0.05 } };
     persistMigration(app, v1, migrateConfig(v1));
     expect(saved).toEqual([{ lookahead: {}, configVersion: CONFIG_VERSION }]);
+    // The cells directory is gone with no charts provider chosen in its place: said once.
+    expect(errors).toEqual([
+      "the ENC cells directory setting is gone: ENC now comes only from a charts provider; " +
+        `choose it under Charts provider (the earlier settings are kept in ${V1_BACKUP})`
+    ]);
     const backup = path.join(dataDir, V1_BACKUP);
     expect(JSON.parse(fs.readFileSync(backup, "utf8"))).toEqual(v1);
     persistMigration(app, { other: true }, migrateConfig({ other: true }));
@@ -211,12 +216,21 @@ describe("saving a migrated configuration", () => {
   });
 
   test("keeps a version 2 configuration once, beside the version 1 backup", () => {
-    const { app, saved } = fakeApp();
+    const { app, saved, errors } = fakeApp();
     const v2 = { configVersion: 2, cellsDir: "/c", chartsProviderEnc: "Gulf_of_Finland" };
     persistMigration(app, v2, migrateConfig(v2));
     expect(saved).toEqual([{ configVersion: CONFIG_VERSION, chartsProvider: CHARTS_PROVIDER_ID }]);
     expect(JSON.parse(fs.readFileSync(path.join(dataDir, backupName(2)), "utf8"))).toEqual(v2);
     expect(fs.existsSync(path.join(dataDir, V1_BACKUP))).toBe(false);
+    // A charts provider takes the cells directory's place: nothing to warn of.
+    expect(errors).toEqual([]);
+  });
+
+  test("an empty cells directory dropped by the migration is nothing to warn of", () => {
+    const { app, errors } = fakeApp();
+    const v2 = { configVersion: 2, cellsDir: " " };
+    persistMigration(app, v2, migrateConfig(v2));
+    expect(errors).toEqual([]);
   });
 
   test("saves nothing for a current configuration", () => {

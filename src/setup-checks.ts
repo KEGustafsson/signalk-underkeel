@@ -112,7 +112,12 @@ export function suggestedSource(datums: readonly DatumFact[]): "fmi" | "signalk-
 
 function chartsCheck(s: PluginState, facts: SetupFacts): SetupCheck {
   if (facts.cells > 0) {
-    return { id: "charts", level: "ok", text: `Charts: ${facts.cells} cells indexed` };
+    // With no provider chosen no ENC is read, as a cells directory dropped by the version 3
+    // migration leaves it: said for as long as none is chosen.
+    const only = s.config?.chartsProviderEnc
+      ? ""
+      : "; no charts provider chosen, so no ENC is read: choose the charts provider";
+    return { id: "charts", level: "ok", text: `Charts: ${facts.cells} cells indexed${only}` };
   }
   if (!s.config?.chartsProviderEnc && !s.config?.wfs) {
     return {

@@ -95,6 +95,15 @@ describe("setup check", () => {
     ]);
   });
 
+  test("an index without a charts provider says no ENC is read", () => {
+    const s = state({ wfs: {} }, undefined, 1);
+    expect(setupChecks(s, setupFacts(app(), s, HOST))[0]).toEqual({
+      id: "charts",
+      level: "ok",
+      text: "Charts: 1 cells indexed; no charts provider chosen, so no ENC is read: choose the charts provider"
+    });
+  });
+
   test("a degraded level is a warning with its reason", () => {
     const s = state({ waterLevel: { source: "fmi" } }, monitor("FMI forecast stale"));
     expect(setupChecks(s, setupFacts(app(), s, HOST))[2]).toEqual({

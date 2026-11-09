@@ -1,6 +1,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
+import { AREA_ERROR_RETRY_MS } from "../src/shared-enc";
 import type { LonLat } from "../src/foundation/geo";
 import { haversine, project } from "../src/foundation/geo";
 import type { Bbox, WfsFetch } from "../src/ingest/wfs";
@@ -147,10 +148,12 @@ describe("WFS box around the vessel", () => {
     );
   });
 
-  test("a failing area request is logged and the box is still built", async () => {
+  test("a failing area request is logged, the box still built, and the box asked about again", async () => {
+    let asks = 0;
     const h = harness(okReply, {
       area: {
         ask: () => {
+          asks++;
           throw new Error("provider gone");
         },
         note: () => undefined
@@ -162,6 +165,12 @@ describe("WFS box around the vessel", () => {
     expect(h.errors).toEqual([
       "Traficom WFS depths: asking for the area's cells failed: provider gone"
     ]);
+    h.t.now += AREA_ERROR_RETRY_MS - 1;
+    await h.service.check();
+    expect(asks).toBe(1);
+    h.t.now += 1;
+    await h.service.check();
+    expect(asks).toBe(2);
   });
 
   test("a box is announced again when the answer says when, and only then", async () => {

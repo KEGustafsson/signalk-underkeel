@@ -96,8 +96,10 @@ and the charts it converted keep their cells (the [README](../README.md#prepare-
 has the details). The plugin has no cells directory of its own. Each index box asks that
 plugin for the ENC cells of its area: with its area downloads on, it downloads the free ENC
 there, the cells are shared like any chart set's, and their arrival rebuilds the index. Where
-the vessel has no coverage, the reason adds what the charts provider answered: downloading,
-no ENC for this area, not running, or too old to ask. The Traficom WFS depths do not depend
+the vessel has no coverage and the charts provider explains it, the reason adds what it
+answered: downloading, no ENC for this area, not running, or too old to ask. Where it holds
+cells reaching the box but none at the vessel, and is not downloading, the gap is the
+charts' and the reason names no charts provider answer. The Traficom WFS depths do not depend
 on it.
 The draft comes from **Boat**, or else from Signal K `design.draft.maximum`; length and beam fall back to `design.length.overall` and
 `design.beam`. Without a draft the engine stays `unknown`. The water level comes from the
@@ -119,7 +121,9 @@ reason says so. A Traficom WFS refresh then keeps that index too, rather than re
 charted hazards with WFS depths alone; with an index of WFS depths alone, or none, it builds
 without ENC. The index records the source it was built from (`source.json`: the charts
 provider, wherever its store is), so this holds only for that source. A source chosen since that has no cells yet does not keep another source's index: the
-engine reports that source's cells as not found until they arrive.
+engine reports that source's cells as not found until they arrive. An index saved without a
+readable `source.json`, as plugin versions before 0.4.0 saved it, records no source and is taken
+as the current source's.
 
 Only the coarse part of the depth pyramid stays in memory; its fine tiles are read from the
 saved file, a few kilometres square at a time, when the look-ahead, a route check, a query or

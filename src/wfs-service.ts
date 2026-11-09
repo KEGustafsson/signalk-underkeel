@@ -21,6 +21,7 @@ import {
   WFS_SOURCE
 } from "./ingest/wfs";
 import type { Clock } from "./monitor";
+import { AREA_ERROR_RETRY_MS } from "./shared-enc";
 import { readBox } from "./spatial/build-box";
 import { MAX_CHART_BUFFER } from "./spatial/chart-position";
 import type { ChartIndex } from "./spatial/chart-index";
@@ -397,7 +398,10 @@ export class WfsService {
     }
   }
 
-  /** Tells the charts provider of the box; advisory, so a failure never stops the refresh. */
+  /**
+   * Tells the charts provider of the box; advisory, so a failure never stops the refresh. A
+   * failed ask is tried again later, as a provider that failed to answer may recover.
+   */
   private announce(bbox: Bbox, now: number): void {
     let ms: number | undefined;
     try {
@@ -406,6 +410,7 @@ export class WfsService {
       this.deps.error(
         `${this.label}: asking for the area's cells failed: ${(err as Error).message}`
       );
+      ms = AREA_ERROR_RETRY_MS;
     }
     this.again = ms === undefined ? undefined : { bbox, at: now + ms };
   }

@@ -169,7 +169,8 @@ function askForArea(app: Pick<ServerAPI, "error" | "debug">): AreaRequests {
   let last: string | undefined;
   let note: string | undefined;
   return {
-    note: () => note,
+    // A provider stopped since its answer leaves that answer stale: it is not running now.
+    note: () => (sharedEncApi() === undefined ? unaskedNote(false) : note),
     ask: (bbox) => {
       const api = sharedEncApi();
       const answer = requestSharedArea(bbox, api);

@@ -24,6 +24,7 @@ import {
 import underkeel = require("../src/index");
 import { AREA_ASK_MAX_MS, AREA_ASK_MIN_MS, areaRequests } from "../src/wfs-wiring";
 import { CELLS, inlineBuilder } from "./helpers/fixture-index";
+import { withDsidVersion } from "./helpers/dsid";
 import { fakeApp, fakeClock, T0 } from "./helpers/plugin-harness";
 
 /**
@@ -140,9 +141,12 @@ describe("charts provider ENC store", () => {
     const put = (collection: string, cell: string, from: string, updates = 0) => {
       const dir = path.join(root, collection, cell);
       fs.mkdirSync(dir, { recursive: true });
-      fs.copyFileSync(path.join(CELLS, `${from}.000`), path.join(dir, `${cell}.000`));
+      const bytes = fs.readFileSync(path.join(CELLS, `${from}.000`));
+      fs.writeFileSync(path.join(dir, `${cell}.000`), bytes);
+      const edition = String(baseEdition(path.join(dir, `${cell}.000`)));
       for (let u = 1; u <= updates; u++) {
-        fs.writeFileSync(path.join(dir, `${cell}.${String(u).padStart(3, "0")}`), "");
+        const update = withDsidVersion(bytes, edition, String(u));
+        fs.writeFileSync(path.join(dir, `${cell}.${String(u).padStart(3, "0")}`), update);
       }
     };
     const read = () => {
@@ -180,6 +184,7 @@ describe("charts provider ENC store", () => {
   });
 
   test("a copy's version counts its base cell's update and only the updates that follow on", () => {
+    const updateOf = (file: string, u: number) => file.replace(/000$/, String(u).padStart(3, "0"));
     const dir = path.join(tmp, "cells");
     fs.mkdirSync(dir);
     const cell = (name: string, updn?: number | string, updates: number[] = []) => {
@@ -194,7 +199,7 @@ describe("charts provider ENC store", () => {
       }
       fs.writeFileSync(file, bytes);
       for (const u of updates) {
-        fs.writeFileSync(file.replace(/000$/, String(u).padStart(3, "0")), "");
+        fs.writeFileSync(updateOf(file, u), withDsidVersion(bytes, "7", String(u)));
       }
       return file;
     };
@@ -206,6 +211,17 @@ describe("charts provider ENC store", () => {
     expect(cellVersionRank(cell("reissued-on", 3, [2, 3, 4]))).toBe(700_004);
     // An update after a gap does not apply, nor do those after it.
     expect(cellVersionRank(cell("gap", undefined, [1, 3, 4]))).toBe(700_001);
+    // Nor after a damaged update, one of another edition, or one whose DSID names another
+    // update than its file: the reader stops applying updates there.
+    const damaged = cell("damaged", undefined, [1, 2, 3]);
+    fs.writeFileSync(updateOf(damaged, 2), "not S-57");
+    expect(cellVersionRank(damaged)).toBe(700_001);
+    const other = cell("other-edition", undefined, [1, 2]);
+    fs.writeFileSync(updateOf(other, 2), withDsidVersion(fs.readFileSync(other), "8", "2"));
+    expect(cellVersionRank(other)).toBe(700_001);
+    const misnamed = cell("misnamed", undefined, [1, 2]);
+    fs.writeFileSync(updateOf(misnamed, 2), withDsidVersion(fs.readFileSync(misnamed), "7", "5"));
+    expect(cellVersionRank(misnamed)).toBe(700_001);
     // A UPDN that is not a number leaves the version unknown, not update 0: such a copy ranks
     // below every copy whose version is known, as the charts provider ranks it.
     expect(cellVersionRank(cell("malformed", "x", [1, 2]))).toBe(-1);
@@ -275,7 +291,8 @@ describe("charts provider ENC store", () => {
     expect(sharedCellsNote("Nope", told)).toMatch(/shares no Nope/);
     // An older provider cannot tell; nor can one that is not running.
     expect(sharedCellsNote("Nope", api)).toBeUndefined();
-    expect(sharedCellsNote("Nope", undefined)).toBeUndefined();
+    expect(sharedCellsNote("Nope", undefined)).toBe("Charts Provider is not running");
+    expect(sharedCellsNote(ALL_COLLECTIONS, undefined)).toBe("Charts Provider is not running");
     expect(sharedCellsNote(ALL_COLLECTIONS, { ...told, collections: () => [] })).toMatch(
       /shares no ENC cells yet/
     );
@@ -329,7 +346,7 @@ describe("charts provider ENC store", () => {
     } as unknown as Parameters<typeof areaRequests>[1];
     expect(areaRequests({}, app)).toBeUndefined();
     const area = areaRequests({ chartsProviderEnc: ALL_COLLECTIONS }, app);
-    expect(area?.note()).toBeUndefined();
+    expect(area?.note()).toBe("Charts Provider is not running");
     const { api } = fakeProvider("/r");
     const scope = globalThis as { __signalk_chartsProviderEnc?: unknown };
     const box: [number, number, number, number] = [20, 59, 21, 60];
@@ -342,6 +359,11 @@ describe("charts provider ENC store", () => {
     area?.ask(box);
     area?.ask(box);
     expect(area?.note()).toBe("Charts Provider is downloading the ENC around the vessel");
+    // A provider stopped since it answered is not running now, asked again or not.
+    const running = scope.__signalk_chartsProviderEnc;
+    delete scope.__signalk_chartsProviderEnc;
+    expect(area?.note()).toBe("Charts Provider is not running");
+    scope.__signalk_chartsProviderEnc = running;
     // A provider without cellsIn cannot say whether it has cells there: its reason is the note.
     answer = { accepted: false, started: false, reason: "turn it on" };
     area?.ask(box);

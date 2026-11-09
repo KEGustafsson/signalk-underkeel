@@ -63,8 +63,10 @@ export function readCell(source: string, cellRef: number): Promise<ReadCell> {
 
 /**
  * A copy's edition and update as one comparable number: the edition and update of its base
- * cell's DSID, raised by each update file beside it that follows on without a gap, as only
- * those apply. -1 when its edition cannot be read, or its files cannot be.
+ * cell's DSID, raised by each update file beside it that follows on without a gap and whose
+ * own DSID names that edition and update, as only those apply: a damaged update ends the
+ * chain where the reader stops applying them. -1 when its edition cannot be read, or its
+ * files cannot be.
  */
 export function cellVersionRank(file: string): number {
   try {
@@ -75,11 +77,14 @@ export function cellVersionRank(file: string): number {
     let update = version.update;
     for (const f of encFiles(file).slice(1)) {
       const n = Number(path.extname(f).slice(1));
-      if (n === update + 1) {
-        update = n;
-      } else if (n > update + 1) {
+      if (n < update + 1) {
+        continue;
+      }
+      const own = baseVersion(f);
+      if (n > update + 1 || own?.edition !== version.edition || own.update !== n) {
         break;
       }
+      update = n;
     }
     return version.edition * 100_000 + update;
   } catch {

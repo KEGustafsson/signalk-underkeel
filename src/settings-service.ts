@@ -41,6 +41,13 @@ export function persistMigration(
   if (!m.changed) {
     return;
   }
+  const dir = isObject(saved) ? saved.cellsDir : undefined;
+  if (typeof dir === "string" && dir.trim() !== "" && m.config.chartsProvider === undefined) {
+    app.error(
+      "the ENC cells directory setting is gone: ENC now comes only from a charts provider; " +
+        `choose it under Charts provider (the earlier settings are kept in ${backupName(m.from)})`
+    );
+  }
   const backup = path.join(app.getDataDirPath(), backupName(m.from));
   try {
     if (!fs.existsSync(backup)) {
