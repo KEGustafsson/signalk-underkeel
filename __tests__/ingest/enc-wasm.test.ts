@@ -253,6 +253,8 @@ describe("S-57 cells read with gdal3.js", () => {
       edition: 9999
     });
     expect(version("10000", "0")).toEqual({ version: undefined, edition: undefined });
+    // Edition 0, as NOAA update files carry it, is no base cell's edition.
+    expect(version("0", "0")).toEqual({ version: undefined, edition: undefined });
     expect(version("1", "1000")).toEqual({ version: undefined, edition: 1 });
     // A directory entry of size 0 is refused, not walked forever.
     const zero = path.join(tmp, "FI5ZERO1.000");

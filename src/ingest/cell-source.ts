@@ -5,7 +5,7 @@ import type { ReadCell } from "./cell-reader";
 import { readCellDirectory, readCellInfo } from "./cell-reader";
 import type { CellInfo } from "./cells";
 import { usageBandFromName } from "./cells";
-import { baseVersion, encFiles, encStamp, readEncCell } from "./enc-wasm";
+import { baseVersion, encFiles, encStamp, isUpdateOf, readEncCell } from "./enc-wasm";
 
 /**
  * Where a cell is read from: an S-57 base cell (`.000`, its updates beside
@@ -64,8 +64,9 @@ export function readCell(source: string, cellRef: number): Promise<ReadCell> {
 /**
  * A copy's edition and update as one comparable number: the edition and update of its base
  * cell's DSID, raised by each update file beside it that follows on without a gap and whose
- * own DSID names that edition and update, as only those apply: a damaged update ends the
- * chain where the reader stops applying them. -1 when its edition cannot be read, or its
+ * own DSID names that edition (or 0, as NOAA's do) and update, as only those apply: an update
+ * whose header is damaged ends the chain. Only headers are read, so an update damaged past
+ * its header still counts. -1 when its edition cannot be read, or its
  * files cannot be.
  */
 export function cellVersionRank(file: string): number {
@@ -80,8 +81,7 @@ export function cellVersionRank(file: string): number {
       if (n < update + 1) {
         continue;
       }
-      const own = baseVersion(f);
-      if (n > update + 1 || own?.edition !== version.edition || own.update !== n) {
+      if (n > update + 1 || !isUpdateOf(f, version.edition, n)) {
         break;
       }
       update = n;

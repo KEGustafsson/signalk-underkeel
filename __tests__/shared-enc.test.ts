@@ -219,6 +219,11 @@ describe("charts provider ENC store", () => {
     const other = cell("other-edition", undefined, [1, 2]);
     fs.writeFileSync(updateOf(other, 2), withDsidVersion(fs.readFileSync(other), "8", "2"));
     expect(cellVersionRank(other)).toBe(700_001);
+    // NOAA updates carry edition 0 in their DSID: they follow on all the same.
+    const noaa = cell("noaa", undefined, [1, 2]);
+    fs.writeFileSync(updateOf(noaa, 1), withDsidVersion(fs.readFileSync(noaa), "0", "1"));
+    fs.writeFileSync(updateOf(noaa, 2), withDsidVersion(fs.readFileSync(noaa), "0", "2"));
+    expect(cellVersionRank(noaa)).toBe(700_002);
     const misnamed = cell("misnamed", undefined, [1, 2]);
     fs.writeFileSync(updateOf(misnamed, 2), withDsidVersion(fs.readFileSync(misnamed), "7", "5"));
     expect(cellVersionRank(misnamed)).toBe(700_001);

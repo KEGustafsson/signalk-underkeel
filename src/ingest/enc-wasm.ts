@@ -256,9 +256,10 @@ const MAX_EDITION = 9_999;
 const MAX_UPDATE = 999;
 
 /**
- * The EDTN and UPDN fields of the base cell's DSID record, read from the ISO 8211 file itself;
+ * The EDTN and UPDN fields of a cell file's DSID record, read from the ISO 8211 file itself;
  * each undefined when it is missing, not all digits, or out of range, and both when the record
- * is not laid out as S-57 sets it, as a separator lost or misplaced leaves it.
+ * is not laid out as S-57 sets it, as a separator lost or misplaced leaves it. EDTN may be 0,
+ * as NOAA update files carry it.
  */
 function dsidFields(file: string): { edition?: number; update?: number } {
   const fd = fs.openSync(file, "r");
@@ -304,7 +305,7 @@ function dsidFields(file: string): { edition?: number; update?: number } {
         const edition = field(dsnmEnd + 1, edtnEnd, MAX_EDITION);
         const update = field(edtnEnd + 1, updnEnd, MAX_UPDATE);
         return {
-          ...(edition !== undefined && edition > 0 ? { edition } : {}),
+          ...(edition === undefined ? {} : { edition }),
           ...(update === undefined ? {} : { update })
         };
       }
@@ -324,12 +325,24 @@ function dsidFields(file: string): { edition?: number; update?: number } {
  */
 export function baseVersion(file: string): { edition: number; update: number } | undefined {
   const { edition, update } = dsidFields(file);
-  return edition !== undefined && update !== undefined ? { edition, update } : undefined;
+  return edition !== undefined && edition > 0 && update !== undefined
+    ? { edition, update }
+    : undefined;
 }
 
 /** The edition number in the base cell's DSID record, whatever its UPDN holds. */
 export function baseEdition(file: string): number | undefined {
-  return dsidFields(file).edition;
+  const { edition } = dsidFields(file);
+  return edition !== undefined && edition > 0 ? edition : undefined;
+}
+
+/**
+ * Whether the update file `file` reads as update `n` of edition `edition`: its DSID's UPDN is
+ * `n` and its EDTN that edition, or 0, as NOAA updates carry it.
+ */
+export function isUpdateOf(file: string, edition: number, n: number): boolean {
+  const own = dsidFields(file);
+  return own.update === n && (own.edition === edition || own.edition === 0);
 }
 
 /** The cell `readEncLayers` read from `file`, parsed as `readCellDirectory` parses an export. */
