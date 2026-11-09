@@ -230,6 +230,13 @@ describe("charts provider ENC store", () => {
     const misnamed = cell("misnamed", undefined, [1, 2]);
     fs.writeFileSync(updateOf(misnamed, 2), withDsidVersion(fs.readFileSync(misnamed), "7", "5"));
     expect(cellVersionRank(misnamed)).toBe(-1);
+    // So does an S-57 update whose UPDN is not a number: it is no file GDAL skips.
+    const unnumbered = cell("unnumbered", undefined, [1, 2]);
+    fs.writeFileSync(
+      updateOf(unnumbered, 2),
+      withDsidVersion(fs.readFileSync(unnumbered), "7", "x")
+    );
+    expect(cellVersionRank(unnumbered)).toBe(-1);
     // A UPDN that is not a number leaves the version unknown, not update 0: such a copy ranks
     // below every copy whose version is known, as the charts provider ranks it.
     expect(cellVersionRank(cell("malformed", "x", [1, 2]))).toBe(-1);

@@ -5,7 +5,7 @@ import type { ReadCell } from "./cell-reader";
 import { readCellDirectory, readCellInfo } from "./cell-reader";
 import type { CellInfo } from "./cells";
 import { usageBandFromName } from "./cells";
-import { baseVersion, dsidVersion, encFiles, encStamp, readEncCell } from "./enc-wasm";
+import { baseVersion, dsidVersion, encFiles, encStamp, isIso8211, readEncCell } from "./enc-wasm";
 
 /**
  * Where a cell is read from: an S-57 base cell (`.000`, its updates beside
@@ -63,8 +63,8 @@ export function readCell(source: string, cellRef: number): Promise<ReadCell> {
 
 /**
  * A copy's edition and update as one comparable number, as GDAL's S-57 reader (3.8) applies
- * its updates: from `.001` on, one file after another until one is missing or cannot be read,
- * whatever update the base cell's DSID carries. Each update's DSID must name the edition the
+ * its updates: from `.001` on, one file after another until one is missing or does not open as
+ * ISO 8211, whatever update the base cell's DSID carries. Each update's DSID must name the edition the
  * reader holds, or 0 (as NOAA's do), and the update after the one it holds; otherwise the
  * reader gives up on the whole cell, as it does on a cell re-issued at update 3 with a `.001`
  * beside it. -1 when the copy would not be read so, or its edition or files cannot be read.
@@ -83,15 +83,20 @@ export function cellVersionRank(file: string): number {
     let { edition, update } = version;
     for (let n = 1; ; n++) {
       const f = updates.get(n);
-      const own = f === undefined ? undefined : dsidVersion(f);
-      // A file missing, or one that is not S-57, ends the updates the reader applies.
-      if (own?.update === undefined) {
+      // A file missing, or one that does not open as ISO 8211, ends the updates GDAL applies.
+      if (f === undefined || !isIso8211(f)) {
         break;
       }
-      if ((own.edition !== 0 && own.edition !== edition) || own.update !== update + 1) {
+      // One that opens but whose DSID gives no edition and update in step makes it give up.
+      const own = dsidVersion(f);
+      if (
+        own.edition === undefined ||
+        own.update !== update + 1 ||
+        (own.edition !== 0 && own.edition !== edition)
+      ) {
         return -1;
       }
-      edition = own.edition ?? edition;
+      edition = own.edition;
       update = own.update;
     }
     return version.edition * 100_000 + update;

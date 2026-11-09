@@ -300,6 +300,14 @@ describe("S-57 cells read with gdal3.js", () => {
     ]);
     await expect(readEncCell(misnamed, 0)).rejects.toThrow(/GDAL cannot read/);
     expect(cellVersionRank(misnamed)).toBe(-1);
+    const unnumbered = copy("unnumbered", "0", [[1, "1", "x"]]);
+    await expect(readEncCell(unnumbered, 0)).rejects.toThrow(/GDAL cannot read/);
+    expect(cellVersionRank(unnumbered)).toBe(-1);
+    // A file beside the cell that is not ISO 8211 ends the updates GDAL applies.
+    const ended = copy("ended", "0", [[1, "1", "1"]]);
+    fs.writeFileSync(ended.replace(/000$/, "002"), "not S-57");
+    expect(await applied(ended)).toBe(1);
+    expect(cellVersionRank(ended)).toBe(100_001);
   });
 
   test("a file that is not S-57 is refused with GDAL's reason", async () => {

@@ -336,6 +336,22 @@ export function baseEdition(file: string): number | undefined {
   return edition !== undefined && edition > 0 ? edition : undefined;
 }
 
+/**
+ * Whether `file` opens as ISO 8211, as GDAL's DDFModule checks its leader: a record length, an
+ * interchange level of 1 to 3 and the leader identifier L. GDAL stops looking for updates at a
+ * file that does not.
+ */
+export function isIso8211(file: string): boolean {
+  const fd = fs.openSync(file, "r");
+  try {
+    const head = Buffer.alloc(7);
+    const size = fs.readSync(fd, head, 0, head.length, 0);
+    return size === head.length && /^\d{5}[123]L$/.test(head.toString("latin1"));
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 /** The EDTN and UPDN of any cell file's DSID record, an update file's among them; EDTN may be 0. */
 export function dsidVersion(file: string): { edition?: number; update?: number } {
   return dsidFields(file);
