@@ -318,6 +318,27 @@ describe("S-57 cells read with gdal3.js", () => {
     fs.mkdirSync(folder.replace(/000$/, "002"));
     expect(await applied(folder)).toBe(1);
     expect(cellVersionRank(folder)).toBe(100_001);
+    // As does an update that cannot be opened, as one without read access cannot.
+    const locked = copy("locked", "0", [
+      [1, "1", "1"],
+      [2, "1", "2"]
+    ]);
+    const lockedUpdate = locked.replace(/000$/, "002");
+    const openSync = fs.openSync;
+    const spy = jest.spyOn(fs, "openSync").mockImplementation(((
+      p: fs.PathLike,
+      ...rest: unknown[]
+    ) => {
+      if (p === lockedUpdate) {
+        throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
+      }
+      return (openSync as (...a: unknown[]) => number)(p, ...rest);
+    }) as typeof fs.openSync);
+    try {
+      expect(cellVersionRank(locked)).toBe(100_001);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   test("a file that is not S-57 is refused with GDAL's reason", async () => {
