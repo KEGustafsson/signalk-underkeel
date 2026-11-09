@@ -1,7 +1,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { readCell, scanCellSources } from "../../src/ingest/cell-source";
+import { cellVersionRank, readCell, scanCellSources } from "../../src/ingest/cell-source";
 import { withDsidVersion } from "../helpers/dsid";
 import {
   baseEdition,
@@ -269,6 +269,37 @@ describe("S-57 cells read with gdal3.js", () => {
     const bad = path.join(tmp, "FI5BAD01.000");
     fs.writeFileSync(bad, "not a cell");
     expect(baseEdition(bad)).toBeUndefined();
+  });
+
+  test("a copy's rank is the update GDAL applies, and -1 where GDAL gives up on the cell", async () => {
+    const bytes = fs.readFileSync(CELL);
+    const copy = (name: string, updn: string, updates: [number, string, string][]) => {
+      const dir = path.join(tmp, name);
+      fs.mkdirSync(dir);
+      const file = path.join(dir, "FI5SYNTH.000");
+      fs.writeFileSync(file, withDsidVersion(bytes, "1", updn));
+      for (const [n, edition, update] of updates) {
+        const updateFile = file.replace(/000$/, String(n).padStart(3, "0"));
+        fs.writeFileSync(updateFile, withDsidVersion(bytes, edition, update));
+      }
+      return file;
+    };
+    const applied = async (file: string) => (await readEncCell(file, 0)).info.update;
+    const chain = copy("chain", "0", [
+      [1, "1", "1"],
+      [2, "0", "2"]
+    ]);
+    expect(await applied(chain)).toBe(2);
+    expect(cellVersionRank(chain)).toBe(100_002);
+    const reissue = copy("reissue", "3", [[4, "1", "4"]]);
+    expect(await applied(reissue)).toBe(3);
+    expect(cellVersionRank(reissue)).toBe(100_003);
+    const misnamed = copy("misnamed", "0", [
+      [1, "1", "1"],
+      [2, "1", "5"]
+    ]);
+    await expect(readEncCell(misnamed, 0)).rejects.toThrow(/GDAL cannot read/);
+    expect(cellVersionRank(misnamed)).toBe(-1);
   });
 
   test("a file that is not S-57 is refused with GDAL's reason", async () => {

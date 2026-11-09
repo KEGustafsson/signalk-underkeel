@@ -5,7 +5,7 @@ import type { ReadCell } from "./cell-reader";
 import { readCellDirectory, readCellInfo } from "./cell-reader";
 import type { CellInfo } from "./cells";
 import { usageBandFromName } from "./cells";
-import { baseVersion, encFiles, encStamp, isUpdateOf, readEncCell } from "./enc-wasm";
+import { baseVersion, dsidVersion, encFiles, encStamp, readEncCell } from "./enc-wasm";
 
 /**
  * Where a cell is read from: an S-57 base cell (`.000`, its updates beside
@@ -62,12 +62,12 @@ export function readCell(source: string, cellRef: number): Promise<ReadCell> {
 }
 
 /**
- * A copy's edition and update as one comparable number: the edition and update of its base
- * cell's DSID, raised by each update file beside it that follows on without a gap and whose
- * own DSID names that edition (or 0, as NOAA's do) and update, as only those apply: an update
- * whose header is damaged ends the chain. Only headers are read, so an update damaged past
- * its header still counts. -1 when its edition cannot be read, or its
- * files cannot be.
+ * A copy's edition and update as one comparable number, as GDAL's S-57 reader (3.8) applies
+ * its updates: from `.001` on, one file after another until one is missing or cannot be read,
+ * whatever update the base cell's DSID carries. Each update's DSID must name the edition the
+ * reader holds, or 0 (as NOAA's do), and the update after the one it holds; otherwise the
+ * reader gives up on the whole cell, as it does on a cell re-issued at update 3 with a `.001`
+ * beside it. -1 when the copy would not be read so, or its edition or files cannot be read.
  */
 export function cellVersionRank(file: string): number {
   try {
@@ -75,16 +75,24 @@ export function cellVersionRank(file: string): number {
     if (version === undefined) {
       return -1;
     }
-    let update = version.update;
-    for (const f of encFiles(file).slice(1)) {
-      const n = Number(path.extname(f).slice(1));
-      if (n < update + 1) {
-        continue;
-      }
-      if (n > update + 1 || !isUpdateOf(f, version.edition, n)) {
+    const updates = new Map(
+      encFiles(file)
+        .slice(1)
+        .map((f) => [Number(path.extname(f).slice(1)), f] as const)
+    );
+    let { edition, update } = version;
+    for (let n = 1; ; n++) {
+      const f = updates.get(n);
+      const own = f === undefined ? undefined : dsidVersion(f);
+      // A file missing, or one that is not S-57, ends the updates the reader applies.
+      if (own?.update === undefined) {
         break;
       }
-      update = n;
+      if ((own.edition !== 0 && own.edition !== edition) || own.update !== update + 1) {
+        return -1;
+      }
+      edition = own.edition ?? edition;
+      update = own.update;
     }
     return version.edition * 100_000 + update;
   } catch {

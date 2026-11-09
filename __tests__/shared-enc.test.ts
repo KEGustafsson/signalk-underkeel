@@ -183,7 +183,7 @@ describe("charts provider ENC store", () => {
     expect(read().sources).toEqual(["B_set/FI4SYNTH/FI4SYNTH.000"]);
   });
 
-  test("a copy's version counts its base cell's update and only the updates that follow on", () => {
+  test("a copy's version counts its base cell's update and the updates GDAL applies after it", () => {
     const updateOf = (file: string, u: number) => file.replace(/000$/, String(u).padStart(3, "0"));
     const dir = path.join(tmp, "cells");
     fs.mkdirSync(dir);
@@ -207,18 +207,21 @@ describe("charts provider ENC store", () => {
     // A re-issue carrying update 3 outranks a copy with updates 1 and 2 beside it.
     expect(cellVersionRank(cell("reissued", 3))).toBe(700_003);
     expect(cellVersionRank(cell("two", undefined, [1, 2]))).toBe(700_002);
-    // Updates up to the base cell's are in it already; the next one follows on.
-    expect(cellVersionRank(cell("reissued-on", 3, [2, 3, 4]))).toBe(700_004);
+    // The reader looks for .001 first, whatever the base cell carries: without it, a re-issue
+    // at update 3 applies no update beside it, and with it, the reader gives up on the cell.
+    expect(cellVersionRank(cell("reissued-on", 3, [4]))).toBe(700_003);
+    expect(cellVersionRank(cell("reissued-all", 3, [1, 2, 3, 4]))).toBe(-1);
     // An update after a gap does not apply, nor do those after it.
     expect(cellVersionRank(cell("gap", undefined, [1, 3, 4]))).toBe(700_001);
-    // Nor after a damaged update, one of another edition, or one whose DSID names another
-    // update than its file: the reader stops applying updates there.
+    // Nor after a file that is not S-57: the reader stops applying updates there.
     const damaged = cell("damaged", undefined, [1, 2, 3]);
     fs.writeFileSync(updateOf(damaged, 2), "not S-57");
     expect(cellVersionRank(damaged)).toBe(700_001);
     const other = cell("other-edition", undefined, [1, 2]);
     fs.writeFileSync(updateOf(other, 2), withDsidVersion(fs.readFileSync(other), "8", "2"));
-    expect(cellVersionRank(other)).toBe(700_001);
+    // An update of another edition, or one whose DSID names another update than the next,
+    // makes the reader give up on the cell: no version.
+    expect(cellVersionRank(other)).toBe(-1);
     // NOAA updates carry edition 0 in their DSID: they follow on all the same.
     const noaa = cell("noaa", undefined, [1, 2]);
     fs.writeFileSync(updateOf(noaa, 1), withDsidVersion(fs.readFileSync(noaa), "0", "1"));
@@ -226,7 +229,7 @@ describe("charts provider ENC store", () => {
     expect(cellVersionRank(noaa)).toBe(700_002);
     const misnamed = cell("misnamed", undefined, [1, 2]);
     fs.writeFileSync(updateOf(misnamed, 2), withDsidVersion(fs.readFileSync(misnamed), "7", "5"));
-    expect(cellVersionRank(misnamed)).toBe(700_001);
+    expect(cellVersionRank(misnamed)).toBe(-1);
     // A UPDN that is not a number leaves the version unknown, not update 0: such a copy ranks
     // below every copy whose version is known, as the charts provider ranks it.
     expect(cellVersionRank(cell("malformed", "x", [1, 2]))).toBe(-1);

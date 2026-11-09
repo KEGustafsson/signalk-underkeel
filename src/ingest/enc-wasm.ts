@@ -336,13 +336,9 @@ export function baseEdition(file: string): number | undefined {
   return edition !== undefined && edition > 0 ? edition : undefined;
 }
 
-/**
- * Whether the update file `file` reads as update `n` of edition `edition`: its DSID's UPDN is
- * `n` and its EDTN that edition, or 0, as NOAA updates carry it.
- */
-export function isUpdateOf(file: string, edition: number, n: number): boolean {
-  const own = dsidFields(file);
-  return own.update === n && (own.edition === edition || own.edition === 0);
+/** The EDTN and UPDN of any cell file's DSID record, an update file's among them; EDTN may be 0. */
+export function dsidVersion(file: string): { edition?: number; update?: number } {
+  return dsidFields(file);
 }
 
 /** The cell `readEncLayers` read from `file`, parsed as `readCellDirectory` parses an export. */

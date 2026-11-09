@@ -27,8 +27,10 @@ All notable changes to signalk-underkeel are documented here.
 
 - Of a cell two charts provider collections hold, the index reads the copy of the newest
   edition and update, as the cell's DSID and its update files give them, rather than the first
-  in path order. An update counts only when its own DSID names the cell's edition (or 0, as
-  NOAA updates do) and its update number, so an update with a damaged header ends the count.
+  in path order. Updates count as GDAL applies them: from `.001` on until a file is missing or
+  not S-57, each naming the cell's edition (or 0, as NOAA updates do) and the next update. A
+  copy GDAL would give up on, such as a cell re-issued at update 3 with a `.001` beside it,
+  ranks below every copy it can read.
 - An index saved from one Charts Provider collection is the whole charts provider's, so it
   stays in use after the upgrade while the charts provider's store is away.
 - With no index yet, a failed box build's reason adds what the charts provider said of the
