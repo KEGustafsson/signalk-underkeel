@@ -313,6 +313,11 @@ describe("S-57 cells read with gdal3.js", () => {
     fs.writeFileSync(cut.replace(/000$/, "002"), withDsidVersion(bytes, "1", "2").subarray(0, 40));
     expect(await applied(cut)).toBe(1);
     expect(cellVersionRank(cut)).toBe(100_001);
+    // And so does a directory in an update's place: GDAL's Open refuses it.
+    const folder = copy("folder", "0", [[1, "1", "1"]]);
+    fs.mkdirSync(folder.replace(/000$/, "002"));
+    expect(await applied(folder)).toBe(1);
+    expect(cellVersionRank(folder)).toBe(100_001);
   });
 
   test("a file that is not S-57 is refused with GDAL's reason", async () => {

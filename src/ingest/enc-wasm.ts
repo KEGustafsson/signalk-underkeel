@@ -344,7 +344,16 @@ export function baseEdition(file: string): number | undefined {
  * a file that does not open.
  */
 export function isIso8211(file: string): boolean {
-  const fd = fs.openSync(file, "r");
+  let fd: number;
+  try {
+    // GDAL's Open refuses a directory, and a file it cannot open ends the updates too.
+    if (!fs.statSync(file).isFile()) {
+      return false;
+    }
+    fd = fs.openSync(file, "r");
+  } catch {
+    return false;
+  }
   try {
     const leader = Buffer.alloc(LEADER);
     const sizes =
@@ -357,6 +366,8 @@ export function isIso8211(file: string): boolean {
       fs.readSync(fd, record, 0, sizes.recLength, 0) === sizes.recLength &&
       directoryFits(record, sizes)
     );
+  } catch {
+    return false;
   } finally {
     fs.closeSync(fd);
   }
