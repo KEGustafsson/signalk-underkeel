@@ -308,6 +308,11 @@ describe("S-57 cells read with gdal3.js", () => {
     fs.writeFileSync(ended.replace(/000$/, "002"), "not S-57");
     expect(await applied(ended)).toBe(1);
     expect(cellVersionRank(ended)).toBe(100_001);
+    // So does one whose leader reads but whose header record is cut short.
+    const cut = copy("cut", "0", [[1, "1", "1"]]);
+    fs.writeFileSync(cut.replace(/000$/, "002"), withDsidVersion(bytes, "1", "2").subarray(0, 40));
+    expect(await applied(cut)).toBe(1);
+    expect(cellVersionRank(cut)).toBe(100_001);
   });
 
   test("a file that is not S-57 is refused with GDAL's reason", async () => {

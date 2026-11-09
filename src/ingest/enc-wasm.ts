@@ -337,19 +337,84 @@ export function baseEdition(file: string): number | undefined {
 }
 
 /**
- * Whether `file` opens as ISO 8211, as GDAL's DDFModule checks its leader: a record length, an
- * interchange level of 1 to 3 and the leader identifier L. GDAL stops looking for updates at a
- * file that does not.
+ * Whether `file` opens as ISO 8211 as GDAL's `DDFModule::Open` (3.8) checks it: a 24-byte
+ * leader of printable characters with an interchange level of 1 to 3, the leader identifier L,
+ * a version of 1 or blank, and sizes in range; then the whole data descriptive record, each of
+ * its directory entries naming a field that lies within it. GDAL stops looking for updates at
+ * a file that does not open.
  */
 export function isIso8211(file: string): boolean {
   const fd = fs.openSync(file, "r");
   try {
-    const head = Buffer.alloc(7);
-    const size = fs.readSync(fd, head, 0, head.length, 0);
-    return size === head.length && /^\d{5}[123]L$/.test(head.toString("latin1"));
+    const leader = Buffer.alloc(LEADER);
+    const sizes =
+      fs.readSync(fd, leader, 0, LEADER, 0) === LEADER ? leaderSizes(leader) : undefined;
+    if (!sizes) {
+      return false;
+    }
+    const record = Buffer.alloc(sizes.recLength);
+    return (
+      fs.readSync(fd, record, 0, sizes.recLength, 0) === sizes.recLength &&
+      directoryFits(record, sizes)
+    );
   } finally {
     fs.closeSync(fd);
   }
+}
+
+const LEADER = 24;
+
+interface LeaderSizes {
+  recLength: number;
+  areaStart: number;
+  lenSize: number;
+  posSize: number;
+  tagSize: number;
+}
+
+/** DDFScanInt: atoi over a fixed width, 0 where no digits lead. */
+const scanInt = (bytes: Buffer, at: number, len: number): number =>
+  Number.parseInt(bytes.toString("latin1", at, at + len), 10) || 0;
+
+/** The record and entry sizes a leader gives, or undefined where GDAL refuses it. */
+function leaderSizes(leader: Buffer): LeaderSizes | undefined {
+  const char = (at: number): string => String.fromCharCode(leader[at] as number);
+  const valid =
+    leader.every((b) => b >= 32 && b <= 126) &&
+    "123".includes(char(5)) &&
+    char(6) === "L" &&
+    "1 ".includes(char(8));
+  if (!valid) {
+    return undefined;
+  }
+  const sizes = {
+    recLength: scanInt(leader, 0, 5),
+    areaStart: scanInt(leader, 12, 5),
+    lenSize: scanInt(leader, 20, 1),
+    posSize: scanInt(leader, 21, 1),
+    tagSize: scanInt(leader, 23, 1)
+  };
+  const inRange =
+    sizes.recLength >= LEADER &&
+    scanInt(leader, 10, 2) > 0 &&
+    sizes.areaStart >= LEADER &&
+    sizes.lenSize > 0 &&
+    sizes.posSize > 0 &&
+    sizes.tagSize > 0;
+  return inRange ? sizes : undefined;
+}
+
+/** Whether every directory entry of the data descriptive record names a field within it. */
+function directoryFits(record: Buffer, s: LeaderSizes): boolean {
+  const width = s.lenSize + s.posSize + s.tagSize;
+  for (let e = LEADER; e + width <= s.recLength && record[e] !== 0x1e; e += width) {
+    const length = scanInt(record, e + s.tagSize, s.lenSize);
+    const position = scanInt(record, e + s.tagSize + s.lenSize, s.posSize);
+    if (position < 0 || length < 2 || s.recLength - (s.areaStart + position) < length) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /** The EDTN and UPDN of any cell file's DSID record, an update file's among them; EDTN may be 0. */
