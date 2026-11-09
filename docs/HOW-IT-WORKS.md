@@ -81,6 +81,8 @@ look-ahead, a corridor around each leg for a route check, or a map tile for the 
 
 ![Plugin configuration in the Signal K admin UI](images/how-it-works/config.png)
 
+This screenshot is from before 0.5.0: since then the **Charts provider** pulldown stands where it shows **ENC cells directory**.
+
 The setup steps, opened with **Open setup** in Freeboard's Under-keel details panel, ask for the
 same essentials in three steps:
 the boat on a side view whose keel, margin line and sounder can be dragged, the water-level

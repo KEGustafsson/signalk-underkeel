@@ -2,7 +2,7 @@
 
 All notable changes to signalk-underkeel are documented here.
 
-## [Unreleased]
+## [0.5.0] - 2026-11-09
 
 ### Changed
 
