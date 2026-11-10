@@ -153,7 +153,8 @@ export const PROVIDER_ABSENT = "Charts Provider is not running or still starting
 /**
  * Why the charts provider's `collection` holds no cells to read, as it tells it, or that it is
  * not running; undefined when it is ready, or cannot tell. A provider started later restarts
- * the plugin (`watchShared`), so the note is read again then.
+ * the plugin (`watchShared`) unless it shares the cells read at start; then only this note is
+ * read again (`watchAtStart` in index.ts).
  */
 export function sharedCellsNote(collection: string, api = sharedEncApi()): string | undefined {
   if (!api) {
@@ -254,7 +255,7 @@ export interface SharedEncWatchOptions {
   scope?: object;
 }
 
-/** `f()`, or false when it throws. */
+/** A comparison that throws counts as cells changed, so the plugin restarts rather than keep them. */
 function safely(f: () => boolean): boolean {
   try {
     return f();
