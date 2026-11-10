@@ -11,14 +11,18 @@ import { readEncLayers, readEncParts, sharedLayers } from "./enc-wasm";
  * neither process holds a serialized copy of every cell at once.
  */
 
-/** The layers of each `.000` file in `files`. */
-export type EncReader = (files: readonly string[]) => Promise<Map<string, EncLayers>>;
+/** The layers of each `.000` file in `files`; `onRead` is told of each one as it is read. */
+export type EncReader = (
+  files: readonly string[],
+  onRead?: (file: string) => void
+) => Promise<Map<string, EncLayers>>;
 
 /** Reads on the calling thread; the WebAssembly memory stays with it. */
-export const readInProcess: EncReader = async (files) => {
+export const readInProcess: EncReader = async (files, onRead) => {
   const out = new Map<string, EncLayers>();
-  for (const file of files) {
+  for (const file of new Set(files)) {
     out.set(file, await readEncLayers(file));
+    onRead?.(file);
   }
   return out;
 };
@@ -35,7 +39,7 @@ interface ReadReply {
  * that exits before every cell has come back fails the read.
  */
 export function readInChild(heapMb: number, script = __filename): EncReader {
-  return (files) => {
+  return (files, onRead) => {
     const want = [...new Set(files)];
     if (want.length === 0) {
       return Promise.resolve(new Map());
@@ -49,6 +53,7 @@ export function readInChild(heapMb: number, script = __filename): EncReader {
           failure ??= new Error(m.error);
         } else if (m.file !== undefined && m.layers) {
           out.set(m.file, sharedLayers(new Map(Object.entries(m.layers))));
+          onRead?.(m.file);
         }
       });
       child.once("error", (err) => (failure ??= err));

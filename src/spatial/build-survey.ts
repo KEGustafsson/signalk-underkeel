@@ -34,9 +34,14 @@ export class EncReads {
     if (files.length === 0) {
       return;
     }
-    const done = this.layers.size;
-    reportProgress({ phase: "cells", done, total: done + files.length });
-    for (const [file, layers] of await this.reader(files)) {
+    const total = this.layers.size + new Set(files).size;
+    let done = this.layers.size;
+    reportProgress({ phase: "cells", done, total });
+    const read = await this.reader(files, () => {
+      done = Math.min(total, done + 1);
+      reportProgress({ phase: "cells", done, total });
+    });
+    for (const [file, layers] of read) {
       this.layers.set(file, layers);
     }
     reportProgress({ phase: "cells", done: this.layers.size, total: this.layers.size });

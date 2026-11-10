@@ -21,7 +21,7 @@ import type { WaterLevel } from "./model/uncertainty";
 import type { VesselModel } from "./model/vessel";
 import { resolveVessel } from "./model/vessel";
 import type { ChartIndex } from "./spatial/chart-index";
-import { PENDING_REASONS } from "./index-loader";
+import { isPending, noIndexReason } from "./box-status";
 import { WFS_NOTICE } from "./ingest/wfs";
 import type { WaterLevelStatus } from "./water-level-service";
 import { WaterLevelService } from "./water-level-service";
@@ -333,7 +333,7 @@ export class Monitor {
     if (!this.index) {
       return {
         state: "off",
-        reason: this.indexReason ?? "no chart index loaded",
+        reason: noIndexReason(this.indexReason, this.chartBox?.()),
         clearance: null,
         clearanceSigma: null,
         risk: null,
@@ -408,8 +408,8 @@ export class Monitor {
     const now = this.clock.now();
     if (!this.index) {
       // The engine is off either way; a pending reason is a status, any other an error.
-      const reason = this.indexReason ?? "no chart index loaded";
-      if (PENDING_REASONS.has(reason)) {
+      const reason = noIndexReason(this.indexReason, this.chartBox?.());
+      if (isPending(reason)) {
         this.status.status(boxNote ? `${reason} · ${boxNote}` : reason, now);
       } else {
         this.status.error(reason, now);

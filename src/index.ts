@@ -10,7 +10,8 @@ import { schemaHints } from "./setup-checks";
 import { persistMigration } from "./settings-service";
 import type { EngineStatus } from "./foundation/state";
 import { createStatus, PATHS } from "./foundation/state";
-import { planIndex } from "./index-loader";
+import type { IndexPlan } from "./index-loader";
+import { cellSources, planIndex, sourceKeys } from "./index-loader";
 import { pendingLoad, settleAtStart } from "./index-startup";
 import type { Clock } from "./monitor";
 import { Monitor, SYSTEM_CLOCK } from "./monitor";
@@ -27,7 +28,14 @@ import type { IndexBuilder } from "./wfs-service";
 import { workerBuilder } from "./wfs-service";
 import { startBox } from "./wfs-wiring";
 import type { SharedEncWatch } from "./shared-enc";
-import { noteSharedCells, runningProviders, watchSharedCells, withSharedCells } from "./shared-enc";
+import {
+  ALL_COLLECTIONS,
+  noteSharedCells,
+  runningProviders,
+  sharedEncApi,
+  watchSharedCells,
+  withSharedCells
+} from "./shared-enc";
 import fs from "fs";
 import path from "path";
 
@@ -80,15 +88,90 @@ function watchShared(
   app: ServerAPI,
   clock: Clock,
   collection: string,
-  restart: (() => void) | undefined
+  restart: (() => void) | undefined,
+  sameCells: ((root: string) => boolean) | undefined
 ): SharedEncWatch {
-  return watchSharedCells(collection, clock, () => {
-    if (restart) {
-      restart();
-    } else {
-      app.error("the shared ENC cells changed; restart the plugin to index them");
+  return watchSharedCells(
+    collection,
+    clock,
+    () => {
+      if (restart) {
+        restart();
+      } else {
+        app.error("the shared ENC cells changed; restart the plugin to index them");
+      }
+    },
+    sameCells ? { sameCells } : {}
+  );
+}
+
+/** The stamps of the S-57 cells under `dir`, as one string; undefined when it cannot be read. */
+function cellsStamp(dir: string): string | undefined {
+  try {
+    return sourceKeys(cellSources(dir)).join("\n");
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Watches the charts provider's cells in use (`watchShared`). A provider publishing later the
+ * cells read at start restarts nothing: the reason shown loses its note that it had not started.
+ */
+function watchAtStart(
+  app: ServerAPI,
+  clock: Clock,
+  state: PluginState,
+  plan: IndexPlan,
+  restart: (() => void) | undefined
+): SharedEncWatch | undefined {
+  const { config, load } = state;
+  const collection = config?.chartsProviderEnc;
+  if (!config || collection === undefined) {
+    return undefined;
+  }
+  const same = sameCellsAsStart(config.cellsDir, collection);
+  const renote = (): void => {
+    if ("load" in plan && state.load === load && load?.reason !== undefined) {
+      const fresh = noteSharedCells(plan.load, config);
+      state.load = fresh;
+      if (!fresh.index && fresh.reason !== undefined) {
+        state.monitor?.noIndex(fresh.reason);
+      }
     }
-  });
+  };
+  const quiet =
+    same &&
+    ((root: string): boolean => {
+      const unchanged = same(root);
+      if (unchanged) {
+        renote();
+      }
+      return unchanged;
+    });
+  return watchShared(app, clock, collection, restart, quiet);
+}
+
+/**
+ * Whether a charts provider that publishes its store later than this plugin starts, as it does
+ * once its charts are loaded, publishes the cells read at start: the same directory, the same
+ * cells. Undefined when the provider was there at start, or nothing was read.
+ */
+function sameCellsAsStart(
+  cellsDir: string | undefined,
+  collection: string
+): ((root: string) => boolean) | undefined {
+  if (sharedEncApi() !== undefined || cellsDir === undefined) {
+    return undefined;
+  }
+  const stamp = cellsStamp(cellsDir);
+  if (stamp === undefined) {
+    return undefined;
+  }
+  return (root) => {
+    const dir = collection === ALL_COLLECTIONS ? root : path.join(root, collection);
+    return path.resolve(dir) === path.resolve(cellsDir) && cellsStamp(dir) === stamp;
+  };
 }
 
 /**
@@ -170,14 +253,7 @@ export = function underkeel(
           errors.forEach((e) => app.error(e));
         }
       );
-      shared = config.chartsProviderEnc
-        ? watchShared(
-            app,
-            clock,
-            config.chartsProviderEnc,
-            restart && (() => restart(migration.config))
-          )
-        : undefined;
+      shared = watchAtStart(app, clock, state, plan, restart && (() => restart(migration.config)));
       mountAssets(app);
       app.registerResourceProvider(manifestProvider(VERSION));
     },

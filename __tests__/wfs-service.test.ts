@@ -587,6 +587,42 @@ describe("box service and the index in use", () => {
     expect(jobs[0]?.box?.sources).toContain("FI1WFS01 edition 1 update 0");
   });
 
+  test("the cell cache is warmed once a box is in use, and never beside a build", async () => {
+    const events: string[] = [];
+    const h = harness(okReply, {
+      config: { radiusKm: 10 },
+      inBox: true,
+      warm: {
+        boxInUse: (bbox, reachKm) => events.push(`in use ${reachKm} km`),
+        beforeBuild: () => {
+          events.push("ended for the build");
+          return Promise.resolve();
+        },
+        stop: () => events.push("stopped")
+      }
+    });
+    const build = h.builder.build;
+    h.builder.build = (job, signal) => {
+      events.push("build");
+      return build(job, signal);
+    };
+    h.t.pos = POS;
+    await h.service.check();
+    h.t.now += 120_000;
+    h.t.pos = project(POS, 0, 8000);
+    await h.service.check();
+    h.service.stop();
+    expect(events).toEqual([
+      "ended for the build",
+      "build",
+      "in use 18 km",
+      "ended for the build",
+      "build",
+      "in use 18 km",
+      "stopped"
+    ]);
+  });
+
   test("a missing cells directory fails the refresh, which is retried once it is back", async () => {
     fs.rmSync(CHARTS, { recursive: true });
     const h = harness(okReply, { config: { radiusKm: 10 }, inBox: true });

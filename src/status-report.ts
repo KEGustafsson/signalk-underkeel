@@ -7,12 +7,18 @@ import type { WfsService } from "./wfs-service";
 
 /** Body of `GET /status`: engine state, index provenance and look-ahead summary; `?summary` without the per-cell lists. */
 
-function indexSection(load: IndexLoad | undefined, summary: boolean): Record<string, unknown> {
+function indexSection(
+  load: IndexLoad | undefined,
+  monitor: Monitor | undefined,
+  summary: boolean
+): Record<string, unknown> {
   const index = load?.index;
+  // Without an index the engine's reason is why, and follows a first box build as it runs.
+  const reason = !index && monitor?.last.state === "off" ? monitor.last.reason : load?.reason;
   return {
     loaded: index !== undefined,
     built: load?.built ?? false,
-    reason: publicReason(load?.reason),
+    reason: publicReason(reason),
     nodes: index?.pyramid.count ?? 0,
     hazards: index?.hazards.size ?? 0,
     ...(summary ? {} : { cells: index?.catalogue.cells ?? [] })
@@ -57,7 +63,7 @@ export function statusReport(s: {
   const wfs = s.wfs?.status();
   return {
     ...(s.monitor ? monitorSection(s.monitor, summary) : { engine: s.stopped, vessel: [] }),
-    index: indexSection(s.load, summary),
+    index: indexSection(s.load, s.monitor, summary),
     livechart: s.livechart?.status() ?? null,
     wfs: wfs && s.wfs?.downloads ? { ...wfs, lastError: publicReason(wfs.lastError) } : null,
     chartBox: s.wfs ? boxSection(s.wfs) : null,

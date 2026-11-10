@@ -1,6 +1,8 @@
 import type { BoxSize, SizingInput } from "./box-sizing";
 import { buildMsAt } from "./box-sizing";
+import type { ChartBoxView } from "./engine/chart-box";
 import { spoken } from "./engine/chart-box";
+import { BOX_BUILDING_REASON, BOX_WAITING_REASON, PENDING_REASONS } from "./index-loader";
 import type { BuildPhase, BuildProgress } from "./spatial/build-progress";
 
 /**
@@ -42,7 +44,26 @@ export function rebuildStatus(r: RunningBuild, now: number): BoxRebuild {
   };
 }
 
-function phaseText(r: BoxRebuild): string {
+/** Whether `reason` is one of PENDING_REASONS, maybe with a note (`; …`) or detail (`: …`). */
+export const isPending = (reason: string): boolean =>
+  [...PENDING_REASONS].some(
+    (p) => reason.startsWith(p) && /^(?:$|[;:] )/.test(reason.slice(p.length))
+  );
+
+/**
+ * Why there is no index: `reason`, or what the first chart box build is doing while it runs,
+ * as the vessel position it waited for has come.
+ */
+export function noIndexReason(reason: string | undefined, box: ChartBoxView | undefined): string {
+  const why = reason ?? "no chart index loaded";
+  if (box?.rebuilding && why.startsWith(BOX_WAITING_REASON)) {
+    return box.phase ? `${BOX_BUILDING_REASON}: ${box.phase}` : BOX_BUILDING_REASON;
+  }
+  return why;
+}
+
+/** What a box build in progress is doing, with its count where it gave one. */
+export function phaseText(r: BoxRebuild): string {
   const of = r.done !== undefined && r.total !== undefined ? ` ${r.done}/${r.total}` : "";
   switch (r.phase) {
     case "download":

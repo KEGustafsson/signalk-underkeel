@@ -24,6 +24,8 @@ export interface ChartBoxView {
   lastMs?: number;
   /** The box service's status line, when it has something to say. */
   summary?: string;
+  /** What the build in progress is doing ("reading cells 3/8"), while one runs. */
+  phase?: string;
   /** What the charts provider last answered when asked for the ENC around the vessel. */
   providerNote?: string;
 }

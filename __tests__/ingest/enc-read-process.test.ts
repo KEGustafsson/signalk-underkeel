@@ -23,11 +23,13 @@ const bytes = (layers: Record<string, Uint8Array>): Record<string, string> =>
 
 test("a child process reads the layers an in-process read gets, in shared memory", async () => {
   const files = [RAW, RAW];
+  const told: string[] = [];
   const [child, inline] = await Promise.all([
-    readInChild(256, LIB_READER)(files),
+    readInChild(256, LIB_READER)(files, (f) => told.push(f)),
     readInProcess([RAW])
   ]);
   expect([...child.keys()]).toEqual([RAW]);
+  expect(told).toEqual([RAW]);
   const layers = child.get(RAW) as Record<string, Uint8Array>;
   expect(Object.values(layers).every((v) => v.buffer instanceof SharedArrayBuffer)).toBe(true);
   expect(bytes(layers)).toEqual(bytes(inline.get(RAW) as Record<string, Uint8Array>));
