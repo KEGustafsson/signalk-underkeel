@@ -2,6 +2,25 @@
 
 All notable changes to signalk-underkeel are documented here.
 
+## [Unreleased]
+
+### Changed
+
+- Charts Provider sharing its store after this plugin started, as it does at every server
+  start once its charts are loaded, no longer restarts the plugin when the store holds the
+  cells read at start; only the note that it was not running goes.
+- The first chart box is built as soon as the first position arrives, not at the next 10 s
+  check. Until it is in use the reason says the box is being built and how far it has come,
+  for example `building the chart box around the vessel: reading cells 3/7`, and the cells
+  phase counts each cell as it is read instead of jumping from 0 to all.
+- A charts provider still starting, or one that does not download an area, goes to the debug
+  log instead of the error log; one too old to be asked, or whose answer failed, stays an
+  error.
+- Once a chart box is in use, the cells the next box can reach are read into the cell cache by
+  a child process at the lowest CPU priority, so moving the box over them reads none during the
+  rebuild: after a 6 km move the Waddenzee box rebuilt in 8.6 s against 34 s for its first
+  build (x86).
+
 ## [0.5.1] - 2026-11-10
 
 ### Changed

@@ -102,7 +102,11 @@ the vessel has no coverage and the charts provider explains it, the reason adds 
 answered: downloading, no ENC for this area, not running, or too old to ask. Where it holds
 cells reaching the box but none at the vessel, and is not downloading, the gap is the
 charts' and the reason names no charts provider answer. The Traficom WFS depths do not depend
-on it.
+on it. At a server start that plugin shares its store only once its charts are loaded, after
+this one has started and read the store where it keeps it; when the store it then shares holds
+the same cells, nothing is rebuilt and only the note that it was not running goes. A charts
+provider still starting, or one that does not download an area, is said in the reason and the
+debug log; one too old to be asked, or one whose answer failed, goes to the error log.
 The draft comes from **Boat**, or else from Signal K `design.draft.maximum`; length and beam fall back to `design.length.overall` and
 `design.beam`. Without a draft the engine stays `unknown`. The water level comes from the
 source picked under **Water level** (section 8).
@@ -851,7 +855,14 @@ flowchart TD
   next box's `radiusKm`, `enough`, `neededKm`, `capKm` and `sog`; and `summary`, the line the
   plugin status and the details panel show, such as "chart box rebuilding (10 km): building
   roots 12/40, started 2 min ago, last build took 5 min". The build process posts progress at
-  each phase's start and end and at most every 2 s between.
+  each phase's start and end and at most every 2 s between; the cells phase counts each cell as
+  it is read or taken from the cell cache. While the first box builds, the engine's reason says
+  so with the phase, for example "building the chart box around the vessel: reading cells 3/7".
+- **Cell cache warming:** once a box of ENC cells is in use, a child process at the lowest CPU
+  priority reads into the cell cache every cell within 1.8 box radii of it, as far as the next
+  box can reach (centred inside this one, at most 0.8 of its radius ahead), keeping the
+  entries of the box in use. A rebuild ends it first and it never runs beside one; an entry it
+  leaves half-written is a temporary file that the next build removes.
 
 ## 13. In Freeboard
 

@@ -144,8 +144,10 @@ phase, start and the last build's duration. At speed the box grows past its radi
 **Largest index box at speed** (0 sizes it from the RAM), so the vessel cannot reach the edge
 before the next box is built (docs/HOW-IT-WORKS.md §12). A radius under 2 km is raised to 2.
 Until the first position arrives the engine is `off`
-with the reason `waiting for the vessel position to build the chart box`. Set the box to 0 to
-index every cell.
+with the reason `waiting for the vessel position to build the chart box`; the box is built
+as soon as one does, and meanwhile the reason says how far it has come, for example
+`building the chart box around the vessel: reading cells 3/7`. Set the box to 0 to index every
+cell.
 
 At the first start the plugin builds a chart index from the cells in a child process and saves
 it under the plugin data directory, `~/.signalk/plugin-config-data/signalk-underkeel/index`
@@ -157,8 +159,11 @@ changed; `GET /status` names the cells that caused the rebuild. **Rebuild index 
 forces a rebuild on every start. A cell folder may be a symbolic link. What the build read
 from each cell is kept, compressed, in `cell-cache` in the plugin data directory (at most 512 MB), so a
 chart box refresh reads again only the cells whose files changed: the 10 km Waddenzee box
-rebuilds in 12–15 s instead of 30–34 s on x86. Deleting the folder is safe; the cells are then
-read again.
+rebuilds in 12–15 s instead of 30–34 s on x86. Once a box is in use, a child process at the
+lowest CPU priority reads into it the cells the next box can reach, so a box moved over cells it
+had not met reads none during the rebuild: after a 6 km move the Waddenzee box was rebuilt in
+8.6 s against 34 s for its first build (x86). A rebuild ends that process first. Deleting the
+folder is safe; the cells are then read again.
 
 Folders of GeoJSON layers exported by `scripts/enc-to-geojson.sh` for earlier versions are no
 longer read: convert the original `.000` cells in the charts provider instead. Such a folder
