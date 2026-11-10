@@ -2,6 +2,13 @@
 
 All notable changes to signalk-underkeel are documented here.
 
+## [0.5.1] - 2026-11-10
+
+### Changed
+
+- The package is listed in the Signal K plugin registry's **Plotter Extensions** category
+  (keyword `signalk-category-plotter-extensions`).
+
 ## [0.5.0] - 2026-11-09
 
 ### Changed
