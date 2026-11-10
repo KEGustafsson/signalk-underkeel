@@ -12,6 +12,7 @@ import {
   CHARTS_PROVIDER_ID,
   collectionsHint,
   noteSharedCells,
+  PROVIDER_ABSENT,
   requestSharedArea,
   runningProviders,
   sharedCellsDir,
@@ -25,7 +26,7 @@ import underkeel = require("../src/index");
 import { AREA_ASK_MAX_MS, AREA_ASK_MIN_MS, areaRequests } from "../src/wfs-wiring";
 import { CELLS, inlineBuilder } from "./helpers/fixture-index";
 import { withDsidVersion } from "./helpers/dsid";
-import { fakeApp, fakeClock, T0 } from "./helpers/plugin-harness";
+import { fakeApp, fakeClock, fakeRouter, T0 } from "./helpers/plugin-harness";
 
 /**
  * The ENC cells signalk-charts-provider-simple shares: which directory a
@@ -306,8 +307,8 @@ describe("charts provider ENC store", () => {
     expect(sharedCellsNote("Nope", told)).toMatch(/shares no Nope/);
     // An older provider cannot tell; nor can one that is not running.
     expect(sharedCellsNote("Nope", api)).toBeUndefined();
-    expect(sharedCellsNote("Nope", undefined)).toBe("Charts Provider is not running");
-    expect(sharedCellsNote(ALL_COLLECTIONS, undefined)).toBe("Charts Provider is not running");
+    expect(sharedCellsNote("Nope", undefined)).toBe(PROVIDER_ABSENT);
+    expect(sharedCellsNote(ALL_COLLECTIONS, undefined)).toBe(PROVIDER_ABSENT);
     expect(sharedCellsNote(ALL_COLLECTIONS, { ...told, collections: () => [] })).toMatch(
       /shares no ENC cells yet/
     );
@@ -349,7 +350,8 @@ describe("charts provider ENC store", () => {
       accepted: false,
       started: false,
       reason: "store gone",
-      retryAfterMs: AREA_ERROR_RETRY_MS
+      retryAfterMs: AREA_ERROR_RETRY_MS,
+      failed: true
     });
   });
 
@@ -361,7 +363,7 @@ describe("charts provider ENC store", () => {
     } as unknown as Parameters<typeof areaRequests>[1];
     expect(areaRequests({}, app)).toBeUndefined();
     const area = areaRequests({ chartsProviderEnc: ALL_COLLECTIONS }, app);
-    expect(area?.note()).toBe("Charts Provider is not running");
+    expect(area?.note()).toBe(PROVIDER_ABSENT);
     const { api } = fakeProvider("/r");
     const scope = globalThis as { __signalk_chartsProviderEnc?: unknown };
     const box: [number, number, number, number] = [20, 59, 21, 60];
@@ -377,7 +379,7 @@ describe("charts provider ENC store", () => {
     // A provider stopped since it answered is not running now, asked again or not.
     const running = scope.__signalk_chartsProviderEnc;
     delete scope.__signalk_chartsProviderEnc;
-    expect(area?.note()).toBe("Charts Provider is not running");
+    expect(area?.note()).toBe(PROVIDER_ABSENT);
     scope.__signalk_chartsProviderEnc = running;
     // A provider without cellsIn cannot say whether it has cells there: its reason is the note.
     answer = { accepted: false, started: false, reason: "turn it on" };
@@ -425,14 +427,22 @@ describe("charts provider ENC store", () => {
     );
     delete scope.__signalk_chartsProviderEnc;
     area?.ask(box);
-    expect(area?.note()).toBe("Charts Provider is not running");
+    expect(area?.note()).toBe(PROVIDER_ABSENT);
     expect(logged).toEqual([
       "debug Charts Provider, asked for the ENC around the vessel: downloading the area",
-      "error Charts Provider, asked for the ENC around the vessel: turn it on",
+      // A refusal follows the provider's own setting: no error. One too old needs the user.
+      "debug Charts Provider, asked for the ENC around the vessel: turn it on",
       "debug Charts Provider, asked for the ENC around the vessel: no free ENC covers the area",
       "error Charts Provider is too old to be asked for the ENC around the vessel: update it",
-      "error Charts Provider is not running"
+      `debug ${PROVIDER_ABSENT}`
     ]);
+    // Found absent, then started: its answer is not known until it is asked again.
+    scope.__signalk_chartsProviderEnc = api;
+    expect(area?.note()).toBeUndefined();
+    area?.ask(box);
+    expect(area?.note()).toBe(
+      "Charts Provider is too old to be asked for the ENC around the vessel: update it"
+    );
   });
 
   test("a box is asked about again when Charts Provider says when, or is not running", () => {
@@ -442,7 +452,8 @@ describe("charts provider ENC store", () => {
     const ask = areaRequests({ chartsProviderEnc: ALL_COLLECTIONS }, app)?.ask;
     const scope = globalThis as { __signalk_chartsProviderEnc?: unknown };
     delete scope.__signalk_chartsProviderEnc;
-    expect(ask?.([20, 59, 21, 60])).toBe(5 * 60_000);
+    // Not running yet is most likely starting: it is asked again within a minute.
+    expect(ask?.([20, 59, 21, 60])).toBe(AREA_ASK_MIN_MS);
     const { api } = fakeProvider("/r");
     let answer: SharedAreaAnswer = {
       accepted: true,
@@ -577,6 +588,51 @@ describe("charts provider ENC store", () => {
     clock.advance(10_000);
     expect(changes).toBe(1);
     present.stop();
+  });
+
+  test("a provider that publishes the store read at start, unchanged, restarts nothing", () => {
+    // At a server start the provider publishes its store only once its charts are loaded,
+    // after this plugin started and read the cells from where that store is kept.
+    const root = sharedEncRoot(dataDir, undefined);
+    writeStore(root);
+    const scope = globalThis as { __signalk_chartsProviderEnc?: unknown };
+    delete scope.__signalk_chartsProviderEnc;
+    const run = (publish: () => void) => {
+      const f = fakeApp(dataDir);
+      const clock = fakeClock(T0);
+      const plugin = underkeel(f.app, clock);
+      const { router, call } = fakeRouter();
+      plugin.registerWithRouter?.(router as never);
+      const restarts: object[] = [];
+      plugin.start({ chartsProvider: CHARTS_PROVIDER_ID }, (c) => restarts.push(c));
+      const reason = () => (call("/v1/status").body as { index: { reason?: string } }).index.reason;
+      expect(reason()).toContain(PROVIDER_ABSENT);
+      publish();
+      for (let i = 0; i < 6; i++) {
+        clock.advance(5000);
+      }
+      const result = { restarts: restarts.length, reason: reason() };
+      plugin.stop();
+      delete scope.__signalk_chartsProviderEnc;
+      return result;
+    };
+    // The same store and cells: no restart, and the note that it had not started goes.
+    const same = run(() => (scope.__signalk_chartsProviderEnc = fakeProvider(root).api));
+    expect(same.restarts).toBe(0);
+    expect(same.reason).not.toContain(PROVIDER_ABSENT);
+    // A store kept elsewhere, or cells written meanwhile, are a change.
+    const elsewhere = path.join(tmp, "elsewhere");
+    writeStore(elsewhere);
+    const moved = run(() => (scope.__signalk_chartsProviderEnc = fakeProvider(elsewhere).api));
+    const written = run(() => {
+      fs.mkdirSync(path.join(root, "Other", "FI6NEW01"));
+      fs.copyFileSync(
+        path.join(CELLS, "FI4SYNTH.000"),
+        path.join(root, "Other", "FI6NEW01", "FI6NEW01.000")
+      );
+      scope.__signalk_chartsProviderEnc = fakeProvider(root).api;
+    });
+    expect({ moved: moved.restarts, written: written.restarts }).toEqual({ moved: 1, written: 1 });
   });
 
   test("the plugin builds from every shared cell and restarts when they change", async () => {

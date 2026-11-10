@@ -1,8 +1,10 @@
 import { isMainThread } from "worker_threads";
+import type { WfsConfig } from "./config";
 import { cellSources, cellsMissing, savedCatalogue, sourceKeys } from "./index-loader";
 import type { EncReader } from "./ingest/enc-read-process";
 import type { Bbox, WfsDownload, WfsFetch } from "./ingest/wfs";
-import { downloadWfsCell } from "./ingest/wfs";
+import { downloadWfsCell, WFS_SOURCE } from "./ingest/wfs";
+import type { ChartIndex } from "./spatial/chart-index";
 import { readBox } from "./spatial/build-box";
 import { reportProgress } from "./spatial/build-progress";
 import type { BuildJob, BuildReply, IndexParts } from "./spatial/build-worker";
@@ -31,6 +33,48 @@ export interface WfsJob {
   /** Builds in this box (plan §4.2), not whole. */
   box?: Bbox;
   build: BuildJob;
+}
+
+/** What the box service builds its refresh jobs from (`WfsService`). */
+export interface BoxJobDeps {
+  config: WfsConfig | { radiusKm: number };
+  inBox: boolean;
+  cellsDir?: string;
+  index: () => ChartIndex | undefined;
+  leafZoom: number;
+  indexDir: string;
+  cacheDir?: string;
+  source?: string;
+}
+
+/** The refresh of the box `bbox`, started at `now`, with its WFS cell kept in `cellDir`. */
+export function refreshJob(deps: BoxJobDeps, cellDir: string, bbox: Bbox, now: number): WfsJob {
+  const { config, inBox, cellsDir } = deps;
+  const wfs = "url" in config ? config : undefined;
+  // With WFS depths alone in use an empty cells directory loses nothing.
+  const cells = deps.index()?.catalogue.cells.some((c) => c.source !== WFS_SOURCE);
+  return {
+    download: wfs && {
+      url: wfs.url,
+      bbox,
+      dir: cellDir,
+      now: new Date(now).toISOString(),
+      catzoc: wfs.catzoc
+    },
+    cellsDir,
+    // WFS depths are built whatever ENC the charts provider has, but an index of charted
+    // hazards is kept while its cells are away, not replaced by depths alone.
+    cellsRequired: !wfs || cells === true,
+    box: inBox ? bbox : undefined,
+    build: {
+      dirs: wfs ? [cellDir] : [],
+      leafZoom: deps.leafZoom,
+      indexDir: deps.indexDir,
+      ...(deps.cacheDir === undefined ? {} : { cacheDir: deps.cacheDir }),
+      source: deps.source,
+      ...(inBox ? {} : { changed: [cellDir] })
+    }
+  };
 }
 
 export type WfsCounts = Awaited<ReturnType<typeof downloadWfsCell>>;

@@ -46,6 +46,40 @@ export function fakeClock(start: number): FakeClock {
   };
 }
 
+/**
+ * A clock whose intervals fire at their own periods: `advance` runs each timer as often as
+ * its period fits, in time order. For tests where how soon something runs is the point.
+ */
+export function intervalClock(start: number): FakeClock {
+  let now = start;
+  const timers = new Map<number, { f: () => void; ms: number; due: number }>();
+  let next = 1;
+  return {
+    now: () => now,
+    setInterval: (f, ms) => {
+      timers.set(next, { f, ms, due: now + ms });
+      return next++;
+    },
+    clearInterval: (h) => {
+      timers.delete(h as number);
+    },
+    advance(ms: number) {
+      const end = now + ms;
+      for (;;) {
+        const first = [...timers.entries()].sort((a, b) => a[1].due - b[1].due)[0];
+        if (!first || first[1].due > end) {
+          break;
+        }
+        const [, t] = first;
+        now = t.due;
+        t.due += t.ms;
+        t.f();
+      }
+      now = end;
+    }
+  };
+}
+
 /** A delta whose updates all carry values, as navDelta builds them. */
 export type ValuesDelta = Delta & { updates: Extract<Update, { values: unknown }>[] };
 

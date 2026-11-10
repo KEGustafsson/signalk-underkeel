@@ -8,7 +8,13 @@ import { toMercator } from "./foundation/geo";
 import { cellCacheDir } from "./index-loader";
 import { indexSource } from "./index-source";
 import type { SharedAreaAnswer, SharedAreaCell } from "./shared-enc";
-import { ALL_COLLECTIONS, requestSharedArea, sharedCellsIn, sharedEncApi } from "./shared-enc";
+import {
+  ALL_COLLECTIONS,
+  PROVIDER_ABSENT,
+  requestSharedArea,
+  sharedCellsIn,
+  sharedEncApi
+} from "./shared-enc";
 import type { Bbox } from "./ingest/wfs";
 import { WFS_SOURCE } from "./ingest/wfs";
 import { startLivechart } from "./livechart-service";
@@ -17,6 +23,8 @@ import type { FetchLike } from "./model/fmi";
 import type { Clock } from "./monitor";
 import type { ChartIndex } from "./spatial/chart-index";
 import { autoCapKm } from "./box-sizing";
+import type { WarmJob, Warming } from "./cell-warm";
+import { boxWarmer, startWarming } from "./cell-warm";
 import type { AreaRequests, EncBoxConfig, IndexBuilder } from "./wfs-service";
 import {
   inThreadRefresher,
@@ -122,7 +130,9 @@ export function areaRequests(
 /** How soon, and how late, a box is asked about again: Charts Provider starting, or busy. */
 export const AREA_ASK_MIN_MS = 60_000;
 export const AREA_ASK_MAX_MS = 30 * 60_000;
-const ASK_STARTING_MS = 5 * 60_000;
+/** A charts provider not running yet is most likely starting: at a server start it publishes
+ * its store once its charts are loaded, after this plugin started. */
+const ASK_STARTING_MS = AREA_ASK_MIN_MS;
 
 /**
  * What the provider said of a box, as the status gives it when the vessel has no chart
@@ -158,7 +168,7 @@ export function areaNote(
 function unaskedNote(running: boolean): string {
   return running
     ? "Charts Provider is too old to be asked for the ENC around the vessel: update it"
-    : "Charts Provider is not running";
+    : PROVIDER_ABSENT;
 }
 
 /**
@@ -168,11 +178,18 @@ function unaskedNote(running: boolean): string {
 function askForArea(app: Pick<ServerAPI, "error" | "debug">): AreaRequests {
   let last: string | undefined;
   let note: string | undefined;
+  /** Whether the last ask found no charts provider running. */
+  let askedAbsent = false;
   return {
-    // A provider stopped since its answer leaves that answer stale: it is not running now.
-    note: () => (sharedEncApi() === undefined ? unaskedNote(false) : note),
+    // A provider stopped since its answer leaves that answer stale: it is not running now. One
+    // started since it was found absent has not been asked yet: it is asked again shortly.
+    note: () => {
+      const running = sharedEncApi() !== undefined;
+      return !running ? unaskedNote(false) : askedAbsent ? undefined : note;
+    },
     ask: (bbox) => {
       const api = sharedEncApi();
+      askedAbsent = api === undefined;
       const answer = requestSharedArea(bbox, api);
       note = areaNote(answer, answer === undefined ? undefined : sharedCellsIn(bbox, api), !!api);
       const line =
@@ -181,10 +198,14 @@ function askForArea(app: Pick<ServerAPI, "error" | "debug">): AreaRequests {
           : `Charts Provider, asked for the ENC around the vessel: ${answer.reason}`;
       if (line !== last) {
         last = line;
-        if (answer?.accepted === true) {
-          app.debug(line);
-        } else {
+        // A refusal follows the provider's own setting, and a provider not running yet is most
+        // likely starting; the status says both where the vessel lacks coverage. A provider too
+        // old to be asked, or one whose answer threw, needs the user.
+        const fault = answer === undefined ? api !== undefined : answer.failed === true;
+        if (fault) {
           app.error(line);
+        } else {
+          app.debug(line);
         }
       }
       const ms = answer === undefined ? ASK_STARTING_MS : answer.retryAfterMs;
@@ -195,6 +216,17 @@ function askForArea(app: Pick<ServerAPI, "error" | "debug">): AreaRequests {
   };
 }
 
+/** Fills the cell cache around the box, saying in the debug log how many cells it read. */
+function warmAround(w: WfsWiring, job: WarmJob): Warming {
+  return startWarming(job, workerHeapLimitMb(), (reply) => {
+    if (reply.error !== undefined) {
+      w.app.debug(`cell cache: filling it around the chart box failed: ${reply.error}`);
+    } else if (reply.read) {
+      w.app.debug(`cell cache: read ${reply.read} cells around the chart box`);
+    }
+  });
+}
+
 export function startWfs(
   w: WfsWiring,
   config: WfsConfig | EncBoxConfig,
@@ -203,11 +235,13 @@ export function startWfs(
   const dir = path.join(w.app.getDataDirPath(), dirName);
   fs.mkdirSync(dir, { recursive: true });
   const area = areaRequests(w.config, w.app);
+  const cacheDir = cellCacheDir(w.app.getDataDirPath());
+  const { cellsDir } = w.config;
   return new WfsService({
     config,
     dir,
     indexDir: w.config.indexDir ?? path.join(w.app.getDataDirPath(), "index"),
-    cacheDir: cellCacheDir(w.app.getDataDirPath()),
+    cacheDir,
     leafZoom: w.config.leafZoom,
     source: indexSource(w.config),
     area,
@@ -223,6 +257,15 @@ export function startWfs(
     lookahead: w.config.lookahead,
     maxRadiusKm: w.config.boxMaxRadiusKm || autoCapKm(workerHeapLimitMb()),
     onIndex: (index, changed) => useIndex(w, index, changed),
+    // In processes of their own, as the builds are; an injected builder, as in the tests, gets none.
+    ...(w.build === workerBuilder && cellsDir !== undefined && w.config.boxRadiusKm > 0
+      ? {
+          warm: boxWarmer(
+            (around, hold) => warmAround(w, { cellsDir, cacheDir, around, hold }),
+            (m) => w.app.error(m)
+          )
+        }
+      : {}),
     error: (m) => {
       w.app.error(m);
       // With no index in use the failure is why the look-ahead is off: an error, not "waiting",

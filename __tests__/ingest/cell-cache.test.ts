@@ -11,6 +11,8 @@ import { readInProcess } from "../../src/ingest/enc-read-process";
 import type { EncLayers } from "../../src/ingest/enc-wasm";
 import { boxAround } from "../../src/ingest/wfs";
 import { boxCells } from "../../src/spatial/build-box";
+import type { BuildProgress } from "../../src/spatial/build-progress";
+import { reportProgressTo } from "../../src/spatial/build-progress";
 import type { BuildJob } from "../../src/spatial/build-worker";
 import { runBuild } from "../../src/spatial/build-worker";
 import { CELLS, ROCK } from "../helpers/fixture-index";
@@ -37,9 +39,9 @@ afterEach(() => fs.rmSync(tmp, { recursive: true, force: true }));
 /** readInProcess, recording the cells it reads. */
 function counting(): { reader: EncReader; read: string[] } {
   const read: string[] = [];
-  const reader: EncReader = (files) => {
+  const reader: EncReader = (files, onRead) => {
     read.push(...files.map((f) => path.basename(f)));
-    return readInProcess(files);
+    return readInProcess(files, onRead);
   };
   return { reader, read };
 }
@@ -111,6 +113,22 @@ describe("index built from the cell cache", () => {
     expect(read).toEqual(changes.map(([cell]) => [cell]));
   }, 30_000);
 
+  test("the cells phase counts each cell as it comes, read or kept", async () => {
+    const cellsPhase = async (): Promise<string[]> => {
+      const seen: BuildProgress[] = [];
+      reportProgressTo((p) => seen.push(p));
+      try {
+        await staged(job(), readInProcess);
+      } finally {
+        reportProgressTo(undefined);
+      }
+      return seen.filter((p) => p.phase === "cells").map((p) => `${p.done}/${p.total}`);
+    };
+    // Cold the cells are read, warm they come from the cache: each counts once, in order.
+    expect(await cellsPhase()).toEqual(["0/2", "1/2", "2/2", "2/2"]);
+    expect(await cellsPhase()).toEqual(["0/2", "1/2", "2/2", "2/2"]);
+  }, 30_000);
+
   test("a damaged or torn entry is read from the cell again, then rewritten", async () => {
     const plain = await staged(job(false), readInProcess);
     await staged(job(), readInProcess);
@@ -156,6 +174,21 @@ describe("cache bounds", () => {
     // A build using both keeps the one it has and writes no other.
     await write([fi4, fi5], [fi5, fi4], limits);
     expect(entries()).toEqual([expect.stringMatching(/^FI5SYNTH-/)]);
+  });
+
+  test("a held entry is kept as one used: no room is made by dropping it", async () => {
+    await write([fi4, fi5], [fi4], unlimited);
+    const one = fs.statSync(path.join(cacheDir, entries()[0] as string)).size;
+    const cache = LayerCache.open(cacheDir, [fi4, fi5], {
+      maxBytes: one * 1.5,
+      minFreeBytes: 0
+    }) as LayerCache;
+    cache.hold([fi4]);
+    expect(cache.has(fi4)).toBe(true);
+    expect(cache.has(fi5)).toBe(false);
+    cache.put(fi5, layers.get(fi5) as EncLayers);
+    await cache.flush();
+    expect(entries()).toEqual([expect.stringMatching(/^FI4SYNTH-/)]);
   });
 
   test("entries of cells gone and writes of ended processes are removed when opened", async () => {

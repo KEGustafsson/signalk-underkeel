@@ -28,6 +28,8 @@ export interface SharedAreaAnswer {
   reason: string;
   /** Ask again after this long, ms, though the area is the same; a newer charts provider's. */
   retryAfterMs?: number;
+  /** Set here, not by the provider: asking threw, so `reason` is its error. */
+  failed?: true;
 }
 
 /** A stored cell reaching an area, as the charts provider's `cellsIn` gives it. */
@@ -143,13 +145,20 @@ export function collectionsHint(api = sharedEncApi()): string | undefined {
 }
 
 /**
+ * What is said of a charts provider whose store is not published: at a server start it is
+ * published only once the provider's charts are loaded, after this plugin has started.
+ */
+export const PROVIDER_ABSENT = "Charts Provider is not running or still starting";
+
+/**
  * Why the charts provider's `collection` holds no cells to read, as it tells it, or that it is
  * not running; undefined when it is ready, or cannot tell. A provider started later restarts
- * the plugin (`watchShared`), so the note is read again then.
+ * the plugin (`watchShared`) unless it shares the cells read at start; then only this note is
+ * read again (`watchAtStart` in index.ts).
  */
 export function sharedCellsNote(collection: string, api = sharedEncApi()): string | undefined {
   if (!api) {
-    return "Charts Provider is not running";
+    return PROVIDER_ABSENT;
   }
   if (collection === ALL_COLLECTIONS) {
     return collectionsHint(api)?.startsWith("Charts Provider shares no")
@@ -223,7 +232,8 @@ export function requestSharedArea(
       accepted: false,
       started: false,
       reason: (err as Error).message,
-      retryAfterMs: AREA_ERROR_RETRY_MS
+      retryAfterMs: AREA_ERROR_RETRY_MS,
+      failed: true
     };
   }
 }
@@ -237,7 +247,21 @@ export interface SharedEncWatchOptions {
   pollMs?: number;
   /** How often to look for it after `waitMs`, ms. */
   slowPollMs?: number;
+  /**
+   * Whether the cells under `root`, the store a charts provider that started late publishes,
+   * are those read at start: then its start is no change. Without it, a late start is one.
+   */
+  sameCells?: (root: string) => boolean;
   scope?: object;
+}
+
+/** A comparison that throws counts as cells changed, so the plugin restarts rather than keep them. */
+function safely(f: () => boolean): boolean {
+  try {
+    return f();
+  } catch {
+    return false;
+  }
 }
 
 export interface SharedEncWatch {
@@ -249,9 +273,9 @@ export interface SharedEncWatch {
  * settled. While the charts provider has not published its API, looks for it every `pollMs`,
  * and after `waitMs` every `slowPollMs` for as long as the watch runs, since it may start any
  * time; meanwhile the cells are read as found at start. An API that appears later counts as
- * a change: the provider may have written cells meanwhile, or keep its store elsewhere than
- * the default path the cells were read from, and the restart rebuilds the index only when
- * the cells it finds differ.
+ * a change, unless `sameCells` finds its store holds the cells read at start: the provider
+ * may have written cells meanwhile, or keep its store elsewhere than the default path the
+ * cells were read from. It is asked once subscribed, so a write after it is heard.
  */
 export function watchSharedCells(
   collection: string,
@@ -264,6 +288,7 @@ export function watchSharedCells(
   const pollMs = opts.pollMs ?? 5_000;
   const slowPollMs = opts.slowPollMs ?? 60_000;
   const started = clock.now();
+  const sameAsStart = (root: string): boolean => safely(() => opts.sameCells?.(root) ?? false);
   let unsubscribe: (() => void) | undefined;
   let changedAt: number | undefined;
   let timer: unknown;
@@ -291,7 +316,9 @@ export function watchSharedCells(
     });
     if (late) {
       stopTimer();
-      changed();
+      if (!sameAsStart(api.root)) {
+        changed();
+      }
     }
     return true;
   };

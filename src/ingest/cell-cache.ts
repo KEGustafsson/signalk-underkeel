@@ -86,8 +86,8 @@ interface Header {
   layers: [string, number][];
 }
 
-/** The layers in `bytes` filed under `key`; "stale" for another key, "corrupt" for a damaged entry. */
-function decodeEntry(bytes: Buffer, key: string): EncLayers | "stale" | "corrupt" {
+/** The entry's header and where its body lies; "corrupt" for a damaged entry. */
+function entryHead(bytes: Buffer): { head: Header; bodyAt: number; end: number } | "corrupt" {
   const end = bytes.length - SUM_BYTES;
   const headAt = MAGIC.length + 4;
   if (end < headAt || !bytes.subarray(0, MAGIC.length).equals(MAGIC)) {
@@ -97,16 +97,27 @@ function decodeEntry(bytes: Buffer, key: string): EncLayers | "stale" | "corrupt
     return "corrupt";
   }
   const bodyAt = headAt + bytes.readUInt32LE(MAGIC.length);
-  let head: Header;
+  try {
+    return bodyAt > end
+      ? "corrupt"
+      : { head: JSON.parse(bytes.toString("utf8", headAt, bodyAt)) as Header, bodyAt, end };
+  } catch {
+    return "corrupt";
+  }
+}
+
+/** The layers in `bytes` filed under `key`; "stale" for another key, "corrupt" for a damaged entry. */
+function decodeEntry(bytes: Buffer, key: string): EncLayers | "stale" | "corrupt" {
+  const entry = entryHead(bytes);
+  if (entry === "corrupt") {
+    return entry;
+  }
+  const { head, bodyAt, end } = entry;
+  if (head.key !== key) {
+    return "stale";
+  }
   let raw: Buffer;
   try {
-    if (bodyAt > end) {
-      return "corrupt";
-    }
-    head = JSON.parse(bytes.toString("utf8", headAt, bodyAt)) as Header;
-    if (head.key !== key) {
-      return "stale";
-    }
     raw = zlib.brotliDecompressSync(bytes.subarray(bodyAt, end));
   } catch {
     return "corrupt";
@@ -218,6 +229,36 @@ export class LayerCache {
   }
 
   /**
+   * Whether an entry for `file` as its files are now is kept, checked whole but not
+   * decompressed; a damaged one is removed.
+   */
+  has(file: string): boolean {
+    try {
+      const { name, key } = this.identify(file, encStamp(file));
+      const entry = path.join(this.dir, name);
+      const found = entryHead(fs.readFileSync(entry));
+      if (found === "corrupt") {
+        fs.rmSync(entry, { force: true });
+        return false;
+      }
+      return found.head.key === key;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Keeps the entries of `files` from being dropped to make room, as if this build used them. */
+  hold(files: readonly string[]): void {
+    for (const file of files) {
+      try {
+        this.used.add(entryName(fs.realpathSync(file)));
+      } catch {
+        // Gone: nothing to keep.
+      }
+    }
+  }
+
+  /**
    * Files the layers just read from `file`, compressed off the event loop; `flush` waits for
    * the write. Layers of a cell whose files changed while it was read are not kept: they are
    * filed under the stamp taken before the read, which no later lookup asks for.
@@ -306,18 +347,19 @@ export class LayerCache {
  * from, and filing those it reads. With every cell kept, gdal3.js is not started.
  */
 export function cachedReader(reader: EncReader, cache: LayerCache): EncReader {
-  return async (files) => {
+  return async (files, onRead) => {
     const out = new Map<string, EncLayers>();
     const read: string[] = [];
     for (const file of new Set(files)) {
       const layers = cache.get(file);
       if (layers) {
         out.set(file, layers);
+        onRead?.(file);
       } else {
         read.push(file);
       }
     }
-    for (const [file, layers] of await reader(read)) {
+    for (const [file, layers] of await reader(read, onRead)) {
       out.set(file, layers);
       cache.put(file, layers);
     }

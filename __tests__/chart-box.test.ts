@@ -22,7 +22,15 @@ import { footprintGeom, minDepthOver } from "../src/spatial/pyramid";
 import type { IndexBuilder } from "../src/wfs-service";
 import underkeel = require("../src/index");
 import { BANK, CELLS, M_PER_DEG_LON, prepareFixtureIndex, ROCK } from "./helpers/fixture-index";
-import { fakeApp, fakeClock, fakeRouter, lastValue, navDelta, T0 } from "./helpers/plugin-harness";
+import {
+  fakeApp,
+  fakeClock,
+  fakeRouter,
+  intervalClock,
+  lastValue,
+  navDelta,
+  T0
+} from "./helpers/plugin-harness";
 import { boxRing } from "./helpers/synthetic";
 
 /**
@@ -204,6 +212,36 @@ describe("plugin with the box around the vessel", () => {
       await new Promise((r) => setImmediate(r));
     }
   };
+
+  test("the first position starts the box at once, not at the next check", async () => {
+    // A server starts the plugin before the position arrives.
+    const clock = intervalClock(T0);
+    const h = fakeApp(dir);
+    const jobs: unknown[] = [];
+    const plugin = underkeel(h.app, clock, globalThis.fetch, (job, signal) => {
+      jobs.push(job.box);
+      return boxBuilder(job, signal);
+    });
+    plugin.start(
+      {
+        vessel: { draft: 2 },
+        ...chartsProviderAt(CELLS, HAS_AREA),
+        leafZoom: LEAF,
+        boxRadiusKm: 2
+      },
+      () => undefined
+    );
+    clock.advance(1500);
+    expect(jobs).toHaveLength(0);
+    h.send(navDelta(ROCK[0], ROCK[1], 0, clock.now()));
+    clock.advance(1000);
+    // The refresh finds the cells off the event loop before it hands the job to the builder.
+    for (let i = 0; i < 300 && jobs.length === 0; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(jobs).toHaveLength(1);
+    plugin.stop();
+  });
 
   test("is off until a position arrives, then builds the box and follows the vessel", async () => {
     const clock = fakeClock(T0);

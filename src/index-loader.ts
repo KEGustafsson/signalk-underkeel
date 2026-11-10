@@ -45,12 +45,16 @@ export const LOADING_REASON = "loading chart index";
 export const WFS_WAITING_REASON = "waiting for the first Traficom WFS download";
 export const BOX_WAITING_REASON = "waiting for the vessel position to build the chart box";
 
+/** Why there is no index while the first chart box around the vessel is built. */
+export const BOX_BUILDING_REASON = "building the chart box around the vessel";
+
 /** Reasons that mean the index is on its way, not that loading it failed. */
 export const PENDING_REASONS: ReadonlySet<string> = new Set([
   BUILDING_REASON,
   LOADING_REASON,
   WFS_WAITING_REASON,
-  BOX_WAITING_REASON
+  BOX_WAITING_REASON,
+  BOX_BUILDING_REASON
 ]);
 
 /**

@@ -9,7 +9,9 @@ import { buildMsAt, fits, nextSize, STEP_KM } from "./box-sizing";
 import type { WfsRefresher } from "./build-process";
 import type { ChartBoxView } from "./engine/chart-box";
 import type { BoxRebuild, BoxSizing, RunningBuild } from "./box-status";
-import { boxSummary, rebuildStatus } from "./box-status";
+import type { BoxWarmer } from "./cell-warm";
+import { refreshJob } from "./wfs-worker";
+import { boxSummary, phaseText, rebuildStatus } from "./box-status";
 import { readCellInfo } from "./ingest/cell-reader";
 import type { Bbox } from "./ingest/wfs";
 import {
@@ -116,11 +118,16 @@ export interface WfsServiceDeps {
    * one when this service built both, so only the WFS cell differs between them.
    */
   onIndex: (index: ChartIndex, changed?: Bbox[]) => void | Promise<void>;
+  /** Fills the cell cache between builds (`cell-warm.ts`); none when absent. */
+  warm?: BoxWarmer;
   error: (message: string) => void;
 }
 
 /** Position checks; a download is due only when the vessel has left the inner half of the box. */
 const CHECK_EVERY_MS = 10_000;
+
+/** How often a service started before the first position looks for it, ms. */
+const FIRST_FIX_EVERY_MS = 1000;
 /** No two downloads start closer together than this, and after a failure the wait is longer. */
 const MIN_INTERVAL_MS = 60_000;
 const RETRY_AFTER_ERROR_MS = 300_000;
@@ -170,6 +177,8 @@ export class WfsService {
   private lastAttempt = -Infinity;
   private lastError?: string;
   private timer: unknown;
+  /** Looks for the first position while none has come. */
+  private firstFix: unknown;
   private controller?: AbortController;
   private rebuild?: RunningBuild;
   /** Lowered for this run when a box ran its build out of memory. */
@@ -221,7 +230,33 @@ export class WfsService {
     const check = (): void =>
       void this.check().catch((err: Error) => this.deps.error(`${this.label}: ${err.message}`));
     this.timer = this.deps.clock.setInterval(check, CHECK_EVERY_MS);
+    // A server starts this plugin before the position arrives: the first box is checked once
+    // one does, not up to CHECK_EVERY_MS later.
+    if (!this.hasPosition()) {
+      this.firstFix = this.deps.clock.setInterval(() => {
+        if (this.hasPosition()) {
+          this.stopFirstFix();
+          check();
+        }
+      }, FIRST_FIX_EVERY_MS);
+    }
     check();
+  }
+
+  /** Whether a position is known; one that cannot be read is reported by the check. */
+  private hasPosition(): boolean {
+    try {
+      return this.deps.position() !== undefined;
+    } catch {
+      return true;
+    }
+  }
+
+  private stopFirstFix(): void {
+    if (this.firstFix !== undefined) {
+      this.deps.clock.clearInterval(this.firstFix);
+      this.firstFix = undefined;
+    }
   }
 
   stop(): void {
@@ -229,7 +264,9 @@ export class WfsService {
       this.deps.clock.clearInterval(this.timer);
       this.timer = undefined;
     }
+    this.stopFirstFix();
     this.controller?.abort();
+    this.deps.warm?.stop();
   }
 
   status(): WfsStatus {
@@ -254,9 +291,11 @@ export class WfsService {
     const bbox = this.handed ?? this.box?.bbox;
     const lastMs = this.box?.durationMs;
     const note = this.deps.area?.note();
+    const run = this.rebuild;
     return {
       ...(bbox ? { bbox } : {}),
       rebuilding: this.busy,
+      ...(this.busy && run ? { phase: phaseText(rebuildStatus(run, this.deps.clock.now())) } : {}),
       failed: !this.busy && this.lastError !== undefined,
       ...(lastMs === undefined ? {} : { lastMs }),
       summary: this.status().summary,
@@ -445,39 +484,12 @@ export class WfsService {
     const run = this.begin(now, controller);
     const { radiusKm } = run;
     try {
+      await this.deps.warm?.beforeBuild();
       const centre = this.centreAhead(pos, radiusKm, run.estimateMs ?? this.refreshMs());
       const bbox = boxAround(centre, radiusKm);
       this.announce(bbox, now);
-      const config = this.deps.config;
-      const { inBox, cellsDir } = this.deps;
-      // With WFS depths alone in use an empty cells directory loses nothing.
-      const cells = this.deps.index()?.catalogue.cells.some((c) => c.source !== WFS_SOURCE);
       const { index, features } = await this.deps.refresh(
-        {
-          download:
-            "url" in config
-              ? {
-                  url: config.url,
-                  bbox,
-                  dir: this.cellDir,
-                  now: new Date(now).toISOString(),
-                  catzoc: config.catzoc
-                }
-              : undefined,
-          cellsDir,
-          // WFS depths are built whatever ENC the charts provider has, but an index of
-          // charted hazards is kept while its cells are away, not replaced by depths alone.
-          cellsRequired: !("url" in config) || cells === true,
-          box: inBox ? bbox : undefined,
-          build: {
-            dirs: "url" in config ? [this.cellDir] : [],
-            leafZoom: this.deps.leafZoom,
-            indexDir: this.deps.indexDir,
-            ...(this.deps.cacheDir === undefined ? {} : { cacheDir: this.deps.cacheDir }),
-            source: this.deps.source,
-            ...(inBox ? {} : { changed: [this.cellDir] })
-          }
-        },
+        refreshJob(this.deps, this.cellDir, bbox, now),
         controller.signal,
         (progress) => {
           if (this.rebuild === run) {
@@ -498,6 +510,8 @@ export class WfsService {
       this.box = box;
       this.lastError = undefined;
       await this.handOver(index, bbox);
+      // The next box is centred inside this one, at most MAX_LEAD of its radius ahead.
+      this.deps.warm?.boxInUse(bbox, radiusKm * (1 + MAX_LEAD));
     } catch (err) {
       if (controller.signal.aborted) {
         return;
