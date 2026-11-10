@@ -96,7 +96,7 @@ jobs:
   # ── Automatic runs (push / pull request) ──────────────────
   test-plugin-auto:
     if: ${{ github.event_name != 'workflow_dispatch' }}
-    uses: SignalK/signalk-server/.github/workflows/plugin-ci.yml@95a0ae6c067fc9dc6e0c67232a7953dc053399ba # master 2026-10-19
+    uses: SignalK/signalk-server/.github/workflows/plugin-ci.yml
     with:
       test-command: npm run test
       build-command: npm run build --if-present
