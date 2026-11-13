@@ -928,6 +928,18 @@ sounding about 60 m off the track: its 50 m survey-category-B position uncertain
 The widget and the panel use Freeboard's depth unit. On a host that lacks a capability, the
 page says what is missing: no Signal K stream on the widget, or no shared routes in the panel.
 
+### Day, dusk and night
+
+The widget, the details panel and the setup steps share one set of colours (`public/theme.css`)
+in three schemes. **Day** is light. **Dusk** is dark and follows the device's dark-mode
+setting. **Night** follows Freeboard's night mode: a black page on which nothing is brighter
+than a dim grey (relative luminance at most 0.3, under a third of the day page's white), so a
+look at the panel does not spoil the eyes' adaptation to the dark. Every text colour reads at
+WCAG AA, 4.5:1, on the surfaces it is drawn on, in each scheme; a test holds every colour to
+that. Setup opened from the panel keeps the panel's scheme.
+
+![The details panel and the status widget in the day, dusk and night schemes](images/how-it-works/panel-themes.jpg)
+
 ## 14. What the plugin never does
 
 - It never reports `normal` on stale position, missing draft, missing index, missing chart

@@ -3,14 +3,20 @@
   <head>
     <meta charset="utf-8" />
     <title>Under-keel status</title>
+    <link rel="stylesheet" href="theme.css" />
     <style>
       html, body { margin: 0; height: 100%; font: 13px/1.25 system-ui, sans-serif; }
-      body { box-sizing: border-box; padding: 6px 8px; cursor: pointer; color: #fff; background: #808080; }
+      body { box-sizing: border-box; padding: 6px 8px; cursor: pointer; color: var(--on-st-unknown); background: var(--st-unknown); }
+      body[data-state="normal"] { color: var(--on-st-normal); background: var(--st-normal); }
+      body[data-state="alert"] { color: var(--on-st-alert); background: var(--st-alert); }
+      body[data-state="warn"] { color: var(--on-st-warn); background: var(--st-warn); }
+      body[data-state="alarm"] { color: var(--on-st-alarm); background: var(--st-alarm); }
       #state { font-size: 18px; font-weight: 700; letter-spacing: 0.02em; }
       #line { margin-top: 2px; }
-      #reason { margin-top: 2px; font-size: 11px; opacity: 0.9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      #advisory { margin-top: 2px; font-size: 10px; opacity: 0.8; }
+      #reason { margin-top: 2px; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      #advisory { margin-top: 2px; font-size: 10px; }
     </style>
+    <script src="theme.js"></script>
     <script src="ukc-shared.js"></script>
     <script type="module" src="widget.js"></script>
   </head>

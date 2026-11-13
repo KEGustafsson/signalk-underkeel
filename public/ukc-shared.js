@@ -6,17 +6,23 @@
   /** Plugin REST base; the pages are same-origin with the Signal K server. */
   const API = "/plugins/signalk-underkeel/v1";
 
+  /** Each state's label; its colours are theme.css's `--st-<state>` tokens. */
   const STATES = {
-    normal: { label: "Normal", colour: "#1a9850" },
-    alert: { label: "Alert", colour: "#d4a000" },
-    warn: { label: "Warning", colour: "#e66101" },
-    alarm: { label: "ALARM", colour: "#d7301f" },
-    unknown: { label: "Unknown", colour: "#808080" },
-    off: { label: "Off", colour: "#808080" }
+    normal: { label: "Normal" },
+    alert: { label: "Alert" },
+    warn: { label: "Warning" },
+    alarm: { label: "ALARM" },
+    unknown: { label: "Unknown" },
+    off: { label: "Off" }
   };
 
   function stateStyle(state) {
     return STATES[state] || STATES.unknown;
+  }
+
+  /** The state a page colours: one of STATES, unknown for anything else (theme.css `--st-*`). */
+  function stateKey(state) {
+    return Object.prototype.hasOwnProperty.call(STATES, state) ? state : "unknown";
   }
 
   /** Metres in the user's depth unit ("m" or "foot"); "—" when there is no number. */
@@ -35,16 +41,17 @@
   }
 
   /**
-   * The status widget's texts and colour at `now`. A stale view, or one past
+   * The status widget's texts and state at `now` (`key`, whose colours theme.css holds). A stale view, or one past
    * its `freshUntil`, reads Unknown with no numbers, whatever values it last
    * held: a timer can fire late in a hidden page, the clock cannot.
    */
   function widgetView(view, unit, now) {
     const stale = view.stale || (typeof view.freshUntil === "number" && !(now < view.freshUntil));
-    const s = stateStyle(stale ? "unknown" : view.state);
+    const key = stateKey(stale ? "unknown" : view.state);
+    const s = stateStyle(key);
     const tts = stale ? "" : timeToShoal(view.timeToShoal);
     return {
-      colour: s.colour,
+      key: key,
       state: "UKC " + s.label,
       line: "min " + depth(stale ? null : view.clearance, unit) + (tts ? " · shoal " + tts : ""),
       reason: stale ? "no data from the under-keel plugin" : reason(view.message)
@@ -422,6 +429,7 @@
     retryAfterMs: retryAfterMs,
     STALE_MS: STALE_MS,
     widgetValue: widgetValue,
+    stateKey: stateKey,
     freshFor: freshFor,
     freshness: freshness,
     routeBadge: routeBadge,
