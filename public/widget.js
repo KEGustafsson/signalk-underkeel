@@ -3,7 +3,8 @@ import { connectExtension } from "./vendor/plotterext-bus/extension.js";
 
 const UKC = globalThis.UKC;
 const client = await connectExtension();
-await globalThis.UKC_THEME.followHost(client, document);
+// Not awaited: a host that offers night mode but never answers must not hold back the status.
+void globalThis.UKC_THEME.followHost(client, document);
 const view = { state: "unknown", clearance: null, timeToShoal: null, message: "", stale: false };
 let unit = "m";
 /** A state not seen for this long is shown as unknown (the liveness contract in UKC.STALE_MS). */

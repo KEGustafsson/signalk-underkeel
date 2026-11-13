@@ -115,6 +115,14 @@ describe("pages use the theme's tokens only", () => {
     expect(missing).toEqual([]);
   });
 
+  test("no page waits for the host's night mode before showing the status", () => {
+    // An optional capability the host offers but never answers must not stall the page.
+    const waits = ["panel.js", "widget.js"].filter((f) =>
+      /await\s+[\w.]*followHost\(/.test(fs.readFileSync(path.join(PUBLIC, f), "utf8"))
+    );
+    expect(waits).toEqual([]);
+  });
+
   test("no page or script writes a colour of its own", () => {
     const hex = /#[0-9a-f]{6}\b|#[0-9a-f]{3}\b/i;
     const found = [...pages, ...scripts].filter((f) =>

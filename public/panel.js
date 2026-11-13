@@ -11,7 +11,8 @@ document.getElementById("open-setup").addEventListener("click", () => {
   location.assign(`setup.html?from=details${scheme ? `&scheme=${scheme}` : ""}`);
 });
 const client = await connectExtension();
-scheme = await THEME.followHost(client, document, (s) => (scheme = s));
+// Not awaited: a host that offers night mode but never answers must not hold back the status.
+void THEME.followHost(client, document, (s) => (scheme = s));
 let unit = "m";
 
 if (client.hasCapability("units")) {
