@@ -145,12 +145,22 @@ async function refreshRoutes() {
   }
 }
 
+/** Reads overlap as the status ones do: only the latest may update the message. */
+let noticeRequest = 0;
+
 /** The notification's message, which the background page keeps in the extension state. */
 async function refreshNotice() {
+  const id = ++noticeRequest;
   try {
     const { ukcNotice } = await client.state.get(["ukcNotice"], "extension");
+    if (id !== noticeRequest) {
+      return;
+    }
     text("message", ukcNotice && typeof ukcNotice.message === "string" ? ukcNotice.message : "");
   } catch (err) {
+    if (id !== noticeRequest) {
+      return;
+    }
     // An old message left on screen could say normal over a warning; the poll reads it again.
     text("message", "Under-keel message unavailable: the chart host did not answer.");
     console.warn("under-keel notice", err);

@@ -438,7 +438,7 @@ const NOTICE = "notifications.navigation.underKeel";
 /** A write that fails is tried again this many times, each wait longer by this much. */
 const NOTICE_RETRIES = 5;
 const NOTICE_RETRY_MS = 2000;
-/** The last notice received, as JSON; a newer one replaces a retry of an older one. */
+/** The last notice received and not given up on, as JSON; a newer one replaces a retry of an older one. */
 let latestNotice;
 let noticeRetry;
 
@@ -462,9 +462,14 @@ async function writeNotice(notice, key, tries) {
   try {
     await client.state.set({ ukcNotice: notice }, "extension");
   } catch (err) {
-    if (key === latestNotice && tries < NOTICE_RETRIES) {
+    if (key !== latestNotice) {
+      return;
+    }
+    if (tries < NOTICE_RETRIES) {
       noticeRetry = setTimeout(() => void writeNotice(notice, key, tries + 1), NOTICE_RETRY_MS * (tries + 1));
     } else {
+      // Given up: the same notice, sent again on a reconnect, is written rather than dropped.
+      latestNotice = undefined;
       console.warn("under-keel notice", err);
     }
   }

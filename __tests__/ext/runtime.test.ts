@@ -57,6 +57,7 @@ let sk = () => undefined;
 console.warn = () => out.warnings++;
 let routes = [];
 let failList = false;
+let hostDown = true;
 const subs = [];
 const fail = new Set((process.env.FAIL || "").split(",").filter(Boolean));
 globalThis.__client = {
@@ -75,6 +76,7 @@ globalThis.__client = {
   state: {
     set: async (values) => {
       if (fail.has("state")) throw new Error("quota exceeded");
+      if (fail.has("noticeDown") && "ukcNotice" in values && hostDown) throw new Error("host down");
       if (fail.has("noticeOnce") && "ukcNotice" in values && !out.failedNotice) {
         out.failedNotice = true;
         throw new Error("host busy");
@@ -142,6 +144,16 @@ if (scenario === "aging") {
   sk({ path: "notifications.navigation.underKeel", timestamp: at, value: { state: "warn", message: "shoal ahead" } });
   // The write fails once; no further notification comes, as for an unchanged warning.
   await wait(300);
+} else if (scenario === "notice-giveup") {
+  const at = new Date().toISOString();
+  const warn = () => sk({ path: "notifications.navigation.underKeel", timestamp: at, value: { state: "warn", message: "shoal ahead" } });
+  warn();
+  // Every write and retry fails (30 s of retries, 600 ms here); then the host recovers and a
+  // reconnect delivers the same notification again.
+  await wait(1000);
+  hostDown = false;
+  warn();
+  await wait(50);
 } else if (scenario === "prune") {
   routes = ["R"];
   emit("ukc.checkRoutes", {});
@@ -236,6 +248,11 @@ describe("the notification, relayed to the details panel", () => {
 
   test("a write the host refuses is tried again without waiting for another notification", () => {
     const r = run("notice-retry", "noticeOnce");
+    expect(r.states).toEqual([{ message: "shoal ahead", state: "warn" }]);
+  });
+
+  test("a notice whose retries all failed is written when it arrives again", () => {
+    const r = run("notice-giveup", "noticeDown");
     expect(r.states).toEqual([{ message: "shoal ahead", state: "warn" }]);
   });
 
