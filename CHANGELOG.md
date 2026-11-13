@@ -2,6 +2,16 @@
 
 All notable changes to signalk-underkeel are documented here.
 
+## [0.6.2] - 2026-11-13
+
+### Fixed
+
+- Closing the details panel no longer logs an error in the Signal K server log. The panel
+  subscribed to `notifications.navigation.underKeel` itself, and on close Freeboard sent
+  Signal K an unsubscribe for that one path, which Signal K refuses (it takes only an
+  unsubscribe of everything). The background page, which never closes, now holds that
+  subscription and passes the message to the panel.
+
 ## [0.6.1] - 2026-11-13
 
 ### Fixed

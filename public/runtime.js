@@ -427,11 +427,64 @@ if (has("routes")) {
   }, RECHECK_MS);
 }
 
+// ---- the notification, relayed to the details panel ----
+/**
+ * The panel opens and closes, and the chart host unsubscribes a closed page's Signal K paths
+ * one by one, which Signal K refuses: it only takes an unsubscribe of everything, and logs the
+ * rest as errors. So this page, which never closes, holds the notification's subscription and
+ * keeps its message in the extension state, where the panel reads it.
+ */
+const NOTICE = "notifications.navigation.underKeel";
+/** A write that fails is tried again this many times, each wait longer by this much. */
+const NOTICE_RETRIES = 5;
+const NOTICE_RETRY_MS = 2000;
+/** The last notice received and not given up on, as JSON; a newer one replaces a retry of an older one. */
+let latestNotice;
+let noticeRetry;
+
+function relayNotice(value) {
+  const n = value && typeof value === "object" ? value : {};
+  const notice = { message: typeof n.message === "string" ? n.message : "", state: n.state };
+  const key = JSON.stringify(notice);
+  if (key === latestNotice) {
+    return;
+  }
+  latestNotice = key;
+  clearTimeout(noticeRetry);
+  void writeNotice(notice, key, 0);
+}
+
+/**
+ * Writes the notice to the extension state. A notification is sent only when it changes, so
+ * a write that fails is tried again rather than left until the next one.
+ */
+async function writeNotice(notice, key, tries) {
+  try {
+    await client.state.set({ ukcNotice: notice }, "extension");
+  } catch (err) {
+    if (key !== latestNotice) {
+      return;
+    }
+    if (tries < NOTICE_RETRIES) {
+      noticeRetry = setTimeout(() => void writeNotice(notice, key, tries + 1), NOTICE_RETRY_MS * (tries + 1));
+    } else {
+      // Given up: the same notice, sent again on a reconnect, is written rather than dropped.
+      latestNotice = undefined;
+      console.warn("under-keel notice", err);
+    }
+  }
+}
+
 /** Without the Signal K stream, or when subscribing to it fails, the envelope is polled. */
 let streaming = false;
 if (has("signalk.stream")) {
   try {
-    await client.signalk.subscribe(Object.keys(onPath), (ev) => {
+    await client.signalk.subscribe([...Object.keys(onPath), NOTICE], (ev) => {
+      // A notification is sent only when it changes, so its age says nothing about the plugin.
+      if (ev.path === NOTICE) {
+        relayNotice(ev.value);
+        return;
+      }
       const left = fresh(ev.path, ev.timestamp, Date.now());
       if (left > 0) {
         onPath[ev.path](ev.value, left);

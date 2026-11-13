@@ -145,19 +145,45 @@ async function refreshRoutes() {
   }
 }
 
-if (client.hasCapability("signalk.stream")) {
-  await client.signalk.subscribe(["notifications.navigation.underKeel"], (ev) => {
-    text("message", ev.value && typeof ev.value === "object" ? ev.value.message : "");
+/** Reads overlap as the status ones do: only the latest may update the message. */
+let noticeRequest = 0;
+
+/** The notification's message, which the background page keeps in the extension state. */
+async function refreshNotice() {
+  const id = ++noticeRequest;
+  try {
+    const { ukcNotice } = await client.state.get(["ukcNotice"], "extension");
+    if (id !== noticeRequest) {
+      return;
+    }
+    text("message", ukcNotice && typeof ukcNotice.message === "string" ? ukcNotice.message : "");
+  } catch (err) {
+    if (id !== noticeRequest) {
+      return;
+    }
+    // An old message left on screen could say normal over a warning; the poll reads it again.
+    text("message", "Under-keel message unavailable: the chart host did not answer.");
+    console.warn("under-keel notice", err);
+  }
+}
+
+// No Signal K subscription of its own: the host would unsubscribe it path by path when the
+// panel closes, which Signal K refuses and logs as an error. The background page relays it.
+await client.subscribe(["state.changed"], (_name, params) => {
+  if (!params || params.scope !== "extension") {
+    return;
+  }
+  if (params.keys.includes("routeCheck")) {
+    void refreshRoutes();
+  }
+  if (params.keys.includes("ukcNotice")) {
+    void refreshNotice();
     if (!document.hidden) {
       void refreshStatus();
     }
-  });
-}
-await client.subscribe(["state.changed"], (_name, params) => {
-  if (params && params.scope === "extension" && params.keys.includes("routeCheck")) {
-    void refreshRoutes();
   }
 });
+void refreshNotice();
 // The background runtime answers the button, over an event the host must carry.
 const recheck = document.getElementById("recheck");
 recheck.hidden = !["events.publish", "routes", "background.iframe"].every((c) => client.hasCapability(c));
@@ -176,6 +202,7 @@ function checkStatusAge() {
 function poll() {
   void refreshStatus();
   void refreshRoutes();
+  void refreshNotice();
 }
 
 // A hidden page polls nothing; back on screen an old status reads unknown until the poll answers.
