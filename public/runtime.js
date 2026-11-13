@@ -435,22 +435,38 @@ if (has("routes")) {
  * keeps its message in the extension state, where the panel reads it.
  */
 const NOTICE = "notifications.navigation.underKeel";
-let relayedNotice;
+/** A write that fails is tried again this many times, each wait longer by this much. */
+const NOTICE_RETRIES = 5;
+const NOTICE_RETRY_MS = 2000;
+/** The last notice received, as JSON; a newer one replaces a retry of an older one. */
+let latestNotice;
+let noticeRetry;
 
-async function relayNotice(value) {
+function relayNotice(value) {
   const n = value && typeof value === "object" ? value : {};
   const notice = { message: typeof n.message === "string" ? n.message : "", state: n.state };
   const key = JSON.stringify(notice);
-  if (key === relayedNotice) {
+  if (key === latestNotice) {
     return;
   }
-  relayedNotice = key;
+  latestNotice = key;
+  clearTimeout(noticeRetry);
+  void writeNotice(notice, key, 0);
+}
+
+/**
+ * Writes the notice to the extension state. A notification is sent only when it changes, so
+ * a write that fails is tried again rather than left until the next one.
+ */
+async function writeNotice(notice, key, tries) {
   try {
     await client.state.set({ ukcNotice: notice }, "extension");
   } catch (err) {
-    // Sent again with the next notification.
-    relayedNotice = undefined;
-    console.warn("under-keel notice", err);
+    if (key === latestNotice && tries < NOTICE_RETRIES) {
+      noticeRetry = setTimeout(() => void writeNotice(notice, key, tries + 1), NOTICE_RETRY_MS * (tries + 1));
+    } else {
+      console.warn("under-keel notice", err);
+    }
   }
 }
 
@@ -461,7 +477,7 @@ if (has("signalk.stream")) {
     await client.signalk.subscribe([...Object.keys(onPath), NOTICE], (ev) => {
       // A notification is sent only when it changes, so its age says nothing about the plugin.
       if (ev.path === NOTICE) {
-        void relayNotice(ev.value);
+        relayNotice(ev.value);
         return;
       }
       const left = fresh(ev.path, ev.timestamp, Date.now());

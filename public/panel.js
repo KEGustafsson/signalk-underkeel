@@ -151,6 +151,8 @@ async function refreshNotice() {
     const { ukcNotice } = await client.state.get(["ukcNotice"], "extension");
     text("message", ukcNotice && typeof ukcNotice.message === "string" ? ukcNotice.message : "");
   } catch (err) {
+    // An old message left on screen could say normal over a warning; the poll reads it again.
+    text("message", "Under-keel message unavailable: the chart host did not answer.");
     console.warn("under-keel notice", err);
   }
 }
@@ -190,6 +192,7 @@ function checkStatusAge() {
 function poll() {
   void refreshStatus();
   void refreshRoutes();
+  void refreshNotice();
 }
 
 // A hidden page polls nothing; back on screen an old status reads unknown until the poll answers.

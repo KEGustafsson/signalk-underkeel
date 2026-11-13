@@ -75,6 +75,10 @@ globalThis.__client = {
   state: {
     set: async (values) => {
       if (fail.has("state")) throw new Error("quota exceeded");
+      if (fail.has("noticeOnce") && "ukcNotice" in values && !out.failedNotice) {
+        out.failedNotice = true;
+        throw new Error("host busy");
+      }
       if ("ukcNotice" in values) out.states.push(values.ukcNotice);
     }
   },
@@ -133,6 +137,11 @@ if (scenario === "aging") {
   notice("normal", "Under-keel clearance normal");
   sk({ path: "notifications.navigation.underKeel", timestamp: at, value: null });
   await wait(50);
+} else if (scenario === "notice-retry") {
+  const at = new Date().toISOString();
+  sk({ path: "notifications.navigation.underKeel", timestamp: at, value: { state: "warn", message: "shoal ahead" } });
+  // The write fails once; no further notification comes, as for an unchanged warning.
+  await wait(300);
 } else if (scenario === "prune") {
   routes = ["R"];
   emit("ukc.checkRoutes", {});
@@ -223,6 +232,11 @@ describe("the notification, relayed to the details panel", () => {
       { message: "Under-keel clearance normal", state: "normal" },
       { message: "" }
     ]);
+  });
+
+  test("a write the host refuses is tried again without waiting for another notification", () => {
+    const r = run("notice-retry", "noticeOnce");
+    expect(r.states).toEqual([{ message: "shoal ahead", state: "warn" }]);
   });
 
   test("the panel, which opens and closes, holds no Signal K subscription of its own", () => {
