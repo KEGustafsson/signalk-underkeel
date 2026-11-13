@@ -52,7 +52,8 @@ globalThis.fetch = async (url) => {
   return reply(200, { legs: [LEG], checkedAt: new Date(Date.now()).toISOString() });
 };
 
-const out = { setData: [], signalk: [], warnings: 0 };
+const out = { setData: [], signalk: [], states: [], warnings: 0 };
+let sk = () => undefined;
 console.warn = () => out.warnings++;
 let routes = [];
 let failList = false;
@@ -72,15 +73,21 @@ globalThis.__client = {
     return undefined;
   },
   state: {
-    set: async () => {
+    set: async (values) => {
       if (fail.has("state")) throw new Error("quota exceeded");
+      if ("ukcNotice" in values) out.states.push(values.ukcNotice);
     }
   },
   subscribe: async (patterns, cb) => {
     if (fail.has("subscribe")) throw new Error("subscribe failed");
     subs.push([patterns, cb]);
   },
-  signalk: { subscribe: async (paths) => out.signalk.push(...paths) }
+  signalk: {
+    subscribe: async (paths, cb) => {
+      out.signalk.push(...paths);
+      sk = cb;
+    }
+  }
 };
 const emit = (name, params) =>
   subs.filter(([p]) => p.some((x) => name.startsWith(x.replace("**", "")))).forEach(([, cb]) => cb(name, params));
@@ -117,6 +124,15 @@ if (scenario === "aging") {
   await wait(200);
   out.routeChecks = routeChecks;
   out.after = statuses();
+} else if (scenario === "notice") {
+  const at = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const notice = (state, message) => sk({ path: "notifications.navigation.underKeel", timestamp: at, value: { state, message } });
+  notice("warn", "shoal ahead in 2 min");
+  // The same notification again, as on a reconnect: nothing new to tell the panel.
+  notice("warn", "shoal ahead in 2 min");
+  notice("normal", "Under-keel clearance normal");
+  sk({ path: "notifications.navigation.underKeel", timestamp: at, value: null });
+  await wait(50);
 } else if (scenario === "prune") {
   routes = ["R"];
   emit("ukc.checkRoutes", {});
@@ -135,6 +151,7 @@ interface Run {
   started: boolean;
   error?: string;
   signalk: string[];
+  states: { message: string; state?: string }[];
   fresh?: string[];
   woken?: string[];
   after?: string[];
@@ -192,6 +209,27 @@ describe("extension runtime", () => {
     const r = run("prune");
     expect(r.listed).toEqual(["ok"]);
     expect(r.unlisted).toEqual([]);
+  });
+});
+
+describe("the notification, relayed to the details panel", () => {
+  test("the background page holds it and keeps each new message in the extension state", () => {
+    const r = run("notice");
+    expect(r.started).toBe(true);
+    expect(r.signalk).toContain("notifications.navigation.underKeel");
+    // Hours old, as a notification sent only on change can be, and still relayed.
+    expect(r.states).toEqual([
+      { message: "shoal ahead in 2 min", state: "warn" },
+      { message: "Under-keel clearance normal", state: "normal" },
+      { message: "" }
+    ]);
+  });
+
+  test("the panel, which opens and closes, holds no Signal K subscription of its own", () => {
+    // The host unsubscribes a closed page's paths one by one, which Signal K refuses and logs.
+    expect(fs.readFileSync(path.join(PUBLIC, "panel.js"), "utf8")).not.toMatch(
+      /signalk\.subscribe/
+    );
   });
 });
 

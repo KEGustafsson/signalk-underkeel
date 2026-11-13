@@ -145,19 +145,33 @@ async function refreshRoutes() {
   }
 }
 
-if (client.hasCapability("signalk.stream")) {
-  await client.signalk.subscribe(["notifications.navigation.underKeel"], (ev) => {
-    text("message", ev.value && typeof ev.value === "object" ? ev.value.message : "");
+/** The notification's message, which the background page keeps in the extension state. */
+async function refreshNotice() {
+  try {
+    const { ukcNotice } = await client.state.get(["ukcNotice"], "extension");
+    text("message", ukcNotice && typeof ukcNotice.message === "string" ? ukcNotice.message : "");
+  } catch (err) {
+    console.warn("under-keel notice", err);
+  }
+}
+
+// No Signal K subscription of its own: the host would unsubscribe it path by path when the
+// panel closes, which Signal K refuses and logs as an error. The background page relays it.
+await client.subscribe(["state.changed"], (_name, params) => {
+  if (!params || params.scope !== "extension") {
+    return;
+  }
+  if (params.keys.includes("routeCheck")) {
+    void refreshRoutes();
+  }
+  if (params.keys.includes("ukcNotice")) {
+    void refreshNotice();
     if (!document.hidden) {
       void refreshStatus();
     }
-  });
-}
-await client.subscribe(["state.changed"], (_name, params) => {
-  if (params && params.scope === "extension" && params.keys.includes("routeCheck")) {
-    void refreshRoutes();
   }
 });
+void refreshNotice();
 // The background runtime answers the button, over an event the host must carry.
 const recheck = document.getElementById("recheck");
 recheck.hidden = !["events.publish", "routes", "background.iframe"].every((c) => client.hasCapability(c));

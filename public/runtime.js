@@ -427,11 +427,43 @@ if (has("routes")) {
   }, RECHECK_MS);
 }
 
+// ---- the notification, relayed to the details panel ----
+/**
+ * The panel opens and closes, and the chart host unsubscribes a closed page's Signal K paths
+ * one by one, which Signal K refuses: it only takes an unsubscribe of everything, and logs the
+ * rest as errors. So this page, which never closes, holds the notification's subscription and
+ * keeps its message in the extension state, where the panel reads it.
+ */
+const NOTICE = "notifications.navigation.underKeel";
+let relayedNotice;
+
+async function relayNotice(value) {
+  const n = value && typeof value === "object" ? value : {};
+  const notice = { message: typeof n.message === "string" ? n.message : "", state: n.state };
+  const key = JSON.stringify(notice);
+  if (key === relayedNotice) {
+    return;
+  }
+  relayedNotice = key;
+  try {
+    await client.state.set({ ukcNotice: notice }, "extension");
+  } catch (err) {
+    // Sent again with the next notification.
+    relayedNotice = undefined;
+    console.warn("under-keel notice", err);
+  }
+}
+
 /** Without the Signal K stream, or when subscribing to it fails, the envelope is polled. */
 let streaming = false;
 if (has("signalk.stream")) {
   try {
-    await client.signalk.subscribe(Object.keys(onPath), (ev) => {
+    await client.signalk.subscribe([...Object.keys(onPath), NOTICE], (ev) => {
+      // A notification is sent only when it changes, so its age says nothing about the plugin.
+      if (ev.path === NOTICE) {
+        void relayNotice(ev.value);
+        return;
+      }
       const left = fresh(ev.path, ev.timestamp, Date.now());
       if (left > 0) {
         onPath[ev.path](ev.value, left);
