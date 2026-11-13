@@ -4,12 +4,6 @@ const M = globalThis.UKC_SETUP;
 const SVG_NS = "http://www.w3.org/2000/svg";
 const ADMIN_PAGE = "/admin/#/serverConfiguration/plugins/signalk-underkeel";
 const STEPS = ["Boat", "Water level", "Warnings"];
-/** The plugin's state colours, each with a text colour that reads on it. */
-const STATE_COLOURS = {
-  alert: ["#d4a000", "#12233a"],
-  warn: ["#e66101", "#12233a"],
-  alarm: ["#b5261a", "#ffffff"]
-};
 const REFERENCE_KNOTS = 6;
 
 const s = { data: null, patch: {}, step: 0, saving: false, dragScale: undefined };
@@ -493,7 +487,7 @@ function warningsStep() {
       "div",
       { class: "levels" },
       ["alert", "warn", "alarm"].map((k) =>
-        h("div", {}, h("span", { class: "chip", style: `background:${STATE_COLOURS[k][0]};color:${STATE_COLOURS[k][1]}` }, k[0].toUpperCase() + k.slice(1)), lines[k])
+        h("div", {}, h("span", { class: `chip ${k}` }, k[0].toUpperCase() + k.slice(1)), lines[k])
       ),
       h("span", { class: "hint" }, lines.ahead),
       custom.length > 0 ? h("span", { class: "hint" }, `Your own values for ${custom.join(", ")} still apply; change them in the admin page.`) : null
@@ -646,4 +640,6 @@ async function readBack(sent, tries = 5) {
 
 // Opened from the details panel, the page offers the way back to it.
 document.getElementById("back").hidden = new URLSearchParams(location.search).get("from") !== "details";
+// Opened from the details panel, setup shows the scheme the panel had from the host's night mode.
+globalThis.UKC_THEME.applyScheme(document, globalThis.UKC_THEME.schemeFromUrl(location.href));
 await load();

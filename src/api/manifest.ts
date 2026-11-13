@@ -207,6 +207,7 @@ export function buildManifest(version: string): Record<string, Manifest> {
         "signalk.stream",
         "routes",
         "units",
+        "nightMode",
         "ui",
         "events.publish",
         "x-freeboard.services.navigationSafety"

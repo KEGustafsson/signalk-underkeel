@@ -2,6 +2,21 @@
 
 All notable changes to signalk-underkeel are documented here.
 
+## [Unreleased]
+
+### Fixed
+
+- The details panel reads in dark mode (#67): it had fixed light-theme colours and no
+  background of its own, so on Freeboard's dark background most of its text was dark grey on
+  dark. The status chip and widget also put white on amber (Alert, 2.4:1) and on green
+  (Normal, 3.7:1), below the 4.5:1 that small text needs.
+
+### Changed
+
+- The widget, the details panel and the setup steps share one set of colours in three
+  schemes: day, dusk (the device's dark mode) and night (Freeboard's night mode: black, and
+  nothing brighter than a dim grey). Every text colour reads at WCAG AA in each scheme.
+
 ## [0.6.1] - 2026-11-13
 
 ### Fixed

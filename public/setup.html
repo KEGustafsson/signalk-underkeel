@@ -4,21 +4,8 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Under-keel setup</title>
+    <link rel="stylesheet" href="theme.css" />
     <style>
-      :root {
-        --ink: #12233a; --muted: #4a5b70; --line: #d5dce5; --field: #b8c3d1; --accent: #1f5fa8;
-        --accent-soft: #eaf2fb; --page: #ffffff; --panel: #f6f8fb; --water: #dcebf7; --bed: #b9a98f;
-        --ok: #1a7340; --warn: #8a4b00; --todo: #b5261a; --margin: #e66101; --margin-ink: #a84300;
-        --note: #fff4e5; --note-line: #f0c27a; --note-ink: #5c3300; --on-accent: #ffffff;
-      }
-      @media (prefers-color-scheme: dark) {
-        :root {
-          --ink: #e6edf5; --muted: #a9b6c6; --line: #33414f; --field: #4b5b6c; --accent: #6ea8ef;
-          --accent-soft: #1b2c42; --page: #121a23; --panel: #1a2430; --water: #173049; --bed: #5d5243;
-          --ok: #6fcf97; --warn: #f2b25c; --todo: #ff8a80; --margin: #ff9d4d; --margin-ink: #ffb27a;
-          --note: #3a2a12; --note-line: #7a5420; --note-ink: #f6d7a8; --on-accent: #0b1520;
-        }
-      }
       * { box-sizing: border-box; }
       body { margin: 0; font: 14px/1.4 system-ui, sans-serif; color: var(--ink); background: var(--page); }
       .back { padding: 10px 16px 0; font-size: 14px; }
@@ -64,7 +51,10 @@
       .seg button[aria-checked="true"] { background: var(--accent); color: var(--on-accent); font-weight: 600; }
       .levels { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
       .levels div { display: flex; gap: 10px; align-items: center; }
-      .chip { width: 60px; flex: none; text-align: center; border-radius: 4px; font-size: 12px; font-weight: 600; padding: 3px 0; color: #fff; }
+      .chip { width: 60px; flex: none; text-align: center; border-radius: 4px; font-size: 12px; font-weight: 600; padding: 3px 0; }
+      .chip.alert { color: var(--on-st-alert); background: var(--st-alert); }
+      .chip.warn { color: var(--on-st-warn); background: var(--st-warn); }
+      .chip.alarm { color: var(--on-st-alarm); background: var(--st-alarm); }
       .switches { border: 1px solid var(--line); border-radius: 8px; margin-top: 6px; }
       .switches label { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 44px; padding: 0 12px; border-bottom: 1px solid var(--line); }
       .switches label:last-child { border-bottom: 0; }
@@ -83,6 +73,7 @@
       a { color: var(--accent); }
       :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     </style>
+    <script src="theme.js"></script>
     <script src="setup-model.js"></script>
     <script type="module" src="setup.js"></script>
   </head>

@@ -3,18 +3,26 @@
   <head>
     <meta charset="utf-8" />
     <title>Under-keel details</title>
+    <link rel="stylesheet" href="theme.css" />
     <style>
-      body { margin: 0; padding: 10px 12px; font: 14px/1.4 system-ui, sans-serif; }
+      body { margin: 0; padding: 10px 12px; font: 14px/1.4 system-ui, sans-serif; color: var(--ink); background: var(--page); }
       h2 { font-size: 15px; margin: 14px 0 6px; }
-      .advisory { font-size: 12px; padding: 6px 8px; background: #fff3cd; border-radius: 4px; }
-      #state { display: inline-block; padding: 2px 8px; border-radius: 4px; color: #fff; font-weight: 700; }
+      .advisory { font-size: 12px; padding: 6px 8px; border-radius: 4px; color: var(--note-ink); background: var(--note); border: 1px solid var(--note-line); }
+      #state { display: inline-block; padding: 2px 8px; border-radius: 4px; font-weight: 700; color: var(--on-st-unknown); background: var(--st-unknown); }
+      #state[data-state="normal"] { color: var(--on-st-normal); background: var(--st-normal); }
+      #state[data-state="alert"] { color: var(--on-st-alert); background: var(--st-alert); }
+      #state[data-state="warn"] { color: var(--on-st-warn); background: var(--st-warn); }
+      #state[data-state="alarm"] { color: var(--on-st-alarm); background: var(--st-alarm); }
       #message { margin-top: 6px; }
       table { border-collapse: collapse; width: 100%; font-size: 13px; }
-      td, th { text-align: left; padding: 3px 4px; border-bottom: 1px solid #ddd; }
-      .ok { color: #1a9850; } .marginal { color: #b35806; } .fail { color: #d7301f; } .unverified { color: #6a51a3; }
-      button { margin-top: 8px; }
-      .muted { color: #666; font-size: 12px; }
+      td, th { text-align: left; padding: 3px 4px; border-bottom: 1px solid var(--line); }
+      th { color: var(--muted); font-weight: 600; }
+      .ok { color: var(--ok); } .marginal { color: var(--warn); } .fail { color: var(--todo); } .unverified { color: var(--unverified); }
+      button { margin-top: 8px; min-height: 32px; padding: 0 12px; font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--field); border-radius: 6px; cursor: pointer; }
+      button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+      .muted { color: var(--muted); font-size: 12px; }
     </style>
+    <script src="theme.js"></script>
     <script src="ukc-shared.js"></script>
     <script type="module" src="panel.js"></script>
   </head>

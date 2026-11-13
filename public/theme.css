@@ -1,0 +1,59 @@
+/*
+ * Colours of the extension pages, one set per scheme. The pages use these tokens only, so a
+ * colour is changed here once; __tests__/ext/theme.test.ts holds every text colour to WCAG
+ * contrast against the surfaces it is drawn on, in every scheme.
+ *
+ * day:   light, the default.
+ * dusk:  dark, when the OS prefers it (prefers-color-scheme) or the page is told to.
+ * night: the chart host's night mode (`nightMode`): black, and nothing brighter than a dim
+ *        grey, so the helmsman's eyes stay adapted to the dark (theme.js sets it).
+ */
+:root {
+  color-scheme: light;
+  --page: #ffffff; --panel: #f6f8fb; --ink: #12233a; --muted: #4a5b70; --line: #d5dce5;
+  --field: #b8c3d1; --accent: #1f5fa8; --accent-soft: #eaf2fb; --on-accent: #ffffff;
+  --water: #dcebf7; --bed: #b9a98f; --margin: #e66101; --margin-ink: #a84300;
+  --ok: #1a7340; --warn: #8a4b00; --todo: #b5261a; --unverified: #5b3f9e;
+  --note: #fff4e5; --note-line: #f0c27a; --note-ink: #5c3300;
+  --st-normal: #1a7340; --on-st-normal: #ffffff; --st-alert: #d4a000; --on-st-alert: #12233a;
+  --st-warn: #e66101; --on-st-warn: #12233a; --st-alarm: #b5261a; --on-st-alarm: #ffffff;
+  --st-unknown: #5f6b78; --on-st-unknown: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-scheme]) {
+    color-scheme: dark;
+    --page: #121a23; --panel: #1a2430; --ink: #e6edf5; --muted: #a9b6c6; --line: #33414f;
+    --field: #4b5b6c; --accent: #6ea8ef; --accent-soft: #1b2c42; --on-accent: #0b1520;
+    --water: #173049; --bed: #5d5243; --margin: #ff9d4d; --margin-ink: #ffb27a;
+    --ok: #6fcf97; --warn: #f2b25c; --todo: #ff8a80; --unverified: #c3b0f7;
+    --note: #3a2a12; --note-line: #7a5420; --note-ink: #f6d7a8;
+    --st-normal: #6fcf97; --on-st-normal: #0b1520; --st-alert: #f2c94c; --on-st-alert: #0b1520;
+    --st-warn: #ff9d4d; --on-st-warn: #0b1520; --st-alarm: #ff6f61; --on-st-alarm: #0b1520;
+    --st-unknown: #8a96a3; --on-st-unknown: #0b1520;
+  }
+}
+:root[data-scheme="dusk"] {
+  color-scheme: dark;
+  --page: #121a23; --panel: #1a2430; --ink: #e6edf5; --muted: #a9b6c6; --line: #33414f;
+  --field: #4b5b6c; --accent: #6ea8ef; --accent-soft: #1b2c42; --on-accent: #0b1520;
+  --water: #173049; --bed: #5d5243; --margin: #ff9d4d; --margin-ink: #ffb27a;
+  --ok: #6fcf97; --warn: #f2b25c; --todo: #ff8a80; --unverified: #c3b0f7;
+  --note: #3a2a12; --note-line: #7a5420; --note-ink: #f6d7a8;
+  --st-normal: #6fcf97; --on-st-normal: #0b1520; --st-alert: #f2c94c; --on-st-alert: #0b1520;
+  --st-warn: #ff9d4d; --on-st-warn: #0b1520; --st-alarm: #ff6f61; --on-st-alarm: #0b1520;
+  --st-unknown: #8a96a3; --on-st-unknown: #0b1520;
+}
+:root[data-scheme="night"] {
+  color-scheme: dark;
+  --page: #000000; --panel: #0d0807; --ink: #b8786c; --muted: #a86f63; --line: #2a1814;
+  --field: #3a221d; --accent: #b9805a; --accent-soft: #1a0e08; --on-accent: #000000;
+  --water: #0a1014; --bed: #1c140e; --margin: #b9805a; --margin-ink: #b9805a;
+  --ok: #6f9160; --warn: #b08a45; --todo: #e0675a; --unverified: #9c809b;
+  --note: #1a0e08; --note-line: #3a221d; --note-ink: #b8786c;
+  --st-normal: #1d2a14; --on-st-normal: #7c9a69; --st-alert: #2b220c; --on-st-alert: #ad8e47;
+  --st-warn: #2e1909; --on-st-warn: #c07f4c; --st-alarm: #3a0c08; --on-st-alarm: #e66e61;
+  --st-unknown: #1c1716; --on-st-unknown: #9a817b;
+}
+:root[data-scheme="day"] {
+  color-scheme: light;
+}

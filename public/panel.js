@@ -3,11 +3,16 @@
 import { connectExtension } from "./vendor/plotterext-bus/extension.js";
 
 const UKC = globalThis.UKC;
+const THEME = globalThis.UKC_THEME;
+/** The host's night mode as this page shows it; setup opens in the same scheme. */
+let scheme = null;
 // Setup opens in this panel rather than one of its own, so the toolbar keeps one button.
 document.getElementById("open-setup").addEventListener("click", () => {
-  location.assign("setup.html?from=details");
+  location.assign(`setup.html?from=details${scheme ? `&scheme=${scheme}` : ""}`);
 });
 const client = await connectExtension();
+// Not awaited: a host that offers night mode but never answers must not hold back the status.
+void THEME.followHost(client, document, (s) => (scheme = s));
 let unit = "m";
 
 if (client.hasCapability("units")) {
@@ -19,11 +24,15 @@ function text(id, value) {
   document.getElementById(id).textContent = value;
 }
 
-function showUnknownStatus(why) {
-  const style = UKC.stateStyle("unknown");
+/** The state chip: its label, and its colours from theme.css for the state. */
+function showState(state) {
   const chip = document.getElementById("state");
-  chip.textContent = style.label;
-  chip.style.background = style.colour;
+  chip.textContent = UKC.stateStyle(state).label;
+  chip.dataset.state = UKC.stateKey(state);
+}
+
+function showUnknownStatus(why) {
+  showState("unknown");
   text("source", `Under-keel status unavailable: ${why}`);
 }
 
@@ -53,10 +62,7 @@ async function refreshStatus() {
       return;
     }
     statusAt = Date.now();
-    const style = UKC.stateStyle(s.engine.state);
-    const chip = document.getElementById("state");
-    chip.textContent = style.label;
-    chip.style.background = style.colour;
+    showState(s.engine.state);
     text("source", UKC.statusLines(s, unit).join(" · "));
   } catch (err) {
     if (id !== statusRequest) {
