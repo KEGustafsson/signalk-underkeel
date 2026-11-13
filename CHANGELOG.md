@@ -2,6 +2,16 @@
 
 All notable changes to signalk-underkeel are documented here.
 
+## [0.6.2] - 2026-11-13
+
+### Fixed
+
+- Closing the details panel no longer logs an error in the Signal K server log. The panel
+  subscribed to `notifications.navigation.underKeel` itself, and on close Freeboard sent
+  Signal K an unsubscribe for that one path, which Signal K refuses (it takes only an
+  unsubscribe of everything). The background page, which never closes, now holds that
+  subscription and passes the message to the panel.
+
 ## [0.6.1] - 2026-11-13
 
 ### Fixed
@@ -10,11 +20,6 @@ All notable changes to signalk-underkeel are documented here.
   background of its own, so on Freeboard's dark background most of its text was dark grey on
   dark. The status chip and widget also put white on amber (Alert, 2.4:1) and on green
   (Normal, 3.7:1), below the 4.5:1 that small text needs.
-- Closing the details panel no longer logs an error in the Signal K server log. The panel
-  subscribed to `notifications.navigation.underKeel` itself, and on close Freeboard sent
-  Signal K an unsubscribe for that one path, which Signal K refuses (it takes only an
-  unsubscribe of everything). The background page, which never closes, now holds that
-  subscription and passes the message to the panel.
 - The SignalK plugin CI workflow is pinned to a commit again. Without the `@ref`, GitHub could
   not read the workflow file, so no plugin CI ran for 0.6.0 and the plugin registry took 10
   points from its score.
