@@ -2,6 +2,14 @@
 
 All notable changes to signalk-underkeel are documented here.
 
+## [0.6.1] - 2026-11-13
+
+### Fixed
+
+- The SignalK plugin CI workflow is pinned to a commit again. Without the `@ref`, GitHub could
+  not read the workflow file, so no plugin CI ran for 0.6.0 and the plugin registry took 10
+  points from its score.
+
 ## [0.6.0] - 2026-11-10
 
 ### Changed
