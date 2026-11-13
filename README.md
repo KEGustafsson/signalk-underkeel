@@ -275,6 +275,11 @@ Extensions API shows it without any change to Freeboard:
 | Widget grid                     | Under-keel status: state colour, minimum clearance, time to shoal and the reason                                                           |
 | Toolbar button (boat icon)      | details panel: state, water level and source, a leg table per route, and **Open setup** for boat, water level and warning style (Settings) |
 
+The widget, the panel and the setup steps follow Freeboard's look: light by day, dark when the
+device is in dark mode, and a dim night scheme, black with nothing brighter than a dim grey,
+while Freeboard's night mode is on, so a glance at the panel keeps the eyes adapted to the
+dark. Every text colour reads at WCAG AA in each scheme.
+
 Routes shown on the chart are checked 1 s after each edit and every minute; the panel shows
 each result's age and marks it "out of date" after 3 minutes, when the chart draws its legs
 `unverified`. Stale status is shown as Unknown,
@@ -502,7 +507,10 @@ panel with its toolbar button, a hidden background page and the experimental
 - `runtime.js`, the background page, keeps the envelope, route results and tiles current;
 - `widget.js` and `panel.js` render the status and the route legs;
 - `ukc-shared.js` holds their pure logic (freshness, badges, labels), the part the Jest tests
-  cover.
+  cover;
+- `theme.css` holds every colour of the pages in the day, dusk and night schemes, and
+  `theme.js` picks the scheme from Freeboard's night mode (`nightMode`) or the device's dark
+  mode; a test holds each text colour to WCAG AA contrast in every scheme.
 
 The pages talk to the host through the vendored `signalk-plotterext-bus` client, copied into
 `public/vendor/` by the build. The [Plotter Extensions services RFC](docs/rfcs/plotter-extensions-services.md)
