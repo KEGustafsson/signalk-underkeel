@@ -13,7 +13,8 @@ lib/
 *.log
 .vscode/
 .idea/
-.claude/
+.claude/*
+!.claude/settings.json
 
 # Temporary files
 *.tmp
