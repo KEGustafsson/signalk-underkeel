@@ -20,8 +20,9 @@ performance.
 Every commit is authored and committed as the repository owner, `KEGustafsson`, with the
 owner's own email. No commit message, pull request description, review reply or issue carries a
 `Co-Authored-By` trailer, a `Claude-Session` trailer or a "Generated with" line.
-`.claude/settings.json` turns Claude Code's attribution off for every session in this
-repository; keep it that way.
+`.claude/settings.json` is the shared default that turns Claude Code's attribution off. A
+contributor's own local or user settings can take precedence, so check the commit author and the
+generated message before you publish.
 
 ## Repository profile
 

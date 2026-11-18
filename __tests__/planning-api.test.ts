@@ -138,6 +138,34 @@ describe("planning API v1", () => {
     expect(v).toEqual({ ok: false, status: 422, error: "vessel draft not configured" });
   });
 
+  test.each([
+    [{ probability: Number.NaN }, /probability must be/],
+    [{ probability: 0.9 }, /probability must be/],
+    [{ speed: 0 }, /speed must be/],
+    [{ speed: Number.POSITIVE_INFINITY }, /speed must be/],
+    [{ xteLimit: -1 }, /xteLimit must be/],
+    [{ draft: 0 }, /draft must be/],
+    [{ until: NOW - 1 }, /until not before departure/],
+    [{ departure: Number.NaN }, /finite epoch ms/]
+  ])("a session with %p is refused before it starts", async (over, message) => {
+    let ran = false;
+    const r = await api.session(
+      { departure: NOW, until: NOW, speed: 3, ...over },
+      NEVER,
+      async () => {
+        ran = true;
+        return 1;
+      }
+    );
+    expect(ran).toBe(false);
+    expect(r.ok ? "" : `${r.status} ${r.error}`).toMatch(new RegExp(`^400 .*${message.source}`));
+  });
+
+  test("a leg whose corridor is over 25 km² is refused", async () => {
+    // 400 km at the default 40 m half-width: (400 km) × 80 m = 32 km².
+    await expect(inSession(api, (s) => s.segment([22, 60], [29.2, 60]))).rejects.toThrow(/25 km²/);
+  });
+
   test("an aborted request stops at its next pause", async () => {
     const ctl = new AbortController();
     const r = await api.session({ departure: NOW, until: NOW, speed: 3 }, ctl.signal, async (s) => {

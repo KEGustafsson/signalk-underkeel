@@ -1,8 +1,9 @@
+import { LIMITS } from "./api/route-request";
 import type { ApiReply } from "./api/routes";
 import { checkFootprint, checkLeg } from "./engine/route-check";
 import type { RouteCheckInput } from "./engine/route-check";
 import type { LonLat } from "./foundation/geo";
-import { EARTH_RADIUS } from "./foundation/geo";
+import { EARTH_RADIUS, haversine } from "./foundation/geo";
 import { FALLBACK_HULL } from "./model/vessel";
 import type { RouteServiceDeps } from "./route-service";
 import { routeCheck } from "./route-service";
@@ -47,7 +48,10 @@ export interface Session {
   readonly halfWidth: number;
   /** Every point of the box with halfWidth around it, at the lowest level in the window. */
   box(sw: LonLat, ne: LonLat, window?: Window): Verdict;
-  /** The leg a → b, checked as /route-check checks a leg, over the window. */
+  /**
+   * The leg a → b, checked as /route-check checks a leg, over the window. A leg whose
+   * corridor (length plus both ends, times twice halfWidth) is over 25 km² throws RangeError.
+   */
   segment(a: LonLat, b: LonLat, window?: Window): Verdict;
   /** Work done so far, in work units (src/engine/work.ts). */
   work(): number;
@@ -77,7 +81,10 @@ export interface PlanningApiV1 {
   routeCheck(body: unknown, signal: AbortSignal): Promise<ApiReply>;
 }
 
-/** A box's area with its buffer may be at most this, km²: a query costs about its area. */
+/**
+ * A box's area with its buffer, and a leg's corridor, may be at most this, km²: their
+ * queries run without a pause and cost about their area.
+ */
 export const MAX_BOX_KM2 = 25;
 
 /** sw–ne grown by `r` metres on every side; contains the box's r-buffer. */
@@ -111,6 +118,36 @@ function pauseFor(signal: AbortSignal): () => Promise<void> {
     new Promise((resolve, reject) =>
       setImmediate(() => (signal.aborted ? reject(signal.reason) : resolve()))
     );
+}
+
+const within = (v: unknown, lo: number, hi: number): boolean =>
+  typeof v === "number" && Number.isFinite(v) && v >= lo && v <= hi;
+
+/**
+ * Why `p` cannot start a session, or undefined: the same bounds `/route-check`
+ * holds a request to, applied to the values the session would score with.
+ */
+export function paramsError(
+  p: SessionParams,
+  probability: number,
+  xteLimit: number
+): string | undefined {
+  if (!Number.isFinite(p.departure) || !Number.isFinite(p.until) || p.until < p.departure) {
+    return "departure and until must be finite epoch ms, until not before departure";
+  }
+  if (!within(p.speed, LIMITS.minSpeed, LIMITS.maxSpeed)) {
+    return `speed must be ${LIMITS.minSpeed}..${LIMITS.maxSpeed} m/s`;
+  }
+  if (!within(xteLimit, 0, LIMITS.maxXte)) {
+    return `xteLimit must be 0..${LIMITS.maxXte} m`;
+  }
+  if (!within(probability, LIMITS.minProbability, LIMITS.maxProbability)) {
+    return `probability must be ${LIMITS.minProbability}..${LIMITS.maxProbability}`;
+  }
+  if (p.draft !== undefined && !within(p.draft, LIMITS.minDraft, LIMITS.maxDraft)) {
+    return `draft must be ${LIMITS.minDraft}..${LIMITS.maxDraft} m`;
+  }
+  return undefined;
 }
 
 function inputFor(deps: RouteServiceDeps, p: SessionParams): RouteCheckInput | string {
@@ -161,6 +198,10 @@ function sessionFor(
       return { status: v.status, risk: v.risk, flags: v.flags, worst: v.worst };
     },
     segment(a, b, window = whole) {
+      // Its corridor queries run without a pause, so a leg is bounded as a box is.
+      if (((haversine(a, b) + 2 * halfWidth) * 2 * halfWidth) / 1e6 > MAX_BOX_KM2) {
+        throw new RangeError(`leg corridor over ${MAX_BOX_KM2} km²`);
+      }
       // The leg's own level is the window's lowest, whatever its arrival time.
       const leg = { ...input, coordinates: [a, b], waterLevel: () => level(window, [a, b]) };
       const c = checkLeg(index, leg, 0, window.start);
@@ -202,6 +243,14 @@ export function planningApi(deps: () => RouteServiceDeps, provider: string): Pla
       const d = deps();
       if (!d.index) {
         return { ok: false, status: 503, error: d.indexReason ?? "no chart index loaded" };
+      }
+      const bad = paramsError(
+        params,
+        params.probability ?? d.config.routeCheck.probability,
+        params.xteLimit ?? d.config.routeCheck.xteLimit
+      );
+      if (bad) {
+        return { ok: false, status: 400, error: bad };
       }
       const input = inputFor(d, params);
       if (typeof input === "string") {

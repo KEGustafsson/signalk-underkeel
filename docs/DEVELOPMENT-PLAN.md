@@ -1433,8 +1433,11 @@ stop. `session(params, signal, job)` runs the planner's job in the route request
 session whose `segment(a, b, window?)` is `checkLeg` at the window's lowest water level and whose
 `box(sw, ne, window?)` scores the box grown by the corridor half-width with the same threshold,
 σ, status rules and water-level fallback as a corridor (`checkFootprint`). A leg inside a box is
-then never riskier than the box. A box over 25 km² with its buffer is refused, since a query
-costs about its area, and the session counts the work its queries do. `routeCheck(body, signal)`
+then never riskier than the box. A box over 25 km² with its buffer, or a leg whose corridor is,
+throws RangeError: their queries run without a pause and cost about their area. A session's
+speed, cross-track limit, probability and draft are held to the `/route-check` bounds before it
+starts (400), so a non-finite probability can never pass every leg. The session counts the work
+its queries do. `routeCheck(body, signal)`
 is the `/route-check` service itself, which the planner runs on its final route, so every status
 it offers comes from this check (its plan §3, invariant 1).
 
