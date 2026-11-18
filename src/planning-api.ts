@@ -1,6 +1,6 @@
 import { LIMITS } from "./api/route-request";
 import type { ApiReply } from "./api/routes";
-import { checkFootprint, checkLeg } from "./engine/route-check";
+import { checkFootprint, checkLeg, RING_REACH } from "./engine/route-check";
 import type { RouteCheckInput } from "./engine/route-check";
 import type { LonLat } from "./foundation/geo";
 import { EARTH_RADIUS, haversine } from "./foundation/geo";
@@ -100,13 +100,14 @@ export function greatCircleBulge(sw: LonLat, ne: LonLat): number {
 }
 
 /**
- * sw–ne grown by `r` metres on every side, and by the great-circle bulge of any leg inside it:
- * it contains the r-buffer of the box and the corridor of every leg whose ends lie in the box,
- * so a leg inside a box is never riskier than the box.
+ * sw–ne grown on every side by the reach of a corridor ring past its leg's end (`RING_REACH`
+ * half-widths: a diagonal leg's ring corner lies r√2 from its end) and by the great-circle
+ * bulge of any leg inside it: it contains the r-buffer of the box and every corridor ring of
+ * every leg whose ends lie in the box, so a leg inside a box is never riskier than the box.
  */
 export function grownBox(sw: LonLat, ne: LonLat, r: number): LonLat[] {
   const k = Math.PI / 180;
-  const grow = r + greatCircleBulge(sw, ne);
+  const grow = r * RING_REACH + greatCircleBulge(sw, ne);
   const dLat = grow / (EARTH_RADIUS * k);
   const s = sw[1] - dLat;
   const n = ne[1] + dLat;

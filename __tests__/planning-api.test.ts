@@ -3,6 +3,7 @@ import os from "os";
 import path from "path";
 import underkeel = require("../src/index");
 import { parseConfig } from "../src/config";
+import { corridorRing } from "../src/engine/route-check";
 import type { LonLat } from "../src/foundation/geo";
 import type { PlanningApiV1, Session, Status } from "../src/planning-api";
 import { grownBox, PLANNING_API, planningApi, registerPlanningApi } from "../src/planning-api";
@@ -196,9 +197,22 @@ describe("planning API v1", () => {
     expect((ring[2] as [number, number])[1]).toBeGreaterThanOrEqual(midLat + r / 111195);
   });
 
+  test("the grown box holds the corner of a diagonal leg's corridor ring", () => {
+    // Corner to corner: the ring's corners lie r√2 past each end, beyond an r-grown box.
+    const sw: LonLat = [22, 60];
+    const ne: LonLat = [22.02, 60.01];
+    const r = 40;
+    const ring = grownBox(sw, ne, r);
+    const [w, s] = ring[0] as LonLat;
+    const [e, n] = ring[2] as LonLat;
+    const corners = [...corridorRing(sw, ne, r), ...corridorRing(ne, sw, r)];
+    const outside = corners.filter(([x, y]) => x < w || x > e || y < s || y > n);
+    expect(outside).toEqual([]);
+  });
+
   test("the grown box holds every point within r of the box", () => {
     const ring = grownBox([22, 60], [22.01, 60.01], 1000);
-    expect(ring[0]?.[1]).toBeCloseTo(60 - 1000 / 111195, 4);
+    expect(ring[0]?.[1]).toBeLessThanOrEqual(60 - 1000 / 111195);
     expect(ring[2]?.[0]).toBeGreaterThan(
       22.01 + 1000 / (111195 * Math.cos((60.01 * Math.PI) / 180)) - 1e-9
     );

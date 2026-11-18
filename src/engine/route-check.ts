@@ -109,6 +109,11 @@ function bearing(a: LonLat, b: LonLat): number {
  * pieces up to 4r long).
  */
 const RING_SLACK = 1 / 256;
+/**
+ * How far a corridor ring reaches from the leg's end, in half-widths: its corners lie a
+ * slackened half-width past the end and to the side, so √2 of it away.
+ */
+export const RING_REACH = Math.SQRT2 * (1 + RING_SLACK);
 
 /**
  * Rectangle around segment a→b, `r` metres to each side and past each
