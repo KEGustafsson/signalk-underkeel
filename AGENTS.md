@@ -15,6 +15,14 @@ chart data, water level and vessel state, and warns before the vessel reaches sh
 wrong "safe" answer can put a boat aground, so safety behaviour outranks features and
 performance.
 
+## Authorship
+
+Every commit is authored and committed as the repository owner, `KEGustafsson`, with the
+owner's own email. No commit message, pull request description, review reply or issue carries a
+`Co-Authored-By` trailer, a `Claude-Session` trailer or a "Generated with" line.
+`.claude/settings.json` turns Claude Code's attribution off for every session in this
+repository; keep it that way.
+
 ## Repository profile
 
 - **Runtime:** Node.js Signal K plugin, TypeScript under `src/`.

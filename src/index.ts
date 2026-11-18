@@ -18,7 +18,8 @@ import { Monitor, SYSTEM_CLOCK } from "./monitor";
 import type { FetchLike } from "./model/fmi";
 import { AckStore } from "./ack-store";
 import type { PluginState } from "./api-wiring";
-import { apiFor } from "./api-wiring";
+import { apiFor, routeDepsFor } from "./api-wiring";
+import { planningApi, registerPlanningApi } from "./planning-api";
 import { RequestQueue } from "./route-service";
 import { stoppedNotification } from "./notifications";
 import { loadZones } from "./zones";
@@ -208,6 +209,7 @@ export = function underkeel(
   };
   let startup: AbortController | undefined;
   let shared: SharedEncWatch | undefined;
+  let unregister: (() => void) | undefined;
 
   return {
     id: PLUGIN_ID,
@@ -256,9 +258,15 @@ export = function underkeel(
       shared = watchAtStart(app, clock, state, plan, restart && (() => restart(migration.config)));
       mountAssets(app);
       app.registerResourceProvider(manifestProvider(VERSION));
+      unregister?.();
+      unregister = registerPlanningApi(
+        planningApi(() => routeDepsFor(app, clock, state), `signalk-underkeel ${VERSION}`)
+      );
     },
 
     stop(): void {
+      unregister?.();
+      unregister = undefined;
       shared?.stop();
       shared = undefined;
       startup?.abort();

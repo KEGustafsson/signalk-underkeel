@@ -328,8 +328,7 @@ function* legSteps(
   const speed = input.speeds[i] as number;
   const end = start + (length / speed) * 1000;
   const wl = input.waterLevel(start, end, [from, to]);
-  const terms = vesselTerms(input.vessel, { speed, waveHeight: input.waveHeight }, input.dynamics);
-  const s = { threshold: thresholdDepth(terms, wl), sigmaExtra: sigmaExtra(terms, wl) };
+  const { terms, s } = scoringFor(input, speed, wl);
   const { result, ring, work } = yield* corridorSteps(
     index,
     from,
@@ -346,16 +345,7 @@ function* legSteps(
   }
   const tile = result.riskTile;
   const why = tile ? explainTile(index, tile, ring, terms, wl) : undefined;
-  let status: LegStatus = land
-    ? "fail"
-    : statusOf(result.maxRisk, charted, result.flags, input.probability);
-  // A fallback water level is a guess, so a leg it clears is not verified (invariant 3).
-  if (wl.degraded) {
-    flags.push("WATER_LEVEL_FALLBACK");
-    if (status === "ok") {
-      status = "unverified";
-    }
-  }
+  const status = verdictStatus(result.maxRisk, charted, result.flags, land, wl, flags, input);
   const leg: LegResult = {
     index: i,
     status,
@@ -372,6 +362,80 @@ function* legSteps(
     explanation: why?.explanation
   };
   return { leg, cellRefs: result.cellRefs, work };
+}
+
+function scoringFor(
+  input: RouteCheckInput,
+  speed: number,
+  wl: WaterLevel
+): { terms: VesselTerms; s: Scoring } {
+  const terms = vesselTerms(input.vessel, { speed, waveHeight: input.waveHeight }, input.dynamics);
+  return { terms, s: { threshold: thresholdDepth(terms, wl), sigmaExtra: sigmaExtra(terms, wl) } };
+}
+
+/** A corridor's status; pushes WATER_LEVEL_FALLBACK to `flags` on a fallback level. */
+function verdictStatus(
+  risk: number,
+  charted: number | null,
+  bits: number,
+  land: boolean,
+  wl: WaterLevel,
+  flags: string[],
+  input: RouteCheckInput
+): LegStatus {
+  const status = land ? "fail" : statusOf(risk, charted, bits, input.probability);
+  // A fallback water level is a guess, so a leg it clears is not verified (invariant 3).
+  if (wl.degraded) {
+    flags.push("WATER_LEVEL_FALLBACK");
+    return status === "ok" ? "unverified" : status;
+  }
+  return status;
+}
+
+/** A footprint scored as a leg's corridor is (planning API, `src/planning-api.ts`). */
+export interface FootprintVerdict {
+  status: LegStatus;
+  risk: number;
+  flags: string[];
+  worst?: LonLat;
+  /** Work its query did (work.ts). */
+  work: number;
+}
+
+/**
+ * The ring `ring` scored as a leg's corridor at speed `speed`, at the water
+ * level `input.waterLevel(start, end, at)`: every point in it is held to the
+ * same threshold and status rules as a corridor of `checkLeg`.
+ */
+export function checkFootprint(
+  index: ChartIndex,
+  input: RouteCheckInput,
+  ring: LonLat[],
+  speed: number,
+  window: { start: number; end: number; at: readonly LonLat[] }
+): FootprintVerdict {
+  const wl = input.waterLevel(window.start, window.end, window.at);
+  const { s } = scoringFor(input, speed, wl);
+  const result = minDepthOver(index.pyramid, footprintGeom(ring), {
+    chartPosition: true,
+    clearAbove: s.threshold + CLEARANCE_RESOLUTION,
+    risk: { threshold: s.threshold, sigmaExtra: s.sigmaExtra }
+  });
+  const covered = result.coveredDMin;
+  const land = covered === -Infinity;
+  const charted = covered === Infinity || land ? null : covered;
+  const flags = flagNames(result.flags);
+  if (land) {
+    flags.push("LAND");
+  }
+  const status = verdictStatus(result.maxRisk, charted, result.flags, land, wl, flags, input);
+  return {
+    status,
+    risk: Math.round(result.maxRisk * 10000) / 10000,
+    flags,
+    worst: result.riskTile?.center,
+    work: queryWork(result)
+  };
 }
 
 export function checkRoute(
