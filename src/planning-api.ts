@@ -87,14 +87,31 @@ export interface PlanningApiV1 {
  */
 export const MAX_BOX_KM2 = 25;
 
-/** sw–ne grown by `r` metres on every side; contains the box's r-buffer. */
+/**
+ * How far the corridor of a leg with both ends in the box sw–ne may stray past it, beyond `r`:
+ * the leg's great circle bows toward the pole by at most diag² · tan|φ| / 8R (φ the box's
+ * poleward latitude), and its corridor is widened by that gap or drawn along it
+ * (`legCorridors`). Doubled, and a metre more, for the chord gap between its points.
+ */
+export function greatCircleBulge(sw: LonLat, ne: LonLat): number {
+  const diag = haversine(sw, ne);
+  const lat = (Math.max(Math.abs(sw[1]), Math.abs(ne[1])) * Math.PI) / 180;
+  return (2 * diag * diag * Math.tan(lat)) / (8 * EARTH_RADIUS) + 1;
+}
+
+/**
+ * sw–ne grown by `r` metres on every side, and by the great-circle bulge of any leg inside it:
+ * it contains the r-buffer of the box and the corridor of every leg whose ends lie in the box,
+ * so a leg inside a box is never riskier than the box.
+ */
 export function grownBox(sw: LonLat, ne: LonLat, r: number): LonLat[] {
   const k = Math.PI / 180;
-  const dLat = r / (EARTH_RADIUS * k);
+  const grow = r + greatCircleBulge(sw, ne);
+  const dLat = grow / (EARTH_RADIUS * k);
   const s = sw[1] - dLat;
   const n = ne[1] + dLat;
   const cos = Math.cos(Math.max(Math.abs(s), Math.abs(n)) * k);
-  const dLon = r / (EARTH_RADIUS * k * Math.max(cos, 1e-6));
+  const dLon = grow / (EARTH_RADIUS * k * Math.max(cos, 1e-6));
   const w = sw[0] - dLon;
   const e = ne[0] + dLon;
   return [
@@ -244,15 +261,17 @@ export function planningApi(deps: () => RouteServiceDeps, provider: string): Pla
       if (!d.index) {
         return { ok: false, status: 503, error: d.indexReason ?? "no chart index loaded" };
       }
+      // One copy at admission: the job, after its wait in the queue, uses the values checked.
+      const p = { ...params };
       const bad = paramsError(
-        params,
-        params.probability ?? d.config.routeCheck.probability,
-        params.xteLimit ?? d.config.routeCheck.xteLimit
+        p,
+        p.probability ?? d.config.routeCheck.probability,
+        p.xteLimit ?? d.config.routeCheck.xteLimit
       );
       if (bad) {
         return { ok: false, status: 400, error: bad };
       }
-      const input = inputFor(d, params);
+      const input = inputFor(d, p);
       if (typeof input === "string") {
         return { ok: false, status: 422, error: input };
       }
@@ -260,7 +279,7 @@ export function planningApi(deps: () => RouteServiceDeps, provider: string): Pla
       const scoped = AbortSignal.any([signal, d.queue.stopSignal]);
       let value: { v: Awaited<ReturnType<typeof job>> } | undefined;
       const reply = await d.queue.run(scoped, async (s) => {
-        value = { v: await job(sessionFor(d, index, input, params, s)) };
+        value = { v: await job(sessionFor(d, index, input, p, s)) };
         return { status: 200, body: null };
       });
       return value && reply.status === 200

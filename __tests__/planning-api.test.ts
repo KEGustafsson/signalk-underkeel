@@ -176,6 +176,26 @@ describe("planning API v1", () => {
     expect(r).toEqual({ ok: false, status: 503, error: "client gone" });
   });
 
+  test("the grown box holds the corridor of every leg inside it, great-circle bulge and all", () => {
+    // A leg along the box's poleward edge at 60° N bows north of it on the great circle.
+    const sw: [number, number] = [22, 60];
+    const ne: [number, number] = [22.09, 60.04];
+    const r = 40;
+    const k = Math.PI / 180;
+    const unit = ([lon, lat]: [number, number]): [number, number, number] => [
+      Math.cos(lat * k) * Math.cos(lon * k),
+      Math.cos(lat * k) * Math.sin(lon * k),
+      Math.sin(lat * k)
+    ];
+    const [ax, ay, az] = unit([sw[0], ne[1]]);
+    const [bx, by, bz] = unit([ne[0], ne[1]]);
+    const midLat = Math.atan2(az + bz, Math.hypot(ax + bx, ay + by)) / k;
+    expect(midLat).toBeGreaterThan(ne[1]);
+    const ring = grownBox(sw, ne, r);
+    // The ring's north edge is past the great circle's midpoint by at least r.
+    expect((ring[2] as [number, number])[1]).toBeGreaterThanOrEqual(midLat + r / 111195);
+  });
+
   test("the grown box holds every point within r of the box", () => {
     const ring = grownBox([22, 60], [22.01, 60.01], 1000);
     expect(ring[0]?.[1]).toBeCloseTo(60 - 1000 / 111195, 4);
