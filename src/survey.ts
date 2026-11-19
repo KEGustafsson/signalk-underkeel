@@ -29,9 +29,13 @@ export interface Survey {
 export const SURVEY_MIN_CELL_M = 50;
 /** A grid has at most this many cells (4 MB of depths); a coarser cell keeps it within. */
 export const SURVEY_MAX_CELLS = 1_000_000;
-/** A tile of the download spans at most this much, degrees, north–south and east–west. */
-const TILE_LAT = 0.1;
-const TILE_LON = 0.2;
+/**
+ * A tile of the download spans at most this much, degrees, north–south and east–west: about
+ * 5.5 km at 60° N, 2 MB of depth areas off Turku. The WFS sends nothing for over 30 s at times
+ * on a larger one.
+ */
+const TILE_LAT = 0.05;
+const TILE_LON = 0.1;
 
 const M_PER_DEG = (EARTH_RADIUS * Math.PI) / 180;
 
@@ -87,6 +91,33 @@ export function surveyTiles(g: Survey): SurveyTile[] {
         range: [c0, r0, c1, r1],
         bbox: [w + c0 * dLon, s + r0 * dLat, w + c1 * dLon, s + r1 * dLat]
       });
+    }
+  }
+  return out;
+}
+
+/** `tile` cut in four, or fewer when it is a single row or column; itself when one cell. */
+export function splitTile(g: Survey, tile: SurveyTile): SurveyTile[] {
+  const [dLat, dLon] = cellDegrees(g);
+  const [w, s] = g.bbox;
+  const [c0, r0, c1, r1] = tile.range;
+  const cm = c1 - c0 > 1 ? Math.floor((c0 + c1) / 2) : c1;
+  const rm = r1 - r0 > 1 ? Math.floor((r0 + r1) / 2) : r1;
+  const out: SurveyTile[] = [];
+  for (const [a, b] of [
+    [c0, cm],
+    [cm, c1]
+  ] as const) {
+    for (const [c, d] of [
+      [r0, rm],
+      [rm, r1]
+    ] as const) {
+      if (a < b && c < d) {
+        out.push({
+          range: [a, c, b, d],
+          bbox: [w + a * dLon, s + c * dLat, w + b * dLon, s + d * dLat]
+        });
+      }
     }
   }
   return out;

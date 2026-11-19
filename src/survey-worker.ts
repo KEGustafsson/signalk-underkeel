@@ -8,7 +8,7 @@ import { fetchLayer, limiter, num, retried, WFS_LIMITS } from "./ingest/wfs-fetc
 import { reportProgress } from "./spatial/build-progress";
 import { serveBuildProcess } from "./spatial/build-worker";
 import type { Survey, SurveyTile } from "./survey";
-import { markPolygon, surveyGrid, surveyTiles } from "./survey";
+import { markPolygon, splitTile, surveyGrid, surveyTiles } from "./survey";
 
 /**
  * The depth survey off the event loop (`survey.ts`): the region's Traficom WFS depth and
@@ -50,11 +50,12 @@ function polygons(f: WfsFeature): Rings[] {
 }
 
 /**
- * Tiles downloaded at once. An 11 km tile of the archipelago off Turku is 9 MB of depth areas
- * that the WFS sends in about 7 s; two at a time keep the parsed features well inside the build
- * heap of a 1 GB machine while the link stays busy.
+ * Tiles downloaded at once: two keep the parsed features well inside the build heap of a 1 GB
+ * machine while the link stays busy.
  */
 const TILES_AT_ONCE = 2;
+/** A failing tile is cut in four at most this many times over. */
+const SPLITS = 2;
 
 /** Marks the depth and dredged areas of `tile`, downloaded with `limit`, on `g`. */
 async function surveyTile(
@@ -95,11 +96,26 @@ export async function runSurvey(
   const g = surveyGrid(job.region, job.cellMetres);
   const limit = limiter(WFS_LIMITS.concurrency);
   const tiles = surveyTiles(g);
+  // A tile whose download fails is cut in four, twice at most, then tried again whole.
+  const survey = async (tile: SurveyTile, depth: number): Promise<void> => {
+    const once = (): Promise<void> => surveyTile(g, tile, job.url, fetch, limit, signal);
+    try {
+      await once();
+    } catch (err) {
+      const parts = depth < SPLITS ? splitTile(g, tile) : [];
+      if (signal?.aborted || parts.length < 2) {
+        await retried(once, signal);
+        return;
+      }
+      for (const p of parts) {
+        await survey(p, depth + 1);
+      }
+    }
+  };
   let next = 0;
   const worker = async (): Promise<void> => {
     while (next < tiles.length) {
-      const tile = tiles[next++] as SurveyTile;
-      await retried(() => surveyTile(g, tile, job.url, fetch, limit, signal), signal);
+      await survey(tiles[next++] as SurveyTile, 0);
       reportProgress({ phase: "download", done: next, total: tiles.length });
     }
   };

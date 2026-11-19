@@ -59,8 +59,8 @@ describe("survey grid", () => {
     const seen = new Uint8Array(g.cols * g.rows);
     for (const t of surveyTiles(g)) {
       const [c0, r0, c1, r1] = t.range;
-      expect(t.bbox[2] - t.bbox[0]).toBeLessThanOrEqual(0.2 + 1e-9);
-      expect(t.bbox[3] - t.bbox[1]).toBeLessThanOrEqual(0.1 + 1e-9);
+      expect(t.bbox[2] - t.bbox[0]).toBeLessThanOrEqual(0.1 + 1e-9);
+      expect(t.bbox[3] - t.bbox[1]).toBeLessThanOrEqual(0.05 + 1e-9);
       for (let r = r0; r < r1; r++) {
         for (let c = c0; c < c1; c++) {
           seen[r * g.cols + c] = (seen[r * g.cols + c] as number) + 1;
@@ -165,14 +165,36 @@ describe("runSurvey", () => {
       { url: "https://wfs.test/wfs", region: [22.0, 60.0, 22.5, 60.09], cellMetres: 200 },
       fetch
     );
-    // Three tiles east–west, one north–south: two layers each.
-    expect(surveyTiles(g)).toHaveLength(3);
-    expect(asked).toHaveLength(6);
+    // Six tiles east–west (the last a sliver of whole cells), two north–south: two layers each.
+    expect(surveyTiles(g)).toHaveLength(12);
+    expect(asked).toHaveLength(24);
     expect(at(g, 22.1, 60.04)).toBe(10);
     expect(at(g, 22.055, 60.035)).toBe(14);
     expect(at(g, 22.4, 60.04)).toBeNaN();
     // Past the area's east edge, though the area came back in every tile.
     expect(at(g, 22.32, 60.04)).toBeNaN();
+  });
+
+  test("a tile whose download fails is cut in four and each quarter downloaded", async () => {
+    const asked: string[] = [];
+    const wfs = fakeWfs(
+      { "rajoitettu:DepthArea_A": [depthArea([22.0, 60.0, 22.3, 60.1], 7)] },
+      asked
+    );
+    // The WFS stalls on a box wider than 0.06°.
+    const fetch: WfsFetch = (url) => {
+      const [, w, , e] = (new URL(url).searchParams.get("bbox") ?? "").split(",").map(Number);
+      return (e as number) - (w as number) > 0.06
+        ? Promise.reject(new Error("no data for 30 s"))
+        : wfs(url);
+    };
+    const g = await runSurvey(
+      { url: "https://wfs.test/wfs", region: [22.0, 60.0, 22.1, 60.05], cellMetres: 200 },
+      fetch
+    );
+    expect(at(g, 22.02, 60.01)).toBe(7);
+    expect(at(g, 22.09, 60.045)).toBe(7);
+    expect(Array.from(g.depth).every((v) => v === 7)).toBe(true);
   });
 
   test("writes the grid and reads it back", () => {
@@ -189,16 +211,24 @@ describe("runSurvey", () => {
 
 describe("corridor download", () => {
   test("parts are grouped while their box stays within twice their area", () => {
-    const row = (s: number, w: number, e: number): Bbox => [w, s, e, s + 0.02];
+    const row = (s: number, w: number, e: number): Bbox => [w, s, e, s + 0.01];
     // A diagonal corridor of rows: neighbours group; far ones do not.
     const parts = [
       row(60.0, 22.0, 22.1),
-      row(60.02, 22.02, 22.12),
-      row(60.04, 22.04, 22.14),
-      row(60.06, 22.4, 22.5)
+      row(60.01, 22.02, 22.12),
+      row(60.02, 22.04, 22.14),
+      row(60.03, 22.4, 22.5)
     ];
     const groups = partGroups(parts);
     expect(groups.map((g) => g.length)).toEqual([3, 1]);
+    // A long run of rows is cut where its box would pass GROUP_LAT.
+    const tall = Array.from({ length: 12 }, (_, i): Bbox => [
+      22.0,
+      60 + i * 0.009,
+      22.1,
+      60 + (i + 1) * 0.009
+    ]);
+    expect(partGroups(tall).map((g) => g.length)).toEqual([5, 5, 2]);
   });
 
   test("the cell covers the parts alone, its areas clipped to each", async () => {

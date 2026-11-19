@@ -1476,17 +1476,20 @@ asks for a depth survey of the trip's region, `survey(region, cellMetres, signal
 million cells, each the deepest charted depth (`DRVAL2` of a depth area, the dredged depth of a
 dredged area) of the areas touching it, NaN where none does. It is made from the Traficom WFS
 (501 without it) in the build process at nice 19, in the same turn as planning builds, giving way
-to the chart box. The region is downloaded in tiles of whole cells, at most 0.1° by 0.2° and two
+to the chart box. The region is downloaded in tiles of whole cells, at most 0.05° by 0.1° and two
 at a time, each tile marked on the grid and dropped before the next, so the memory is one tile's
-features whatever the region (at most 25 000 km², 413 above it). Off Turku a tile is about 9 MB
-of depth areas and takes the WFS about 7 s. The last survey is held, and reused for a region
+features whatever the region (at most 25 000 km², 413 above it). An 11 km tile off Turku was 9 MB
+of depth areas in about 7 s, and the WFS at times sends nothing for over 30 s on one that large;
+a tile whose download fails is cut in four, twice at most, then tried again whole (`TILE_TRIES`
+in all). The last survey is held, and reused for a region
 inside it at its cell size or coarser. It is optimistic by design, a cell taking a draft
 wherever any area touching it does: it only chooses where to look, never a verdict.
 
 The planner finds a coarse route on the survey and asks `prepare(region, signal, corridor)` with
 the corridor's boxes, at most 400 of them within `region`. The planning box downloads the
 Traficom WFS for the boxes alone, in groups of neighbouring boxes whose box keeps within the WFS
-spans and twice their area (`partGroups`), and writes one cell whose coverage and assumed quality
+is at most 0.05° by 0.2° and twice their area (`partGroups`), each group tried again when it
+fails, and writes one cell whose coverage and assumed quality
 are the boxes, its areas clipped to each (`toCellLayers` with `parts`). Queries are judged on the
 charts in the boxes; past them, in `region`, the index reads no coverage. Its area is the boxes'
 sum, not their box's, held to the same cap as a planning box, so a corridor 3 km wide along a

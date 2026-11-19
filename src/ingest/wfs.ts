@@ -336,9 +336,19 @@ const union = (a: Bbox, b: Bbox): Bbox => [
 const degrees2 = (b: Bbox): number => (b[2] - b[0]) * (b[3] - b[1]);
 
 /**
+ * A group's box spans at most this much, degrees: the WFS sends nothing for over 30 s at times
+ * on a box much larger, about 5.5 km by 11 km at 60° N.
+ */
+const GROUP_LAT = 0.05;
+const GROUP_LON = 0.2;
+
+const tooWide = (b: Bbox): boolean => b[3] - b[1] > GROUP_LAT || b[2] - b[0] > GROUP_LON;
+
+/**
  * `parts` in download groups, in their order: consecutive parts while the group's box keeps
- * within the WFS spans and at most twice their area, so a corridor is a few requests, not one
- * per part, nor its whole box.
+ * within GROUP_LAT by GROUP_LON and at most twice their area, so a corridor is a few requests
+ * per tile's worth of it, not one per part, nor its whole box. A part larger than that is a group
+ * of its own.
  */
 export function partGroups(parts: readonly Bbox[]): Bbox[][] {
   const groups: Bbox[][] = [];
@@ -347,10 +357,7 @@ export function partGroups(parts: readonly Bbox[]): Bbox[][] {
   let area = 0;
   for (const p of parts) {
     const next = box ? union(box, p) : p;
-    if (
-      group.length > 0 &&
-      (bboxProblem(next) !== undefined || degrees2(next) > 2 * (area + degrees2(p)))
-    ) {
+    if (group.length > 0 && (tooWide(next) || degrees2(next) > 2 * (area + degrees2(p)))) {
       groups.push(group);
       group = [];
       area = 0;
