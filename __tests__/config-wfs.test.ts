@@ -7,6 +7,7 @@ describe("Traficom WFS configuration", () => {
     expect(parseConfig({ wfs: { radiusKm: 5 } }).wfs).toBeUndefined();
     expect(parseConfig({ wfs: { enabled: true } }).wfs).toEqual({
       url: DEFAULT_WFS_URL,
+      viaChartsProvider: true,
       radiusKm: 10,
       catzoc: 3
     });
@@ -15,6 +16,7 @@ describe("Traficom WFS configuration", () => {
       parseConfig({ wfs: { enabled: true, radiusKm: 2, url: "https://x.test/wfs" } }).wfs
     ).toEqual({
       url: "https://x.test/wfs",
+      viaChartsProvider: true,
       radiusKm: 2,
       catzoc: 3
     });

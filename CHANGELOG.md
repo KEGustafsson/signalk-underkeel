@@ -11,6 +11,10 @@ All notable changes to signalk-underkeel are documented here.
   downloaded from the Traficom WFS tile by tile in the build process, so its memory stays that of
   one tile. `prepare` takes a corridor's boxes, and the planning box is built of them alone, its
   memory going with their area: a 50 nm trip fits a 2 GB Raspberry Pi 4.
+- The Traficom WFS is read through signalk-charts-provider-simple's local WFS proxy when it runs
+  one (2.22 or later): it keeps each area downloaded and serves it again, so the chart box, a
+  survey or a planning box over water downloaded before reads from its store. **Via Charts
+  Provider's WFS proxy** is on by default; turned off, the WFS is read directly.
 
 ### Fixed
 

@@ -9,6 +9,7 @@ import { readBox } from "./spatial/build-box";
 import { reportProgress } from "./spatial/build-progress";
 import type { BuildJob, BuildReply, IndexParts } from "./spatial/build-worker";
 import { builtReply, runBuild, serveBuildProcess } from "./spatial/build-worker";
+import { wfsUrl } from "./charts-provider-wfs";
 
 /**
  * A Traficom WFS refresh off the event loop: download, parse, clip and write the cell, then
@@ -66,7 +67,7 @@ export function refreshJob(
   const cells = deps.index()?.catalogue.cells.some((c) => c.source !== WFS_SOURCE);
   return {
     download: wfs && {
-      url: wfs.url,
+      url: wfsUrl(wfs.url, wfs.viaChartsProvider),
       bbox,
       ...(parts && { parts }),
       dir: cellDir,
