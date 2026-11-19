@@ -23,6 +23,12 @@ export interface Survey {
    * westernmost.
    */
   readonly depth: Float32Array;
+  /**
+   * The shallowest charted depth touching each cell (`DRVAL1`, a dredged area's depth), in the
+   * same order; NaN where no area does. A cell whose shallowest takes a draft is deep enough all
+   * over; one whose deepest alone does may hold a shoal or an island.
+   */
+  readonly shallowest: Float32Array;
 }
 
 /** No cell is finer than this, metres. */
@@ -65,7 +71,8 @@ export function surveyGrid(region: Bbox, cellMetres: number): Survey {
     cols,
     rows,
     cellMetres: cell,
-    depth: new Float32Array(cols * rows).fill(Number.NaN)
+    depth: new Float32Array(cols * rows).fill(Number.NaN),
+    shallowest: new Float32Array(cols * rows).fill(Number.NaN)
   };
 }
 
@@ -98,14 +105,16 @@ export function surveyTiles(g: Survey): SurveyTile[] {
 type Ring = readonly (readonly number[])[];
 
 /**
- * Raises to `value` every cell of `range` the polygon `rings` (outer ring, then holes; lon/lat)
- * touches: the cells its edges pass through and those whose centres lie inside it.
+ * Raises the deepest to `value`, and lowers the shallowest to `shallow`, in every cell of `range`
+ * the polygon `rings` (outer ring, then holes; lon/lat) touches: the cells its edges pass through
+ * and those whose centres lie inside it.
  */
 export function markPolygon(
   g: Survey,
   rings: readonly Ring[],
   value: number,
-  range: readonly [number, number, number, number] = [0, 0, g.cols, g.rows]
+  range: readonly [number, number, number, number] = [0, 0, g.cols, g.rows],
+  shallow = value
 ): void {
   const [dLat, dLon] = cellDegrees(g);
   const [w, s] = g.bbox;
@@ -115,6 +124,9 @@ export function markPolygon(
       const i = r * g.cols + c;
       if (!((g.depth[i] as number) >= value)) {
         g.depth[i] = value;
+      }
+      if (!((g.shallowest[i] as number) <= shallow)) {
+        g.shallowest[i] = shallow;
       }
     }
   };

@@ -28,15 +28,25 @@ export interface SurveyJob {
 }
 
 /** The grid's header, beside its depths in DEPTHS_FILE. */
-export type SurveyHeader = Omit<Survey, "depth">;
+export type SurveyHeader = Omit<Survey, "depth" | "shallowest">;
 
 export const HEADER_FILE = "survey.json";
 export const DEPTHS_FILE = "depths.f32";
+export const SHALLOWEST_FILE = "shallowest.f32";
 
 const LAYERS = [
-  // A depth area's deeper bound, a dredged area's dredged depth: the most the cell may hold.
-  { typeName: "rajoitettu:DepthArea_A", depth: ["DRVAL2", "DRVAL1"] },
-  { typeName: "rajoitettu:DredgedArea_A", depth: ["DRVAL1", "DRVAL2"] }
+  // A depth area's deeper bound, a dredged area's dredged depth: the most the cell may hold;
+  // the shallower bound, the dredged depth: the least.
+  {
+    typeName: "rajoitettu:DepthArea_A",
+    depth: ["DRVAL2", "DRVAL1"],
+    shallow: ["DRVAL1", "DRVAL2"]
+  },
+  {
+    typeName: "rajoitettu:DredgedArea_A",
+    depth: ["DRVAL1", "DRVAL2"],
+    shallow: ["DRVAL1", "DRVAL2"]
+  }
 ] as const;
 
 type Rings = number[][][];
@@ -66,13 +76,15 @@ async function surveyTile(
   const limit = limiter(1);
   for (const layer of LAYERS) {
     const [first, second] = layer.depth;
+    const [low, lower] = layer.shallow;
     const r = { fetch, base: url, typeName: layer.typeName, bbox: tile.bbox, limit, signal };
     await forEachPage(r, PAGE_FEATURES, (features) => {
       for (const f of features) {
         const v = num(f.properties?.[first]) ?? num(f.properties?.[second]);
+        const w = num(f.properties?.[low]) ?? num(f.properties?.[lower]) ?? v;
         if (v !== undefined) {
           for (const rings of polygons(f)) {
-            markPolygon(g, rings, v, tile.range);
+            markPolygon(g, rings, v, tile.range, w);
           }
         }
       }
@@ -103,23 +115,32 @@ export async function runSurvey(
 export function writeSurvey(dir: string, g: Survey): void {
   fs.rmSync(dir, { recursive: true, force: true });
   fs.mkdirSync(dir, { recursive: true });
-  const { depth, ...header } = g;
+  const { depth, shallowest, ...header } = g;
   fs.writeFileSync(path.join(dir, DEPTHS_FILE), new Uint8Array(depth.buffer));
+  fs.writeFileSync(path.join(dir, SHALLOWEST_FILE), new Uint8Array(shallowest.buffer));
   fs.writeFileSync(path.join(dir, HEADER_FILE), JSON.stringify(header));
+}
+
+/** The Float32 grid in `file`, which must hold `cells` values. */
+function readGrid(file: string, cells: number): Float32Array {
+  const bytes = fs.readFileSync(file);
+  const grid = new Float32Array(bytes.byteLength / 4);
+  new Uint8Array(grid.buffer).set(bytes);
+  if (grid.length !== cells) {
+    throw new Error(`survey ${file} holds ${grid.length} cells, not ${cells}`);
+  }
+  return grid;
 }
 
 /** The grid written into `dir`. */
 export function readSurvey(dir: string): Survey {
   const header = JSON.parse(fs.readFileSync(path.join(dir, HEADER_FILE), "utf8")) as SurveyHeader;
-  const bytes = fs.readFileSync(path.join(dir, DEPTHS_FILE));
-  const depth = new Float32Array(bytes.byteLength / 4);
-  new Uint8Array(depth.buffer).set(bytes);
-  if (depth.length !== header.cols * header.rows) {
-    throw new Error(
-      `survey in ${dir} holds ${depth.length} cells, not ${header.cols * header.rows}`
-    );
-  }
-  return { ...header, depth };
+  const cells = header.cols * header.rows;
+  return {
+    ...header,
+    depth: readGrid(path.join(dir, DEPTHS_FILE), cells),
+    shallowest: readGrid(path.join(dir, SHALLOWEST_FILE), cells)
+  };
 }
 
 if (isMainThread && require.main === module && process.send) {

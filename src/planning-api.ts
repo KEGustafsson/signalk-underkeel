@@ -130,7 +130,7 @@ export interface PlanningApiV1 {
   prepare(region: Bbox, signal: AbortSignal, corridor?: readonly Bbox[]): Promise<PrepareResult>;
   /**
    * The depth survey of `region` (feature "survey", `survey.ts`): cells about `cellMetres` on a
-   * side, or coarser, each the deepest charted depth touching it. Made tile by tile in the
+   * side, or coarser, each the deepest and the shallowest charted depth touching it. Made tile by tile in the
    * build process, so it may cover far more than a planning box. It is for choosing a
    * corridor, never a verdict. 400 for a bad request, 413 too large, 501 without a source it
    * can survey, 503 when it fails.

@@ -90,6 +90,12 @@ describe("marking areas", () => {
     expect(at(g, 22.09, 60.045)).toBe(12);
     // A shallower area inside a deeper one leaves the deeper depth.
     expect(at(g, 22.065, 60.032)).toBe(6);
+    // ...and its own shallowest: the cell may hold 3 m.
+    const [dLat, dLon] = cellDegrees(g);
+    const cell = (lon: number, lat: number) =>
+      Math.floor((lat - g.bbox[1]) / dLat) * g.cols + Math.floor((lon - g.bbox[0]) / dLon);
+    expect(g.shallowest[cell(22.065, 60.032)]).toBe(3);
+    expect(g.shallowest[cell(22.07, 60.045)]).toBe(6);
     expect(at(g, 22.01, 60.01)).toBeNaN();
     expect(at(g, 22.15, 60.08)).toBeNaN();
   });
@@ -220,6 +226,7 @@ describe("runSurvey", () => {
     expect(back.cols).toBe(g.cols);
     expect(back.bbox).toEqual(g.bbox);
     expect(Array.from(back.depth)).toEqual(Array.from(g.depth));
+    expect(Array.from(back.shallowest)).toEqual(Array.from(g.shallowest));
   });
 });
 

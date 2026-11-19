@@ -1474,7 +1474,9 @@ planning box holds, 50 nm across the archipelago for one, is planned in a corrid
 asks for a depth survey of the trip's region, `survey(region, cellMetres, signal)`
 (`src/survey.ts`, `src/survey-worker.ts`): a grid of cells, 100 m or coarser so it stays within a
 million cells, each the deepest charted depth (`DRVAL2` of a depth area, the dredged depth of a
-dredged area) of the areas touching it, NaN where none does. It is made from the Traficom WFS
+dredged area) of the areas touching it, and the shallowest (`DRVAL1`), NaN where none does: a
+cell whose shallowest takes a draft is deep enough all over, one whose deepest alone does may hold
+a shoal or an island. It is made from the Traficom WFS
 (501 without it) in the build process at nice 19, in the same turn as planning builds, giving way
 to the chart box. The WFS answers a box with whole areas, not clipped to it: off Turku a box of
 5 by 11 km is 6 to 10 MB, most of it areas reaching far past it, so small tiles download the same
