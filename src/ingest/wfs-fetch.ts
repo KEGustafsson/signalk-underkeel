@@ -27,7 +27,12 @@ export const WFS_LIMITS = {
    * A response or body that sends nothing for this long fails the download, so a stalled
    * server ends it while a slow link that keeps sending is read to the end.
    */
-  idleTimeoutMs: 30_000
+  idleTimeoutMs: 30_000,
+  /**
+   * Before a tile's nth try again (`retried`) the download waits n times this long, ms: the WFS
+   * that stalled recovers in a while.
+   */
+  retryPauseMs: 5000
 } as const;
 
 /** What a page body is read through; a fetch Response's `body`. */
@@ -338,11 +343,12 @@ export function num(v: unknown): number | undefined {
 }
 
 /** A download of one of many tiles is tried this many times: the WFS stalls at times. */
-export const TILE_TRIES = 3;
+export const TILE_TRIES = 4;
 
 /**
- * `task` until it succeeds, at most TILE_TRIES times, for one tile of a download of many, so
- * one stalled response does not lose the others; never again once `signal` aborts.
+ * `task` until it succeeds, at most TILE_TRIES times with a growing pause between, for one
+ * tile of a download of many, so one stalled response does not lose the others; never again
+ * once `signal` aborts.
  */
 export async function retried<T>(task: () => Promise<T>, signal?: AbortSignal): Promise<T> {
   for (let tries = 1; ; tries++) {
@@ -352,8 +358,22 @@ export async function retried<T>(task: () => Promise<T>, signal?: AbortSignal): 
       if (tries >= TILE_TRIES || signal?.aborted) {
         throw err;
       }
+      await pause(WFS_LIMITS.retryPauseMs * tries, signal);
     }
   }
+}
+
+/** Resolves after `ms`, or at once when `signal` aborts. */
+function pause(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const t = setTimeout(done, ms);
+    function done(): void {
+      clearTimeout(t);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    }
+    signal?.addEventListener("abort", done, { once: true });
+  });
 }
 
 /**

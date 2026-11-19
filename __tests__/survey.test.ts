@@ -4,7 +4,7 @@ import path from "path";
 import { readCellDirectory } from "../src/ingest/cell-reader";
 import type { Bbox, WfsFetch } from "../src/ingest/wfs";
 import { downloadWfsCell, partGroups } from "../src/ingest/wfs";
-import { fetchLayer, limiter, retried, TILE_TRIES } from "../src/ingest/wfs-fetch";
+import { fetchLayer, limiter, retried, TILE_TRIES, WFS_LIMITS } from "../src/ingest/wfs-fetch";
 import type { Survey } from "../src/survey";
 import { cellDegrees, markPolygon, SURVEY_MAX_CELLS, surveyGrid, surveyTiles } from "../src/survey";
 import { readSurvey, runSurvey, writeSurvey } from "../src/survey-worker";
@@ -12,6 +12,15 @@ import { readSurvey, runSurvey, writeSurvey } from "../src/survey-worker";
 /** The depth survey (signalk-route-planner's plan §4.2) and the corridor's WFS download. */
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-survey-"));
+// Tried again at once: the pause between tries is the WFS's, not the tests'.
+const limits = WFS_LIMITS as { retryPauseMs: number };
+const PAUSE = limits.retryPauseMs;
+beforeAll(() => {
+  limits.retryPauseMs = 0;
+});
+afterAll(() => {
+  limits.retryPauseMs = PAUSE;
+});
 afterAll(() => fs.rmSync(TMP, { recursive: true, force: true }));
 
 const REGION: Bbox = [22.0, 60.0, 22.2, 60.1];

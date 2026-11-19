@@ -1481,7 +1481,7 @@ to the chart box. The WFS answers a box with whole areas, not clipped to it: off
 areas again and again (about 1.7 GB for Turku to Utö). The region is downloaded in tiles of whole
 cells as large as the WFS spans allow (0.5° by 1.0°), page by page, 250 areas a page, one request
 at a time (the WFS stalls concurrent requests at times), each page marked on the grid and dropped
-before the next, a failed page asked for again: the memory is one page's features whatever the
+before the next, a failed page asked for again after a growing pause (`retried`, `TILE_TRIES`): the memory is one page's features whatever the
 region (at most 25 000 km², 413 above it), and Turku to Utö is about 30 000 areas. The last survey is held, and reused for a region
 inside it at its cell size or coarser. It is optimistic by design, a cell taking a draft
 wherever any area touching it does: it only chooses where to look, never a verdict.
