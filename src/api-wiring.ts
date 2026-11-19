@@ -60,7 +60,8 @@ export function routeDepsFor(
     indexReason: s.load?.reason ?? "plugin not started",
     config: s.config ?? parseConfig({}),
     vessel: () => s.monitor?.vessel(),
-    waterLevel: (start, end, at) => s.monitor?.waterLevelOver(start, end, at) ?? CHART_DATUM,
+    waterLevel: (start, end, at, area) =>
+      s.monitor?.waterLevelOver(start, end, at, area) ?? CHART_DATUM,
     waveHeight: () => s.monitor?.nav.waveHeight?.value,
     getRoute: (id) => app.resourcesApi.getResource("routes", id),
     now: () => clock.now(),

@@ -293,9 +293,12 @@ export class Monitor {
     return this.levels.now(this.nav.position?.value, this.clock.now());
   }
 
-  /** The lowest water level over [start, end] (epoch ms) at the positions `at`, for route checks. */
-  waterLevelOver(start: number, end: number, at: readonly LonLat[]): WaterLevel {
-    return this.levels.over(start, end, at, this.clock.now());
+  /**
+   * The lowest water level over [start, end] (epoch ms) at the positions `at`, for route
+   * checks; with `area`, also over the convex ring `at` encloses.
+   */
+  waterLevelOver(start: number, end: number, at: readonly LonLat[], area = false): WaterLevel {
+    return this.levels.over(start, end, at, this.clock.now(), area);
   }
 
   /** The water level over areas now, for UKC tiles and `POST /query`. */

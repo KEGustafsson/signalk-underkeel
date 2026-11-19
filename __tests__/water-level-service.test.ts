@@ -15,13 +15,13 @@ const index = {
   catalogue: { cells: [{ name: "A", edition: 1, update: 0, band: 5, soundingDatum: 26 }] }
 } as unknown as ChartIndex;
 
-/** An hourly FMI forecast of `cm` above mean water from 2 h before NOW for 72 h. */
-function forecastXml(cm = 20): string {
+/** An hourly FMI forecast of `cm` (or `cm(k)` at hour k) above mean water from 2 h before NOW for 72 h. */
+function forecastXml(cm: number | ((k: number) => number) = 20): string {
   const rows: string[] = [];
   for (let k = -2; k <= 72; k++) {
     const t = new Date(NOW + k * HOUR).toISOString();
     rows.push(
-      `<BsWfs:BsWfsElement><BsWfs:Time>${t}</BsWfs:Time><BsWfs:ParameterName>SeaLevel</BsWfs:ParameterName><BsWfs:ParameterValue>${cm}</BsWfs:ParameterValue></BsWfs:BsWfsElement>`
+      `<BsWfs:BsWfsElement><BsWfs:Time>${t}</BsWfs:Time><BsWfs:ParameterName>SeaLevel</BsWfs:ParameterName><BsWfs:ParameterValue>${typeof cm === "number" ? cm : cm(k)}</BsWfs:ParameterValue></BsWfs:BsWfsElement>`
     );
   }
   return `<wfs:FeatureCollection>${rows.join("")}</wfs:FeatureCollection>`;
@@ -31,12 +31,15 @@ const KEMI: LonLat = [24.52, 65.67];
 const VAASA: LonLat = [21.57, 63.08];
 
 /** An FMI source whose forecast, +0.62 m, was fetched at Kemi at NOW (or none was). */
-async function fmiAtKemi(fetched = true): Promise<WaterLevelService> {
+async function fmiAtKemi(
+  fetched = true,
+  cm: number | ((k: number) => number) = 62
+): Promise<WaterLevelService> {
   const fetch: FetchLike = (url) =>
     Promise.resolve({
       ok: true,
       status: 200,
-      text: () => Promise.resolve(url.includes("forecast") ? forecastXml(62) : "<x/>")
+      text: () => Promise.resolve(url.includes("forecast") ? forecastXml(cm) : "<x/>")
     });
   const s = new WaterLevelService(parseConfig({ waterLevel: { source: "fmi" } }), index, fetch);
   if (fetched) {
@@ -168,6 +171,30 @@ describe("water level over areas", () => {
     expect(r.beyond?.level).toEqual(s.over(NOW, NOW, [KEMI, VAASA], NOW));
     expect(r.beyond?.level.degraded).toMatch(/fmi/);
     expect(r.beyond?.level.h).toBeLessThanOrEqual(r.inside.h);
+  });
+
+  test("a ring the reach cuts into gets no more water than a point inside it, every vertex beyond", async () => {
+    // Falling from +20 cm: the window's lowest within the reach is below the fallback.
+    const s = await fmiAtKemi(true, (k) => 20 - 10 * (k + 2));
+    const k = { n: 1 / 111195, e: 1 / (111195 * Math.cos((KEMI[1] * Math.PI) / 180)) };
+    const at = (east: number, north: number): LonLat => [
+      KEMI[0] + east * k.e,
+      KEMI[1] + north * k.n
+    ];
+    // A 10 km × 0.5 km box whose south edge passes 29.8 km north of Kemi: its corners lie
+    // past the 30 km reach, the middle of its south edge inside it.
+    const ring = [at(-5000, 29800), at(5000, 29800), at(5000, 30300), at(-5000, 30300)];
+    const inside = at(0, 29800);
+    expect(ring.every((c) => haversine(c, KEMI) > 30000)).toBe(true);
+    expect(haversine(inside, KEMI)).toBeLessThan(30000);
+    const own = s.over(NOW, NOW + 6 * HOUR, [inside], NOW);
+    expect(s.over(NOW, NOW + 6 * HOUR, ring, NOW).h).toBeGreaterThan(own.h);
+    expect(s.over(NOW, NOW + 6 * HOUR, ring, NOW, true).h).toBeLessThanOrEqual(own.h);
+    // Far from the reach the area changes nothing.
+    const far = [VAASA, at(0, -300000), at(5000, -300000)];
+    expect(s.over(NOW, NOW + 6 * HOUR, far, NOW, true)).toEqual(
+      s.over(NOW, NOW + 6 * HOUR, far, NOW)
+    );
   });
 
   test("beyond the forecast's reach the reason names the distance, not a missing time", async () => {

@@ -38,9 +38,10 @@ export interface RouteCheckInput {
   dynamics: DynamicsOptions;
   /**
    * Water level over the arrival interval [start, end] (epoch ms) at the
-   * positions `at`, a leg's two ends; the worst one is used.
+   * positions `at`, a leg's two ends; the worst one is used. With `area`, `at`
+   * is a convex ring and the level holds for every point inside it too.
    */
-  waterLevel(start: number, end: number, at: readonly LonLat[]): WaterLevel;
+  waterLevel(start: number, end: number, at: readonly LonLat[], area?: boolean): WaterLevel;
   /** Significant wave height to allow for, metres. */
   waveHeight?: number;
   /** Accept threshold: a leg is ok below this P(UKC < 0). */
@@ -409,15 +410,15 @@ export interface FootprintVerdict {
 
 /**
  * The ring `ring` scored as a leg's corridor at speed `speed`, at the water
- * level `input.waterLevel(start, end, at)`: every point in it is held to the
+ * level `input.waterLevel(start, end, at, true)`: every point in it is held to the
  * same threshold and status rules as a corridor of `checkLeg`.
  *
- * `at` holds the ring's vertices, and that bounds the level of every point inside it: a
- * level depends on position only through its provider's reach, a disk (`LevelReach`,
- * `model/water-level.ts`), and datums are taken at their lowest over every cell. A convex
- * ring with every vertex inside the reach lies inside it, at that one level; a vertex
- * beyond it gives the ring the fallback as well, so the ring never gets more water than a
- * leg inside it.
+ * `at` holds the ring's vertices, and the level is taken over the ring as an area, so it
+ * bounds the level of every point inside it: a level depends on position only through its
+ * provider's reach, a disk (`LevelReach`, `model/water-level.ts`), and datums are taken at
+ * their lowest over every cell. A vertex beyond the reach gives the ring the fallback; a
+ * ring the reach can meet, even with every vertex beyond it, takes the level within the
+ * reach as well; so the ring never gets more water than a leg inside it.
  */
 export function checkFootprint(
   index: ChartIndex,
@@ -426,7 +427,7 @@ export function checkFootprint(
   speed: number,
   window: { start: number; end: number; at: readonly LonLat[] }
 ): FootprintVerdict {
-  const wl = input.waterLevel(window.start, window.end, window.at);
+  const wl = input.waterLevel(window.start, window.end, window.at, true);
   const { s } = scoringFor(input, speed, wl);
   const result = minDepthOver(index.pyramid, footprintGeom(ring), {
     chartPosition: true,

@@ -128,11 +128,23 @@ export class WaterLevelService {
    * water than the lowest level found elsewhere. FMI answers only within
    * its forecast distance of where the forecast was fetched, so a leg far
    * from the vessel falls back rather than taking the vessel's level.
+   *
+   * With `area`, `at` is a convex ring and the level holds for every point
+   * inside it too: where the source's reach can meet the ring's box, the level
+   * within the reach counts as well, so a ring whose vertices all lie beyond the
+   * reach never gets more water than a point inside it that lies within it.
    */
-  over(start: number, end: number, at: readonly LonLat[], now: number): WaterLevel {
+  over(start: number, end: number, at: readonly LonLat[], now: number, area = false): WaterLevel {
     let out: WaterLevel | undefined;
     for (const p of at) {
       out = lowerLevel(out, lowestWaterLevel(this.provider, this.datums, p, start, end, now));
+    }
+    const reach = area ? this.provider?.reach?.() : undefined;
+    if (reach && mayMeet(at, reach.centre, reach.metres)) {
+      out = lowerLevel(
+        out,
+        lowestWaterLevel(this.provider, this.datums, reach.centre, start, end, now)
+      );
     }
     return out ?? lowestWaterLevel(this.provider, this.datums, undefined, start, end, now);
   }
@@ -163,4 +175,25 @@ export class WaterLevelService {
       datums: this.datums
     };
   }
+}
+
+/**
+ * False only when no point of the box round `ring` lies within `metres` of
+ * `centre`. The box's point nearest `centre` in degrees is at most the box's
+ * diagonal from the true nearest point, so allowing that much never misses a
+ * box the disk meets.
+ */
+function mayMeet(ring: readonly LonLat[], centre: LonLat, metres: number): boolean {
+  if (ring.length === 0) {
+    return false;
+  }
+  const lons = ring.map((p) => p[0]);
+  const lats = ring.map((p) => p[1]);
+  const sw: LonLat = [Math.min(...lons), Math.min(...lats)];
+  const ne: LonLat = [Math.max(...lons), Math.max(...lats)];
+  const q: LonLat = [
+    Math.min(Math.max(centre[0], sw[0]), ne[0]),
+    Math.min(Math.max(centre[1], sw[1]), ne[1])
+  ];
+  return haversine(q, centre) <= metres + haversine(sw, ne);
 }
