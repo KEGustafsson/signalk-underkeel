@@ -55,12 +55,12 @@ describe("survey grid", () => {
   });
 
   test("tiles cover every cell once, each within the WFS tile span", () => {
-    const g = surveyGrid([21.5, 59.8, 22.4, 60.3], 200);
+    const g = surveyGrid([20.5, 59.4, 22.4, 60.6], 200);
     const seen = new Uint8Array(g.cols * g.rows);
     for (const t of surveyTiles(g)) {
       const [c0, r0, c1, r1] = t.range;
-      expect(t.bbox[2] - t.bbox[0]).toBeLessThanOrEqual(0.1 + 1e-9);
-      expect(t.bbox[3] - t.bbox[1]).toBeLessThanOrEqual(0.05 + 1e-9);
+      expect(t.bbox[2] - t.bbox[0]).toBeLessThanOrEqual(1.0 + 1e-9);
+      expect(t.bbox[3] - t.bbox[1]).toBeLessThanOrEqual(0.5 + 1e-9);
       for (let r = r0; r < r1; r++) {
         for (let c = c0; c < c1; c++) {
           seen[r * g.cols + c] = (seen[r * g.cols + c] as number) + 1;
@@ -165,36 +165,41 @@ describe("runSurvey", () => {
       { url: "https://wfs.test/wfs", region: [22.0, 60.0, 22.5, 60.09], cellMetres: 200 },
       fetch
     );
-    // Six tiles east–west (the last a sliver of whole cells), two north–south: two layers each.
-    expect(surveyTiles(g)).toHaveLength(12);
-    expect(asked).toHaveLength(24);
+    // One tile: a page of each layer, and the empty page after it.
+    expect(surveyTiles(g)).toHaveLength(1);
+    expect(asked).toHaveLength(4);
     expect(at(g, 22.1, 60.04)).toBe(10);
     expect(at(g, 22.055, 60.035)).toBe(14);
     expect(at(g, 22.4, 60.04)).toBeNaN();
-    // Past the area's east edge, though the area came back in every tile.
+    // Past the area's east edge.
     expect(at(g, 22.32, 60.04)).toBeNaN();
   });
 
-  test("a tile whose download fails is cut in four and each quarter downloaded", async () => {
+  test("reads a layer page by page, and asks again for a page that fails", async () => {
     const asked: string[] = [];
-    const wfs = fakeWfs(
-      { "rajoitettu:DepthArea_A": [depthArea([22.0, 60.0, 22.3, 60.1], 7)] },
-      asked
+    const many = Array.from({ length: 600 }, (_, i) =>
+      depthArea([22.0 + i * 0.0005, 60.0, 22.0005 + i * 0.0005, 60.01], 4)
     );
-    // The WFS stalls on a box wider than 0.06°.
+    const wfs = fakeWfs({ "rajoitettu:DepthArea_A": many }, asked);
+    let failed = false;
+    // The second page stalls once.
     const fetch: WfsFetch = (url) => {
-      const [, w, , e] = (new URL(url).searchParams.get("bbox") ?? "").split(",").map(Number);
-      return (e as number) - (w as number) > 0.06
-        ? Promise.reject(new Error("no data for 30 s"))
-        : wfs(url);
+      if (!failed && new URL(url).searchParams.get("startIndex") === "250") {
+        failed = true;
+        return Promise.reject(new Error("no data for 30 s"));
+      }
+      return wfs(url);
     };
     const g = await runSurvey(
-      { url: "https://wfs.test/wfs", region: [22.0, 60.0, 22.1, 60.05], cellMetres: 200 },
+      { url: "https://wfs.test/wfs", region: [22.0, 60.0, 22.4, 60.05], cellMetres: 200 },
       fetch
     );
-    expect(at(g, 22.02, 60.01)).toBe(7);
-    expect(at(g, 22.09, 60.045)).toBe(7);
-    expect(Array.from(g.depth).every((v) => v === 7)).toBe(true);
+    expect(failed).toBe(true);
+    const depthPages = asked.filter((a) => a.startsWith("rajoitettu:DepthArea_A"));
+    // 250, 250, 100 and the empty page.
+    expect(depthPages).toHaveLength(4);
+    expect(at(g, 22.29, 60.005)).toBe(4);
+    expect(at(g, 22.35, 60.005)).toBeNaN();
   });
 
   test("writes the grid and reads it back", () => {

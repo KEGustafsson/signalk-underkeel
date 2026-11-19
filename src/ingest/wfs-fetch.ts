@@ -352,3 +352,32 @@ export async function retried<T>(task: () => Promise<T>, signal?: AbortSignal): 
     }
   }
 }
+
+/**
+ * Every feature of one layer in the box, page by page in IDENTIFIER order, each page given to
+ * `onPage` and dropped before the next is asked for, so a box of tens of thousands of large
+ * areas takes one page's memory. One request at a time: the WFS stalls concurrent ones at
+ * times. A page that fails is asked for again (`retried`). Resolves with the features read.
+ */
+export async function forEachPage(
+  r: LayerRequest,
+  count: number,
+  onPage: (features: WfsFeature[]) => void
+): Promise<number> {
+  let read = 0;
+  for (let pages = 1; ; pages++) {
+    if (pages > Math.ceil(WFS_LIMITS.maxFeatures / count) + 1) {
+      throw tooMany(r.typeName);
+    }
+    const start = read;
+    const page = await retried(() => readPage(r, start, count), r.signal);
+    if (page.features.length === 0) {
+      return read;
+    }
+    read += page.features.length;
+    onPage(page.features);
+    if (page.matched !== undefined && read >= page.matched) {
+      return read;
+    }
+  }
+}

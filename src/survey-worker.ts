@@ -3,17 +3,17 @@ import path from "path";
 import { isMainThread } from "worker_threads";
 import type { Bbox, WfsFetch } from "./ingest/wfs";
 import type { WfsFeature } from "./ingest/wfs-fetch";
-import type { Limit } from "./ingest/wfs-fetch";
-import { fetchLayer, limiter, num, retried, WFS_LIMITS } from "./ingest/wfs-fetch";
+import { forEachPage, limiter, num } from "./ingest/wfs-fetch";
 import { reportProgress } from "./spatial/build-progress";
 import { serveBuildProcess } from "./spatial/build-worker";
 import type { Survey, SurveyTile } from "./survey";
-import { markPolygon, splitTile, surveyGrid, surveyTiles } from "./survey";
+import { markPolygon, surveyGrid, surveyTiles } from "./survey";
 
 /**
  * The depth survey off the event loop (`survey.ts`): the region's Traficom WFS depth and
- * dredged areas downloaded tile by tile, each tile marked on the grid and dropped before the
- * next, so the memory is one tile's features and the grid however large the region. It runs
+ * dredged areas downloaded tile by tile and page by page, each page marked on the grid and
+ * dropped before the next, so the memory is one page's features and the grid however large the
+ * region. It runs
  * in a child process (`runBuildProcess`) and writes the grid to its staging directory.
  */
 
@@ -50,76 +50,52 @@ function polygons(f: WfsFeature): Rings[] {
 }
 
 /**
- * Tiles downloaded at once: two keep the parsed features well inside the build heap of a 1 GB
- * machine while the link stays busy.
+ * Features asked for per page. A depth area of the archipelago off Turku is 6 to 20 KB, so a page
+ * is a few MB: parsed, marked and dropped well inside the build heap of a 1 GB machine.
  */
-const TILES_AT_ONCE = 2;
-/** A failing tile is cut in four at most this many times over. */
-const SPLITS = 2;
+const PAGE_FEATURES = 250;
 
-/** Marks the depth and dredged areas of `tile`, downloaded with `limit`, on `g`. */
+/** Marks the depth and dredged areas of `tile` on `g`, page by page. */
 async function surveyTile(
   g: Survey,
   tile: SurveyTile,
   url: string,
   fetch: WfsFetch,
-  limit: Limit,
   signal?: AbortSignal
 ): Promise<void> {
+  const limit = limiter(1);
   for (const layer of LAYERS) {
-    const features = await fetchLayer({
-      fetch,
-      base: url,
-      typeName: layer.typeName,
-      bbox: tile.bbox,
-      limit,
-      signal
-    });
     const [first, second] = layer.depth;
-    for (const f of features) {
-      const v = num(f.properties?.[first]) ?? num(f.properties?.[second]);
-      if (v !== undefined) {
-        for (const rings of polygons(f)) {
-          markPolygon(g, rings, v, tile.range);
+    const r = { fetch, base: url, typeName: layer.typeName, bbox: tile.bbox, limit, signal };
+    await forEachPage(r, PAGE_FEATURES, (features) => {
+      for (const f of features) {
+        const v = num(f.properties?.[first]) ?? num(f.properties?.[second]);
+        if (v !== undefined) {
+          for (const rings of polygons(f)) {
+            markPolygon(g, rings, v, tile.range);
+          }
         }
       }
-    }
+    });
   }
 }
 
-/** The survey of `job.region` from the WFS at `job.url`, fetched with `fetch`. */
+/**
+ * The survey of `job.region` from the WFS at `job.url`, fetched with `fetch`, tile by tile. The
+ * WFS answers with whole areas, not clipped to the box, so a tile is as large as its spans
+ * allow: smaller ones download the same large areas again and again.
+ */
 export async function runSurvey(
   job: Omit<SurveyJob, "staging">,
   fetch: WfsFetch,
   signal?: AbortSignal
 ): Promise<Survey> {
   const g = surveyGrid(job.region, job.cellMetres);
-  const limit = limiter(WFS_LIMITS.concurrency);
   const tiles = surveyTiles(g);
-  // A tile whose download fails is cut in four, twice at most, then tried again whole.
-  const survey = async (tile: SurveyTile, depth: number): Promise<void> => {
-    const once = (): Promise<void> => surveyTile(g, tile, job.url, fetch, limit, signal);
-    try {
-      await once();
-    } catch (err) {
-      const parts = depth < SPLITS ? splitTile(g, tile) : [];
-      if (signal?.aborted || parts.length < 2) {
-        await retried(once, signal);
-        return;
-      }
-      for (const p of parts) {
-        await survey(p, depth + 1);
-      }
-    }
-  };
-  let next = 0;
-  const worker = async (): Promise<void> => {
-    while (next < tiles.length) {
-      await survey(tiles[next++] as SurveyTile, 0);
-      reportProgress({ phase: "download", done: next, total: tiles.length });
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(TILES_AT_ONCE, tiles.length) }, worker));
+  for (const [i, tile] of tiles.entries()) {
+    await surveyTile(g, tile, job.url, fetch, signal);
+    reportProgress({ phase: "download", done: i + 1, total: tiles.length });
+  }
   return g;
 }
 

@@ -408,7 +408,8 @@ export async function downloadWfsCell(
       throw new Error(problem);
     }
   }
-  const limit = limiter(WFS_LIMITS.concurrency);
+  // A corridor's many groups one request at a time: the WFS stalls concurrent ones at times.
+  const limit = limiter(groups.length > 1 ? 1 : WFS_LIMITS.concurrency);
   const clipped: ClippedLayers = { depthAreas: [], dredgedAreas: [], soundings: [] };
   const counts = { depthAreas: 0, dredgedAreas: 0, soundings: 0 };
   for (const g of groups) {
