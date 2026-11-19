@@ -198,7 +198,17 @@ export class PlanningBoxes {
           return { ok: true, held };
         }
         // Checked again after each wait: a build that ran out of memory meanwhile lowers the cap.
-        const tooLarge = this.tooLarge(bbox, parts);
+        let tooLarge: string | undefined;
+        try {
+          tooLarge = this.tooLarge(bbox, parts);
+        } catch (err) {
+          // cellsDir unreadable: its cells, and so the area held to the cap, are unknown.
+          return {
+            ok: false,
+            status: 503,
+            error: `the chart cells could not be read: ${(err as Error).message}`
+          };
+        }
         return tooLarge === undefined ? undefined : { ok: false, status: 413, error: tooLarge };
       },
       () => this.build(region, bbox, signal, progress, parts)
@@ -471,7 +481,14 @@ export class PlanningBoxes {
       (err) => {
         if (OUT_OF_MEMORY.test(err.message)) {
           // Not tried at that size again in this run.
-          this.maxKm2 = Math.min(this.maxKm2, this.measure(bbox, parts).km2 * 0.5);
+          let km2: number;
+          try {
+            km2 = this.measure(bbox, parts).km2;
+          } catch {
+            // cellsDir unreadable now: the smaller measure, the corridor's alone, is halved.
+            km2 = parts ? parts.reduce((sum, p) => sum + bboxKm2(p), 0) : bboxKm2(bbox);
+          }
+          this.maxKm2 = Math.min(this.maxKm2, km2 * 0.5);
         }
         return { ok: false, status: 503, error: `planning box build failed: ${err.message}` };
       }

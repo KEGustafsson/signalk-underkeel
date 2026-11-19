@@ -235,6 +235,23 @@ describe("corridor", () => {
     });
   });
 
+  test("an unreadable cellsDir refuses a corridor with 503, not a throw", async () => {
+    let refreshed = 0;
+    const refresh: WfsRefresher = () => {
+      refreshed++;
+      return Promise.reject(new Error("not built"));
+    };
+    const missing = path.join(dir, "unmounted", "cells");
+    const b = boxes({
+      refresh,
+      job: () => ({ config: WFS, cellsDir: missing, index: () => undefined, leafZoom: 16 })
+    });
+    const r = await b.prepare(REGION, NEVER, undefined, CORRIDOR);
+    expect(r).toMatchObject({ ok: false, status: 503 });
+    expect(!r.ok && r.error).toMatch(/chart cells could not be read/);
+    expect(refreshed).toBe(0);
+  });
+
   test("a corridor's WFS spans are its boxes', with S-57 cells in use too", async () => {
     const refresh: WfsRefresher = () =>
       Promise.resolve({
