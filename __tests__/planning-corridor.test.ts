@@ -19,7 +19,7 @@ import { surveyGrid } from "../src/survey";
 import type { IndexBuilder, WfsRefresher } from "../src/wfs-service";
 import { inThreadRefresher } from "../src/wfs-service";
 import type { WfsJob } from "../src/wfs-worker";
-import { fixtureIndex } from "./helpers/fixture-index";
+import { CELLS, fixtureIndex } from "./helpers/fixture-index";
 import { fakeClock } from "./helpers/plugin-harness";
 
 /**
@@ -216,6 +216,23 @@ describe("corridor", () => {
     const again = await b.prepare([22.02, 60.012, 22.04, 60.018], NEVER);
     expect(again.ok && r.ok && again.held === r.held).toBe(true);
     expect(jobs).toHaveLength(1);
+  });
+
+  test("S-57 cells in cellsDir, not yet in the index, hold the whole box to the cap", async () => {
+    const refresh: WfsRefresher = () =>
+      Promise.resolve({
+        index: fixtureIndex(),
+        features: { depthAreas: 0, dredgedAreas: 0, soundings: 0 }
+      });
+    const b = boxes({
+      refresh,
+      maxKm2: 20,
+      job: () => ({ config: WFS, cellsDir: CELLS, index: () => undefined, leafZoom: 16 })
+    });
+    expect(await b.prepare(REGION, NEVER, undefined, CORRIDOR)).toMatchObject({
+      ok: false,
+      status: 413
+    });
   });
 
   test("a corridor's WFS spans are its boxes', with S-57 cells in use too", async () => {

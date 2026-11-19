@@ -1477,13 +1477,11 @@ coarser where that would pass a million cells. Each cell holds the deepest bound
 depth area, the dredged depth of a dredged area) and the least bound (`DRVAL1`) of the charted
 areas touching it, NaN where none does. Both are bounds of those areas alone: a cell an area
 touches at a corner may be land or uncharted elsewhere, and soundings are not read, so neither
-proves a cell clear. It is made from the Traficom WFS (501 without it) in the build process at
-nice 19, in the same turn as planning builds, giving way to the chart box. The WFS answers a box
-with whole areas, not clipped to it, so small tiles download the same areas again and again: the
-region is downloaded in tiles as large as the WFS allows, page by page, one request at a time
-(the WFS stalls concurrent requests at times), each page marked on the grid and dropped before
-the next. The memory is one page's features whatever the region (at most 25 000 km², 413 above
-it). The last survey is held, and reused for a region inside it whose cells are as fine or
+proves a cell clear. It is made from the Traficom WFS (501 without it) in the build process, in
+the same turn as planning builds, giving way to the chart box. Its memory is bounded whatever the
+region (at most 25 000 km², 413 above it): the areas are read a part at a time and marked on the
+grid, never held whole, and one request is in flight at a time, as the WFS stalls concurrent
+requests at times (`src/survey-worker.ts`). The last survey is held, and reused for a region inside it whose cells are as fine or
 coarser. It is optimistic by design: it only chooses where to look, never a verdict.
 
 The planner finds a coarse route on the survey and asks `prepare(region, signal, corridor)` with

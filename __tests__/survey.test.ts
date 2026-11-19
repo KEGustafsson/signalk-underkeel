@@ -496,7 +496,7 @@ describe("refusals and repeats", () => {
       },
       asked
     );
-    // Two boxes far enough apart to be groups of their own.
+    // Each box downloaded on its own: which of the two owns the sounding on the edge they share.
     const parts: Bbox[] = [
       [22.0, 60.0, 22.1, 60.01],
       [22.1, 60.0, 22.2, 60.01]
@@ -525,5 +525,34 @@ describe("refusals and repeats", () => {
     expect(two.features.map((f: { properties: { LNAM: string } }) => f.properties.LNAM)).toEqual([
       "EDGE"
     ]);
+  });
+});
+
+describe("a layer read short", () => {
+  test("an empty page before the reported count is reached fails, not an incomplete grid", async () => {
+    const page = Array.from({ length: 250 }, (_, i) => ({
+      ...depthArea([22, 60, 22.01, 60.01], 4),
+      id: `a${i}`
+    }));
+    const fetch: WfsFetch = (url) => {
+      const start = Number(new URL(url).searchParams.get("startIndex"));
+      const features = start === 0 ? page : [];
+      const body = {
+        type: "FeatureCollection",
+        numberMatched: start === 0 ? 600 : undefined,
+        features
+      };
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve(JSON.stringify(body))
+      });
+    };
+    await expect(
+      runSurvey(
+        { url: "https://wfs.test/wfs", region: [22.0, 60.0, 22.1, 60.05], cellMetres: 200 },
+        fetch
+      )
+    ).rejects.toThrow("250 features read, 600 matched");
   });
 });

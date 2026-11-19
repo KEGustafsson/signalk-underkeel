@@ -414,13 +414,19 @@ export async function forEachPage(
   const seen = new Set<unknown>();
   const maxPages = WFS_LIMITS.maxPages * Math.ceil(WFS_LIMITS.pageSize / count);
   let read = 0;
+  let matched: number | undefined;
   for (let pages = 1; ; pages++) {
     if (pages > maxPages) {
       throw tooManyPages(r.typeName);
     }
     const start = read;
     const page = await retried(() => readPage(r, start, count), r.signal);
+    matched = page.matched ?? matched;
     if (page.features.length === 0) {
+      // Short of the count the server reported: the layer was not read whole.
+      if (matched !== undefined && read < matched) {
+        throw new Error(`${r.typeName}: ${read} features read, ${matched} matched`);
+      }
       return read;
     }
     for (const f of page.features) {
@@ -436,7 +442,7 @@ export async function forEachPage(
       throw tooMany(r.typeName);
     }
     onPage(page.features);
-    if (page.matched !== undefined && read >= page.matched) {
+    if (matched !== undefined && read >= matched) {
       return read;
     }
   }

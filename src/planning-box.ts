@@ -12,6 +12,7 @@ import { MAX_CHART_BUFFER } from "./spatial/chart-position";
 import { indexDirProblem } from "./spatial/chart-index";
 import { EARTH_RADIUS } from "./foundation/geo";
 import { WFS_SOURCE } from "./ingest/wfs";
+import { cellSources } from "./index-loader";
 import { Held, realWait, untilAborted } from "./planning-held";
 import type { Survey } from "./survey";
 import type { SurveyJob } from "./survey-worker";
@@ -308,7 +309,10 @@ export class PlanningBoxes {
   ): { km2: number; wfs: boolean; corridor: boolean } {
     const deps = this.deps.job();
     const wfs = "url" in deps.config;
-    const cells = deps.index()?.catalogue.cells.some((c) => c.source !== WFS_SOURCE) === true;
+    // The cells the build reads: those of the index in use, and any S-57 cell in cellsDir now.
+    const cells =
+      deps.index()?.catalogue.cells.some((c) => c.source !== WFS_SOURCE) === true ||
+      (parts !== undefined && cellSources(deps.cellsDir).length > 0);
     const corridor = parts !== undefined && wfs && !cells;
     const km2 = corridor ? parts.reduce((sum, p) => sum + bboxKm2(p), 0) : bboxKm2(bbox);
     return { km2, wfs, corridor };
