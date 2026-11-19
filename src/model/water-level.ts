@@ -50,7 +50,9 @@ export interface WaterLevelProvider {
   /**
    * Present only for a provider whose answer depends on position: levelAt
    * must be the same at every position within the reach and undefined
-   * beyond it. Absent means levelAt ignores position.
+   * beyond it. Absent means levelAt ignores position. A planning box's level
+   * is taken at its corners on the strength of this (`checkFootprint`): a
+   * provider whose level varies otherwise must bound a box's interior too.
    */
   reach?(): LevelReach | undefined;
 }

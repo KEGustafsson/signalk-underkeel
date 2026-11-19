@@ -411,6 +411,13 @@ export interface FootprintVerdict {
  * The ring `ring` scored as a leg's corridor at speed `speed`, at the water
  * level `input.waterLevel(start, end, at)`: every point in it is held to the
  * same threshold and status rules as a corridor of `checkLeg`.
+ *
+ * `at` holds the ring's vertices, and that bounds the level of every point inside it: a
+ * level depends on position only through its provider's reach, a disk (`LevelReach`,
+ * `model/water-level.ts`), and datums are taken at their lowest over every cell. A convex
+ * ring with every vertex inside the reach lies inside it, at that one level; a vertex
+ * beyond it gives the ring the fallback as well, so the ring never gets more water than a
+ * leg inside it.
  */
 export function checkFootprint(
   index: ChartIndex,
