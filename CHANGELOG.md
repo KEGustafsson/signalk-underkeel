@@ -12,6 +12,12 @@ All notable changes to signalk-underkeel are documented here.
   one tile. `prepare` takes a corridor's boxes, and the planning box is built of them alone, its
   memory going with their area: a 50 nm trip fits a 1 GB Raspberry Pi 3 or Cerbo GX.
 
+### Fixed
+
+- A Traficom WFS download whose layer failed while another layer's request still waited its turn
+  could end the build process, or the server for an in-process build, with an unhandled
+  rejection; the request's own failure is now handled.
+
 ## [0.7.0]
 
 ### Added

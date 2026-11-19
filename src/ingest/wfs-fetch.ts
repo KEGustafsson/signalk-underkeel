@@ -312,6 +312,9 @@ function unlessAborted<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise((resolve, reject) => {
     const abort = (): void => reject(signal.reason as Error);
     if (signal.aborted) {
+      // Its own rejection, once the abort reaches it, would otherwise go unhandled and end the
+      // process: a request queued behind a sibling layer whose failure aborted the download.
+      p.catch(() => undefined);
       abort();
       return;
     }

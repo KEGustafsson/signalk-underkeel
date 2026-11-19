@@ -4,7 +4,7 @@ import path from "path";
 import { readCellDirectory } from "../src/ingest/cell-reader";
 import type { Bbox, WfsFetch } from "../src/ingest/wfs";
 import { downloadWfsCell, partGroups } from "../src/ingest/wfs";
-import { retried, TILE_TRIES } from "../src/ingest/wfs-fetch";
+import { fetchLayer, limiter, retried, TILE_TRIES } from "../src/ingest/wfs-fetch";
 import type { Survey } from "../src/survey";
 import { cellDegrees, markPolygon, SURVEY_MAX_CELLS, surveyGrid, surveyTiles } from "../src/survey";
 import { readSurvey, runSurvey, writeSurvey } from "../src/survey-worker";
@@ -305,5 +305,35 @@ describe("retried", () => {
       }, stop.signal)
     ).rejects.toThrow("aborted");
     expect(once).toBe(1);
+  });
+});
+
+describe("a request on an aborted download", () => {
+  test("its fetch's own later rejection is handled, not left to end the process", async () => {
+    const unhandled: unknown[] = [];
+    const listener = (e: unknown): void => {
+      unhandled.push(e);
+    };
+    process.on("unhandledRejection", listener);
+    try {
+      const stop = new AbortController();
+      stop.abort(new Error("a sibling layer failed"));
+      const late: WfsFetch = () =>
+        new Promise((_, reject) => setTimeout(() => reject(new Error("aborted late")), 5));
+      await expect(
+        fetchLayer({
+          fetch: late,
+          base: "https://wfs.test/wfs",
+          typeName: "rajoitettu:Sounding_P",
+          bbox: [22, 60, 22.1, 60.05],
+          limit: limiter(1),
+          signal: stop.signal
+        })
+      ).rejects.toThrow("a sibling layer failed");
+      await new Promise((r) => setTimeout(r, 50));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", listener);
+    }
   });
 });
