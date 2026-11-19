@@ -498,6 +498,37 @@ describe("review fixes", () => {
     expect((await other).ok).toBe(true);
   });
 
+  test("the chart box need not wait for a reader of a released index; the next build still does", async () => {
+    const fake: Fake = { jobs: [], release: () => undefined };
+    let busy = false;
+    const { b } = boxes({ fake, boxBusy: () => busy });
+    const first = b.prepare(REGION, NEVER);
+    await flush();
+    fake.release();
+    const got = await first;
+    if (!got.ok) {
+      throw new Error(got.error);
+    }
+    expect(got.held.begin()).toBe(true);
+    const other = b.prepare(FAR, NEVER);
+    await flush();
+    // The chart box takes over while the build waits for the reader: it is not held up.
+    busy = true;
+    let yielded = false;
+    void b.preempt().then(() => (yielded = true));
+    await flush();
+    expect(yielded).toBe(true);
+    busy = false;
+    await flush();
+    // Started again, it still waits for the reader before replacing the files.
+    expect(fake.jobs).toHaveLength(1);
+    got.held.end();
+    await flush();
+    expect(fake.jobs).toHaveLength(2);
+    fake.release();
+    expect((await other).ok).toBe(true);
+  });
+
   test("a queued planning session takes the living chart as it is at its turn, and the box's own datums", async () => {
     const queue = new RequestQueue();
     const main = fixtureIndex();

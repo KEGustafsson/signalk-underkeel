@@ -155,6 +155,10 @@ class Held implements HeldBox {
     }
   }
 
+  isIdle(): boolean {
+    return this.active === 0;
+  }
+
   /** Settles once no counted job reads the index. */
   idle(): Promise<void> {
     return this.active === 0 ? Promise.resolve() : new Promise((r) => this.waiters.push(r));
@@ -171,6 +175,8 @@ interface Running {
 
 export class PlanningBoxes {
   private held: Held | undefined;
+  /** Released indexes whose counted jobs may still read them: every build waits for them. */
+  private draining: Held[] = [];
   private running: Running | undefined;
   private maxKm2: number;
   private stopped = false;
@@ -283,8 +289,15 @@ export class PlanningBoxes {
   release(): void {
     if (this.held) {
       this.held.live = false;
+      this.draining.push(this.held);
       this.held = undefined;
     }
+  }
+
+  /** Settles once no job reads a released index; the barrier stays for the next build. */
+  private async drained(): Promise<void> {
+    await Promise.all(this.draining.map((h) => h.idle()));
+    this.draining = this.draining.filter((h) => !h.isIdle());
   }
 
   private releaseIdle(): void {
@@ -325,14 +338,14 @@ export class PlanningBoxes {
     signal.addEventListener("abort", stopIt, { once: true });
     const run: Running = { bbox, controller, preempted: false, done: Promise.resolve("again") };
     // The index it replaces takes no new job: its files are about to be replaced.
-    const old = this.held;
     this.release();
     const started = this.deps.clock.now();
     run.done = (async (): Promise<PrepareOutcome | "again"> => {
       let resume: (() => void) | undefined;
       try {
-        // A job already reading the old index ends before its files are replaced.
-        await old?.idle();
+        // A job still reading a released index ends before its files are replaced. The wait
+        // gives way to the chart box, an abort or a stop; the next build waits for it again.
+        await untilAborted(this.drained(), controller.signal);
         fs.mkdirSync(this.deps.dir, { recursive: true });
         resume = await this.deps.pauseWarming?.();
         const job = refreshJob(
