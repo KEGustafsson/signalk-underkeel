@@ -33,6 +33,8 @@ export interface WfsJob {
   /** Builds in this box (plan §4.2), not whole. */
   box?: Bbox;
   build: BuildJob;
+  /** Runs at the lowest CPU priority: a planning box (`planning-box.ts`). */
+  lowPriority?: boolean;
 }
 
 /** What the box service builds its refresh jobs from (`WfsService`). */
@@ -137,6 +139,7 @@ if (isMainThread && require.main === module && process.send) {
         ...builtReply(r),
         features: r.features
       })),
-    (job) => job.build.heapMb
+    (job) => job.build.heapMb,
+    (job) => job.lowPriority === true
   );
 }

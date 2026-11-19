@@ -4,9 +4,15 @@ import { checkFootprint, checkLeg, RING_REACH } from "./engine/route-check";
 import type { RouteCheckInput } from "./engine/route-check";
 import type { LonLat } from "./foundation/geo";
 import { EARTH_RADIUS, haversine } from "./foundation/geo";
+import type { Bbox } from "./ingest/wfs";
 import { FALLBACK_HULL } from "./model/vessel";
+import type { HeldBox, PlanningBoxes } from "./planning-box";
+import { holds, regionError } from "./planning-box";
 import type { RouteServiceDeps } from "./route-service";
 import { routeCheck } from "./route-service";
+import { growBbox } from "./spatial/build-box";
+import type { ChartIndex } from "./spatial/chart-index";
+import { MAX_CHART_BUFFER } from "./spatial/chart-position";
 
 /**
  * Planning API v1: the in-process interface signalk-route-planner searches against
@@ -62,10 +68,37 @@ export interface Session {
 export type SessionResult<T> =
   { ok: true; value: T } | { ok: false; status: number; error: string };
 
+/**
+ * An index prepared for a region (`prepare`): the chart box around the vessel when it covers
+ * the region, the whole index when there is no box, else a planning box built for it.
+ */
+export interface Prepared {
+  /** The box the index was built in [west, south, east, north]; undefined for a whole index. */
+  readonly coverage: Bbox | undefined;
+  /** `session` over this index. */
+  session<T>(
+    params: SessionParams,
+    signal: AbortSignal,
+    job: (s: Session) => Promise<T>
+  ): Promise<SessionResult<T>>;
+  /** `routeCheck` over this index. */
+  routeCheck(body: unknown, signal: AbortSignal): Promise<ApiReply>;
+  /** Frees a planning box early; its sessions then answer 503. Nothing for the other kinds. */
+  release(): void;
+}
+
+export type PrepareResult =
+  { ok: true; value: Prepared } | { ok: false; status: number; error: string };
+
+/** What this provider adds to version 1, for a planner to test before it calls it. */
+export const FEATURES = ["prepare"] as const;
+
 export interface PlanningApiV1 {
   readonly version: 1;
   /** The underkeel release serving it. */
   readonly provider: string;
+  /** Additions to version 1 this provider serves (`FEATURES`); a planner tests it before use. */
+  readonly features: readonly string[];
   /** Why planning cannot run now; undefined when the index is ready. */
   unavailable(): string | undefined;
   /** The box the index covers [west, south, east, north]; undefined for a whole index. */
@@ -79,6 +112,14 @@ export interface PlanningApiV1 {
   ): Promise<SessionResult<T>>;
   /** The `/route-check` service: same body, same reply. */
   routeCheck(body: unknown, signal: AbortSignal): Promise<ApiReply>;
+  /**
+   * An index whose queries are judged on the charts wherever a box's or leg's corridor lies in
+   * `region` [west, south, east, north]: the index in use when it covers the region, else a
+   * planning box built for it (`planning-box.ts`). A build can take minutes; it runs behind the
+   * chart box around the vessel. 400 for a bad region, 413 for one too large to build on this
+   * machine, 503 when no index or build is to be had.
+   */
+  prepare(region: Bbox, signal: AbortSignal): Promise<PrepareResult>;
 }
 
 /**
@@ -239,10 +280,146 @@ function sessionFor(
   }
 }
 
-export function planningApi(deps: () => RouteServiceDeps, provider: string): PlanningApiV1 {
+/** `session` over the index `deps` gives at admission. */
+function sessionOver(deps: () => RouteServiceDeps): PlanningApiV1["session"] {
+  return async (params, signal, job) => {
+    const d = deps();
+    if (!d.index) {
+      return { ok: false, status: 503, error: d.indexReason ?? "no chart index loaded" };
+    }
+    // One copy at admission: the job, after its wait in the queue, uses the values checked.
+    const p = { ...params };
+    const bad = paramsError(
+      p,
+      p.probability ?? d.config.routeCheck.probability,
+      p.xteLimit ?? d.config.routeCheck.xteLimit
+    );
+    if (bad) {
+      return { ok: false, status: 400, error: bad };
+    }
+    const input = inputFor(d, p);
+    if (typeof input === "string") {
+      return { ok: false, status: 422, error: input };
+    }
+    const index = d.index;
+    const scoped = AbortSignal.any([signal, d.queue.stopSignal]);
+    let value: { v: Awaited<ReturnType<typeof job>> } | undefined;
+    const reply = await d.queue.run(scoped, async (s) => {
+      value = { v: await job(sessionFor(d, index, input, p, s)) };
+      return { status: 200, body: null };
+    });
+    return value && reply.status === 200
+      ? { ok: true, value: value.v }
+      : { ok: false, status: reply.status, error: errorOf(reply) };
+  };
+}
+
+/** `box` less the band inside its edge where a query still reads past it. */
+const inside = (box: Bbox): Bbox => growBbox(box, -MAX_CHART_BUFFER / 1000);
+
+/** Whether the chart box `box` judges every query in `region` on the charts. */
+const boxHolds = (box: Bbox, region: Bbox): boolean => {
+  const b = inside(box);
+  return b[0] < b[2] && b[1] < b[3] && holds(b, region);
+};
+
+const cellKey = (c: { name: string; edition: number; update: number }): string =>
+  `${c.name}/${c.edition}/${c.update}`;
+
+/** The revision of the living chart's adjustments each planning store last took, and from what. */
+const carried = new WeakMap<object, { from: object; revision: number }>();
+
+/**
+ * Puts the living chart's adjustments of `from` (the index in use) on `to` (a planning box),
+ * each with the catalogue reference of the same cell in `to`. Taking them only lowers a depth
+ * (invariant 5), so a planning box reads no deeper than the index in use where the boat has
+ * sounded. False when the two index the adjustments at different zooms and cannot share them.
+ */
+export function carryAdjustments(from: ChartIndex, to: ChartIndex): boolean {
+  const src = from.pyramid.adjustments;
+  const dst = to.pyramid.adjustments;
+  const last = carried.get(to.pyramid);
+  if (last && last.from === from.pyramid && last.revision === src.revision) {
+    return true;
+  }
+  if (src.size > 0 && from.pyramid.adjustZoom !== to.pyramid.adjustZoom) {
+    return false;
+  }
+  const refs = new Map(to.catalogue.cells.map((c, i) => [cellKey(c), i]));
+  const cells = from.catalogue.cells;
+  dst.clear();
+  for (const [key, v] of src) {
+    const cell = cells[v.cellRef];
+    dst.set(key, { ...v, cellRef: cell ? (refs.get(cellKey(cell)) ?? -1) : -1 });
+  }
+  carried.set(to.pyramid, { from: from.pyramid, revision: src.revision });
+  return true;
+}
+
+/** The route services over the index in use, while the chart box still covers `region`. */
+function onIndexInUse(deps: () => RouteServiceDeps, region: Bbox, box: Bbox | undefined) {
+  return (): RouteServiceDeps => {
+    const d = deps();
+    const now = d.chartBox?.();
+    if (box !== undefined && !(now !== undefined && boxHolds(now, region))) {
+      return {
+        ...d,
+        index: undefined,
+        indexReason: "the chart box around the vessel no longer covers the region; prepare it again"
+      };
+    }
+    return d;
+  };
+}
+
+/** The route services over the planning box `held`, with the living chart carried over. */
+function onPlanningBox(deps: () => RouteServiceDeps, held: HeldBox, boxes: PlanningBoxes) {
+  return (): RouteServiceDeps => {
+    const d = deps();
+    if (!held.live) {
+      return {
+        ...d,
+        index: undefined,
+        indexReason: "the planning box was released; prepare it again"
+      };
+    }
+    if (!d.index) {
+      return d;
+    }
+    if (!carryAdjustments(d.index, held.index)) {
+      return {
+        ...d,
+        index: undefined,
+        indexReason: "the living chart's soundings cannot be carried to the planning box"
+      };
+    }
+    boxes.touch(held);
+    return { ...d, index: held.index, chartBox: () => held.bbox };
+  };
+}
+
+function preparedOver(
+  deps: () => RouteServiceDeps,
+  coverage: Bbox | undefined,
+  release: () => void
+): Prepared {
+  return {
+    coverage,
+    session: sessionOver(deps),
+    routeCheck: (body, signal) => routeCheck(body, deps(), signal),
+    release
+  };
+}
+
+export function planningApi(
+  deps: () => RouteServiceDeps,
+  provider: string,
+  boxes: () => PlanningBoxes | undefined = () => undefined
+): PlanningApiV1 {
   return {
     version: 1,
     provider,
+    features: FEATURES,
     unavailable: () => {
       const d = deps();
       return d.index ? undefined : (d.indexReason ?? "no chart index loaded");
@@ -257,37 +434,43 @@ export function planningApi(deps: () => RouteServiceDeps, provider: string): Pla
         planningBuffer: c.lookahead.positionBuffer
       };
     },
-    async session(params, signal, job) {
+    session: sessionOver(deps),
+    routeCheck: (body, signal) => routeCheck(body, deps(), signal),
+    async prepare(region, signal) {
+      const bad = regionError(region);
+      if (bad) {
+        return { ok: false, status: 400, error: bad };
+      }
+      const r: Bbox = [region[0], region[1], region[2], region[3]];
       const d = deps();
       if (!d.index) {
         return { ok: false, status: 503, error: d.indexReason ?? "no chart index loaded" };
       }
-      // One copy at admission: the job, after its wait in the queue, uses the values checked.
-      const p = { ...params };
-      const bad = paramsError(
-        p,
-        p.probability ?? d.config.routeCheck.probability,
-        p.xteLimit ?? d.config.routeCheck.xteLimit
-      );
-      if (bad) {
-        return { ok: false, status: 400, error: bad };
+      const box = d.chartBox?.();
+      if (box === undefined || boxHolds(box, r)) {
+        return { ok: true, value: preparedOver(onIndexInUse(deps, r, box), box, () => undefined) };
       }
-      const input = inputFor(d, p);
-      if (typeof input === "string") {
-        return { ok: false, status: 422, error: input };
+      const b = boxes();
+      if (!b) {
+        return {
+          ok: false,
+          status: 503,
+          error:
+            "the region lies outside the chart box around the vessel, and no planning box can be built"
+        };
       }
-      const index = d.index;
-      const scoped = AbortSignal.any([signal, d.queue.stopSignal]);
-      let value: { v: Awaited<ReturnType<typeof job>> } | undefined;
-      const reply = await d.queue.run(scoped, async (s) => {
-        value = { v: await job(sessionFor(d, index, input, p, s)) };
-        return { status: 200, body: null };
-      });
-      return value && reply.status === 200
-        ? { ok: true, value: value.v }
-        : { ok: false, status: reply.status, error: errorOf(reply) };
-    },
-    routeCheck: (body, signal) => routeCheck(body, deps(), signal)
+      const got = await b.prepare(r, signal);
+      if (!got.ok) {
+        return got;
+      }
+      const { held } = got;
+      const release = (): void => {
+        if (b.current() === held) {
+          b.release();
+        }
+      };
+      return { ok: true, value: preparedOver(onPlanningBox(deps, held, b), held.bbox, release) };
+    }
   };
 }
 

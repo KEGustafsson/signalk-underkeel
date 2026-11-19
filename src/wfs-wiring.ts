@@ -23,8 +23,9 @@ import type { FetchLike } from "./model/fmi";
 import type { Clock } from "./monitor";
 import type { ChartIndex } from "./spatial/chart-index";
 import { autoCapKm } from "./box-sizing";
-import type { WarmJob, Warming } from "./cell-warm";
+import type { BoxWarmer, WarmJob, Warming } from "./cell-warm";
 import { boxWarmer, startWarming } from "./cell-warm";
+import { PlanningBoxes } from "./planning-box";
 import type { AreaRequests, EncBoxConfig, IndexBuilder } from "./wfs-service";
 import {
   inThreadRefresher,
@@ -227,6 +228,41 @@ function warmAround(w: WfsWiring, job: WarmJob): Warming {
   });
 }
 
+/** Each chart box service's warming, for the planning boxes beside it. */
+const warmers = new WeakMap<WfsService, SharedWarmer>();
+
+/** The cell cache's filling as the chart box sees it, which a planning build can pause too. */
+export interface SharedWarmer extends BoxWarmer {
+  /** Pauses the filling for a planning build; the returned function lets it fill again. */
+  pause(): Promise<() => void>;
+}
+
+/**
+ * `inner` with a planning box build (`planning-box.ts`) stopped ahead of each chart box build,
+ * so the box around the vessel never waits for one or builds beside one.
+ */
+export function yieldingWarmer(w: Pick<WfsWiring, "state">, inner?: BoxWarmer): SharedWarmer {
+  let last: [Bbox, number] | undefined;
+  return {
+    boxInUse: (bbox, reachKm) => {
+      last = [bbox, reachKm];
+      inner?.boxInUse(bbox, reachKm);
+    },
+    beforeBuild: async () => {
+      await w.state.planning?.preempt();
+      await inner?.beforeBuild();
+    },
+    stop: () => {
+      last = undefined;
+      inner?.stop();
+    },
+    pause: async () => {
+      await inner?.beforeBuild();
+      return () => last && inner?.boxInUse(...last);
+    }
+  };
+}
+
 export function startWfs(
   w: WfsWiring,
   config: WfsConfig | EncBoxConfig,
@@ -237,7 +273,17 @@ export function startWfs(
   const area = areaRequests(w.config, w.app);
   const cacheDir = cellCacheDir(w.app.getDataDirPath());
   const { cellsDir } = w.config;
-  return new WfsService({
+  const warm = yieldingWarmer(
+    w,
+    // In processes of their own, as the builds are; an injected builder, as in the tests, gets none.
+    w.build === workerBuilder && cellsDir !== undefined && w.config.boxRadiusKm > 0
+      ? boxWarmer(
+          (around, hold) => warmAround(w, { cellsDir, cacheDir, around, hold }),
+          (m) => w.app.error(m)
+        )
+      : undefined
+  );
+  const service = new WfsService({
     config,
     dir,
     indexDir: w.config.indexDir ?? path.join(w.app.getDataDirPath(), "index"),
@@ -257,15 +303,7 @@ export function startWfs(
     lookahead: w.config.lookahead,
     maxRadiusKm: w.config.boxMaxRadiusKm || autoCapKm(workerHeapLimitMb()),
     onIndex: (index, changed) => useIndex(w, index, changed),
-    // In processes of their own, as the builds are; an injected builder, as in the tests, gets none.
-    ...(w.build === workerBuilder && cellsDir !== undefined && w.config.boxRadiusKm > 0
-      ? {
-          warm: boxWarmer(
-            (around, hold) => warmAround(w, { cellsDir, cacheDir, around, hold }),
-            (m) => w.app.error(m)
-          )
-        }
-      : {}),
+    warm,
     error: (m) => {
       w.app.error(m);
       // With no index in use the failure is why the look-ahead is off: an error, not "waiting",
@@ -278,5 +316,45 @@ export function startWfs(
         monitor?.noIndex(reason);
       }
     }
+  });
+  warmers.set(service, warm);
+  return service;
+}
+
+/**
+ * Planning boxes (`planning-box.ts`) beside the chart box `box`: built from the same cells,
+ * cell cache, leaf zoom and Traficom WFS source, in directories of their own, up to the
+ * chart box's area at its cap. None without a chart box: a whole index covers every region.
+ */
+export function startPlanningBoxes(
+  w: WfsWiring,
+  box: WfsService | undefined
+): PlanningBoxes | undefined {
+  if (!box) {
+    return undefined;
+  }
+  const warmer = warmers.get(box);
+  const data = w.app.getDataDirPath();
+  const dir = path.join(data, "planning-box");
+  fs.mkdirSync(dir, { recursive: true });
+  const capKm = w.config.boxMaxRadiusKm || autoCapKm(workerHeapLimitMb());
+  const config: WfsConfig | EncBoxConfig = w.config.wfs ?? { radiusKm: w.config.boxRadiusKm };
+  return new PlanningBoxes({
+    dir,
+    indexDir: path.join(data, "planning-index"),
+    job: () => ({
+      config,
+      cellsDir: w.config.cellsDir,
+      index: () => w.state.load?.index,
+      leafZoom: w.config.leafZoom,
+      cacheDir: cellCacheDir(data),
+      source: indexSource(w.config)
+    }),
+    refresh: w.build === workerBuilder ? workerRefresher : inThreadRefresher(w.fetch, w.build),
+    maxKm2: (2 * capKm) ** 2,
+    boxBusy: () => box.view().rebuilding,
+    ...(warmer && { pauseWarming: () => warmer.pause() }),
+    clock: w.clock,
+    debug: (m) => w.app.debug(m)
   });
 }

@@ -10,6 +10,14 @@ All notable changes to signalk-underkeel are documented here.
   planner checks boxes and legs against this plugin's chart index, water level and vessel with
   the route check's scoring, in the same request queue, and proves its final route with
   `/route-check` itself. No second chart index is built.
+- Planning boxes: `prepare(region)` in the planning API gives a planner an index for a region
+  the chart box around the vessel does not reach. The index in use serves it when the chart box
+  covers the region, or when the index is whole; otherwise a planning box is built for it from
+  the same cells, cell cache and Traficom WFS source, in its own directory and build process at
+  the lowest CPU priority. A chart box build always comes first: a planning build stops for it
+  and starts again after it. One planning box is held at a time, released after 10 minutes
+  unused, at most the chart box's area at its cap. The living chart's soundings are carried
+  onto it, so it never reads deeper than the index in use where the boat has sounded.
 
 ## [0.6.2] - 2026-11-13
 

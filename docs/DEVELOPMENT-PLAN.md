@@ -1441,6 +1441,27 @@ its queries do. `routeCheck(body, signal)`
 is the `/route-check` service itself, which the planner runs on its final route, so every status
 it offers comes from this check (its plan §3, invariant 1).
 
+**Planning boxes** (the planner's R2). `prepare(region, signal)` answers with an index over which a
+box's or leg's corridor lying in `region` is judged on the charts, and `session` and `routeCheck`
+over it (`features` lists `prepare`):
+
+- the index in use when it is whole, or when the chart box less the widest chart position reach
+  (`MAX_CHART_BUFFER`) holds the region; its sessions answer 503 once the chart box has moved off
+  the region;
+- otherwise a planning box (`src/planning-box.ts`): the region grown by `MAX_CHART_BUFFER`, built
+  as a chart box is (`refreshJob`, ENC cells in the box and any Traficom WFS cell) into
+  `planning-index/`, in a build process at nice 19, from the same cell cache.
+
+The box around the vessel comes first (invariant 3 needs it current): a planning build waits while
+a chart box builds, is stopped when one starts (the chart box warmer's `beforeBuild`), and starts
+again after it; two builds never run at once. One planning box is held at a time and released
+after 10 minutes unused; its files stay, so the next build reuses their tiles. Its area, with its
+reach, is at most the chart box's at its cap, (2 · cap)², halved for the run after a build that
+reached the heap limit (413 above it). The living chart's adjustments are copied onto it at each
+session with each cell's own catalogue reference (`carryAdjustments`); taking them only lowers a
+depth, so a planning box never reads deeper than the index in use where the boat has sounded
+(invariant 5).
+
 ### 4.12 Acknowledged passages
 
 On acknowledge, Freeboard POSTs to `/acks` with:

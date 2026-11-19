@@ -19,6 +19,7 @@ import type { RequestQueue } from "./route-service";
 import { departureWindowReply, routeCheck, routeRepair } from "./route-service";
 import { statusReport } from "./status-report";
 import type { LivechartService } from "./livechart-service";
+import type { PlanningBoxes } from "./planning-box";
 import type { WfsService } from "./wfs-service";
 import { saveSettings, settingsReply } from "./settings-service";
 
@@ -32,6 +33,8 @@ export interface PluginState {
   zoneErrors: string[];
   livechart?: LivechartService;
   wfs?: WfsService;
+  /** Indexes built on request for regions past the chart box (`planning-box.ts`). */
+  planning?: PlanningBoxes;
   stopped: EngineStatus;
   /** The heavy REST work, aborted when the plugin stops. */
   requests: RequestQueue;
