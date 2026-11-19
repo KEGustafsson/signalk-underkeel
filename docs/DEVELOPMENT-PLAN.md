@@ -1494,7 +1494,7 @@ tried again when it fails, and writes one cell whose coverage and assumed qualit
 are the boxes, its areas clipped to each (`toCellLayers` with `parts`). Queries are judged on the
 charts in the boxes; past them, in `region`, the index reads no coverage. Its area is the boxes'
 sum, not their box's, held to the same cap as a planning box, so a corridor 3 km wide along a
-50 nm trip fits a 1 GB machine. With S-57 cells in use the build spans the whole box, which is then
+50 nm trip fits a 2 GB machine. With S-57 cells in use the build spans the whole box, which is then
 the area held to the cap.
 
 ### 4.12 Acknowledged passages
