@@ -27,7 +27,7 @@ import { keepBlocksNearVessel } from "./block-keeper";
 import { startLivechart } from "./livechart-service";
 import type { IndexBuilder } from "./wfs-service";
 import { workerBuilder } from "./wfs-service";
-import { startBox } from "./wfs-wiring";
+import { startBox, startPlanningBoxes } from "./wfs-wiring";
 import type { SharedEncWatch } from "./shared-enc";
 import {
   ALL_COLLECTIONS,
@@ -47,8 +47,16 @@ const VERSION = (
   }
 ).version;
 
+/** The planning API over the plugin's current state and planning boxes. */
+function planningApiOf(app: ServerAPI, clock: Clock, state: PluginState) {
+  const deps = () => routeDepsFor(app, clock, state);
+  return planningApi(deps, `signalk-underkeel ${VERSION}`, () => state.planning);
+}
+
 function stopPlugin(app: ServerAPI, clock: Clock, state: PluginState): void {
   state.requests.abortAll("plugin stopped");
+  state.planning?.stop();
+  state.planning = undefined;
   state.wfs?.stop();
   state.wfs = undefined;
   // A save that throws must not leave the monitor running or REST answering on the old index.
@@ -225,6 +233,7 @@ export = function underkeel(
       persistMigration(app, options, migration);
       const config = withSharedCells(parseConfig(migration.config), app.getDataDirPath());
       const wfs = startBox({ app, clock, state, config, fetch, build });
+      const planning = startPlanningBoxes({ app, clock, state, config, fetch, build }, wfs);
       const plan = planIndex(config, app.getDataDirPath(), wfs?.savedCell() ? [wfs.cellDir] : []);
       const load = "load" in plan ? noteSharedCells(plan.load, config) : pendingLoad(plan);
       const monitor = new Monitor(app, PLUGIN_ID, config, load.index, load.reason, clock, fetch);
@@ -238,7 +247,7 @@ export = function underkeel(
       const livechart = startLivechart(app, clock, config, load.index, monitor);
       monitor.start();
       Object.assign(state, { config, load, monitor, acks, livechart, wfs, zoneErrors: [] });
-      Object.assign(state, { options: migration.config, restart });
+      Object.assign(state, { planning, options: migration.config, restart });
       if ("load" in plan) {
         wfs?.start();
       } else {
@@ -259,9 +268,7 @@ export = function underkeel(
       mountAssets(app);
       app.registerResourceProvider(manifestProvider(VERSION));
       unregister?.();
-      unregister = registerPlanningApi(
-        planningApi(() => routeDepsFor(app, clock, state), `signalk-underkeel ${VERSION}`)
-      );
+      unregister = registerPlanningApi(planningApiOf(app, clock, state));
     },
 
     stop(): void {

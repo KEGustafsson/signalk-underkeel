@@ -72,7 +72,8 @@ export class Monitor {
   private readonly unsubscribes: Unsubscribes = [];
   /** The server does not merge overlapping subscriptions: each would deliver a delta again. */
   private readonly subscribed = new Set<string>();
-  private readonly levels: WaterLevelService;
+  /** The water level service, read by the planning API for another index's datums. */
+  readonly levels: WaterLevelService;
   private readonly integrity = new IntegrityMonitor();
   integrityResult?: IntegrityResult;
   private readonly notifier: ChangeNotifier;

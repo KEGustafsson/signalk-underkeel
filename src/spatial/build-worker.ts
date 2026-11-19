@@ -392,7 +392,8 @@ export function builtReply(r: { staging: string; index: IndexParts }): BuildRepl
  */
 export function serveBuildProcess<J>(
   run: (job: J, reader: EncReader) => Promise<BuildReply>,
-  heapMb: (job: J) => number | undefined
+  heapMb: (job: J) => number | undefined,
+  lowPriority: (job: J) => boolean = () => false
 ): void {
   exitWithParent();
   // --max-old-space-size capped this process's heap at its start; left set, V8 would apply it
@@ -405,6 +406,15 @@ export function serveBuildProcess<J>(
     )
   );
   process.once("message", (job: J) => {
+    if (lowPriority(job)) {
+      // Behind the server, the look-ahead and the chart box; the reader and the region threads
+      // started after it inherit it.
+      try {
+        os.setPriority(19);
+      } catch {
+        // Not permitted: it runs at the server's priority.
+      }
+    }
     const reader = readInChild(heapMb(job) ?? DEFAULT_READER_HEAP_MB);
     run(job, reader)
       .catch((err: Error): BuildReply => ({ ok: false, error: err.message }))
