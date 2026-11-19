@@ -506,11 +506,15 @@ vessel with the route check's own scoring, inside the same request queue, and th
 `/route-check` itself for the planner's final check. It is removed when the plugin stops.
 
 A planner asks for a region past the chart box with `prepare(region)`. The index in use serves it
-when the chart box covers the region, or when the index is whole; otherwise the plugin builds a
-planning box for it, in `planning-index/` under its data directory, from the same cells and cell
-cache. The build runs at the lowest CPU priority and always gives way to the chart box around the
-vessel; a planning box is at most the chart box's area at its cap (`boxMaxRadiusKm`, or the
-automatic cap for the machine's memory), and is released after 10 minutes unused.
+when the index is whole, or when the region lies inside the chart box less the widest chart
+position reach (1.86 km) inside its edge, where tiles still read past it. Any other region, one
+inside the chart box but within that band included, gets a planning box: the plugin builds one for
+it, in `planning-index/` under its data directory, from the same cells and cell cache, and the
+planner waits for that build or its error. The build runs at the lowest CPU priority and always
+gives way to the chart box around the vessel; a planning box is at most the chart box's area at its
+cap (`boxMaxRadiusKm`, or the automatic cap for the machine's memory), within the Traficom WFS's
+span when that source is on, and is released after 10 minutes unused. Planning boxes are off when
+their directories overlap the configured `indexDir`.
 
 ## Plotter Extensions
 

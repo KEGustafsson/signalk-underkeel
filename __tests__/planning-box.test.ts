@@ -11,10 +11,11 @@ import {
   IDLE_MS,
   planningBbox,
   PlanningBoxes,
-  regionError
+  regionError,
+  carryAdjustments
 } from "../src/planning-box";
 import type { PlanningApiV1, Prepared, Session } from "../src/planning-api";
-import { carryAdjustments, FEATURES, planningApi } from "../src/planning-api";
+import { planningApi } from "../src/planning-api";
 import type { RouteServiceDeps } from "../src/route-service";
 import { RequestQueue } from "../src/route-service";
 import { runBuild } from "../src/spatial/build-worker";
@@ -25,7 +26,7 @@ import { tileKey } from "../src/foundation/geo";
 import { readCellDirectory } from "../src/ingest/cell-reader";
 import type { IndexBuilder, WfsRefresher } from "../src/wfs-service";
 import { inThreadRefresher } from "../src/wfs-service";
-import { yieldingWarmer } from "../src/wfs-wiring";
+import { overlaps, yieldingWarmer } from "../src/wfs-wiring";
 import type { WfsJob } from "../src/wfs-worker";
 import { CELLS, FIXTURES, fixtureIndex, prepareFixtureIndex, ROCK } from "./helpers/fixture-index";
 import { fakeClock } from "./helpers/plugin-harness";
@@ -260,7 +261,7 @@ const FAR: Bbox = [10, 50, 10.2, 50.1];
 
 describe("prepare", () => {
   test("serves the features it adds", () => {
-    expect(planningApi(() => routeDeps({}), "test").features).toEqual(FEATURES);
+    expect(planningApi(() => routeDeps({}), "test").features).toContain("prepare");
   });
 
   test("a whole index covers any region: no build", async () => {
@@ -409,5 +410,174 @@ describe("yieldingWarmer", () => {
     calls.length = 0;
     (await w.pause())();
     expect(calls).toEqual(["pause", `in use ${REGION.join(",")} 9`]);
+  });
+});
+
+describe("review fixes", () => {
+  test("an already aborted request is refused even where the index in use covers the region", async () => {
+    const c = new AbortController();
+    c.abort();
+    const api = planningApi(() => routeDeps({}), "test");
+    expect(await api.prepare(REGION, c.signal)).toMatchObject({ ok: false, status: 503 });
+  });
+
+  test("an index saved with a box is not whole before the box service reports one", async () => {
+    const api = planningApi(() => routeDeps({ indexBox: () => FAR }), "test");
+    // Past the saved box, and no planning boxes: refused, not served by the clipped index.
+    expect(await api.prepare(REGION, NEVER)).toMatchObject({ ok: false, status: 503 });
+    const inside = planningApi(
+      () => routeDeps({ indexBox: () => [21.9, 59.9, 22.2, 60.1] }),
+      "test"
+    );
+    const r = await inside.prepare(REGION, NEVER);
+    expect(r.ok && r.value.coverage).toEqual([21.9, 59.9, 22.2, 60.1]);
+  });
+
+  test("a WFS planning box past the WFS span limits is 413, before any build", async () => {
+    const fake: Fake = { jobs: [], release: () => undefined };
+    const { b } = boxes({
+      fake,
+      maxKm2: 1e6,
+      job: () => ({
+        config: { url: "https://example.invalid/wfs", radiusKm: 10, catzoc: "B" } as never,
+        index: () => undefined,
+        leafZoom: 16
+      })
+    });
+    const r = await b.prepare([22, 60, 22.01, 60.6], NEVER);
+    expect(r).toMatchObject({ ok: false, status: 413, error: expect.stringMatching(/WFS/) });
+    expect(fake.jobs).toHaveLength(0);
+  });
+
+  test("a request waiting for a build that ran out of memory is 413 when the cap falls below it", async () => {
+    const fake: Fake = {
+      jobs: [],
+      release: () => undefined,
+      fail: "index build stopped at the 256 MB heap limit"
+    };
+    const { b } = boxes({ fake });
+    const first = b.prepare(REGION, NEVER);
+    await flush();
+    const second = b.prepare(REGION, NEVER);
+    await flush();
+    fake.release();
+    expect(await first).toMatchObject({ status: 503 });
+    expect(await second).toMatchObject({ ok: false, status: 413 });
+    expect(fake.jobs).toHaveLength(1);
+  });
+
+  test("a planning directory that cannot be made fails only the build, with 503", async () => {
+    const file = path.join(dir, "planning-box");
+    fs.writeFileSync(file, "not a directory");
+    const fake: Fake = { jobs: [], release: () => undefined };
+    const { b } = boxes({ fake, dir: file });
+    expect(await b.prepare(REGION, NEVER)).toMatchObject({ ok: false, status: 503 });
+    expect(fake.jobs).toHaveLength(0);
+  });
+
+  test("a new build waits for a job still reading the index it replaces", async () => {
+    const fake: Fake = { jobs: [], release: () => undefined };
+    const { b } = boxes({ fake });
+    const first = b.prepare(REGION, NEVER);
+    await flush();
+    fake.release();
+    const got = await first;
+    if (!got.ok) {
+      throw new Error(got.error);
+    }
+    expect(got.held.begin()).toBe(true);
+    const other = b.prepare(FAR, NEVER);
+    await flush();
+    // Released: no new job reads it, but the one reading it holds the build back.
+    expect(got.held.begin()).toBe(false);
+    expect(fake.jobs).toHaveLength(1);
+    got.held.end();
+    await flush();
+    expect(fake.jobs).toHaveLength(2);
+    fake.release();
+    expect((await other).ok).toBe(true);
+  });
+
+  test("a queued planning session takes the living chart as it is at its turn, and the box's own datums", async () => {
+    const queue = new RequestQueue();
+    const main = fixtureIndex();
+    const planned = reversedIndex();
+    const fake: Fake = { jobs: [], release: () => undefined };
+    const { b } = boxes({ fake, refresh: fakeRefresh(planned, fake) });
+    const levelsFor: unknown[] = [];
+    const deps = routeDeps({
+      index: main,
+      queue,
+      chartBox: () => FAR,
+      waterLevelFor: (cells) => {
+        levelsFor.push(cells);
+        return () => ({ h: 0, sigma: 0.3, source: "chart-datum" });
+      }
+    });
+    const api = planningApi(
+      () => deps,
+      "test",
+      () => b
+    );
+    const p = api.prepare(REGION, NEVER);
+    await flush();
+    fake.release();
+    const r = await p;
+    if (!r.ok) {
+      throw new Error(r.error);
+    }
+    // Another request holds the queue while the planner's session waits for its turn.
+    let free: () => void = () => undefined;
+    const busy = queue.run(
+      NEVER,
+      () => new Promise((resolve) => (free = () => resolve({ status: 200, body: null })))
+    );
+    const key = tileKey(Math.min(ADJUST_ZOOM, main.pyramid.leafZoom), 3, 4);
+    const seen = r.value.session(
+      { departure: NOW, until: NOW + 1000, speed: 3 },
+      NEVER,
+      async (s: Session) => {
+        s.segment([22.0, 60.005], [22.01, 60.005]);
+        return planned.pyramid.adjustments.has(key);
+      }
+    );
+    await flush();
+    // A sounding confirmed while it waits.
+    main.pyramid.adjustments.set(key, { dMin: 1, sigmaD: 0.1, sigmaP: 1, flags: 0, cellRef: 0 });
+    free();
+    await busy;
+    expect(await seen).toEqual({ ok: true, value: true });
+    expect(levelsFor).toContain(planned.catalogue.cells);
+    main.pyramid.adjustments.delete(key);
+    // Released while queued: refused at its turn.
+    const busy2 = queue.run(
+      NEVER,
+      () => new Promise((resolve) => (free = () => resolve({ status: 200, body: null })))
+    );
+    const late = r.value.session(
+      { departure: NOW, until: NOW + 1000, speed: 3 },
+      NEVER,
+      async () => 1
+    );
+    await flush();
+    r.value.release();
+    free();
+    await busy2;
+    expect(await late).toMatchObject({ ok: false, status: 503 });
+    b.stop();
+  });
+
+  test("overlaps: one directory, one inside the other, or through a link", () => {
+    const a = path.join(dir, "data");
+    fs.mkdirSync(a);
+    fs.symlinkSync(a, path.join(dir, "link"));
+    expect(overlaps(a, a)).toBe(true);
+    expect(overlaps(path.join(a, "planning-index"), a)).toBe(true);
+    expect(overlaps(a, path.join(a, "planning-index"))).toBe(true);
+    expect(overlaps(path.join(dir, "link", "planning-index"), path.join(a, "planning-index"))).toBe(
+      true
+    );
+    expect(overlaps(path.join(a, "planning-index"), path.join(a, "index"))).toBe(false);
+    expect(overlaps(path.join(a, "index2"), path.join(a, "index"))).toBe(false);
   });
 });

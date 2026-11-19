@@ -20,6 +20,7 @@ import { departureWindowReply, routeCheck, routeRepair } from "./route-service";
 import { statusReport } from "./status-report";
 import type { LivechartService } from "./livechart-service";
 import type { PlanningBoxes } from "./planning-box";
+import { readBox } from "./spatial/build-box";
 import type { WfsService } from "./wfs-service";
 import { saveSettings, settingsReply } from "./settings-service";
 
@@ -65,11 +66,14 @@ export function routeDepsFor(
     vessel: () => s.monitor?.vessel(),
     waterLevel: (start, end, at, area) =>
       s.monitor?.waterLevelOver(start, end, at, area) ?? CHART_DATUM,
+    waterLevelFor: (cells) => (start, end, at, area) =>
+      s.monitor?.levels.over(start, end, at, clock.now(), area, cells) ?? CHART_DATUM,
     waveHeight: () => s.monitor?.nav.waveHeight?.value,
     getRoute: (id) => app.resourcesApi.getResource("routes", id),
     now: () => clock.now(),
     queue: s.requests,
-    chartBox: () => s.wfs?.view().bbox
+    chartBox: () => s.wfs?.view().bbox,
+    indexBox: () => (s.load?.indexDir === undefined ? undefined : readBox(s.load.indexDir)?.bbox)
   };
 }
 

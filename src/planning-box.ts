@@ -1,4 +1,6 @@
+import fs from "fs";
 import type { Bbox } from "./ingest/wfs";
+import { bboxProblem } from "./ingest/wfs";
 import type { OnProgress, WfsRefresher } from "./wfs-service";
 import type { BoxJobDeps } from "./wfs-worker";
 import { refreshJob } from "./wfs-worker";
@@ -36,6 +38,12 @@ export interface HeldBox {
   readonly index: ChartIndex;
   /** False once released: its index is no longer the one held. */
   readonly live: boolean;
+  /**
+   * Counts a job reading the index from its turn in the request queue to its end; false once
+   * released. A new build waits for every counted job to end before it replaces the files.
+   */
+  begin(): boolean;
+  end(): void;
 }
 
 export type PrepareOutcome =
@@ -121,6 +129,8 @@ function realWait(ms: number, signal: AbortSignal): Promise<void> {
 class Held implements HeldBox {
   live = true;
   usedAt: number;
+  private active = 0;
+  private waiters: (() => void)[] = [];
   constructor(
     readonly region: Bbox,
     readonly bbox: Bbox,
@@ -128,6 +138,26 @@ class Held implements HeldBox {
     now: number
   ) {
     this.usedAt = now;
+  }
+
+  begin(): boolean {
+    if (!this.live) {
+      return false;
+    }
+    this.active++;
+    return true;
+  }
+
+  end(): void {
+    this.active = Math.max(0, this.active - 1);
+    if (this.active === 0) {
+      this.waiters.splice(0).forEach((w) => w());
+    }
+  }
+
+  /** Settles once no counted job reads the index. */
+  idle(): Promise<void> {
+    return this.active === 0 ? Promise.resolve() : new Promise((r) => this.waiters.push(r));
   }
 }
 
@@ -177,31 +207,28 @@ export class PlanningBoxes {
    */
   async prepare(region: Bbox, signal: AbortSignal, progress?: OnProgress): Promise<PrepareOutcome> {
     const bbox = planningBbox(region);
-    const km2 = bboxKm2(bbox);
-    if (km2 > this.maxKm2) {
-      return {
-        ok: false,
-        status: 413,
-        error: `the planning box would be ${Math.round(km2)} km² with its reach; at most ${Math.round(this.maxKm2)} km² on this machine`
-      };
-    }
     const wait = this.deps.wait ?? realWait;
     for (;;) {
       if (this.stopped) {
         return { ok: false, status: 503, error: "plugin stopped" };
       }
       if (signal.aborted) {
-        return { ok: false, status: 503, error: "planning box request aborted" };
+        return aborted();
       }
       const held = this.held;
       if (held && holds(held.region, region)) {
         held.usedAt = this.deps.clock.now();
         return { ok: true, held };
       }
+      // Checked again after each wait: a build that ran out of memory meanwhile lowers the cap.
+      const tooLarge = this.tooLarge(bbox);
+      if (tooLarge) {
+        return { ok: false, status: 413, error: tooLarge };
+      }
       const running = this.running;
       try {
         if (running) {
-          await Promise.race([running.done, abortOf(signal)]);
+          await untilAborted(running.done, signal);
         } else if (this.deps.boxBusy()) {
           await wait(WAIT_MS, signal);
         } else {
@@ -214,6 +241,20 @@ export class PlanningBoxes {
         // Aborted: the loop says so.
       }
     }
+  }
+
+  /** Why a planning box of `bbox` is not built on this machine, or undefined. */
+  private tooLarge(bbox: Bbox): string | undefined {
+    const km2 = bboxKm2(bbox);
+    if (km2 > this.maxKm2) {
+      return `the planning box would be ${Math.round(km2)} km² with its reach; at most ${Math.round(this.maxKm2)} km² on this machine`;
+    }
+    const config = this.deps.job().config;
+    // A Traficom WFS download has its own span limits, which no retry passes.
+    const wfs = "url" in config ? bboxProblem(bbox) : undefined;
+    return wfs === undefined
+      ? undefined
+      : `the planning box is too large for the Traficom WFS: ${wfs}`;
   }
 
   /**
@@ -254,6 +295,21 @@ export class PlanningBoxes {
     }
   }
 
+  /** What a build that threw ends in: built again after the chart box, aborted, or failed. */
+  private failed(err: Error, run: Running, signal: AbortSignal): PrepareOutcome | "again" {
+    if (run.preempted && !signal.aborted && !this.stopped) {
+      return "again";
+    }
+    if (run.controller.signal.aborted) {
+      return aborted();
+    }
+    if (OUT_OF_MEMORY.test(err.message)) {
+      // Not tried at that size again in this run.
+      this.maxKm2 = Math.min(this.maxKm2, bboxKm2(run.bbox) * 0.5);
+    }
+    return { ok: false, status: 503, error: `planning box build failed: ${err.message}` };
+  }
+
   private build(
     region: Bbox,
     bbox: Bbox,
@@ -268,12 +324,16 @@ export class PlanningBoxes {
     const stopIt = (): void => controller.abort(signal.reason);
     signal.addEventListener("abort", stopIt, { once: true });
     const run: Running = { bbox, controller, preempted: false, done: Promise.resolve("again") };
-    // The index it replaces is never read again: its files are about to be replaced.
+    // The index it replaces takes no new job: its files are about to be replaced.
+    const old = this.held;
     this.release();
     const started = this.deps.clock.now();
     run.done = (async (): Promise<PrepareOutcome | "again"> => {
       let resume: (() => void) | undefined;
       try {
+        // A job already reading the old index ends before its files are replaced.
+        await old?.idle();
+        fs.mkdirSync(this.deps.dir, { recursive: true });
         resume = await this.deps.pauseWarming?.();
         const job = refreshJob(
           { ...this.deps.job(), indexDir: this.deps.indexDir, inBox: true },
@@ -296,18 +356,7 @@ export class PlanningBoxes {
         );
         return { ok: true, held };
       } catch (err) {
-        if (run.preempted && !signal.aborted && !this.stopped) {
-          return "again";
-        }
-        if (controller.signal.aborted) {
-          return aborted();
-        }
-        const message = (err as Error).message;
-        if (OUT_OF_MEMORY.test(message)) {
-          // Not tried at that size again in this run.
-          this.maxKm2 = Math.min(this.maxKm2, bboxKm2(bbox) * 0.5);
-        }
-        return { ok: false, status: 503, error: `planning box build failed: ${message}` };
+        return this.failed(err as Error, run, signal);
       } finally {
         signal.removeEventListener("abort", stopIt);
         if (this.running === run) {
@@ -327,13 +376,48 @@ function aborted(): PrepareOutcome {
   return { ok: false, status: 503, error: "planning box request aborted" };
 }
 
-/** Rejects once `signal` aborts; never resolves. */
-function abortOf(signal: AbortSignal): Promise<never> {
-  return new Promise((_, reject) => {
+/** `p`'s outcome, or a rejection once `signal` aborts first; its listener is removed either way. */
+function untilAborted<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise((resolve, reject) => {
     if (signal.aborted) {
       reject(new Error("aborted"));
       return;
     }
-    signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+    const stop = (): void => reject(new Error("aborted"));
+    signal.addEventListener("abort", stop, { once: true });
+    p.then(resolve, reject).finally(() => signal.removeEventListener("abort", stop));
   });
+}
+
+const cellKey = (c: { name: string; edition: number; update: number }): string =>
+  `${c.name}/${c.edition}/${c.update}`;
+
+/** The revision of the living chart's adjustments each planning store last took, and from what. */
+const carried = new WeakMap<object, { from: object; revision: number }>();
+
+/**
+ * Puts the living chart's adjustments of `from` (the index in use) on `to` (a planning box),
+ * each with the catalogue reference of the same cell in `to`. Taking them only lowers a depth
+ * (invariant 5), so a planning box reads no deeper than the index in use where the boat has
+ * sounded. False when the two index the adjustments at different zooms and cannot share them.
+ */
+export function carryAdjustments(from: ChartIndex, to: ChartIndex): boolean {
+  const src = from.pyramid.adjustments;
+  const dst = to.pyramid.adjustments;
+  const last = carried.get(to.pyramid);
+  if (last && last.from === from.pyramid && last.revision === src.revision) {
+    return true;
+  }
+  if (src.size > 0 && from.pyramid.adjustZoom !== to.pyramid.adjustZoom) {
+    return false;
+  }
+  const refs = new Map(to.catalogue.cells.map((c, i) => [cellKey(c), i]));
+  const cells = from.catalogue.cells;
+  dst.clear();
+  for (const [key, v] of src) {
+    const cell = cells[v.cellRef];
+    dst.set(key, { ...v, cellRef: cell ? (refs.get(cellKey(cell)) ?? -1) : -1 });
+  }
+  carried.set(to.pyramid, { from: from.pyramid, revision: src.revision });
+  return true;
 }

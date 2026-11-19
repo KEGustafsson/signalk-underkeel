@@ -19,6 +19,7 @@ import type { WaterLevel } from "./model/uncertainty";
 import type { VesselModel } from "./model/vessel";
 import { FALLBACK_HULL } from "./model/vessel";
 import type { ChartIndex } from "./spatial/chart-index";
+import type { CellInfo } from "./ingest/cells";
 
 /** `POST /route-check`, `/route-repair` and `/departure-window`: validation, then the work in a queue. */
 
@@ -34,12 +35,22 @@ export interface RouteServiceDeps {
   waterLevel(start: number, end: number, at: readonly LonLat[], area?: boolean): WaterLevel;
   /** Current significant wave height, if known, metres. */
   waveHeight(): number | undefined;
+  /**
+   * `waterLevel` related to the vertical datums of `cells` rather than the index in use's: for
+   * another index's queries (a planning box). Absent, `waterLevel` serves them too.
+   */
+  waterLevelFor?: (cells: readonly CellInfo[]) => RouteServiceDeps["waterLevel"];
   getRoute(id: string): Promise<unknown>;
   now(): number;
-  queue: RequestQueue;
+  queue: RouteQueue;
   /** The box the index in use was built in around the vessel; none for a whole index. */
   chartBox?: () => Bbox | undefined;
+  /** The box saved with the index in use (`box.json`), known before the box service's. */
+  indexBox?: () => Bbox | undefined;
 }
+
+/** The request queue as the route services use it. */
+export type RouteQueue = Pick<RequestQueue, "run" | "stopSignal">;
 
 /**
  * The route lookup, given up when the request's signal aborts first. The provider gets no

@@ -336,12 +336,20 @@ export function startPlanningBoxes(
   const warmer = warmers.get(box);
   const data = w.app.getDataDirPath();
   const dir = path.join(data, "planning-box");
-  fs.mkdirSync(dir, { recursive: true });
+  const indexDir = path.join(data, "planning-index");
+  const vessel = w.config.indexDir ?? path.join(data, "index");
+  // A commit replaces its directory whole: one that is, or holds, the index in use would replace it.
+  if ([dir, indexDir].some((p) => overlaps(p, vessel))) {
+    w.app.error(
+      `planning boxes are off: ${indexDir} or ${dir} overlaps the chart index directory ${vessel}`
+    );
+    return undefined;
+  }
   const capKm = w.config.boxMaxRadiusKm || autoCapKm(workerHeapLimitMb());
   const config: WfsConfig | EncBoxConfig = w.config.wfs ?? { radiusKm: w.config.boxRadiusKm };
   return new PlanningBoxes({
     dir,
-    indexDir: path.join(data, "planning-index"),
+    indexDir,
     job: () => ({
       config,
       cellsDir: w.config.cellsDir,
@@ -357,4 +365,26 @@ export function startPlanningBoxes(
     clock: w.clock,
     debug: (m) => w.app.debug(m)
   });
+}
+
+/** `p` resolved through the links of its nearest existing ancestor. */
+function realPath(p: string): string {
+  const abs = path.resolve(p);
+  let head = abs;
+  while (!fs.existsSync(head) && path.dirname(head) !== head) {
+    head = path.dirname(head);
+  }
+  try {
+    return path.join(fs.realpathSync.native(head), path.relative(head, abs));
+  } catch {
+    return abs;
+  }
+}
+
+/** Whether `a` and `b` are one directory, or one holds the other, links resolved. */
+export function overlaps(a: string, b: string): boolean {
+  const [x, y] = [realPath(a), realPath(b)];
+  const inside = (p: string, q: string) =>
+    p === q || p.startsWith(q.endsWith(path.sep) ? q : q + path.sep);
+  return inside(x, y) || inside(y, x);
 }

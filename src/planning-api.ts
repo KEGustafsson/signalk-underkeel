@@ -7,11 +7,10 @@ import { EARTH_RADIUS, haversine } from "./foundation/geo";
 import type { Bbox } from "./ingest/wfs";
 import { FALLBACK_HULL } from "./model/vessel";
 import type { HeldBox, PlanningBoxes } from "./planning-box";
-import { holds, regionError } from "./planning-box";
-import type { RouteServiceDeps } from "./route-service";
+import { carryAdjustments, holds, regionError } from "./planning-box";
+import type { RouteQueue, RouteServiceDeps } from "./route-service";
 import { routeCheck } from "./route-service";
 import { growBbox } from "./spatial/build-box";
-import type { ChartIndex } from "./spatial/chart-index";
 import { MAX_CHART_BUFFER } from "./spatial/chart-position";
 
 /**
@@ -323,44 +322,14 @@ const boxHolds = (box: Bbox, region: Bbox): boolean => {
   return b[0] < b[2] && b[1] < b[3] && holds(b, region);
 };
 
-const cellKey = (c: { name: string; edition: number; update: number }): string =>
-  `${c.name}/${c.edition}/${c.update}`;
+/** The box the index in use was built in: the box service's, else the one saved with it. */
+const boxOf = (d: RouteServiceDeps): Bbox | undefined => d.chartBox?.() ?? d.indexBox?.();
 
-/** The revision of the living chart's adjustments each planning store last took, and from what. */
-const carried = new WeakMap<object, { from: object; revision: number }>();
-
-/**
- * Puts the living chart's adjustments of `from` (the index in use) on `to` (a planning box),
- * each with the catalogue reference of the same cell in `to`. Taking them only lowers a depth
- * (invariant 5), so a planning box reads no deeper than the index in use where the boat has
- * sounded. False when the two index the adjustments at different zooms and cannot share them.
- */
-export function carryAdjustments(from: ChartIndex, to: ChartIndex): boolean {
-  const src = from.pyramid.adjustments;
-  const dst = to.pyramid.adjustments;
-  const last = carried.get(to.pyramid);
-  if (last && last.from === from.pyramid && last.revision === src.revision) {
-    return true;
-  }
-  if (src.size > 0 && from.pyramid.adjustZoom !== to.pyramid.adjustZoom) {
-    return false;
-  }
-  const refs = new Map(to.catalogue.cells.map((c, i) => [cellKey(c), i]));
-  const cells = from.catalogue.cells;
-  dst.clear();
-  for (const [key, v] of src) {
-    const cell = cells[v.cellRef];
-    dst.set(key, { ...v, cellRef: cell ? (refs.get(cellKey(cell)) ?? -1) : -1 });
-  }
-  carried.set(to.pyramid, { from: from.pyramid, revision: src.revision });
-  return true;
-}
-
-/** The route services over the index in use, while the chart box still covers `region`. */
+/** The route services over the index in use, while its box still covers `region`. */
 function onIndexInUse(deps: () => RouteServiceDeps, region: Bbox, box: Bbox | undefined) {
   return (): RouteServiceDeps => {
     const d = deps();
-    const now = d.chartBox?.();
+    const now = boxOf(d);
     if (box !== undefined && !(now !== undefined && boxHolds(now, region))) {
       return {
         ...d,
@@ -372,31 +341,57 @@ function onIndexInUse(deps: () => RouteServiceDeps, region: Bbox, box: Bbox | un
   };
 }
 
-/** The route services over the planning box `held`, with the living chart carried over. */
+const refused = (error: string): ApiReply => ({ status: 503, body: { errors: [error] } });
+
+/**
+ * The route services over the planning box `held`. Each queued job, at its turn and before it
+ * reads anything, takes the living chart's adjustments as they are then (invariant 5) and is
+ * counted on `held`, so a new planning build waits for it before it replaces the files; a job
+ * whose turn comes after the box was released is refused. Water levels relate to the planning
+ * box's own cells' datums.
+ */
 function onPlanningBox(deps: () => RouteServiceDeps, held: HeldBox, boxes: PlanningBoxes) {
   return (): RouteServiceDeps => {
     const d = deps();
     if (!held.live) {
-      return {
-        ...d,
-        index: undefined,
-        indexReason: "the planning box was released; prepare it again"
-      };
-    }
-    if (!d.index) {
-      return d;
-    }
-    if (!carryAdjustments(d.index, held.index)) {
-      return {
-        ...d,
-        index: undefined,
-        indexReason: "the living chart's soundings cannot be carried to the planning box"
-      };
+      return { ...d, index: undefined, indexReason: RELEASED };
     }
     boxes.touch(held);
-    return { ...d, index: held.index, chartBox: () => held.bbox };
+    const cells = held.index.catalogue.cells;
+    const queue: RouteQueue = {
+      get stopSignal() {
+        return d.queue.stopSignal;
+      },
+      run: (signal, job) =>
+        d.queue.run(signal, async (s) => {
+          const main = deps().index;
+          if (!held.begin()) {
+            return refused(RELEASED);
+          }
+          try {
+            if (!main) {
+              return refused(deps().indexReason ?? "no chart index loaded");
+            }
+            if (!carryAdjustments(main, held.index)) {
+              return refused("the living chart's soundings cannot be carried to the planning box");
+            }
+            return await job(s);
+          } finally {
+            held.end();
+          }
+        })
+    };
+    return {
+      ...d,
+      index: held.index,
+      chartBox: () => held.bbox,
+      waterLevel: d.waterLevelFor?.(cells) ?? d.waterLevel,
+      queue
+    };
   };
 }
+
+const RELEASED = "the planning box was released; prepare it again";
 
 function preparedOver(
   deps: () => RouteServiceDeps,
@@ -441,12 +436,15 @@ export function planningApi(
       if (bad) {
         return { ok: false, status: 400, error: bad };
       }
+      if (signal.aborted) {
+        return { ok: false, status: 503, error: "planning box request aborted" };
+      }
       const r: Bbox = [region[0], region[1], region[2], region[3]];
       const d = deps();
       if (!d.index) {
         return { ok: false, status: 503, error: d.indexReason ?? "no chart index loaded" };
       }
-      const box = d.chartBox?.();
+      const box = boxOf(d);
       if (box === undefined || boxHolds(box, r)) {
         return { ok: true, value: preparedOver(onIndexInUse(deps, r, box), box, () => undefined) };
       }
