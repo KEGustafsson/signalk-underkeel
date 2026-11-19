@@ -17,6 +17,9 @@ All notable changes to signalk-underkeel are documented here.
 - A Traficom WFS download whose layer failed while another layer's request still waited its turn
   could end the build process, or the server for an in-process build, with an unhandled
   rejection; the request's own failure is now handled.
+- Traficom WFS layers with few features in the box downloaded as several tiny pages, and the WFS
+  sends nothing at all for a page of 60 or fewer: the box's download stalled until the idle
+  timeout, every time. A page now asks for at least 100, and a layer that fits one page is one.
 
 ## [0.7.0]
 

@@ -280,8 +280,8 @@ describe("corridor download", () => {
       now: new Date("2026-11-19T12:00:00Z"),
       catzoc: 3
     });
-    // One group: one request per layer over the group's box.
-    expect(asked).toHaveLength(3);
+    // One group: a page of each layer with features over the group's box (no dredged area).
+    expect(asked).toHaveLength(2);
     const covr = JSON.parse(fs.readFileSync(path.join(d, "M_COVR.geojson"), "utf8"));
     expect(covr.features).toHaveLength(2);
     const depare = JSON.parse(fs.readFileSync(path.join(d, "DEPARE.geojson"), "utf8"));
@@ -344,5 +344,42 @@ describe("a request on an aborted download", () => {
     } finally {
       process.off("unhandledRejection", listener);
     }
+  });
+});
+
+describe("small pages", () => {
+  test("a page asks for at least minPageCount features, and a small layer is one page", async () => {
+    const counts: number[] = [];
+    const features = Array.from({ length: 23 }, (_, i) => ({
+      type: "Feature",
+      id: `s${i}`,
+      geometry: { type: "Point", coordinates: [22.01, 60.01] },
+      properties: { DEPTH: 3, IDENTIFIER: `S${i}` }
+    }));
+    const fetch: WfsFetch = (url) => {
+      const u = new URL(url);
+      if (u.searchParams.get("resultType") === "hits") {
+        const xml = `<wfs:FeatureCollection numberMatched="${features.length}"/>`;
+        return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(xml) });
+      }
+      const count = Number(u.searchParams.get("count"));
+      const start = Number(u.searchParams.get("startIndex"));
+      counts.push(count);
+      const body = { type: "FeatureCollection", features: features.slice(start, start + count) };
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve(JSON.stringify(body))
+      });
+    };
+    const got = await fetchLayer({
+      fetch,
+      base: "https://wfs.test/wfs",
+      typeName: "rajoitettu:Sounding_P",
+      bbox: [22, 60, 22.1, 60.05],
+      limit: limiter(4)
+    });
+    expect(got).toHaveLength(23);
+    expect(counts).toEqual([WFS_LIMITS.minPageCount]);
   });
 });

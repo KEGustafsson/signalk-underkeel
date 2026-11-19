@@ -277,7 +277,7 @@ describe("Traficom WFS ingest", () => {
     });
 
     test("a server that ignores startIndex fails on the repeated features", async () => {
-      const { fetch } = server(numbered(40), { ignoreStart: true });
+      const { fetch } = server(numbered(400), { ignoreStart: true });
       await expect(download(fetch, "repeated")).rejects.toThrow(
         "rajoitettu:Sounding_P: the same feature on more than one page"
       );

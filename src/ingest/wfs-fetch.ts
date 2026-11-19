@@ -12,6 +12,11 @@ export const WFS_LIMITS = {
   maxLonSpan: 1.5,
   pageSize: 5000,
   /**
+   * A page asks for at least this many features: the WFS sends nothing at all for a small
+   * `count` (60 or fewer soundings, 6 depth areas) while it answers 80 or more at once.
+   */
+  minPageCount: 100,
+  /**
    * Page requests in flight at once over the whole download. The server sends one response
    * at about 1 MB/s: the 461 depth areas of a 10 km box off Helsinki (5.5 MB) took 7.5 s as
    * one page and 3.5 s as four concurrent pages.
@@ -173,7 +178,7 @@ export async function fetchLayer(r: LayerRequest): Promise<WfsFeature[]> {
   if (matched > WFS_LIMITS.maxFeatures) {
     throw tooMany(r.typeName);
   }
-  const runs = Math.min(WFS_LIMITS.concurrency, matched);
+  const runs = Math.min(WFS_LIMITS.concurrency, Math.ceil(matched / WFS_LIMITS.minPageCount));
   const share = Math.ceil(matched / Math.max(1, runs));
   let pages = 0;
   const run = async (from: number, to: number): Promise<WfsFeature[]> => {
@@ -183,11 +188,13 @@ export async function fetchLayer(r: LayerRequest): Promise<WfsFeature[]> {
         throw tooManyPages(r.typeName);
       }
       const start = from + out.length;
-      const page = await readPage(r, start, Math.min(WFS_LIMITS.pageSize, to - start));
+      const want = Math.min(WFS_LIMITS.pageSize, to - start);
+      // At least minPageCount asked for, the run's own share kept.
+      const page = await readPage(r, start, Math.max(want, WFS_LIMITS.minPageCount));
       if (page.features.length === 0) {
         break;
       }
-      append(out, page.features);
+      append(out, page.features.slice(0, want));
     }
     return out;
   };
