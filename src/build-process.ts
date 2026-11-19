@@ -13,6 +13,9 @@ import { adoptIndex } from "./spatial/build-worker";
 import { readsSettled } from "./spatial/block-reader";
 import type { ChartIndex } from "./spatial/chart-index";
 import { commitChartIndex, loadChartIndexAsync, removeStaging } from "./spatial/chart-index";
+import type { Survey } from "./survey";
+import type { SurveyJob } from "./survey-worker";
+import { readSurvey, runSurvey } from "./survey-worker";
 
 /**
  * Index builds and Traficom WFS refreshes in child processes (plan §6), each run's progress
@@ -192,6 +195,27 @@ export const workerRefresher: WfsRefresher = async (job, signal, progress) => {
   const features = m.features ?? NO_FEATURES;
   return { index: await commit(job.build.indexDir, m, signal), features };
 };
+
+/** A depth survey in a child process from the compiled `lib/survey-worker.js`. */
+export async function workerSurveyor(
+  job: Omit<SurveyJob, "heapMb">,
+  signal: AbortSignal
+): Promise<Survey> {
+  const script = path.join(__dirname, "survey-worker.js");
+  const heapMb = workerHeapLimitMb();
+  const m = await runBuildProcess(script, { ...job, heapMb }, signal, undefined, heapMb);
+  try {
+    return readSurvey(m.staging);
+  } finally {
+    fs.rmSync(m.staging, { recursive: true, force: true });
+  }
+}
+
+/** A depth survey on this thread with `fetch`: for an injected fetch. */
+export function inThreadSurveyor(fetch: WfsFetch) {
+  return (job: Omit<SurveyJob, "heapMb">, signal: AbortSignal): Promise<Survey> =>
+    runSurvey(job, fetch, signal);
+}
 
 /** The download on this thread with `fetch`, then `build`: for an injected fetch or builder. */
 export function inThreadRefresher(fetch: WfsFetch, build: IndexBuilder): WfsRefresher {

@@ -333,3 +333,22 @@ export function num(v: unknown): number | undefined {
   const n = typeof v === "string" && v.trim() !== "" ? Number(v) : v;
   return typeof n === "number" && Number.isFinite(n) ? n : undefined;
 }
+
+/** A download of one of many tiles is tried this many times: the WFS stalls at times. */
+export const TILE_TRIES = 3;
+
+/**
+ * `task` until it succeeds, at most TILE_TRIES times, for one tile of a download of many, so
+ * one stalled response does not lose the others; never again once `signal` aborts.
+ */
+export async function retried<T>(task: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  for (let tries = 1; ; tries++) {
+    try {
+      return await task();
+    } catch (err) {
+      if (tries >= TILE_TRIES || signal?.aborted) {
+        throw err;
+      }
+    }
+  }
+}

@@ -1,4 +1,5 @@
 import fs from "fs";
+import path from "path";
 import type { Bbox } from "./ingest/wfs";
 import { bboxProblem } from "./ingest/wfs";
 import type { OnProgress, WfsRefresher } from "./wfs-service";
@@ -10,6 +11,10 @@ import { growBbox } from "./spatial/build-box";
 import { MAX_CHART_BUFFER } from "./spatial/chart-position";
 import { indexDirProblem } from "./spatial/chart-index";
 import { EARTH_RADIUS } from "./foundation/geo";
+import { WFS_SOURCE } from "./ingest/wfs";
+import { Held, realWait, untilAborted } from "./planning-held";
+import type { Survey } from "./survey";
+import type { SurveyJob } from "./survey-worker";
 
 /**
  * The planning box (signalk-route-planner's plan §4.2): an index built on request for a region
@@ -35,6 +40,11 @@ export interface HeldBox {
   readonly region: Bbox;
   /** The box the index was built in: the region grown by the chart position reach. */
   readonly bbox: Bbox;
+  /**
+   * A corridor's boxes, when one was asked for: the index judges queries on the charts in
+   * them alone, and in `region` (their box) past them reads no coverage.
+   */
+  readonly parts: readonly Bbox[] | undefined;
   readonly index: ChartIndex;
   /** False once released: its index is no longer the one held. */
   readonly live: boolean;
@@ -49,6 +59,15 @@ export interface HeldBox {
 export type PrepareOutcome =
   { ok: true; held: HeldBox } | { ok: false; status: number; error: string };
 
+export type SurveyOutcome =
+  { ok: true; survey: Survey } | { ok: false; status: number; error: string };
+
+/** Makes a depth survey (`survey-worker.ts`), in a build process of its own. */
+export type SurveyRunner = (job: Omit<SurveyJob, "heapMb">, signal: AbortSignal) => Promise<Survey>;
+
+/** A survey covers at most this much, km²: 47 tiles of the WFS at 60° N, a 4 MB grid. */
+export const SURVEY_MAX_KM2 = 25_000;
+
 export interface PlanningBoxDeps {
   /** Holds the planning box's Traficom WFS cell, when that source is on. */
   dir: string;
@@ -57,6 +76,10 @@ export interface PlanningBoxDeps {
   /** The chart box service's job settings (`startWfs`), for the job of a planning box. */
   job: () => Omit<BoxJobDeps, "indexDir" | "inBox">;
   refresh: WfsRefresher;
+  /** Makes a depth survey; absent, none is made (501). */
+  survey?: SurveyRunner;
+  /** Where a survey's grid is staged before it is read. */
+  surveyDir?: string;
   /** The largest planning box, km², with its reach: the chart box's area at its cap. */
   maxKm2: number;
   /** Whether a chart box build is running or about to: a planning build waits for it. */
@@ -108,73 +131,20 @@ export function planningBbox(region: Bbox): Bbox {
   return growBbox(region, MAX_CHART_BUFFER / 1000);
 }
 
-function realWait(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) {
-      reject(new Error("aborted"));
-      return;
-    }
-    const t = setTimeout(() => {
-      signal.removeEventListener("abort", stop);
-      resolve();
-    }, ms);
-    const stop = (): void => {
-      clearTimeout(t);
-      reject(new Error("aborted"));
-    };
-    signal.addEventListener("abort", stop, { once: true });
-  });
-}
-
-class Held implements HeldBox {
-  live = true;
-  usedAt: number;
-  private active = 0;
-  private waiters: (() => void)[] = [];
-  constructor(
-    readonly region: Bbox,
-    readonly bbox: Bbox,
-    readonly index: ChartIndex,
-    now: number
-  ) {
-    this.usedAt = now;
-  }
-
-  begin(): boolean {
-    if (!this.live) {
-      return false;
-    }
-    this.active++;
-    return true;
-  }
-
-  end(): void {
-    this.active = Math.max(0, this.active - 1);
-    if (this.active === 0) {
-      this.waiters.splice(0).forEach((w) => w());
-    }
-  }
-
-  isIdle(): boolean {
-    return this.active === 0;
-  }
-
-  /** Settles once no counted job reads the index. */
-  idle(): Promise<void> {
-    return this.active === 0 ? Promise.resolve() : new Promise((r) => this.waiters.push(r));
-  }
-}
-
 interface Running {
   bbox: Bbox;
-  done: Promise<PrepareOutcome | "again">;
+  done: Promise<unknown>;
   controller: AbortController;
   /** Set when the chart box took the build process: the build is started again after it. */
   preempted: boolean;
+  /** Lets the cell cache fill again, once the build has paused it. */
+  resume?: () => void;
 }
 
 export class PlanningBoxes {
   private held: Held | undefined;
+  /** The survey made last, and what was asked for. */
+  private surveyed: { region: Bbox; cellMetres: number; survey: Survey } | undefined;
   /** Released indexes whose counted jobs may still read them: every build waits for them. */
   private draining: Held[] = [];
   private running: Running | undefined;
@@ -205,14 +175,93 @@ export class PlanningBoxes {
   }
 
   /**
-   * A planning index whose queries are judged on the charts across `region`: the one held when
-   * it covers the region, else one built for it. Waits for a chart box build to finish first,
-   * and starts again after one that took over. Resolves with an error status when the region is
-   * too large (413), the index directory refuses a commit or the build fails (503), or `signal`
-   * aborts (503).
+   * A planning index whose queries are judged on the charts across `region`, or across each
+   * of `parts` alone, a corridor whose box is `region`: the one held when it covers them, else
+   * one built for them. Waits for a chart box build to finish first, and starts again after
+   * one that took over. Resolves with an error status when the region is too large (413), the
+   * index directory refuses a commit or the build fails (503), or `signal` aborts (503).
    */
-  async prepare(region: Bbox, signal: AbortSignal, progress?: OnProgress): Promise<PrepareOutcome> {
+  prepare(
+    region: Bbox,
+    signal: AbortSignal,
+    progress?: OnProgress,
+    parts?: readonly Bbox[]
+  ): Promise<PrepareOutcome> {
     const bbox = planningBbox(region);
+    return this.exclusive<PrepareOutcome>(
+      signal,
+      () => {
+        const held = this.held;
+        if (held && covers(held, region, parts)) {
+          held.usedAt = this.deps.clock.now();
+          return { ok: true, held };
+        }
+        // Checked again after each wait: a build that ran out of memory meanwhile lowers the cap.
+        const tooLarge = this.tooLarge(bbox, parts);
+        return tooLarge === undefined ? undefined : { ok: false, status: 413, error: tooLarge };
+      },
+      () => this.build(region, bbox, signal, progress, parts)
+    );
+  }
+
+  /**
+   * A depth survey (`survey.ts`) over `region` of cells about `cellMetres` on a side: the one
+   * made last when it covers the region at that size or finer, else one made for it, in the
+   * build process as a planning build is, one at a time. 501 without the Traficom WFS, 413
+   * over SURVEY_MAX_KM2, 503 when it fails or `signal` aborts.
+   */
+  survey(region: Bbox, cellMetres: number, signal: AbortSignal): Promise<SurveyOutcome> {
+    const runner = this.deps.survey;
+    const config = this.deps.job().config;
+    if (!runner || !("url" in config)) {
+      return Promise.resolve({
+        ok: false,
+        status: 501,
+        error: "a depth survey needs the Traficom WFS depth source"
+      });
+    }
+    const km2 = bboxKm2(region);
+    if (km2 > SURVEY_MAX_KM2) {
+      return Promise.resolve({
+        ok: false,
+        status: 413,
+        error: `the survey would cover ${Math.round(km2)} km²; at most ${SURVEY_MAX_KM2} km²`
+      });
+    }
+    return this.exclusive<SurveyOutcome>(
+      signal,
+      () => {
+        const last = this.surveyed;
+        return last && holds(last.region, region) && last.cellMetres <= cellMetres
+          ? { ok: true, survey: last.survey }
+          : undefined;
+      },
+      () =>
+        this.launch<SurveyOutcome>(
+          region,
+          signal,
+          async (stop) => {
+            const job = { url: config.url, region, cellMetres, lowPriority: true };
+            const staging = this.deps.surveyDir ?? path.join(this.deps.dir, "survey");
+            const survey = await runner({ ...job, staging }, stop);
+            this.surveyed = { region, cellMetres, survey };
+            return { ok: true, survey };
+          },
+          (err) => ({ ok: false, status: 503, error: `depth survey failed: ${err.message}` })
+        )
+    );
+  }
+
+  /**
+   * `check` (what is held, or a refusal) after each wait for the running planning build and
+   * the chart box, else `start` once the build process is free; `start` again after one the
+   * chart box took over. 503 once stopped or `signal` aborts.
+   */
+  private async exclusive<T extends { ok: boolean }>(
+    signal: AbortSignal,
+    check: () => T | undefined,
+    start: () => Promise<T | "again">
+  ): Promise<T | Refusal> {
     const wait = this.deps.wait ?? realWait;
     for (;;) {
       if (this.stopped) {
@@ -221,15 +270,9 @@ export class PlanningBoxes {
       if (signal.aborted) {
         return aborted();
       }
-      const held = this.held;
-      if (held && holds(held.region, region)) {
-        held.usedAt = this.deps.clock.now();
-        return { ok: true, held };
-      }
-      // Checked again after each wait: a build that ran out of memory meanwhile lowers the cap.
-      const tooLarge = this.tooLarge(bbox);
-      if (tooLarge) {
-        return { ok: false, status: 413, error: tooLarge };
+      const now = check();
+      if (now !== undefined) {
+        return now;
       }
       const running = this.running;
       try {
@@ -238,7 +281,7 @@ export class PlanningBoxes {
         } else if (this.deps.boxBusy()) {
           await wait(WAIT_MS, signal);
         } else {
-          const r = await this.build(region, bbox, signal, progress);
+          const r = await start();
           if (r !== "again") {
             return r;
           }
@@ -249,18 +292,22 @@ export class PlanningBoxes {
     }
   }
 
-  /** Why a planning box of `bbox` is not built on this machine, or undefined. */
-  private tooLarge(bbox: Bbox): string | undefined {
-    const km2 = bboxKm2(bbox);
+  /** Why a planning box of `bbox`, or of its corridor's `parts`, is not built here, or undefined. */
+  private tooLarge(bbox: Bbox, parts?: readonly Bbox[]): string | undefined {
+    const deps = this.deps.job();
+    const wfs = "url" in deps.config;
+    // S-57 cells are built across the whole box: a corridor bounds the WFS depths alone.
+    const cells = deps.index()?.catalogue.cells.some((c) => c.source !== WFS_SOURCE) === true;
+    const corridor = parts !== undefined && wfs && !cells;
+    const km2 = corridor ? parts.reduce((sum, p) => sum + bboxKm2(p), 0) : bboxKm2(bbox);
     if (km2 > this.maxKm2) {
-      return `the planning box would be ${Math.round(km2)} km² with its reach; at most ${Math.round(this.maxKm2)} km² on this machine`;
+      return `the planning box would be ${Math.round(km2)} km²${corridor ? " in its corridor" : " with its reach"}; at most ${Math.round(this.maxKm2)} km² on this machine`;
     }
-    const config = this.deps.job().config;
     // A Traficom WFS download has its own span limits, which no retry passes.
-    const wfs = "url" in config ? bboxProblem(bbox) : undefined;
-    return wfs === undefined
+    const problem = wfs ? (corridor ? parts : [bbox]).map(bboxProblem).find((p) => p) : undefined;
+    return problem === undefined
       ? undefined
-      : `the planning box is too large for the Traficom WFS: ${wfs}`;
+      : `the planning box is too large for the Traficom WFS: ${problem}`;
   }
 
   /**
@@ -276,7 +323,6 @@ export class PlanningBoxes {
     r.controller.abort(new Error("the chart box around the vessel is being built"));
     await r.done.catch(() => undefined);
   }
-
   /** Releases the held index and stops any build; no build starts after it. */
   stop(): void {
     this.stopped = true;
@@ -320,98 +366,106 @@ export class PlanningBoxes {
     }
   }
 
-  /** What a build that threw ends in: built again after the chart box, aborted, or failed. */
-  private failed(err: Error, run: Running, signal: AbortSignal): PrepareOutcome | "again" {
-    if (run.preempted && !signal.aborted && !this.stopped) {
-      return "again";
-    }
-    if (run.controller.signal.aborted) {
-      return aborted();
-    }
-    if (OUT_OF_MEMORY.test(err.message)) {
-      // Not tried at that size again in this run.
-      this.maxKm2 = Math.min(this.maxKm2, bboxKm2(run.bbox) * 0.5);
-    }
-    return { ok: false, status: 503, error: `planning box build failed: ${err.message}` };
-  }
-
-  private build(
-    region: Bbox,
+  /**
+   * Runs `work` as the planning build over `bbox`, stopped when `signal` aborts, the plugin
+   * stops or the chart box takes the build process (then "again"). An error `work` throws is
+   * `failed`'s outcome. Warming is let fill again once it ends, unless the chart box took over.
+   */
+  private launch<T extends { ok: boolean }>(
     bbox: Bbox,
     signal: AbortSignal,
-    progress?: OnProgress
-  ): Promise<PrepareOutcome | "again"> {
-    const problem = indexDirProblem(this.deps.indexDir);
-    if (problem !== undefined) {
-      return Promise.resolve({ ok: false, status: 503, error: `planning box: ${problem}` });
-    }
+    work: (stop: AbortSignal, run: Running) => Promise<T | "again">,
+    failed: (err: Error) => T
+  ): Promise<T | Refusal | "again"> {
     const controller = new AbortController();
     const stopIt = (): void => controller.abort(signal.reason);
     signal.addEventListener("abort", stopIt, { once: true });
     const run: Running = { bbox, controller, preempted: false, done: Promise.resolve("again") };
-    // The index it replaces takes no new job: its files are about to be replaced.
-    this.release();
-    const started = this.deps.clock.now();
-    run.done = (async (): Promise<PrepareOutcome | "again"> => {
-      let resume: (() => void) | undefined;
+    const done = (async (): Promise<T | Refusal | "again"> => {
       try {
-        // A job still reading a released index ends before its files are replaced. The wait
-        // gives way to the chart box, an abort or a stop; the next build waits for it again.
-        await untilAborted(this.drained(), controller.signal);
-        fs.mkdirSync(this.deps.dir, { recursive: true });
-        resume = await this.deps.pauseWarming?.();
-        const job = refreshJob(
-          { ...this.deps.job(), indexDir: this.deps.indexDir, inBox: true },
-          this.deps.dir,
-          bbox,
-          started
-        );
-        const { index } = await this.deps.refresh(
-          { ...job, lowPriority: true },
-          controller.signal,
-          progress
-        );
+        const r = await work(controller.signal, run);
         if (controller.signal.aborted) {
           return run.preempted ? "again" : aborted();
         }
-        const held = new Held(region, bbox, index, this.deps.clock.now());
-        this.held = held;
-        this.deps.debug?.(
-          `planning box built in ${Math.round((this.deps.clock.now() - started) / 1000)} s`
-        );
-        return { ok: true, held };
+        return r;
       } catch (err) {
-        return this.failed(err as Error, run, signal);
+        if (run.preempted && !signal.aborted && !this.stopped) {
+          return "again";
+        }
+        return controller.signal.aborted ? aborted() : failed(err as Error);
       } finally {
         signal.removeEventListener("abort", stopIt);
         if (this.running === run) {
           this.running = undefined;
         }
         if (!run.preempted && !this.stopped) {
-          resume?.();
+          run.resume?.();
         }
       }
     })();
+    run.done = done;
     this.running = run;
-    return run.done;
+    return done;
+  }
+
+  private build(
+    region: Bbox,
+    bbox: Bbox,
+    signal: AbortSignal,
+    progress: OnProgress | undefined,
+    parts: readonly Bbox[] | undefined
+  ): Promise<PrepareOutcome | "again"> {
+    const problem = indexDirProblem(this.deps.indexDir);
+    if (problem !== undefined) {
+      return Promise.resolve({ ok: false, status: 503, error: `planning box: ${problem}` });
+    }
+    // The index it replaces takes no new job: its files are about to be replaced.
+    this.release();
+    const started = this.deps.clock.now();
+    return this.launch<PrepareOutcome>(
+      bbox,
+      signal,
+      async (stop, run) => {
+        // A job still reading a released index ends before its files are replaced. The wait
+        // gives way to the chart box, an abort or a stop; the next build waits for it again.
+        await untilAborted(this.drained(), stop);
+        fs.mkdirSync(this.deps.dir, { recursive: true });
+        run.resume = await this.deps.pauseWarming?.();
+        const deps = { ...this.deps.job(), indexDir: this.deps.indexDir, inBox: true };
+        const job = refreshJob(deps, this.deps.dir, bbox, started, parts);
+        const { index } = await this.deps.refresh({ ...job, lowPriority: true }, stop, progress);
+        if (stop.aborted) {
+          return "again";
+        }
+        const held = new Held(region, bbox, parts, index, this.deps.clock.now());
+        this.held = held;
+        this.deps.debug?.(
+          `planning box built in ${Math.round((this.deps.clock.now() - started) / 1000)} s`
+        );
+        return { ok: true, held };
+      },
+      (err) => {
+        if (OUT_OF_MEMORY.test(err.message)) {
+          // Not tried at that size again in this run.
+          const km2 = parts ? parts.reduce((sum, p) => sum + bboxKm2(p), 0) : bboxKm2(bbox);
+          this.maxKm2 = Math.min(this.maxKm2, km2 * 0.5);
+        }
+        return { ok: false, status: 503, error: `planning box build failed: ${err.message}` };
+      }
+    );
   }
 }
 
-function aborted(): PrepareOutcome {
-  return { ok: false, status: 503, error: "planning box request aborted" };
+/** Whether `held` judges on the charts every query in `region`, or in each of its `parts`. */
+function covers(held: HeldBox, region: Bbox, parts?: readonly Bbox[]): boolean {
+  const have = held.parts ?? [held.region];
+  return (parts ?? [region]).every((p) => have.some((q) => holds(q, p)));
 }
 
-/** `p`'s outcome, or a rejection once `signal` aborts first; its listener is removed either way. */
-function untilAborted<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) {
-      reject(new Error("aborted"));
-      return;
-    }
-    const stop = (): void => reject(new Error("aborted"));
-    signal.addEventListener("abort", stop, { once: true });
-    p.then(resolve, reject).finally(() => signal.removeEventListener("abort", stop));
-  });
+type Refusal = { ok: false; status: number; error: string };
+
+function aborted(): Refusal {
+  return { ok: false, status: 503, error: "planning box request aborted" };
 }
 
 const cellKey = (c: { name: string; edition: number; update: number }): string =>

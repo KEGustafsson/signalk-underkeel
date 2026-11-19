@@ -10,6 +10,8 @@ import type { HeldBox, PlanningBoxes } from "./planning-box";
 import { carryAdjustments, holds, regionError } from "./planning-box";
 import type { RouteQueue, RouteServiceDeps } from "./route-service";
 import { routeCheck } from "./route-service";
+import type { SurveyResult } from "./planning-survey";
+import { corridorError, surveyOver } from "./planning-survey";
 import { growBbox } from "./spatial/build-box";
 import { MAX_CHART_BUFFER } from "./spatial/chart-position";
 
@@ -86,11 +88,14 @@ export interface Prepared {
   release(): void;
 }
 
+export type { Survey } from "./survey";
+export type { SurveyResult } from "./planning-survey";
+
 export type PrepareResult =
   { ok: true; value: Prepared } | { ok: false; status: number; error: string };
 
 /** What this provider adds to version 1, for a planner to test before it calls it. */
-export const FEATURES = ["prepare"] as const;
+export const FEATURES = ["prepare", "corridor", "survey"] as const;
 
 export interface PlanningApiV1 {
   readonly version: 1;
@@ -117,8 +122,20 @@ export interface PlanningApiV1 {
    * planning box built for it (`planning-box.ts`). A build can take minutes; it runs behind the
    * chart box around the vessel. 400 for a bad region, 413 for one too large to build on this
    * machine, 503 when no index or build is to be had.
+   *
+   * With `corridor` (feature "corridor"), boxes within `region` it is cut into: queries are
+   * judged on the charts where their corridor lies in the boxes, and a planning box is built of
+   * them alone, its memory going with their area; past them, in `region`, it reads no coverage.
    */
-  prepare(region: Bbox, signal: AbortSignal): Promise<PrepareResult>;
+  prepare(region: Bbox, signal: AbortSignal, corridor?: readonly Bbox[]): Promise<PrepareResult>;
+  /**
+   * The depth survey of `region` (feature "survey", `survey.ts`): cells about `cellMetres` on a
+   * side, or coarser, each the deepest charted depth touching it. Made tile by tile in the
+   * build process, so it may cover far more than a planning box. It is for choosing a
+   * corridor, never a verdict. 400 for a bad request, 413 too large, 501 without a source it
+   * can survey, 503 when it fails.
+   */
+  survey?(region: Bbox, cellMetres: number, signal: AbortSignal): Promise<SurveyResult>;
 }
 
 /**
@@ -431,8 +448,9 @@ export function planningApi(
     },
     session: sessionOver(deps),
     routeCheck: (body, signal) => routeCheck(body, deps(), signal),
-    async prepare(region, signal) {
-      const bad = regionError(region);
+    survey: surveyOver(boxes),
+    async prepare(region, signal, corridor) {
+      const bad = regionError(region) ?? (corridor && corridorError(region, corridor));
       if (bad) {
         return { ok: false, status: 400, error: bad };
       }
@@ -457,7 +475,8 @@ export function planningApi(
             "the region lies outside the chart box around the vessel, and no planning box can be built"
         };
       }
-      const got = await b.prepare(r, signal);
+      const parts = corridor?.map((p): Bbox => [p[0], p[1], p[2], p[3]]);
+      const got = await b.prepare(r, signal, undefined, parts);
       if (!got.ok) {
         return got;
       }

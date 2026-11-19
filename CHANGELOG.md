@@ -2,6 +2,16 @@
 
 All notable changes to signalk-underkeel are documented here.
 
+## [0.8.0]
+
+### Added
+
+- Corridors for long trips in the planning API. A depth survey (`survey`) gives a planner a
+  coarse grid of the deepest charted depth across a region far larger than a planning box,
+  downloaded from the Traficom WFS tile by tile in the build process, so its memory stays that of
+  one tile. `prepare` takes a corridor's boxes, and the planning box is built of them alone, its
+  memory going with their area: a 50 nm trip fits a 1 GB Raspberry Pi 3 or Cerbo GX.
+
 ## [0.7.0]
 
 ### Added

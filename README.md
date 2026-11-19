@@ -516,6 +516,12 @@ cap (`boxMaxRadiusKm`, or the automatic cap for the machine's memory), within th
 span when that source is on, and is released after 10 minutes unused. Planning boxes are off when
 their directories overlap the configured `indexDir`.
 
+A trip longer than a planning box holds is planned in a corridor. With the Traficom WFS depth
+source on, a planner first asks for a coarse depth survey of the trip's region, downloaded tile by
+tile so its memory stays small however large the region. It finds a corridor a few kilometres wide
+on it, and asks `prepare` for the corridor's boxes alone, so the planning box's memory goes with the
+corridor's area. Past the corridor the planning box reads no coverage.
+
 ## Plotter Extensions
 
 `src/api/manifest.ts` registers the `plotterExtensions` resource: three data overlays (the

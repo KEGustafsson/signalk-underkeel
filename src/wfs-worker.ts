@@ -49,8 +49,17 @@ export interface BoxJobDeps {
   source?: string;
 }
 
-/** The refresh of the box `bbox`, started at `now`, with its WFS cell kept in `cellDir`. */
-export function refreshJob(deps: BoxJobDeps, cellDir: string, bbox: Bbox, now: number): WfsJob {
+/**
+ * The refresh of the box `bbox`, started at `now`, with its WFS cell kept in `cellDir`; with
+ * `parts` (a corridor within `bbox`), the cell covers them alone.
+ */
+export function refreshJob(
+  deps: BoxJobDeps,
+  cellDir: string,
+  bbox: Bbox,
+  now: number,
+  parts?: readonly Bbox[]
+): WfsJob {
   const { config, inBox, cellsDir } = deps;
   const wfs = "url" in config ? config : undefined;
   // With WFS depths alone in use an empty cells directory loses nothing.
@@ -59,6 +68,7 @@ export function refreshJob(deps: BoxJobDeps, cellDir: string, bbox: Bbox, now: n
     download: wfs && {
       url: wfs.url,
       bbox,
+      ...(parts && { parts }),
       dir: cellDir,
       now: new Date(now).toISOString(),
       catzoc: wfs.catzoc
