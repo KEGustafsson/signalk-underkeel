@@ -16,6 +16,7 @@ import { cellSources } from "./index-loader";
 import { Held, realWait, untilAborted } from "./planning-held";
 import type { Survey } from "./survey";
 import type { SurveyJob } from "./survey-worker";
+import { wfsUrl } from "./charts-provider-wfs";
 
 /**
  * The planning box (signalk-route-planner's plan §4.2): an index built on request for a region
@@ -253,7 +254,8 @@ export class PlanningBoxes {
           region,
           signal,
           async (stop) => {
-            const job = { url: config.url, region, cellMetres, lowPriority: true };
+            const url = wfsUrl(config.url, config.viaChartsProvider);
+            const job = { url, region, cellMetres, lowPriority: true };
             const staging = this.deps.surveyDir ?? path.join(this.deps.dir, "survey");
             const survey = await runner({ ...job, staging }, stop);
             if (stop.aborted) {

@@ -206,7 +206,8 @@ const WFS_FIELDS = {
     type: "string",
     title: "WFS URL",
     default: "https://julkinen.traficom.fi/inspirepalvelu/rajoitettu/wfs"
-  }
+  },
+  viaChartsProvider: { type: "boolean", title: "Via Charts Provider's WFS proxy", default: true }
 };
 
 const GROUNDING_FIELDS = {

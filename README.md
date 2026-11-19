@@ -328,7 +328,10 @@ example, `Monitoring: unknown — position stale`. Each value is sent when it ch
   Traficom's INSPIRE WFS for a box around the vessel fill gaps between ENC cells in Finnish
   waters. The data is licensed **not for navigational purposes** and has no rocks, wrecks or
   survey quality: water only it covers is at most `alert`, never `ok` in a route check and never
-  `clear` on the overlay.
+  `clear` on the overlay. ENC cells of band 2 and up take precedence wherever they cover the water;
+  the WFS, read as band 1, fills only what they leave. With signalk-charts-provider-simple 2.22 or
+  later the WFS is read through its local WFS proxy (**Via Charts Provider's WFS proxy**, on by
+  default), which keeps each area downloaded and serves it again.
 
 ## Guarantees
 

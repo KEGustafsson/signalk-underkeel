@@ -77,6 +77,11 @@ export interface PluginConfig {
 
 export interface WfsConfig {
   url: string;
+  /**
+   * Read the WFS through signalk-charts-provider-simple's local WFS proxy when
+   * it serves one (`charts-provider-wfs.ts`); undefined reads as true.
+   */
+  viaChartsProvider?: boolean;
   /** Half-width of the box downloaded around the vessel, km. */
   radiusKm: number;
   /** CATZOC assumed for WFS depths, 1–6; the WFS states none. */
@@ -234,6 +239,7 @@ function parseWfs(w: Record<string, unknown>): WfsConfig | undefined {
   }
   return {
     url: str(w.url) ?? DEFAULT_WFS_URL,
+    viaChartsProvider: w.viaChartsProvider !== false,
     radiusKm: num(w.radiusKm, 10, WFS_LIMITS.minRadiusKm, WFS_LIMITS.maxRadiusKm),
     catzoc: CATZOC_CODES[str(w.catzoc) ?? "B"] ?? 3
   };
