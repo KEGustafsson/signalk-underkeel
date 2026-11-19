@@ -5,7 +5,8 @@ import type { LonLat } from "../foundation/geo";
 import { EARTH_RADIUS } from "../foundation/geo";
 import type { GeoJsonFeatureCollection } from "./s57-geojson";
 import type { Bbox, WfsFeature, WfsFetch } from "./wfs-fetch";
-import { fetchLayer, limiter, num, WFS_LIMITS } from "./wfs-fetch";
+import type { Limit } from "./wfs-fetch";
+import { fetchLayer, limiter, num, retried, WFS_LIMITS } from "./wfs-fetch";
 
 export type { Bbox, ByteStream, WfsFetch } from "./wfs-fetch";
 export { WFS_LIMITS } from "./wfs-fetch";
@@ -144,9 +145,23 @@ function areas(features: WfsFeature[], b: Bbox): unknown[] {
     .filter((f) => f.geometry !== null);
 }
 
+/** Whether `c` is a position: finite longitude and latitude within their ranges. */
+function isPosition(c: unknown): boolean {
+  if (!Array.isArray(c) || c.length < 2) {
+    return false;
+  }
+  const [x, y] = c as unknown[];
+  return typeof x === "number" && typeof y === "number" && Math.abs(x) <= 180 && Math.abs(y) <= 90;
+}
+
 function soundings(features: WfsFeature[]): unknown[] {
   return features
-    .filter((f) => f.geometry?.type === "Point" && num(f.properties?.DEPTH) !== undefined)
+    .filter(
+      (f) =>
+        f.geometry?.type === "Point" &&
+        isPosition(f.geometry.coordinates) &&
+        num(f.properties?.DEPTH) !== undefined
+    )
     .map((f) => ({
       type: "Feature",
       geometry: f.geometry,
@@ -160,27 +175,83 @@ export interface WfsLayers {
   soundings: WfsFeature[];
 }
 
+const ring = ([w, s, e, n]: Bbox): number[][][] => [
+  [
+    [w, s],
+    [e, s],
+    [e, n],
+    [w, n],
+    [w, s]
+  ]
+];
+
+const inside = (p: unknown, [w, s, e, n]: Bbox): boolean => {
+  const c = p as number[];
+  return (
+    (c[0] as number) >= w && (c[0] as number) < e && (c[1] as number) >= s && (c[1] as number) < n
+  );
+};
+
+/** The features of `l` clipped to each of `parts`: areas cut at each part, soundings in one. */
+export interface ClippedLayers {
+  depthAreas: unknown[];
+  dredgedAreas: unknown[];
+  soundings: unknown[];
+}
+
 /**
- * The cell's GeoJSON layers. Coverage is the box. The WFS has no survey
- * quality, so the configured CATZOC is written as one assumed M_QUAL zone;
- * with 6 (U) none is written and the cell is unassessed.
+ * Appends `l` clipped to `parts` to `out`. In a corridor (`corridor`, a group of its boxes) a
+ * sounding goes to the box it lies in, half open, so one on an edge two groups share is kept
+ * once; a single box keeps every sounding the WFS gives for it.
+ */
+export function clipTo(
+  l: WfsLayers,
+  parts: readonly Bbox[],
+  out: ClippedLayers,
+  corridor = parts.length > 1
+): void {
+  // Appended one by one: a spread of more than ~100 000 features overflows the call stack.
+  for (const p of parts) {
+    for (const f of areas(l.depthAreas, p)) {
+      out.depthAreas.push(f);
+    }
+    for (const f of areas(l.dredgedAreas, p)) {
+      out.dredgedAreas.push(f);
+    }
+  }
+  const points = soundings(l.soundings) as { geometry: { coordinates: unknown } }[];
+  for (const f of points) {
+    if (!corridor || parts.some((p) => inside(f.geometry.coordinates, p))) {
+      out.soundings.push(f);
+    }
+  }
+}
+
+/**
+ * The cell's GeoJSON layers. Coverage is the box, or each of `parts` (a corridor) when given:
+ * past them the cell is no coverage. The WFS has no survey quality, so the configured CATZOC
+ * is written as an assumed M_QUAL zone over the coverage; with 6 (U) none is written and the
+ * cell is unassessed.
  */
 export function toCellLayers(
   l: WfsLayers,
   b: Bbox,
   fetchedAt: Date,
+  catzoc = 6,
+  parts: readonly Bbox[] = [b]
+): Record<string, GeoJsonFeatureCollection> {
+  const clipped: ClippedLayers = { depthAreas: [], dredgedAreas: [], soundings: [] };
+  clipTo(l, parts, clipped);
+  return cellLayers(clipped, parts, fetchedAt, catzoc);
+}
+
+/** The cell's layers of features already clipped to `parts`, its coverage. */
+export function cellLayers(
+  clipped: ClippedLayers,
+  parts: readonly Bbox[],
+  fetchedAt: Date,
   catzoc = 6
 ): Record<string, GeoJsonFeatureCollection> {
-  const [w, s, e, n] = b;
-  const box = [
-    [
-      [w, s],
-      [e, s],
-      [e, n],
-      [w, n],
-      [w, s]
-    ]
-  ];
   return {
     DSID: collection([
       {
@@ -195,27 +266,28 @@ export function toCellLayers(
         }
       }
     ]),
-    M_COVR: collection([
-      {
+    M_COVR: collection(
+      parts.map((p, i) => ({
         type: "Feature",
-        geometry: { type: "Polygon", coordinates: box },
-        properties: { CATCOV: 1, LNAM: "WFS-COVR" }
-      }
-    ]),
+        geometry: { type: "Polygon", coordinates: ring(p) },
+        properties: { CATCOV: 1, LNAM: i === 0 ? "WFS-COVR" : `WFS-COVR-${i}` }
+      }))
+    ),
     M_QUAL: collection(
       catzoc === 6
         ? []
-        : [
-            {
-              type: "Feature",
-              geometry: { type: "Polygon", coordinates: box },
-              properties: { CATZOC: catzoc, LNAM: "WFS-QUAL-ASSUMED" }
+        : parts.map((p, i) => ({
+            type: "Feature",
+            geometry: { type: "Polygon", coordinates: ring(p) },
+            properties: {
+              CATZOC: catzoc,
+              LNAM: i === 0 ? "WFS-QUAL-ASSUMED" : `WFS-QUAL-ASSUMED-${i}`
             }
-          ]
+          }))
     ),
-    DEPARE: collection(areas(l.depthAreas, b)),
-    DRGARE: collection(areas(l.dredgedAreas, b)),
-    SOUNDG: collection(soundings(l.soundings))
+    DEPARE: collection(clipped.depthAreas),
+    DRGARE: collection(clipped.dredgedAreas),
+    SOUNDG: collection(clipped.soundings)
   };
 }
 
@@ -264,6 +336,11 @@ export interface WfsDownload {
   fetch: WfsFetch;
   url: string;
   bbox: Bbox;
+  /**
+   * A corridor's boxes within `bbox`: the cell covers them alone, and they are downloaded in
+   * groups (`partGroups`), not the whole of `bbox`.
+   */
+  parts?: readonly Bbox[];
   /** The cell directory to write, e.g. `<data dir>/wfs/FI1WFS01`. */
   dir: string;
   now: Date;
@@ -272,20 +349,62 @@ export interface WfsDownload {
   signal?: AbortSignal;
 }
 
-/** Downloads the box and writes the cell; resolves with the feature counts. */
-export async function downloadWfsCell(
-  d: WfsDownload
-): Promise<{ depthAreas: number; dredgedAreas: number; soundings: number }> {
-  const problem = bboxProblem(d.bbox);
-  if (problem) {
-    throw new Error(problem);
+const union = (a: Bbox, b: Bbox): Bbox => [
+  Math.min(a[0], b[0]),
+  Math.min(a[1], b[1]),
+  Math.max(a[2], b[2]),
+  Math.max(a[3], b[3])
+];
+
+const degrees2 = (b: Bbox): number => (b[2] - b[0]) * (b[3] - b[1]);
+
+/**
+ * A group's box spans at most this much, degrees: the WFS sends nothing for over 30 s at times
+ * on a box much larger, about 5.5 km by 11 km at 60° N.
+ */
+const GROUP_LAT = 0.05;
+const GROUP_LON = 0.2;
+
+const tooWide = (b: Bbox): boolean => b[3] - b[1] > GROUP_LAT || b[2] - b[0] > GROUP_LON;
+
+/**
+ * `parts` in download groups, in their order: consecutive parts while the group's box keeps
+ * within GROUP_LAT by GROUP_LON and at most twice their area, so a corridor is a few requests
+ * per tile's worth of it, not one per part, nor its whole box. A part larger than that is a group
+ * of its own.
+ */
+export function partGroups(parts: readonly Bbox[]): Bbox[][] {
+  const groups: Bbox[][] = [];
+  let group: Bbox[] = [];
+  let box: Bbox | undefined;
+  let area = 0;
+  for (const p of parts) {
+    const next = box ? union(box, p) : p;
+    if (group.length > 0 && (tooWide(next) || degrees2(next) > 2 * (area + degrees2(p)))) {
+      groups.push(group);
+      group = [];
+      area = 0;
+      box = p;
+    } else {
+      box = next;
+    }
+    group.push(p);
+    area += degrees2(p);
   }
-  // The layers download side by side; the first failure stops the others.
+  if (group.length > 0) {
+    groups.push(group);
+  }
+  return groups;
+}
+
+const boxOf = (group: readonly Bbox[]): Bbox => group.reduce(union);
+
+/** The three layers in `bbox`, side by side; the first failure stops the others. */
+async function fetchLayers(d: WfsDownload, bbox: Bbox, limit: Limit): Promise<WfsLayers> {
   const failed = new AbortController();
   const signal = d.signal ? AbortSignal.any([d.signal, failed.signal]) : failed.signal;
-  const limit = limiter(WFS_LIMITS.concurrency);
   const get = (typeName: string): Promise<WfsFeature[]> =>
-    fetchLayer({ fetch: d.fetch, base: d.url, typeName, bbox: d.bbox, limit, signal }).catch(
+    fetchLayer({ fetch: d.fetch, base: d.url, typeName, bbox, limit, signal }).catch(
       (err: unknown) => {
         failed.abort(err);
         throw err;
@@ -296,11 +415,36 @@ export async function downloadWfsCell(
     get("rajoitettu:DredgedArea_A"),
     get("rajoitettu:Sounding_P")
   ]);
-  const l: WfsLayers = { depthAreas, dredgedAreas, soundings };
-  writeCell(d.dir, toCellLayers(l, d.bbox, d.now, d.catzoc));
-  return {
-    depthAreas: l.depthAreas.length,
-    dredgedAreas: l.dredgedAreas.length,
-    soundings: l.soundings.length
-  };
+  return { depthAreas, dredgedAreas, soundings };
+}
+
+/** Downloads the box, or its corridor's parts, and writes the cell; resolves with the counts. */
+export async function downloadWfsCell(
+  d: WfsDownload
+): Promise<{ depthAreas: number; dredgedAreas: number; soundings: number }> {
+  const parts = d.parts !== undefined && d.parts.length > 0 ? d.parts : [d.bbox];
+  const corridor = parts === d.parts;
+  const groups = corridor ? partGroups(parts) : [parts];
+  // A corridor's whole box is not downloaded: its groups keep to the spans.
+  for (const g of groups) {
+    const problem = bboxProblem(boxOf(g));
+    if (problem !== undefined) {
+      throw new Error(problem);
+    }
+  }
+  // A corridor one request at a time: the WFS stalls concurrent ones at times.
+  const limit = limiter(corridor ? 1 : WFS_LIMITS.concurrency);
+  const clipped: ClippedLayers = { depthAreas: [], dredgedAreas: [], soundings: [] };
+  const counts = { depthAreas: 0, dredgedAreas: 0, soundings: 0 };
+  for (const g of groups) {
+    // A corridor's group is tried again: a corridor is a few minutes of downloads.
+    const get = () => fetchLayers(d, boxOf(g), limit);
+    const l = corridor ? await retried(get, d.signal) : await get();
+    clipTo(l, g, clipped, corridor);
+    counts.depthAreas += l.depthAreas.length;
+    counts.dredgedAreas += l.dredgedAreas.length;
+    counts.soundings += l.soundings.length;
+  }
+  writeCell(d.dir, cellLayers(clipped, parts, d.now, d.catzoc));
+  return counts;
 }

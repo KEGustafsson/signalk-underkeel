@@ -2,6 +2,25 @@
 
 All notable changes to signalk-underkeel are documented here.
 
+## [0.8.0]
+
+### Added
+
+- Corridors for long trips in the planning API. A depth survey (`survey`) gives a planner a
+  coarse grid of the deepest charted depth across a region far larger than a planning box,
+  downloaded from the Traficom WFS tile by tile in the build process, so its memory stays that of
+  one tile. `prepare` takes a corridor's boxes, and the planning box is built of them alone, its
+  memory going with their area: a 50 nm trip fits a 2 GB Raspberry Pi 4.
+
+### Fixed
+
+- A Traficom WFS download whose layer failed while another layer's request still waited its turn
+  could end the build process, or the server for an in-process build, with an unhandled
+  rejection; the request's own failure is now handled.
+- Traficom WFS layers with few features in the box downloaded as several tiny pages, and the WFS
+  sends nothing at all for a page of 60 or fewer: the box's download stalled until the idle
+  timeout, every time. A page now asks for at least 100, and a layer that fits one page is one.
+
 ## [0.7.0]
 
 ### Added

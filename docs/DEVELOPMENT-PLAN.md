@@ -1469,6 +1469,31 @@ in use: the lowest level and widest σ over the datums of its cells. Planning bo
 their directories overlap the configured `indexDir`, and their directory is made at the first
 build, so it cannot keep the plugin from starting.
 
+**Corridors and the depth survey** (features `corridor` and `survey`). A trip longer than a
+planning box holds, 50 nm across the archipelago for one, is planned in a corridor. The planner
+asks for a depth survey of the trip's region, `survey(region, cellMetres, signal)`
+(`src/survey.ts`, `src/survey-worker.ts`): a grid of cells of the size asked for, at least 50 m,
+coarser where that would pass a million cells. Each cell holds the deepest bound (`DRVAL2` of a
+depth area, the dredged depth of a dredged area) and the least bound (`DRVAL1`) of the charted
+areas touching it, NaN where none does. Both are bounds of those areas alone: a cell an area
+touches at a corner may be land or uncharted elsewhere, and soundings are not read, so neither
+proves a cell clear. It is made from the Traficom WFS (501 without it) in the build process, in
+the same turn as planning builds, giving way to the chart box. Its memory is bounded whatever the
+region (at most 25 000 km², 413 above it): the areas are read a part at a time and marked on the
+grid, never held whole, and one request is in flight at a time, as the WFS stalls concurrent
+requests at times (`src/survey-worker.ts`). The last survey is held, and reused for a region inside it whose cells are as fine or
+coarser. It is optimistic by design: it only chooses where to look, never a verdict.
+
+The planner finds a coarse route on the survey and asks `prepare(region, signal, corridor)` with
+the corridor's boxes, at most 400 of them within `region`, none overlapping. The planning box
+downloads the Traficom WFS for the boxes alone, nearby boxes together to keep the downloads few,
+and writes one cell whose coverage and assumed quality are the boxes, its areas clipped to each.
+Queries are judged on the charts in the boxes; past them, in `region`, the index reads no
+coverage. Its area is the boxes' sum, not their box's, held to the same cap as a planning box,
+so a corridor 3 km wide along a 50 nm trip fits a 2 GB machine. With S-57 cells in use the build
+spans the whole box, which is then the area held to the cap. An index already held that covers
+every box is given instead, and judges on the charts across all it holds.
+
 ### 4.12 Acknowledged passages
 
 On acknowledge, Freeboard POSTs to `/acks` with:

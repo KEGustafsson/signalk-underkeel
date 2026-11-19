@@ -25,6 +25,7 @@ import type { ChartIndex } from "./spatial/chart-index";
 import { autoCapKm } from "./box-sizing";
 import type { BoxWarmer, WarmJob, Warming } from "./cell-warm";
 import { boxWarmer, startWarming } from "./cell-warm";
+import { inThreadSurveyor, workerSurveyor } from "./build-process";
 import { PlanningBoxes } from "./planning-box";
 import type { AreaRequests, EncBoxConfig, IndexBuilder } from "./wfs-service";
 import {
@@ -337,11 +338,12 @@ export function startPlanningBoxes(
   const data = w.app.getDataDirPath();
   const dir = path.join(data, "planning-box");
   const indexDir = path.join(data, "planning-index");
+  const surveyDir = path.join(data, "planning-survey");
   const vessel = w.config.indexDir ?? path.join(data, "index");
   // A commit replaces its directory whole: one that is, or holds, the index in use would replace it.
-  if ([dir, indexDir].some((p) => overlaps(p, vessel))) {
+  if ([dir, indexDir, surveyDir].some((p) => overlaps(p, vessel))) {
     w.app.error(
-      `planning boxes are off: ${indexDir} or ${dir} overlaps the chart index directory ${vessel}`
+      `planning boxes are off: ${indexDir}, ${dir} or ${surveyDir} overlaps the chart index directory ${vessel}`
     );
     return undefined;
   }
@@ -359,6 +361,8 @@ export function startPlanningBoxes(
       source: indexSource(w.config)
     }),
     refresh: w.build === workerBuilder ? workerRefresher : inThreadRefresher(w.fetch, w.build),
+    survey: w.build === workerBuilder ? workerSurveyor : inThreadSurveyor(w.fetch),
+    surveyDir,
     maxKm2: (2 * capKm) ** 2,
     boxBusy: () => box.view().rebuilding,
     ...(warmer && { pauseWarming: () => warmer.pause() }),

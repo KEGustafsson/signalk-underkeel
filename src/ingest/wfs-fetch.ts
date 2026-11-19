@@ -12,6 +12,11 @@ export const WFS_LIMITS = {
   maxLonSpan: 1.5,
   pageSize: 5000,
   /**
+   * A page asks for at least this many features: the WFS sends nothing at all for a small
+   * `count` (60 or fewer soundings, 6 depth areas) while it answers 80 or more at once.
+   */
+  minPageCount: 100,
+  /**
    * Page requests in flight at once over the whole download. The server sends one response
    * at about 1 MB/s: the 461 depth areas of a 10 km box off Helsinki (5.5 MB) took 7.5 s as
    * one page and 3.5 s as four concurrent pages.
@@ -27,7 +32,12 @@ export const WFS_LIMITS = {
    * A response or body that sends nothing for this long fails the download, so a stalled
    * server ends it while a slow link that keeps sending is read to the end.
    */
-  idleTimeoutMs: 30_000
+  idleTimeoutMs: 30_000,
+  /**
+   * Before a tile's nth try again (`retried`) the download waits n times this long, ms: the WFS
+   * that stalled recovers in a while.
+   */
+  retryPauseMs: 5000
 } as const;
 
 /** What a page body is read through; a fetch Response's `body`. */
@@ -135,16 +145,25 @@ async function readPage(r: LayerRequest, start: number, count: number): Promise<
     fetchPage(r.fetch, pageUrl(r, start, count), r.typeName, r.signal)
   )) as { type?: unknown; features?: unknown; numberMatched?: unknown };
   if (page.type !== "FeatureCollection" || !Array.isArray(page.features)) {
-    throw new Error(`${r.typeName}: not a GeoJSON FeatureCollection`);
+    throw new WfsRefusal(`${r.typeName}: not a GeoJSON FeatureCollection`);
   }
   return { features: page.features as WfsFeature[], matched: num(page.numberMatched) };
 }
 
+/**
+ * A refusal no try again changes: a box too large, a page too large, a client error, a server
+ * that pages wrongly. `retried` gives it back at once.
+ */
+export class WfsRefusal extends Error {}
+
 const tooMany = (typeName: string): Error =>
-  new Error(`${typeName}: more than ${WFS_LIMITS.maxFeatures} features; use a smaller box`);
+  new WfsRefusal(`${typeName}: more than ${WFS_LIMITS.maxFeatures} features; use a smaller box`);
 
 const tooManyPages = (typeName: string): Error =>
-  new Error(`${typeName}: more than ${WFS_LIMITS.maxPages} pages`);
+  new WfsRefusal(`${typeName}: more than ${WFS_LIMITS.maxPages} pages`);
+
+const repeated = (typeName: string): Error =>
+  new WfsRefusal(`${typeName}: the same feature on more than one page`);
 
 /** Appends without a spread: a spread of more than ~100 000 features overflows the call stack. */
 function append(out: WfsFeature[], features: WfsFeature[]): void {
@@ -168,7 +187,7 @@ export async function fetchLayer(r: LayerRequest): Promise<WfsFeature[]> {
   if (matched > WFS_LIMITS.maxFeatures) {
     throw tooMany(r.typeName);
   }
-  const runs = Math.min(WFS_LIMITS.concurrency, matched);
+  const runs = Math.min(WFS_LIMITS.concurrency, Math.ceil(matched / WFS_LIMITS.minPageCount));
   const share = Math.ceil(matched / Math.max(1, runs));
   let pages = 0;
   const run = async (from: number, to: number): Promise<WfsFeature[]> => {
@@ -178,11 +197,13 @@ export async function fetchLayer(r: LayerRequest): Promise<WfsFeature[]> {
         throw tooManyPages(r.typeName);
       }
       const start = from + out.length;
-      const page = await readPage(r, start, Math.min(WFS_LIMITS.pageSize, to - start));
+      const want = Math.min(WFS_LIMITS.pageSize, to - start);
+      // At least minPageCount asked for, the run's own share kept.
+      const page = await readPage(r, start, Math.max(want, WFS_LIMITS.minPageCount));
       if (page.features.length === 0) {
         break;
       }
-      append(out, page.features);
+      append(out, page.features.slice(0, want));
     }
     return out;
   };
@@ -201,7 +222,7 @@ export async function fetchLayer(r: LayerRequest): Promise<WfsFeature[]> {
   // A server that ignores startIndex returns the first page to every run.
   const ids = out.map((f) => f.id);
   if (ids.every((id) => typeof id === "string") && new Set(ids).size !== ids.length) {
-    throw new Error(`${r.typeName}: the same feature on more than one page`);
+    throw repeated(r.typeName);
   }
   return out;
 }
@@ -254,7 +275,10 @@ async function fetchText(
   try {
     const res = await unlessAborted(fetch(url, { signal: ended }), ended);
     if (!res.ok) {
-      throw new Error(`${typeName}: HTTP ${res.status}`);
+      // A client error other than a timeout or a rate limit is the request's own.
+      const permanent =
+        res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429;
+      throw new (permanent ? WfsRefusal : Error)(`${typeName}: HTTP ${res.status}`);
     }
     if (res.body) {
       return await readBody(res.body, typeName, ended, alive);
@@ -275,7 +299,7 @@ async function fetchText(
 }
 
 const tooLarge = (typeName: string): Error =>
-  new Error(
+  new WfsRefusal(
     `${typeName}: page larger than ${WFS_LIMITS.maxPageBytes / 2 ** 20} MB; use a smaller box`
   );
 
@@ -312,6 +336,9 @@ function unlessAborted<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise((resolve, reject) => {
     const abort = (): void => reject(signal.reason as Error);
     if (signal.aborted) {
+      // Its own rejection, once the abort reaches it, would otherwise go unhandled and end the
+      // process: a request queued behind a sibling layer whose failure aborted the download.
+      p.catch(() => undefined);
       abort();
       return;
     }
@@ -332,4 +359,91 @@ function unlessAborted<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
 export function num(v: unknown): number | undefined {
   const n = typeof v === "string" && v.trim() !== "" ? Number(v) : v;
   return typeof n === "number" && Number.isFinite(n) ? n : undefined;
+}
+
+/** A download of one of many tiles is tried this many times: the WFS stalls at times. */
+export const TILE_TRIES = 4;
+
+/**
+ * `task` until it succeeds, at most TILE_TRIES times with a growing pause between, for one
+ * tile of a download of many, so one stalled response does not lose the others; never again
+ * once `signal` aborts, nor after a refusal (`WfsRefusal`) no try again changes.
+ */
+export async function retried<T>(task: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  for (let tries = 1; ; tries++) {
+    try {
+      return await task();
+    } catch (err) {
+      if (tries >= TILE_TRIES || signal?.aborted || err instanceof WfsRefusal) {
+        throw err;
+      }
+      await pause(WFS_LIMITS.retryPauseMs * tries, signal);
+      if (signal?.aborted) {
+        throw err;
+      }
+    }
+  }
+}
+
+/** Resolves after `ms`, or at once when `signal` aborts. */
+function pause(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const t = setTimeout(done, ms);
+    function done(): void {
+      clearTimeout(t);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    }
+    signal?.addEventListener("abort", done, { once: true });
+  });
+}
+
+/**
+ * Every feature of one layer in the box, page by page in IDENTIFIER order, each page given to
+ * `onPage` and dropped before the next is asked for, so a box of tens of thousands of large
+ * areas takes one page's memory. One request at a time: the WFS stalls concurrent ones at
+ * times. A page that fails is asked for again (`retried`). More than maxFeatures features, as
+ * many pages as maxPages of pageSize would take, or a feature on two pages (a server that
+ * ignores startIndex) is a refusal. Resolves with the features read.
+ */
+export async function forEachPage(
+  r: LayerRequest,
+  count: number,
+  onPage: (features: WfsFeature[]) => void
+): Promise<number> {
+  const seen = new Set<unknown>();
+  const maxPages = WFS_LIMITS.maxPages * Math.ceil(WFS_LIMITS.pageSize / count);
+  let read = 0;
+  let matched: number | undefined;
+  for (let pages = 1; ; pages++) {
+    if (pages > maxPages) {
+      throw tooManyPages(r.typeName);
+    }
+    const start = read;
+    const page = await retried(() => readPage(r, start, count), r.signal);
+    matched = page.matched ?? matched;
+    if (page.features.length === 0) {
+      // Short of the count the server reported: the layer was not read whole.
+      if (matched !== undefined && read < matched) {
+        throw new Error(`${r.typeName}: ${read} features read, ${matched} matched`);
+      }
+      return read;
+    }
+    for (const f of page.features) {
+      if (typeof f.id === "string") {
+        if (seen.has(f.id)) {
+          throw repeated(r.typeName);
+        }
+        seen.add(f.id);
+      }
+    }
+    read += page.features.length;
+    if (read > WFS_LIMITS.maxFeatures) {
+      throw tooMany(r.typeName);
+    }
+    onPage(page.features);
+    if (matched !== undefined && read >= matched) {
+      return read;
+    }
+  }
 }
