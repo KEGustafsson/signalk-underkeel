@@ -144,7 +144,7 @@ interface Running {
 export class PlanningBoxes {
   private held: Held | undefined;
   /** The survey made last, and what was asked for. */
-  private surveyed: { region: Bbox; cellMetres: number; survey: Survey } | undefined;
+  private surveyed: { region: Bbox; survey: Survey } | undefined;
   /** Released indexes whose counted jobs may still read them: every build waits for them. */
   private draining: Held[] = [];
   private running: Running | undefined;
@@ -232,7 +232,8 @@ export class PlanningBoxes {
       signal,
       () => {
         const last = this.surveyed;
-        return last && holds(last.region, region) && last.cellMetres <= cellMetres
+        // Its cells as made: a large region's grid is coarser than asked for.
+        return last && holds(last.region, region) && last.survey.cellMetres <= cellMetres
           ? { ok: true, survey: last.survey }
           : undefined;
       },
@@ -244,7 +245,11 @@ export class PlanningBoxes {
             const job = { url: config.url, region, cellMetres, lowPriority: true };
             const staging = this.deps.surveyDir ?? path.join(this.deps.dir, "survey");
             const survey = await runner({ ...job, staging }, stop);
-            this.surveyed = { region, cellMetres, survey };
+            if (stop.aborted) {
+              // Stopped as it ended (the chart box took over): kept by no one, made again.
+              return "again";
+            }
+            this.surveyed = { region, survey };
             return { ok: true, survey };
           },
           (err) => ({ ok: false, status: 503, error: `depth survey failed: ${err.message}` })
@@ -292,19 +297,32 @@ export class PlanningBoxes {
     }
   }
 
-  /** Why a planning box of `bbox`, or of its corridor's `parts`, is not built here, or undefined. */
-  private tooLarge(bbox: Bbox, parts?: readonly Bbox[]): string | undefined {
+  /**
+   * How a planning box of `bbox`, or of its corridor's `parts`, is measured against the cap:
+   * its WFS depths are downloaded for the parts alone, and with WFS depths alone in use its area
+   * is theirs; S-57 cells are built across the whole box, which is then the area.
+   */
+  private measure(
+    bbox: Bbox,
+    parts?: readonly Bbox[]
+  ): { km2: number; wfs: boolean; corridor: boolean } {
     const deps = this.deps.job();
     const wfs = "url" in deps.config;
-    // S-57 cells are built across the whole box: a corridor bounds the WFS depths alone.
     const cells = deps.index()?.catalogue.cells.some((c) => c.source !== WFS_SOURCE) === true;
     const corridor = parts !== undefined && wfs && !cells;
     const km2 = corridor ? parts.reduce((sum, p) => sum + bboxKm2(p), 0) : bboxKm2(bbox);
+    return { km2, wfs, corridor };
+  }
+
+  /** Why a planning box of `bbox`, or of its corridor's `parts`, is not built here, or undefined. */
+  private tooLarge(bbox: Bbox, parts?: readonly Bbox[]): string | undefined {
+    const { km2, wfs, corridor } = this.measure(bbox, parts);
     if (km2 > this.maxKm2) {
       return `the planning box would be ${Math.round(km2)} km²${corridor ? " in its corridor" : " with its reach"}; at most ${Math.round(this.maxKm2)} km² on this machine`;
     }
-    // A Traficom WFS download has its own span limits, which no retry passes.
-    const problem = wfs ? (corridor ? parts : [bbox]).map(bboxProblem).find((p) => p) : undefined;
+    // A Traficom WFS download has its own span limits, which no retry passes; a corridor's is
+    // of its boxes, S-57 cells in use or not.
+    const problem = wfs ? (parts ?? [bbox]).map(bboxProblem).find((p) => p) : undefined;
     return problem === undefined
       ? undefined
       : `the planning box is too large for the Traficom WFS: ${problem}`;
@@ -437,7 +455,9 @@ export class PlanningBoxes {
         if (stop.aborted) {
           return "again";
         }
-        const held = new Held(region, bbox, parts, index, this.deps.clock.now());
+        // Without a WFS download the box is built whole, whatever corridor was asked for.
+        const own = job.download === undefined ? undefined : parts;
+        const held = new Held(region, bbox, own, index, this.deps.clock.now());
         this.held = held;
         this.deps.debug?.(
           `planning box built in ${Math.round((this.deps.clock.now() - started) / 1000)} s`
@@ -447,8 +467,7 @@ export class PlanningBoxes {
       (err) => {
         if (OUT_OF_MEMORY.test(err.message)) {
           // Not tried at that size again in this run.
-          const km2 = parts ? parts.reduce((sum, p) => sum + bboxKm2(p), 0) : bboxKm2(bbox);
-          this.maxKm2 = Math.min(this.maxKm2, km2 * 0.5);
+          this.maxKm2 = Math.min(this.maxKm2, this.measure(bbox, parts).km2 * 0.5);
         }
         return { ok: false, status: 503, error: `planning box build failed: ${err.message}` };
       }

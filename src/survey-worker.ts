@@ -3,7 +3,7 @@ import path from "path";
 import { isMainThread } from "worker_threads";
 import type { Bbox, WfsFetch } from "./ingest/wfs";
 import type { WfsFeature } from "./ingest/wfs-fetch";
-import { forEachPage, limiter, num } from "./ingest/wfs-fetch";
+import { forEachPage, limiter, num, WfsRefusal } from "./ingest/wfs-fetch";
 import { reportProgress } from "./spatial/build-progress";
 import { serveBuildProcess } from "./spatial/build-worker";
 import type { Survey, SurveyTile } from "./survey";
@@ -51,12 +51,34 @@ const LAYERS = [
 
 type Rings = number[][][];
 
+const isPosition = (c: unknown): boolean =>
+  Array.isArray(c) &&
+  c.length >= 2 &&
+  typeof c[0] === "number" &&
+  typeof c[1] === "number" &&
+  Math.abs(c[0]) <= 180 &&
+  Math.abs(c[1]) <= 90;
+
+const isPolygon = (rings: unknown): rings is Rings =>
+  Array.isArray(rings) &&
+  rings.every((r) => Array.isArray(r) && (r as unknown[]).every(isPosition));
+
+/**
+ * The polygons of an area, its geometry checked: rings of finite positions within ±180° and
+ * ±90°, which the marking's walk needs to end. A malformed one fails the survey, naming it.
+ */
 function polygons(f: WfsFeature): Rings[] {
   const g = f.geometry;
-  if (g?.type === "Polygon") {
-    return [g.coordinates as Rings];
+  if (g?.type !== "Polygon" && g?.type !== "MultiPolygon") {
+    return [];
   }
-  return g?.type === "MultiPolygon" ? (g.coordinates as Rings[]) : [];
+  const all = g.type === "Polygon" ? [g.coordinates] : g.coordinates;
+  if (!Array.isArray(all) || !all.every(isPolygon)) {
+    throw new WfsRefusal(
+      `depth area ${String(f.properties?.IDENTIFIER ?? f.id)}: malformed ${g.type}`
+    );
+  }
+  return all as Rings[];
 }
 
 /**

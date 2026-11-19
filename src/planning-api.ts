@@ -123,9 +123,12 @@ export interface PlanningApiV1 {
    * chart box around the vessel. 400 for a bad region, 413 for one too large to build on this
    * machine, 503 when no index or build is to be had.
    *
-   * With `corridor` (feature "corridor"), boxes within `region` it is cut into: queries are
-   * judged on the charts where their corridor lies in the boxes, and a planning box is built of
-   * them alone, its memory going with their area; past them, in `region`, it reads no coverage.
+   * With `corridor` (feature "corridor"), boxes within `region` it is cut into, no two
+   * overlapping: an index whose queries are judged on the charts where their corridor lies in
+   * the boxes. A planning box built for them holds their Traficom WFS depths alone, its memory
+   * going with their area, and past them reads no coverage; S-57 cells in use are built across
+   * its whole box. An index already held that covers every box (the index in use, or a planning
+   * box built for a region) is given instead, and judges on the charts across all it holds.
    */
   prepare(region: Bbox, signal: AbortSignal, corridor?: readonly Bbox[]): Promise<PrepareResult>;
   /**
@@ -450,7 +453,9 @@ export function planningApi(
     routeCheck: (body, signal) => routeCheck(body, deps(), signal),
     survey: surveyOver(boxes),
     async prepare(region, signal, corridor) {
-      const bad = regionError(region) ?? (corridor && corridorError(region, corridor));
+      const bad =
+        regionError(region) ??
+        (corridor === undefined ? undefined : corridorError(region, corridor));
       if (bad) {
         return { ok: false, status: 400, error: bad };
       }

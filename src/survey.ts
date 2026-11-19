@@ -24,9 +24,11 @@ export interface Survey {
    */
   readonly depth: Float32Array;
   /**
-   * The shallowest charted depth touching each cell (`DRVAL1`, a dredged area's depth), in the
-   * same order; NaN where no area does. A cell whose shallowest takes a draft is deep enough all
-   * over; one whose deepest alone does may hold a shoal or an island.
+   * The least bound of the charted areas touching each cell (`DRVAL1`, a dredged area's depth),
+   * in the same order; NaN where no area does. It is a bound of those areas alone: a cell an
+   * area touches at a corner may be land or uncharted elsewhere, and soundings are not read, so
+   * it does not prove the cell clear. A planner prefers cells whose least bound takes its draft,
+   * and the route check on the corridor's index decides.
    */
   readonly shallowest: Float32Array;
 }

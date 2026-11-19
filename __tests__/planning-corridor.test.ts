@@ -19,7 +19,7 @@ import { surveyGrid } from "../src/survey";
 import type { IndexBuilder, WfsRefresher } from "../src/wfs-service";
 import { inThreadRefresher } from "../src/wfs-service";
 import type { WfsJob } from "../src/wfs-worker";
-import { fixtureIndex, prepareFixtureIndex } from "./helpers/fixture-index";
+import { fixtureIndex } from "./helpers/fixture-index";
 import { fakeClock } from "./helpers/plugin-harness";
 
 /**
@@ -27,8 +27,6 @@ import { fakeClock } from "./helpers/plugin-harness";
  * corridor's boxes alone, its memory going with their area, and a survey made in the build
  * process's turn.
  */
-
-beforeAll(prepareFixtureIndex);
 
 let dir: string;
 beforeEach(() => {
@@ -157,16 +155,19 @@ describe("corridor", () => {
     expect(inside.flags).not.toContain("NO_COVERAGE");
     // Traficom depths are advisory: charted, never clear.
     expect(inside.flags).toEqual(["NOT_FOR_NAVIGATION"]);
+    expect(inside.status).not.toBe("ok");
     // In the region's box but past the corridor: no chart, unverified.
     const past = await segment(r.value, [22.05, 60.017], [22.06, 60.017]);
     expect(past.status).toBe("unverified");
     expect(past.flags).toContain("NO_COVERAGE");
     // A region inside one of the boxes reuses it; one past them builds again.
+    const before = asked.length;
     const again = await api.prepare([22.02, 60.002, 22.04, 60.008], NEVER);
     expect(again.ok).toBe(true);
-    const pages = asked.length;
-    await api.prepare([22.02, 60.012, 22.04, 60.018], NEVER);
-    expect(asked.length).toBeGreaterThan(pages);
+    expect(asked.length).toBe(before);
+    const past2 = await api.prepare([22.02, 60.012, 22.04, 60.018], NEVER);
+    expect(past2.ok).toBe(true);
+    expect(asked.length).toBeGreaterThan(before);
   });
 
   test("the corridor's area, not its box's, is held to the cap, with WFS depths alone", async () => {
@@ -196,10 +197,54 @@ describe("corridor", () => {
     });
   });
 
+  test("without the WFS the box is built whole, and serves any region in it", async () => {
+    const jobs: WfsJob[] = [];
+    const refresh: WfsRefresher = (job) => {
+      jobs.push(job);
+      return Promise.resolve({
+        index: fixtureIndex(),
+        features: { depthAreas: 0, dredgedAreas: 0, soundings: 0 }
+      });
+    };
+    const b = boxes({
+      refresh,
+      job: () => ({ config: { radiusKm: 10 }, index: () => undefined, leafZoom: 16 })
+    });
+    const r = await b.prepare(REGION, NEVER, undefined, CORRIDOR);
+    expect(r.ok && r.held.parts).toBeUndefined();
+    // Inside the box, past the corridor's boxes: the same index.
+    const again = await b.prepare([22.02, 60.012, 22.04, 60.018], NEVER);
+    expect(again.ok && r.ok && again.held === r.held).toBe(true);
+    expect(jobs).toHaveLength(1);
+  });
+
+  test("a corridor's WFS spans are its boxes', with S-57 cells in use too", async () => {
+    const refresh: WfsRefresher = () =>
+      Promise.resolve({
+        index: fixtureIndex(),
+        features: { depthAreas: 0, dredgedAreas: 0, soundings: 0 }
+      });
+    // A corridor 1.6° long: its box is past the WFS's 1.5° span, its boxes are not.
+    const long: Bbox[] = [
+      [22.0, 60.0, 22.8, 60.01],
+      [22.8, 60.01, 23.6, 60.02]
+    ];
+    const b = boxes({
+      refresh,
+      maxKm2: 10_000,
+      job: () => ({ config: WFS, index: () => fixtureIndex(), leafZoom: 16 })
+    });
+    expect((await b.prepare([22.0, 60.0, 23.6, 60.02], NEVER, undefined, long)).ok).toBe(true);
+  });
+
   test("a corridor not within its region, or of too many boxes, is 400", async () => {
     expect(corridorError(REGION, CORRIDOR)).toBeUndefined();
     expect(corridorError(REGION, [[22.0, 60.0, 22.4, 60.01]])).toMatch(/lie in the region/);
     expect(corridorError(REGION, [])).toMatch(/1 to/);
+    expect(corridorError(REGION, null)).toMatch(/an array/);
+    expect(corridorError(REGION, { length: 1 })).toMatch(/an array/);
+    expect(corridorError(REGION, [ROW_A, ROW_A])).toMatch(/overlap/);
+    expect(corridorError(REGION, [ROW_A, [22.1, 60.0, 22.2, 60.01]])).toMatch(/overlap/);
     expect(corridorError(REGION, Array(MAX_CORRIDOR_PARTS + 1).fill(ROW_A))).toMatch(/1 to/);
     expect(corridorError(REGION, [[22.1, 60.0, 22.0, 60.01]])).toMatch(/west < east/);
     const api = planningApi(
@@ -208,6 +253,10 @@ describe("corridor", () => {
       () => boxes({})
     );
     expect(await api.prepare(REGION, NEVER, [[22, 60, 23, 61]])).toMatchObject({
+      ok: false,
+      status: 400
+    });
+    expect(await api.prepare(REGION, NEVER, null as unknown as Bbox[])).toMatchObject({
       ok: false,
       status: 400
     });
@@ -242,6 +291,23 @@ describe("survey", () => {
     const inner = await api.survey?.([22.1, 60.05, 22.3, 60.1], 500, NEVER);
     expect(inner?.ok && r?.ok && inner.value === r.value).toBe(true);
     expect(jobs).toHaveLength(1);
+    // Coarser than asked for when made (a large region's grid): not reused for a finer ask.
+    const coarse = boxes({
+      survey: (job) => Promise.resolve({ ...grid(job.region), cellMetres: 400 }),
+      surveyDir: path.join(dir, "coarse")
+    });
+    expect((await coarse.survey([22, 60, 22.5, 60.2], 200, NEVER)).ok).toBe(true);
+    const asks: number[] = [];
+    const counted = boxes({
+      survey: (job) => {
+        asks.push(job.cellMetres);
+        return Promise.resolve({ ...grid(job.region), cellMetres: 400 });
+      }
+    });
+    await counted.survey([22, 60, 22.5, 60.2], 200, NEVER);
+    await counted.survey([22.1, 60.05, 22.3, 60.1], 300, NEVER);
+    await counted.survey([22.1, 60.05, 22.3, 60.1], 400, NEVER);
+    expect(asks).toEqual([200, 300]);
     // Finer than the one made: made again.
     void api.survey?.([22.1, 60.05, 22.3, 60.1], 100, NEVER);
     await flush();

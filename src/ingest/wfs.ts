@@ -145,9 +145,23 @@ function areas(features: WfsFeature[], b: Bbox): unknown[] {
     .filter((f) => f.geometry !== null);
 }
 
+/** Whether `c` is a position: finite longitude and latitude within their ranges. */
+function isPosition(c: unknown): boolean {
+  if (!Array.isArray(c) || c.length < 2) {
+    return false;
+  }
+  const [x, y] = c as unknown[];
+  return typeof x === "number" && typeof y === "number" && Math.abs(x) <= 180 && Math.abs(y) <= 90;
+}
+
 function soundings(features: WfsFeature[]): unknown[] {
   return features
-    .filter((f) => f.geometry?.type === "Point" && num(f.properties?.DEPTH) !== undefined)
+    .filter(
+      (f) =>
+        f.geometry?.type === "Point" &&
+        isPosition(f.geometry.coordinates) &&
+        num(f.properties?.DEPTH) !== undefined
+    )
     .map((f) => ({
       type: "Feature",
       geometry: f.geometry,
@@ -185,8 +199,17 @@ export interface ClippedLayers {
   soundings: unknown[];
 }
 
-/** Appends `l` clipped to `parts` to `out`; a sounding on a shared edge goes to one part. */
-export function clipTo(l: WfsLayers, parts: readonly Bbox[], out: ClippedLayers): void {
+/**
+ * Appends `l` clipped to `parts` to `out`. In a corridor (`corridor`, a group of its boxes) a
+ * sounding goes to the box it lies in, half open, so one on an edge two groups share is kept
+ * once; a single box keeps every sounding the WFS gives for it.
+ */
+export function clipTo(
+  l: WfsLayers,
+  parts: readonly Bbox[],
+  out: ClippedLayers,
+  corridor = parts.length > 1
+): void {
   // Appended one by one: a spread of more than ~100 000 features overflows the call stack.
   for (const p of parts) {
     for (const f of areas(l.depthAreas, p)) {
@@ -198,7 +221,7 @@ export function clipTo(l: WfsLayers, parts: readonly Bbox[], out: ClippedLayers)
   }
   const points = soundings(l.soundings) as { geometry: { coordinates: unknown } }[];
   for (const f of points) {
-    if (parts.length === 1 || parts.some((p) => inside(f.geometry.coordinates, p))) {
+    if (!corridor || parts.some((p) => inside(f.geometry.coordinates, p))) {
       out.soundings.push(f);
     }
   }
@@ -400,7 +423,8 @@ export async function downloadWfsCell(
   d: WfsDownload
 ): Promise<{ depthAreas: number; dredgedAreas: number; soundings: number }> {
   const parts = d.parts !== undefined && d.parts.length > 0 ? d.parts : [d.bbox];
-  const groups = parts === d.parts ? partGroups(parts) : [parts];
+  const corridor = parts === d.parts;
+  const groups = corridor ? partGroups(parts) : [parts];
   // A corridor's whole box is not downloaded: its groups keep to the spans.
   for (const g of groups) {
     const problem = bboxProblem(boxOf(g));
@@ -408,15 +432,15 @@ export async function downloadWfsCell(
       throw new Error(problem);
     }
   }
-  // A corridor's many groups one request at a time: the WFS stalls concurrent ones at times.
-  const limit = limiter(groups.length > 1 ? 1 : WFS_LIMITS.concurrency);
+  // A corridor one request at a time: the WFS stalls concurrent ones at times.
+  const limit = limiter(corridor ? 1 : WFS_LIMITS.concurrency);
   const clipped: ClippedLayers = { depthAreas: [], dredgedAreas: [], soundings: [] };
   const counts = { depthAreas: 0, dredgedAreas: 0, soundings: 0 };
   for (const g of groups) {
-    // One group of many is tried again: a corridor is a few minutes of downloads.
+    // A corridor's group is tried again: a corridor is a few minutes of downloads.
     const get = () => fetchLayers(d, boxOf(g), limit);
-    const l = groups.length > 1 ? await retried(get, d.signal) : await get();
-    clipTo(l, g, clipped);
+    const l = corridor ? await retried(get, d.signal) : await get();
+    clipTo(l, g, clipped, corridor);
     counts.depthAreas += l.depthAreas.length;
     counts.dredgedAreas += l.dredgedAreas.length;
     counts.soundings += l.soundings.length;

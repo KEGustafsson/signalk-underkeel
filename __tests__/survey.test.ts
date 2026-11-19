@@ -4,7 +4,14 @@ import path from "path";
 import { readCellDirectory } from "../src/ingest/cell-reader";
 import type { Bbox, WfsFetch } from "../src/ingest/wfs";
 import { downloadWfsCell, partGroups } from "../src/ingest/wfs";
-import { fetchLayer, limiter, retried, TILE_TRIES, WFS_LIMITS } from "../src/ingest/wfs-fetch";
+import {
+  fetchLayer,
+  limiter,
+  retried,
+  TILE_TRIES,
+  WFS_LIMITS,
+  WfsRefusal
+} from "../src/ingest/wfs-fetch";
 import type { Survey } from "../src/survey";
 import { cellDegrees, markPolygon, SURVEY_MAX_CELLS, surveyGrid, surveyTiles } from "../src/survey";
 import { readSurvey, runSurvey, writeSurvey } from "../src/survey-worker";
@@ -388,5 +395,135 @@ describe("small pages", () => {
     });
     expect(got).toHaveLength(23);
     expect(counts).toEqual([WFS_LIMITS.minPageCount]);
+  });
+});
+
+describe("refusals and repeats", () => {
+  test("a refusal no try again changes is not tried again, nor a try after an abort", async () => {
+    let n = 0;
+    await expect(
+      retried(() => {
+        n++;
+        return Promise.reject(new WfsRefusal("more than 50000 features"));
+      })
+    ).rejects.toThrow("more than 50000");
+    expect(n).toBe(1);
+    // Aborted during the pause before the second try: no second try.
+    const stop = new AbortController();
+    let tries = 0;
+    const was = limits.retryPauseMs;
+    limits.retryPauseMs = 50;
+    try {
+      const r = retried(() => {
+        tries++;
+        setTimeout(() => stop.abort(), 10);
+        return Promise.reject(new Error("stalled"));
+      }, stop.signal);
+      await expect(r).rejects.toThrow("stalled");
+      expect(tries).toBe(1);
+    } finally {
+      limits.retryPauseMs = was;
+    }
+  });
+
+  test("a server that ignores startIndex is refused, not read as complete", async () => {
+    const page = Array.from({ length: 250 }, (_, i) => ({
+      ...depthArea([22, 60, 22.01, 60.01], 4),
+      id: `a${i}`
+    }));
+    const fetch: WfsFetch = () =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () =>
+          Promise.resolve(
+            JSON.stringify({ type: "FeatureCollection", numberMatched: 600, features: page })
+          )
+      });
+    await expect(
+      runSurvey(
+        { url: "https://wfs.test/wfs", region: [22.0, 60.0, 22.1, 60.05], cellMetres: 200 },
+        fetch
+      )
+    ).rejects.toThrow("the same feature on more than one page");
+  });
+
+  test("a malformed depth area fails the survey, naming it", async () => {
+    const asked: string[] = [];
+    const bad = {
+      type: "Feature",
+      geometry: {
+        type: "Polygon",
+        coordinates: [
+          [
+            [22, 60],
+            [Number.POSITIVE_INFINITY, 60],
+            [22, 60.01],
+            [22, 60]
+          ]
+        ]
+      },
+      properties: { DRVAL1: 2, DRVAL2: 6, IDENTIFIER: "FI BAD" }
+    };
+    const fetch = fakeWfs({ "rajoitettu:DepthArea_A": [bad] }, asked);
+    await expect(
+      runSurvey(
+        { url: "https://wfs.test/wfs", region: [22.0, 60.0, 22.1, 60.05], cellMetres: 200 },
+        fetch
+      )
+    ).rejects.toThrow("depth area FI BAD: malformed Polygon");
+  });
+
+  test("a corridor's single-box group keeps a sounding on its edge once, and skips a malformed one", async () => {
+    const asked: string[] = [];
+    const fetch = fakeWfs(
+      {
+        "rajoitettu:DepthArea_A": [],
+        "rajoitettu:DredgedArea_A": [],
+        "rajoitettu:Sounding_P": [
+          // On the edge the two boxes share; and one with no position.
+          {
+            type: "Feature",
+            geometry: { type: "Point", coordinates: [22.1, 60.005] },
+            properties: { DEPTH: 4, IDENTIFIER: "EDGE" }
+          },
+          {
+            type: "Feature",
+            geometry: { type: "Point", coordinates: null },
+            properties: { DEPTH: 4, IDENTIFIER: "NONE" }
+          }
+        ]
+      },
+      asked
+    );
+    // Two boxes far enough apart to be groups of their own.
+    const parts: Bbox[] = [
+      [22.0, 60.0, 22.1, 60.01],
+      [22.1, 60.0, 22.2, 60.01]
+    ];
+    const d = path.join(TMP, "edge", "FI1WFS01");
+    await downloadWfsCell({
+      fetch,
+      url: "https://wfs.test/wfs",
+      bbox: [22.0, 60.0, 22.2, 60.01],
+      parts: [parts[0] as Bbox],
+      dir: d,
+      now: new Date("2026-11-19T12:00:00Z")
+    });
+    const one = JSON.parse(fs.readFileSync(path.join(d, "SOUNDG.geojson"), "utf8"));
+    // The first box does not own its east edge: the second does.
+    expect(one.features).toHaveLength(0);
+    await downloadWfsCell({
+      fetch,
+      url: "https://wfs.test/wfs",
+      bbox: [22.0, 60.0, 22.2, 60.01],
+      parts: [parts[1] as Bbox],
+      dir: d,
+      now: new Date("2026-11-19T12:00:00Z")
+    });
+    const two = JSON.parse(fs.readFileSync(path.join(d, "SOUNDG.geojson"), "utf8"));
+    expect(two.features.map((f: { properties: { LNAM: string } }) => f.properties.LNAM)).toEqual([
+      "EDGE"
+    ]);
   });
 });

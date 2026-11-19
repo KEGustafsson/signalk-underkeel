@@ -16,18 +16,31 @@ export type SurveyResult =
 /** A corridor is cut into at most this many boxes. */
 export const MAX_CORRIDOR_PARTS = 400;
 
-/** Why `corridor` is not a corridor within `region`, or undefined when it is. */
-export function corridorError(region: Bbox, corridor: readonly unknown[]): string | undefined {
-  if (corridor.length === 0 || corridor.length > MAX_CORRIDOR_PARTS) {
-    return `corridor must be 1 to ${MAX_CORRIDOR_PARTS} boxes`;
+/**
+ * Why `corridor` is not a corridor within `region`, or undefined when it is: 1 to
+ * MAX_CORRIDOR_PARTS boxes, each within the region, no two overlapping (a box repeated would
+ * have its areas written again for every copy).
+ */
+export function corridorError(region: Bbox, corridor: unknown): string | undefined {
+  if (!Array.isArray(corridor) || corridor.length === 0 || corridor.length > MAX_CORRIDOR_PARTS) {
+    return `corridor must be an array of 1 to ${MAX_CORRIDOR_PARTS} boxes`;
   }
-  for (const p of corridor) {
+  for (const p of corridor as unknown[]) {
     const bad = regionError(p);
     if (bad !== undefined) {
       return `corridor box: ${bad}`;
     }
     if (!holds(region, p as Bbox)) {
       return "every corridor box must lie in the region";
+    }
+  }
+  const boxes = corridor as Bbox[];
+  for (const [i, a] of boxes.entries()) {
+    for (let j = i + 1; j < boxes.length; j++) {
+      const b = boxes[j] as Bbox;
+      if (a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3]) {
+        return "corridor boxes must not overlap";
+      }
     }
   }
   return undefined;
