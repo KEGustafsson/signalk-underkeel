@@ -496,6 +496,15 @@ with at most four more waiting; beyond that a request gets 503 with `Retry-After
 whose client disconnects, or that is running when the plugin stops, is abandoned between two of
 its steps.
 
+### Planning API for signalk-route-planner
+
+While it runs, the plugin also publishes an in-process planning API (version 1) under
+`globalThis[Symbol.for("signalk-underkeel.planning")]`, for
+[signalk-route-planner](https://github.com/KEGustafsson/signalk-route-planner) in the same Signal
+K server. A planner session checks a box or a single leg against this index, water level and
+vessel with the route check's own scoring, inside the same request queue, and the API serves
+`/route-check` itself for the planner's final check. It is removed when the plugin stops.
+
 ## Plotter Extensions
 
 `src/api/manifest.ts` registers the `plotterExtensions` resource: three data overlays (the

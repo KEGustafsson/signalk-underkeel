@@ -38,9 +38,10 @@ export interface RouteCheckInput {
   dynamics: DynamicsOptions;
   /**
    * Water level over the arrival interval [start, end] (epoch ms) at the
-   * positions `at`, a leg's two ends; the worst one is used.
+   * positions `at`, a leg's two ends; the worst one is used. With `area`, `at`
+   * is a convex ring and the level holds for every point inside it too.
    */
-  waterLevel(start: number, end: number, at: readonly LonLat[]): WaterLevel;
+  waterLevel(start: number, end: number, at: readonly LonLat[], area?: boolean): WaterLevel;
   /** Significant wave height to allow for, metres. */
   waveHeight?: number;
   /** Accept threshold: a leg is ok below this P(UKC < 0). */
@@ -109,6 +110,11 @@ function bearing(a: LonLat, b: LonLat): number {
  * pieces up to 4r long).
  */
 const RING_SLACK = 1 / 256;
+/**
+ * How far a corridor ring reaches from the leg's end, in half-widths: its corners lie a
+ * slackened half-width past the end and to the side, so √2 of it away.
+ */
+export const RING_REACH = Math.SQRT2 * (1 + RING_SLACK);
 
 /**
  * Rectangle around segment a→b, `r` metres to each side and past each
@@ -328,8 +334,7 @@ function* legSteps(
   const speed = input.speeds[i] as number;
   const end = start + (length / speed) * 1000;
   const wl = input.waterLevel(start, end, [from, to]);
-  const terms = vesselTerms(input.vessel, { speed, waveHeight: input.waveHeight }, input.dynamics);
-  const s = { threshold: thresholdDepth(terms, wl), sigmaExtra: sigmaExtra(terms, wl) };
+  const { terms, s } = scoringFor(input, speed, wl);
   const { result, ring, work } = yield* corridorSteps(
     index,
     from,
@@ -346,16 +351,7 @@ function* legSteps(
   }
   const tile = result.riskTile;
   const why = tile ? explainTile(index, tile, ring, terms, wl) : undefined;
-  let status: LegStatus = land
-    ? "fail"
-    : statusOf(result.maxRisk, charted, result.flags, input.probability);
-  // A fallback water level is a guess, so a leg it clears is not verified (invariant 3).
-  if (wl.degraded) {
-    flags.push("WATER_LEVEL_FALLBACK");
-    if (status === "ok") {
-      status = "unverified";
-    }
-  }
+  const status = verdictStatus(result.maxRisk, charted, result.flags, land, wl, flags, input);
   const leg: LegResult = {
     index: i,
     status,
@@ -372,6 +368,87 @@ function* legSteps(
     explanation: why?.explanation
   };
   return { leg, cellRefs: result.cellRefs, work };
+}
+
+function scoringFor(
+  input: RouteCheckInput,
+  speed: number,
+  wl: WaterLevel
+): { terms: VesselTerms; s: Scoring } {
+  const terms = vesselTerms(input.vessel, { speed, waveHeight: input.waveHeight }, input.dynamics);
+  return { terms, s: { threshold: thresholdDepth(terms, wl), sigmaExtra: sigmaExtra(terms, wl) } };
+}
+
+/** A corridor's status; pushes WATER_LEVEL_FALLBACK to `flags` on a fallback level. */
+function verdictStatus(
+  risk: number,
+  charted: number | null,
+  bits: number,
+  land: boolean,
+  wl: WaterLevel,
+  flags: string[],
+  input: RouteCheckInput
+): LegStatus {
+  const status = land ? "fail" : statusOf(risk, charted, bits, input.probability);
+  // A fallback water level is a guess, so a leg it clears is not verified (invariant 3).
+  if (wl.degraded) {
+    flags.push("WATER_LEVEL_FALLBACK");
+    return status === "ok" ? "unverified" : status;
+  }
+  return status;
+}
+
+/** A footprint scored as a leg's corridor is (planning API, `src/planning-api.ts`). */
+export interface FootprintVerdict {
+  status: LegStatus;
+  risk: number;
+  flags: string[];
+  worst?: LonLat;
+  /** Work its query did (work.ts). */
+  work: number;
+}
+
+/**
+ * The ring `ring` scored as a leg's corridor at speed `speed`, at the water
+ * level `input.waterLevel(start, end, at, true)`: every point in it is held to the
+ * same threshold and status rules as a corridor of `checkLeg`.
+ *
+ * `at` holds the ring's vertices, and the level is taken over the ring as an area, so it
+ * bounds the level of every point inside it: a level depends on position only through its
+ * provider's reach, a disk (`LevelReach`, `model/water-level.ts`), and datums are taken at
+ * their lowest over every cell. A vertex beyond the reach gives the ring the fallback; a
+ * ring the reach can meet, even with every vertex beyond it, takes the level within the
+ * reach as well; so the ring never gets more water than a leg inside it.
+ */
+export function checkFootprint(
+  index: ChartIndex,
+  input: RouteCheckInput,
+  ring: LonLat[],
+  speed: number,
+  window: { start: number; end: number; at: readonly LonLat[] }
+): FootprintVerdict {
+  const wl = input.waterLevel(window.start, window.end, window.at, true);
+  const { s } = scoringFor(input, speed, wl);
+  const result = minDepthOver(index.pyramid, footprintGeom(ring), {
+    chartPosition: true,
+    clearAbove: s.threshold + CLEARANCE_RESOLUTION,
+    risk: { threshold: s.threshold, sigmaExtra: s.sigmaExtra }
+  });
+  const covered = result.coveredDMin;
+  const land = covered === -Infinity;
+  const charted = covered === Infinity || land ? null : covered;
+  const flags = flagNames(result.flags);
+  if (land) {
+    flags.push("LAND");
+  }
+  const status = verdictStatus(result.maxRisk, charted, result.flags, land, wl, flags, input);
+  return {
+    status,
+    risk: Math.round(result.maxRisk * 10000) / 10000,
+    flags,
+    worst: result.riskTile?.center,
+    work: queryWork(result)
+  };
 }
 
 export function checkRoute(

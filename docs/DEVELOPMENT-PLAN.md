@@ -110,7 +110,8 @@ Planning features follow from the same model.
   position uncertainty, not just the leg's line, and evaluates it at that leg's estimated
   arrival time against the water-level forecast.
 - **Minimal-repair suggestion.** For a failing leg, the system suggests the fewest inserted
-  waypoints that clear it. This is not full auto-routing.
+  waypoints that clear it. Full auto-routing is signalk-route-planner's, over the planning API
+  (§4.11, Planning API v1).
 - **Departure window.** The system reports when, over the next 48 h, the whole route clears
   with a chosen probability.
 
@@ -1423,6 +1424,22 @@ corridor over 3000 shoals costs 1–3.5 ms per km². `POST /query` is refused wh
 box widened by the buffer exceeds 25 km², or when its vertices times that area exceed 150 km²:
 every tile is tested against every vertex, and a 499-vertex ring over 25 km² took 0.47 s on a
 laptop over the Nauvo cells, against at most 16 ms within both limits.
+
+**Planning API v1.** Decision: full start-to-destination routing lives in a separate plugin,
+signalk-route-planner, which builds no chart index of its own (one index per server keeps the Pi
+memory budget). While this plugin runs it registers an object under
+`globalThis[Symbol.for("signalk-underkeel.planning")]` (`src/planning-api.ts`) and removes it on
+stop. `session(params, signal, job)` runs the planner's job in the route request queue with a
+session whose `segment(a, b, window?)` is `checkLeg` at the window's lowest water level and whose
+`box(sw, ne, window?)` scores the box grown by the corridor half-width with the same threshold,
+σ, status rules and water-level fallback as a corridor (`checkFootprint`). A leg inside a box is
+then never riskier than the box. A box over 25 km² with its buffer, or a leg whose corridor is,
+throws RangeError: their queries run without a pause and cost about their area. A session's
+speed, cross-track limit, probability and draft are held to the `/route-check` bounds before it
+starts (400), so a non-finite probability can never pass every leg. The session counts the work
+its queries do. `routeCheck(body, signal)`
+is the `/route-check` service itself, which the planner runs on its final route, so every status
+it offers comes from this check (its plan §3, invariant 1).
 
 ### 4.12 Acknowledged passages
 

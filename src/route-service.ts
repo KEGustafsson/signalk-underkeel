@@ -27,8 +27,11 @@ export interface RouteServiceDeps {
   indexReason: string | undefined;
   config: PluginConfig;
   vessel(): VesselModel | undefined;
-  /** Water level over an arrival interval (epoch ms) at the positions `at`; the lowest applies. */
-  waterLevel(start: number, end: number, at: readonly LonLat[]): WaterLevel;
+  /**
+   * Water level over an arrival interval (epoch ms) at the positions `at`; the lowest
+   * applies. With `area`, `at` is a convex ring and the level holds inside it too.
+   */
+  waterLevel(start: number, end: number, at: readonly LonLat[], area?: boolean): WaterLevel;
   /** Current significant wave height, if known, metres. */
   waveHeight(): number | undefined;
   getRoute(id: string): Promise<unknown>;

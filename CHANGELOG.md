@@ -2,6 +2,15 @@
 
 All notable changes to signalk-underkeel are documented here.
 
+## [0.7.0]
+
+### Added
+
+- A planning API for signalk-route-planner, published in-process while the plugin runs. A
+  planner checks boxes and legs against this plugin's chart index, water level and vessel with
+  the route check's scoring, in the same request queue, and proves its final route with
+  `/route-check` itself. No second chart index is built.
+
 ## [0.6.2] - 2026-11-13
 
 ### Fixed

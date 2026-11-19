@@ -49,6 +49,27 @@ function livechartReply(s: PluginState, body: (l: LivechartService) => unknown):
     : { status: 404, body: { errors: ["living chart is off"] } };
 }
 
+/** The route services' view of the plugin's current state: REST and the planning API. */
+export function routeDepsFor(
+  app: Pick<ServerAPI, "resourcesApi">,
+  clock: Clock,
+  s: PluginState
+): RouteServiceDeps {
+  return {
+    index: s.load?.index,
+    indexReason: s.load?.reason ?? "plugin not started",
+    config: s.config ?? parseConfig({}),
+    vessel: () => s.monitor?.vessel(),
+    waterLevel: (start, end, at, area) =>
+      s.monitor?.waterLevelOver(start, end, at, area) ?? CHART_DATUM,
+    waveHeight: () => s.monitor?.nav.waveHeight?.value,
+    getRoute: (id) => app.resourcesApi.getResource("routes", id),
+    now: () => clock.now(),
+    queue: s.requests,
+    chartBox: () => s.wfs?.view().bbox
+  };
+}
+
 export function apiFor(
   app: Pick<ServerAPI, "resourcesApi" | "error" | "getSelfPath">,
   clock: Clock,
@@ -66,18 +87,7 @@ export function apiFor(
     tileChanges,
     tileCache
   });
-  const routeDeps = (): RouteServiceDeps => ({
-    index: s.load?.index,
-    indexReason: s.load?.reason ?? "plugin not started",
-    config: s.config ?? parseConfig({}),
-    vessel: () => s.monitor?.vessel(),
-    waterLevel: (start, end, at) => s.monitor?.waterLevelOver(start, end, at) ?? CHART_DATUM,
-    waveHeight: () => s.monitor?.nav.waveHeight?.value,
-    getRoute: (id) => app.resourcesApi.getResource("routes", id),
-    now: () => clock.now(),
-    queue: s.requests,
-    chartBox: () => s.wfs?.view().bbox
-  });
+  const routeDeps = (): RouteServiceDeps => routeDepsFor(app, clock, s);
   const withAcks = (fn: (deps: AckServiceDeps) => ApiReply): ApiReply => {
     const m = s.monitor;
     if (!s.acks || !m) {
