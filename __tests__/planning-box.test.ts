@@ -522,11 +522,24 @@ describe("review fixes", () => {
     await flush();
     // Started again, it still waits for the reader before replacing the files.
     expect(fake.jobs).toHaveLength(1);
+    expect(b.stillRead()).toBe(1);
     got.held.end();
     await flush();
+    expect(b.stillRead()).toBe(0);
     expect(fake.jobs).toHaveLength(2);
     fake.release();
     expect((await other).ok).toBe(true);
+  });
+
+  test("a released index no job reads is not kept", async () => {
+    const fake: Fake = { jobs: [], release: () => undefined };
+    const { b } = boxes({ fake });
+    const first = b.prepare(REGION, NEVER);
+    await flush();
+    fake.release();
+    expect((await first).ok).toBe(true);
+    b.release();
+    expect(b.stillRead()).toBe(0);
   });
 
   test("a queued planning session takes the living chart as it is at its turn, and the box's own datums", async () => {

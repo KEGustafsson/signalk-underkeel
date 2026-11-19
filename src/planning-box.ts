@@ -287,17 +287,29 @@ export class PlanningBoxes {
 
   /** Releases the held index: its handles answer that it is gone. */
   release(): void {
-    if (this.held) {
-      this.held.live = false;
-      this.draining.push(this.held);
-      this.held = undefined;
+    const h = this.held;
+    if (!h) {
+      return;
     }
+    h.live = false;
+    this.held = undefined;
+    // Kept only while a job still reads it, so a released index is not held in memory.
+    if (!h.isIdle()) {
+      this.draining.push(h);
+      void h.idle().then(() => {
+        this.draining = this.draining.filter((x) => x !== h);
+      });
+    }
+  }
+
+  /** Released indexes a job still reads; a new build waits for them. */
+  stillRead(): number {
+    return this.draining.length;
   }
 
   /** Settles once no job reads a released index; the barrier stays for the next build. */
   private async drained(): Promise<void> {
     await Promise.all(this.draining.map((h) => h.idle()));
-    this.draining = this.draining.filter((h) => !h.isIdle());
   }
 
   private releaseIdle(): void {
