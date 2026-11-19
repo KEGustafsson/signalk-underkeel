@@ -14,7 +14,7 @@ All notable changes to signalk-underkeel are documented here.
 - The Traficom WFS is read through signalk-charts-provider-simple's local WFS proxy when it runs
   one (2.22 or later): it keeps each area downloaded and serves it again, so the chart box, a
   survey or a planning box over water downloaded before reads from its store. **Via Charts
-  Provider's WFS proxy** (on by default) turns it off.
+  Provider's WFS proxy** is on by default; turned off, the WFS is read directly.
 
 ### Fixed
 

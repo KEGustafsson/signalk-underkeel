@@ -331,7 +331,9 @@ example, `Monitoring: unknown — position stale`. Each value is sent when it ch
   `clear` on the overlay. ENC cells of band 2 and up take precedence wherever they cover the water;
   the WFS, read as band 1, fills only what they leave. With signalk-charts-provider-simple 2.22 or
   later the WFS is read through its local WFS proxy (**Via Charts Provider's WFS proxy**, on by
-  default), which keeps each area downloaded and serves it again.
+  default), which keeps each area downloaded and serves it again. The WFS is read directly,
+  bypassing that store, when the setting is off, Charts Provider runs no proxy or does not proxy
+  that WFS, or asking it for the proxy fails.
 
 ## Guarantees
 
