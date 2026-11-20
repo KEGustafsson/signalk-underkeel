@@ -1487,10 +1487,11 @@ CC BY 4.0) as the WFS cell's `NAVLINE` layer, two-way, each with the draft it is
 (`mitoitussyvays`), read through Charts Provider's proxy when it runs one. No verdict reads them;
 a session's `objects` lists them. A failed download of the lines writes the cell without them,
 since they are a preference, never a depth, and a line the WFS sends broken is left out. The
-boat's own passages are its logged soundings joined into tracks where they follow within 2
-minutes and 200 m (`src/livechart/tracks.ts`), each with the highest water level it was sailed at
-(depth below the surface less below datum); below 1 kn the log, thinned to a sounding a cell a
-minute, still keeps one taken at more water than the cell logged that minute. A session lists a
+boat's own passages are its logged soundings joined into tracks, a gap in time or a jump in
+position starting a new one (`src/livechart/tracks.ts`), each with the highest water level it was
+sailed at (depth below the surface less below datum); where the log is thinned at low speed
+(`src/livechart/csb-thin.ts`), it still keeps a sounding taken at more water than the cell logged
+since, so a track's highest level is kept. A track across ±180° is listed cut there. A session lists a
 track as a `TRACK` object only where the window's lowest water is known and no lower than that
 at every point the track keeps, so the planner is offered it only at water it has been sailed in.
 No verdict reads a track: the route check still proves every leg (the planner's invariant 6).

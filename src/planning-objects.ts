@@ -1,5 +1,6 @@
+import { splitLine } from "./foundation/antimeridian";
 import type { LonLat } from "./foundation/geo";
-import { fromMercator, toMercator } from "./foundation/geo";
+import { fromMercator, toMercator, wrapLon } from "./foundation/geo";
 import type { OwnTrack } from "./livechart/tracks";
 import type { WaterLevel } from "./model/uncertainty";
 import type { ChartIndex } from "./spatial/chart-index";
@@ -138,6 +139,7 @@ export function trackObjects(
   const meets = (c: readonly LonLat[]): boolean =>
     c.some((p, i) => i > 0 && segmentMeets(c[i - 1] as LonLat, p, sw, ne));
   return tracks
+    .flatMap((t) => localParts(t.coordinates).map((c) => ({ coordinates: c, level: t.level })))
     .filter((t) => meets(t.coordinates))
     .filter((t) => {
       const h = low(t.coordinates);
@@ -145,11 +147,23 @@ export function trackObjects(
     })
     .map((t) => ({
       class: "TRACK",
-      geometry: {
-        type: "LineString" as const,
-        coordinates: t.coordinates.map((p): LonLat => [p[0], p[1]])
-      }
+      geometry: { type: "LineString" as const, coordinates: t.coordinates }
     }));
+}
+
+/**
+ * A track's points as lines within [-180°, 180°]: a passage across the antimeridian is cut
+ * there, so no leg of it spans the world and meets a box it never came near.
+ */
+function localParts(points: readonly LonLat[]): LonLat[][] {
+  const line: LonLat[] = [];
+  for (const [lon, lat] of points) {
+    const before = line[line.length - 1];
+    line.push([before ? before[0] + wrapLon(lon - before[0]) : lon, lat]);
+  }
+  return line.some((p) => p[0] < -180 || p[0] > 180)
+    ? splitLine(line)
+    : [points.map((p): LonLat => [p[0], p[1]])];
 }
 
 /**

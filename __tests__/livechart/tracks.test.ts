@@ -58,6 +58,21 @@ describe("own tracks", () => {
     expect(trackObjects([track as never], [21.99, 59.99], [22.01, 60.01], low)).toEqual([]);
   });
 
+  test("a passage across ±180° is cut there: it meets no box near Greenwich", () => {
+    const track = {
+      coordinates: [
+        [179.999, 60],
+        [-179.999, 60]
+      ] as LonLat[],
+      level: 0.2
+    };
+    expect(trackObjects([track], [-1, 59], [1, 61], () => 0.5)).toEqual([]);
+    const near = trackObjects([track], [179.99, 59.99], [180, 60.01], () => 0.5);
+    expect(near).toHaveLength(1);
+    const lons = (near[0]?.geometry.coordinates as LonLat[]).map((p) => p[0]);
+    expect(Math.max(...lons) - Math.min(...lons)).toBeLessThan(0.01);
+  });
+
   test("a track is listed where its leg crosses the box with no point inside it", () => {
     const track = {
       coordinates: [
