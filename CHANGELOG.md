@@ -6,6 +6,8 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Added
 
+- The navigation-safety service schema accepts `routePlan` in `provides`; a provider that only
+  plans routes, as signalk-route-planner does, may leave out `statePath` and `notificationPath`.
 - What a planner keeps to: leading lines, recommended tracks and anchorage areas from the charts,
   the Finnish Transport Infrastructure Agency's fairway navigation lines with the Traficom WFS
   (CC BY 4.0), and the boat's own passages from its soundings, each only at water no lower than it
