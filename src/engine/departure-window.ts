@@ -65,8 +65,14 @@ class LegMemo {
 
   constructor(private readonly acrossLevels: boolean) {}
 
-  private results(i: number, wl: WaterLevel): LegResults {
-    const key = `${i}|${wl.sigma}|${wl.degraded ?? ""}`;
+  /**
+   * The results of leg `i` at levels of σ and fallback like `wl`'s, and at the high water `hw`
+   * its clearances were held to: across depth levels a leg's status moves one way only while
+   * what passes overhead stands as high above the water.
+   */
+  private results(i: number, wl: WaterLevel, hw?: WaterLevel): LegResults {
+    const high = hw ? `${hw.h}|${hw.sigma}|${hw.degraded ?? ""}` : "";
+    const key = `${i}|${wl.sigma}|${wl.degraded ?? ""}|${high}`;
     let r = this.legs.get(key);
     if (!r) {
       r = { at: new Map(), okFrom: Infinity, failTo: -Infinity };
@@ -75,8 +81,8 @@ class LegMemo {
     return r;
   }
 
-  get(i: number, wl: WaterLevel): LegStatus | undefined {
-    const r = this.results(i, wl);
+  get(i: number, wl: WaterLevel, hw?: WaterLevel): LegStatus | undefined {
+    const r = this.results(i, wl, hw);
     const exact = r.at.get(wl.h);
     if (exact !== undefined || !this.acrossLevels) {
       return exact;
@@ -84,8 +90,8 @@ class LegMemo {
     return wl.h >= r.okFrom ? "ok" : wl.h <= r.failTo ? "fail" : undefined;
   }
 
-  set(i: number, wl: WaterLevel, status: LegStatus): void {
-    const r = this.results(i, wl);
+  set(i: number, wl: WaterLevel, hw: WaterLevel | undefined, status: LegStatus): void {
+    const r = this.results(i, wl, hw);
     r.at.set(wl.h, status);
     if (status === "ok") {
       r.okFrom = Math.min(r.okFrom, wl.h);
@@ -117,12 +123,20 @@ export async function departureWindow(
       const b = input.coordinates[i + 1] as LonLat;
       const end = start + (haversine(a, b) / (input.speeds[i] as number)) * 1000;
       const wl = rounded(input.waterLevel(start, end + stepMs, [a, b]));
-      let status = memo.get(i, wl);
+      // Only a boat with an air height holds a leg to the high water.
+      const high = input.vessel.airHeight === undefined ? undefined : input.highWater;
+      const hw = high && rounded(high(start, end + stepMs, [a, b]));
+      let status = memo.get(i, wl, hw);
       if (status === undefined) {
         checks += 1;
-        const fixed = { ...input, departure: t, waterLevel: () => wl };
+        const fixed = {
+          ...input,
+          departure: t,
+          waterLevel: () => wl,
+          ...(hw && { highWater: () => hw })
+        };
         status = checkLeg(index, fixed, i, start).leg.status;
-        memo.set(i, wl, status);
+        memo.set(i, wl, hw, status);
         await pause();
       }
       if (RANK[status] > RANK[worst]) {

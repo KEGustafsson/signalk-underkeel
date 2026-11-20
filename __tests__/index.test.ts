@@ -1082,6 +1082,7 @@ describe("index loader", () => {
         "cells.json",
         "hazards.bin",
         "pyramid.bin",
+        "rules.json",
         "source.json"
       ]);
       expect((await loadOrBuildIndex(cfg, dir)).built).toBe(false);

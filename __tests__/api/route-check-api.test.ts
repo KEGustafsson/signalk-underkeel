@@ -34,7 +34,7 @@ describe("route-check request validation", () => {
         departure: "2026-10-18T07:00:00Z",
         speed: { default: 3.1 },
         xteLimit: 25,
-        vessel: { draft: 1.9 }
+        vessel: { draft: 1.9, airHeight: 14.5 }
       },
       Date.parse("2026-10-18T06:00:00Z")
     );
@@ -45,7 +45,8 @@ describe("route-check request validation", () => {
         departure: Date.parse("2026-10-18T07:00:00Z"),
         speed: 3.1,
         xteLimit: 25,
-        draft: 1.9
+        draft: 1.9,
+        airHeight: 14.5
       }
     });
   });
@@ -82,6 +83,8 @@ describe("route-check request validation", () => {
     [{ route: LINE, departure: "tomorrow" }, /ISO 8601/],
     [{ route: LINE, xteLimit: -1 }, /xteLimit/],
     [{ route: LINE, vessel: { draft: 100 } }, /draft/],
+    [{ route: LINE, vessel: { airHeight: 0 } }, /airHeight/],
+    [{ route: LINE, vessel: { airHeight: 101 } }, /airHeight/],
     [{ route: LINE, vessel: { draft: 0 } }, /vessel\.draft must be 0\.01\.\.30 m/],
     [{ route: LINE, probability: 0.9 }, /probability/]
   ])("rejects %j", (body, message) => {

@@ -14,6 +14,7 @@ import { haversine } from "../../src/foundation/geo";
 import type { VesselModel } from "../../src/model/vessel";
 import type { ChartIndex } from "../../src/spatial/chart-index";
 import { HazardIndex } from "../../src/spatial/hazards";
+import { RuleIndex } from "../../src/spatial/rules";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
 import { CHART_DATUM, ctx } from "../helpers/engine";
 import { BANK, FAIRWAY_LAT, fixtureIndex, M_PER_DEG_LON, ROCK } from "../helpers/fixture-index";
@@ -136,7 +137,8 @@ describe("probabilistic look-ahead on the synthetic chart", () => {
     const edge: ChartIndex = {
       catalogue: { version: 1, cells: [] },
       pyramid: store,
-      hazards: new HazardIndex([])
+      hazards: new HazardIndex([]),
+      rules: new RuleIndex([])
     };
     const r = evaluateLookahead(nav(22.0193, 60.005, EAST, 0.1), ctx(SHALLOW_KEEL), edge, NOW);
     expect(r.state).toBe("alarm");
@@ -217,7 +219,8 @@ describe("probabilistic look-ahead on the synthetic chart", () => {
         minZoom: 12,
         leafZoom: 18
       }),
-      hazards: new HazardIndex([decoy, rock])
+      hazards: new HazardIndex([decoy, rock]),
+      rules: new RuleIndex([])
     };
     const r = evaluateLookahead(nav(at[0], at[1], EAST, 0), ctx(DEEP_KEEL), named, NOW);
     expect(r.worst?.explanation.charted).toBe(3);
@@ -268,7 +271,8 @@ describe("probabilistic look-ahead on the synthetic chart", () => {
         [...basin([22.01, 60.005, 22.03, 60.015], 10), point(22.02, 60.01, 1)],
         { minZoom: 12, leafZoom: 21 }
       ),
-      hazards: new HazardIndex([])
+      hazards: new HazardIndex([]),
+      rules: new RuleIndex([])
     };
     // The fix reads 8 s old at 8 m/s, yet with the server's clock 8 s ahead of the GNSS clock
     // the boat is still at it, its bow 9 m short of the rock: a footprint only 64 m on, its
@@ -406,7 +410,8 @@ describe("probabilistic look-ahead on the synthetic chart", () => {
         minZoom: 12,
         leafZoom: 18
       }),
-      hazards: new HazardIndex([])
+      hazards: new HazardIndex([]),
+      rules: new RuleIndex([])
     };
     const opts = { ...DEFAULT_LOOKAHEAD, distance: 5 * 1852 };
     // 70 m short of the rock at 0.3 m/s: alarm within 60 s. A 5 NM horizon in 400 equal steps
@@ -443,7 +448,8 @@ describe("probabilistic look-ahead on the synthetic chart", () => {
         minZoom: 12,
         leafZoom: 18
       }),
-      hazards: new HazardIndex([])
+      hazards: new HazardIndex([]),
+      rules: new RuleIndex([])
     };
     for (const d of [5, 15, 30]) {
       const r = evaluateLookahead(
@@ -466,7 +472,8 @@ describe("probabilistic look-ahead on the synthetic chart", () => {
         minZoom: 12,
         leafZoom: 18
       }),
-      hazards: new HazardIndex([])
+      hazards: new HazardIndex([]),
+      rules: new RuleIndex([])
     };
     // The rock is `ahead` m along the course and `off` m to port: a straight track passes it
     // clear, the COG + σ member does not. Scored on its track alone, holding course came out as
@@ -507,7 +514,8 @@ describe("probabilistic look-ahead on the synthetic chart", () => {
         minZoom: 12,
         leafZoom: 18
       }),
-      hazards: new HazardIndex([])
+      hazards: new HazardIndex([]),
+      rules: new RuleIndex([])
     };
     const start = nav(origin[0], origin[1], EAST, 3);
     const inputs = { ...ctx(DEEP_KEEL), escape: true };
@@ -528,7 +536,8 @@ describe("probabilistic look-ahead on the synthetic chart", () => {
     const edge: ChartIndex = {
       catalogue: { version: 1, cells: [] },
       pyramid: buildPyramid(basin([22.0, 60.0, 22.02, 60.01], 10), { minZoom: 12, leafZoom: 18 }),
-      hazards: new HazardIndex([])
+      hazards: new HazardIndex([]),
+      rules: new RuleIndex([])
     };
     const r = evaluateLookahead(
       nav(22.0165, 60.009, EAST, 3),
@@ -561,7 +570,8 @@ describe("chart position uncertainty", () => {
       ],
       { minZoom: 12, leafZoom: 20 }
     ),
-    hazards: new HazardIndex([])
+    hazards: new HazardIndex([]),
+    rules: new RuleIndex([])
   });
   test("a drying area 60 m off under CATZOC C alarms; the boat itself is over 15 m", () => {
     const r = evaluateLookahead(nav(22.03, 60.015, EAST, 0), ctx(SHALLOW_KEEL), chart(4), NOW);
@@ -589,7 +599,8 @@ describe("heel from roll", () => {
   const bank: ChartIndex = {
     catalogue: { version: 1, cells: [] },
     pyramid: buildPyramid(basin([22.0, 60.0, 22.04, 60.02], 2.5), { minZoom: 12, leafZoom: 18 }),
-    hazards: new HazardIndex([])
+    hazards: new HazardIndex([]),
+    rules: new RuleIndex([])
   };
   const fin = { heel: { kind: "fin" as const } };
   const rolled = (roll: number, at = NOW): NavState => ({

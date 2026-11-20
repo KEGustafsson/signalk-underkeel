@@ -196,7 +196,8 @@ export class Monitor {
       signalk: {
         draft: asNumber(draft?.maximum),
         length: asNumber(length?.overall),
-        beam: asNumber(selfValue(this.app, "design.beam"))
+        beam: asNumber(selfValue(this.app, "design.beam")),
+        airHeight: asNumber(selfValue(this.app, "design.airHeight"))
       }
     });
     this.vesselNotes = resolved.notes;

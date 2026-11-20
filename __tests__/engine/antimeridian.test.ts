@@ -10,6 +10,7 @@ import { DEFAULT_LOOKAHEAD, evaluateLookahead } from "../../src/engine/lookahead
 import { reduce } from "../../src/livechart/soundings";
 import type { ChartIndex } from "../../src/spatial/chart-index";
 import { HazardIndex } from "../../src/spatial/hazards";
+import { RuleIndex } from "../../src/spatial/rules";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
 import { CHART_DATUM, ctx } from "../helpers/engine";
 import type { Box } from "../helpers/synthetic";
@@ -32,7 +33,8 @@ function chart(extra: DepthFeature[] = []): ChartIndex {
       minZoom: 10,
       leafZoom: 18
     }),
-    hazards: new HazardIndex([])
+    hazards: new HazardIndex([]),
+    rules: new RuleIndex([])
   };
 }
 

@@ -125,13 +125,19 @@ describe("vessel model", () => {
       signalk: { draft: 1.8, length: 11, beam: 3.6 }
     });
     expect(r.vessel).toEqual({ draft: 2.1, length: 11, beam: 3.6 });
-    expect(r.notes).toEqual([]);
+    expect(r.notes).toEqual(["air height unknown: bridges and overhead cables are not checked"]);
+    const tall = resolveVessel({
+      config: { draft: 2.1, airHeight: 17 },
+      signalk: { draft: 1.8, length: 11, beam: 3.6, airHeight: 15 }
+    });
+    expect(tall.vessel).toEqual({ draft: 2.1, length: 11, beam: 3.6, airHeight: 17 });
+    expect(tall.notes).toEqual([]);
   });
 
   test("missing hull size falls back with a note; missing draft gives no vessel", () => {
     const r = resolveVessel({ config: {}, signalk: { draft: 1.5 } });
     expect(r.vessel).toEqual({ draft: 1.5, ...FALLBACK_HULL });
-    expect(r.notes).toHaveLength(2);
+    expect(r.notes).toHaveLength(3);
     const none = resolveVessel({ config: { draft: 0 }, signalk: { draft: NaN } });
     expect(none.vessel).toBeUndefined();
     expect(none.notes[0]).toBe("vessel draft not configured");

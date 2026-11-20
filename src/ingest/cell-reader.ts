@@ -3,6 +3,8 @@ import path from "path";
 import type { CellInfo } from "./cells";
 import { compilationSigma, usageBandOf } from "./cells";
 import type { ChartFeature } from "./features";
+import type { RuleFeature } from "./rule-features";
+import { parseRuleLayer, RULE_LAYERS } from "./rule-features";
 import type { GeoJsonFeatureCollection } from "./s57-geojson";
 import { parseLayer, POSITION_LAYER, S57_LAYERS } from "./s57-geojson";
 import { WFS_SOURCE } from "./wfs";
@@ -19,6 +21,8 @@ import { WFS_SOURCE } from "./wfs";
 export interface ReadCell {
   info: CellInfo;
   features: ChartFeature[];
+  /** Overhead clearances and hard-rule areas (`rule-features.ts`); none for a WFS cell. */
+  rules: RuleFeature[];
 }
 
 function readCollection(file: string): GeoJsonFeatureCollection | undefined {
@@ -153,5 +157,9 @@ export function readCellLayers(
   if (!features.some((f) => f.role === "coverage")) {
     throw new Error(`cell ${info.name}: no M_COVR coverage in ${where}`);
   }
-  return { info, features };
+  const rules = RULE_LAYERS.flatMap((layer) => {
+    const collection = layers(layer);
+    return collection ? parseRuleLayer(layer, collection, cellRef) : [];
+  });
+  return { info, features, rules };
 }

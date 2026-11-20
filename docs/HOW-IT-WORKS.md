@@ -738,6 +738,14 @@ from east to west at 2.5 m/s:
 Each leg also returns its length, ETA at both ends, minimum UKC, σ, flags, the deciding position
 and hazard, the explanation, and the response lists the cell editions used.
 
+Depth is not all a leg is held to. With the boat's air height set (**Air height**, or Signal K
+`design.airHeight`), a bridge or an overhead cable the corridor passes under must clear it by
+0.5 m at the highest water while the boat is there: a 17 m mast passes under an 18 m bridge at
+mean water and fails it (`AIR_DRAFT`) when the sea stands 1 m above. A clearance the chart does
+not give, or one within 2 m of the mast whose datum the water level cannot be related to, leaves
+the leg `unverified`. A restricted area with entry prohibited fails the leg, and so does a traffic
+separation lane sailed against its direction or crossed at a shallow angle.
+
 ### Suggesting a way round
 
 `POST /route-repair` takes the same body as the route check. For every leg that is `fail` or

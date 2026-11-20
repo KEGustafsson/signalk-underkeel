@@ -2,6 +2,7 @@ import type { CellCatalogue } from "../../src/ingest/cells";
 import { parseCatalogue } from "../../src/ingest/cells";
 import type { BuiltIndex } from "../../src/spatial/build-worker";
 import { HazardIndex } from "../../src/spatial/hazards";
+import { RuleIndex } from "../../src/spatial/rules";
 import { indexParts } from "../../src/spatial/index-parts";
 import type { NodeColumns, NodeStore } from "../../src/spatial/node-store";
 
@@ -21,6 +22,7 @@ test("a cell read with datum areas is handed over in the order cells.json loads 
   const built = {
     catalogue: read,
     hazards: new HazardIndex([]),
+    rules: new RuleIndex([]),
     pyramid: { minZoom: 12, leafZoom: 16 } as NodeStore,
     cols: {} as NodeColumns,
     roots: { built: 0, copied: 0, nodesCopied: 0 },

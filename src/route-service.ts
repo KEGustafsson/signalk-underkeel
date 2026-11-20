@@ -40,6 +40,10 @@ export interface RouteServiceDeps {
    * another index's queries (a planning box). Absent, `waterLevel` serves them too.
    */
   waterLevelFor?: (cells: readonly CellInfo[]) => RouteServiceDeps["waterLevel"];
+  /** The highest water level over an interval, for clearances (`RouteCheckInput.highWater`). */
+  highWater?: RouteServiceDeps["waterLevel"];
+  /** `highWater` related to the vertical datums of `cells`, as `waterLevelFor`. */
+  highWaterFor?: (cells: readonly CellInfo[]) => RouteServiceDeps["waterLevel"];
   getRoute(id: string): Promise<unknown>;
   now(): number;
   queue: RouteQueue;
@@ -87,12 +91,19 @@ async function coordinatesOf(
   return coords ?? { status: 404, body: { errors: [`route ${id} not found or has no geometry`] } };
 }
 
-function vesselFor(draft: number | undefined, deps: RouteServiceDeps): VesselModel | undefined {
+/** The vessel, with a request's draft and air height in place of the configured ones. */
+export function vesselFor(
+  over: { draft?: number; airHeight?: number },
+  deps: Pick<RouteServiceDeps, "vessel">
+): VesselModel | undefined {
   const current = deps.vessel();
-  if (draft === undefined) {
-    return current;
+  const air = over.airHeight === undefined ? {} : { airHeight: over.airHeight };
+  if (over.draft === undefined) {
+    return current && { ...current, ...air };
   }
-  return current ? { ...current, draft } : { draft, ...FALLBACK_HULL };
+  return current
+    ? { ...current, draft: over.draft, ...air }
+    : { draft: over.draft, ...FALLBACK_HULL, ...air };
 }
 
 /** Validates the request and resolves route, vessel and speeds into a route-check input. */
@@ -113,7 +124,7 @@ async function prepare(
   if (!Array.isArray(coords)) {
     return coords;
   }
-  const vessel = vesselFor(req.draft, deps);
+  const vessel = vesselFor(req, deps);
   if (!vessel) {
     return { status: 422, body: { errors: ["vessel draft not configured"] } };
   }
@@ -138,6 +149,7 @@ async function prepare(
       vessel,
       dynamics: deps.config.dynamics,
       waterLevel: deps.waterLevel,
+      ...(deps.highWater && { highWater: deps.highWater }),
       waveHeight: deps.waveHeight(),
       probability: req.probability ?? deps.config.routeCheck.probability
     }

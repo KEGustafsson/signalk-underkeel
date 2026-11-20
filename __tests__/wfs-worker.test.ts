@@ -7,6 +7,7 @@ import type { IndexParts } from "../src/spatial/build-worker";
 import { runBuild } from "../src/spatial/build-worker";
 import { loadChartIndex, saveChartIndex, stageChartIndex } from "../src/spatial/chart-index";
 import { serializeHazards } from "../src/spatial/hazard-file";
+import { serializeRules } from "../src/spatial/rules";
 import { pyramidColumns } from "../src/spatial/store";
 import { workerBuilder, workerHeapLimitMb } from "../src/wfs-service";
 import underkeel = require("../src/index");
@@ -129,6 +130,7 @@ describe("only the main thread writes the index directory", () => {
     return {
       catalogue: fixture.catalogue,
       hazards: serializeHazards(fixture.hazards),
+      rules: serializeRules(fixture.rules),
       minZoom: fixture.pyramid.minZoom,
       leafZoom: fixture.pyramid.leafZoom,
       cols: pyramidColumns(fixture.pyramid),

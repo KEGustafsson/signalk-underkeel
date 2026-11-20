@@ -8,6 +8,7 @@ import { parseCatalogue } from "../ingest/cells";
 import type { ChartFeature, DepthFeature } from "../ingest/features";
 import { isOtherHazardsVersion, readHazards, serializeHazards } from "./hazard-file";
 import { HazardIndex } from "./hazards";
+import { isCurrentRules, readRules, RuleIndex, serializeRules } from "./rules";
 import type { NodeStore } from "./node-store";
 import type { BuildOptions } from "./pyramid-build";
 import { buildPyramid } from "./pyramid-build";
@@ -21,11 +22,13 @@ import {
   wholePyramid
 } from "./store";
 
-/** The queryable chart: provenance, the min-depth pyramid and the hazard tree. */
+/** The queryable chart: provenance, the min-depth pyramid, the hazard tree and the rules. */
 export interface ChartIndex {
   catalogue: CellCatalogue;
   pyramid: NodeStore;
   hazards: HazardIndex;
+  /** Overhead clearances and hard-rule areas (`rules.ts`). */
+  rules: RuleIndex;
 }
 
 /** Object classes kept in the hazard tree so results can name what they hit. */
@@ -53,11 +56,17 @@ export function buildChartIndex(cells: ReadCell[], opts: Partial<BuildOptions> =
   return {
     catalogue: { version: 1, cells: cells.map((c) => c.info) },
     pyramid: buildPyramid(features, opts),
-    hazards: new HazardIndex(features.filter(isNamedHazard))
+    hazards: new HazardIndex(features.filter(isNamedHazard)),
+    rules: new RuleIndex(cells.flatMap((c) => c.rules))
   };
 }
 
-const FILES = { cells: "cells.json", pyramid: "pyramid.bin", hazards: "hazards.bin" };
+const FILES = {
+  cells: "cells.json",
+  pyramid: "pyramid.bin",
+  hazards: "hazards.bin",
+  rules: "rules.json"
+};
 
 /**
  * With delayed allocation a power cut after a rename can leave the renamed
@@ -160,6 +169,7 @@ export function stageChartIndex(dir: string, index: ChartIndex): string {
     writeDurable(path.join(staging, FILES.cells), JSON.stringify(catalogue, null, 2));
     writeDurable(path.join(staging, FILES.pyramid), serializePyramid(index.pyramid));
     writeDurable(path.join(staging, FILES.hazards), serializeHazards(index.hazards));
+    writeDurable(path.join(staging, FILES.rules), serializeRules(index.rules));
     syncDirectory(staging);
   } catch (err) {
     fs.rmSync(staging, { recursive: true, force: true });
@@ -321,16 +331,21 @@ function head(file: string): Buffer {
 }
 
 /**
- * Whether the saved index's pyramid was built under this version's rules and
- * its hazards saved in this version's file, not in `hazards.json` or another
- * version of `hazards.bin`; reads their headers only.
+ * Whether the saved index's pyramid was built under this version's rules, its
+ * hazards saved in this version's file, not in `hazards.json` or another
+ * version of `hazards.bin`, and its rule features in this version's
+ * `rules.json`; reads their headers only. An index saved before `rules.json` is
+ * rebuilt, never read as one with no bridges.
  */
 export function savedIndexIsCurrent(dir: string): boolean {
   const hazards = path.join(dir, FILES.hazards);
+  const rules = path.join(dir, FILES.rules);
   return (
     isCurrentPyramid(head(path.join(dir, FILES.pyramid))) &&
     fs.existsSync(hazards) &&
-    !isOtherHazardsVersion(head(hazards))
+    !isOtherHazardsVersion(head(hazards)) &&
+    fs.existsSync(rules) &&
+    isCurrentRules(head(rules).toString("utf8"))
   );
 }
 
@@ -362,7 +377,8 @@ export function loadChartIndex(dir: string, opts: LoadOptions = {}): ChartIndex 
   );
   const pyramid = checked(openPyramid(path.join(dir, FILES.pyramid), opts.cache), opts);
   const hazards = readHazards(fs.readFileSync(path.join(dir, FILES.hazards)));
-  return { catalogue, pyramid, hazards };
+  const rules = readRules(fs.readFileSync(path.join(dir, FILES.rules), "utf8"));
+  return { catalogue, pyramid, hazards, rules };
 }
 
 /**
@@ -375,12 +391,18 @@ export async function loadChartIndexAsync(
 ): Promise<ChartIndex> {
   recoverChartIndex(dir);
   const read = (f: string) => fs.promises.readFile(path.join(dir, f));
-  const [cells, pyramid, hazards] = await Promise.all([
+  const [cells, pyramid, hazards, rules] = await Promise.all([
     read(FILES.cells),
     openPyramidAsync(path.join(dir, FILES.pyramid), opts.cache),
-    read(FILES.hazards)
+    read(FILES.hazards),
+    read(FILES.rules)
   ]);
   await cacheOf(pyramid)?.verify();
   const catalogue = parseCatalogue(JSON.parse(cells.toString("utf8")));
-  return { catalogue, pyramid, hazards: readHazards(hazards) };
+  return {
+    catalogue,
+    pyramid,
+    hazards: readHazards(hazards),
+    rules: readRules(rules.toString("utf8"))
+  };
 }

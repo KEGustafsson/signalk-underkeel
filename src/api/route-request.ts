@@ -22,6 +22,8 @@ export const LIMITS = {
   maxXte: 2000,
   minDraft: 0.01,
   maxDraft: 30,
+  minAirHeight: 0.1,
+  maxAirHeight: 100,
   minProbability: 1e-6,
   maxProbability: 0.5,
   /** Departure at most this far from now, ms; no water-level forecast reaches further. */
@@ -38,6 +40,8 @@ export interface RouteRequest {
   speed?: number | number[];
   xteLimit?: number;
   draft?: number;
+  /** Air height override, metres: bridges and overhead cables are checked against it. */
+  airHeight?: number;
   /** Accept threshold for P(UKC < 0). */
   probability?: number;
 }
@@ -140,7 +144,17 @@ export function parseRouteRequest(body: unknown, now: number = Date.now()): Pars
       errors.push(`probability must be ${LIMITS.minProbability}..${LIMITS.maxProbability}`);
     }
   }
-  const draft = (b.vessel as { draft?: unknown } | undefined)?.draft;
+  vesselOverrides(b.vessel as Record<string, unknown> | undefined, req, errors);
+  return errors.length > 0 ? { ok: false, errors } : { ok: true, value: req };
+}
+
+/** The request's `vessel.draft` and `vessel.airHeight`, each checked. */
+function vesselOverrides(
+  vessel: Record<string, unknown> | undefined,
+  req: RouteRequest,
+  errors: string[]
+): void {
+  const draft = vessel?.draft;
   if (draft !== undefined) {
     if (inRange(draft, LIMITS.minDraft, LIMITS.maxDraft)) {
       req.draft = draft;
@@ -148,7 +162,14 @@ export function parseRouteRequest(body: unknown, now: number = Date.now()): Pars
       errors.push(`vessel.draft must be ${LIMITS.minDraft}..${LIMITS.maxDraft} m`);
     }
   }
-  return errors.length > 0 ? { ok: false, errors } : { ok: true, value: req };
+  const airHeight = vessel?.airHeight;
+  if (airHeight !== undefined) {
+    if (inRange(airHeight, LIMITS.minAirHeight, LIMITS.maxAirHeight)) {
+      req.airHeight = airHeight;
+    } else {
+      errors.push(`vessel.airHeight must be ${LIMITS.minAirHeight}..${LIMITS.maxAirHeight} m`);
+    }
+  }
 }
 
 /** Speeds per leg from a single value or a per-leg list; errors when the list length is wrong. */

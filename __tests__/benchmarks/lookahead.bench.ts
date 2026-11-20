@@ -2,6 +2,7 @@ import { performance } from "perf_hooks";
 import { evaluateLookahead } from "../../src/engine/lookahead";
 import type { NavState } from "../../src/engine/lookahead";
 import { HazardIndex } from "../../src/spatial/hazards";
+import { RuleIndex } from "../../src/spatial/rules";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
 import type { ChartFeature } from "../../src/ingest/features";
 import { ctx } from "../helpers/engine";
@@ -39,7 +40,8 @@ describe("look-ahead benchmark", () => {
     const index = {
       catalogue: { version: 1 as const, cells: [] },
       pyramid: buildPyramid(features, { minZoom: 10, leafZoom: 20 }),
-      hazards: new HazardIndex([])
+      hazards: new HazardIndex([]),
+      rules: new RuleIndex([])
     };
     const NOW = 1_800_000_000_000;
     const navs: NavState[] = Array.from({ length: 60 }, () => ({

@@ -7,6 +7,7 @@ import type { VesselModel } from "../../src/model/vessel";
 import type { ChartIndex } from "../../src/spatial/chart-index";
 import { fromMercator, tileAt, tileRect, toMercator } from "../../src/foundation/geo";
 import { HazardIndex } from "../../src/spatial/hazards";
+import { RuleIndex } from "../../src/spatial/rules";
 import { NodeStore } from "../../src/spatial/node-store";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
 import { ctx } from "../helpers/engine";
@@ -32,7 +33,8 @@ function indexOf(features: ReturnType<typeof basin>): ChartIndex {
   return {
     catalogue: { version: 1, cells: [] },
     pyramid: buildPyramid(features, { minZoom: 12, leafZoom: 18 }),
-    hazards: new HazardIndex([])
+    hazards: new HazardIndex([]),
+    rules: new RuleIndex([])
   };
 }
 
@@ -78,7 +80,12 @@ describe("certain land ends a footprint's chart walk", () => {
     store.add(16, x + 1, y, { ...water, dMin: -Infinity }, false, 0);
     const r = tileRect(16, x + 1, y);
     const [lon, lat] = fromMercator(r.minX, r.minY);
-    const index = { catalogue: { version: 1 as const, cells: [] }, pyramid: store, hazards };
+    const index = {
+      catalogue: { version: 1 as const, cells: [] },
+      pyramid: store,
+      hazards,
+      rules: new RuleIndex([])
+    };
     const perDegree = 111320 * Math.cos((lat * Math.PI) / 180);
     const at = (metres: number) => nav(lon - metres / perDegree, lat);
     return { index, at };

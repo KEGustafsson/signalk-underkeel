@@ -9,6 +9,7 @@ import { DEFAULT_DYNAMICS } from "../../src/model/vessel";
 import { CHART_DATUM } from "../../src/model/water-level";
 import type { LonLat } from "../../src/foundation/geo";
 import { HazardIndex } from "../../src/spatial/hazards";
+import { RuleIndex } from "../../src/spatial/rules";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
 import { area, basin, point } from "../helpers/synthetic";
 import type { ChartFeature } from "../../src/ingest/features";
@@ -45,7 +46,8 @@ describe("route check benchmark", () => {
     const index = {
       catalogue: { version: 1 as const, cells: [] },
       pyramid: buildPyramid(features, { minZoom: 10, leafZoom: 20 }),
-      hazards: new HazardIndex([])
+      hazards: new HazardIndex([]),
+      rules: new RuleIndex([])
     };
     const coords: LonLat[] = Array.from({ length: 31 }, (_, i) => [
       22.01 + (i % 2 === 0 ? 0 : 0.16),
@@ -146,7 +148,8 @@ features.push(area([22.5, 60.16, 22.52, 60.54], 0.5), area([22.5, 59.96, 22.52, 
 const index = {
   catalogue: { version: 1, cells: [] },
   pyramid: buildPyramid(features, { minZoom: 10, leafZoom: 18 }),
-  hazards: new HazardIndex([])
+  hazards: new HazardIndex([]),
+  rules: new RuleIndex([])
 };
 const long = [[22.08, 60.25], [22.93, 60.25]];
 const short = [[22.42, 60.165], [22.6, 60.165]];

@@ -8,6 +8,8 @@ import type { LonLat } from "../src/foundation/geo";
 import type { PlanningApiV1, Session, Status } from "../src/planning-api";
 import { grownBox, PLANNING_API, planningApi, registerPlanningApi } from "../src/planning-api";
 import type { RouteServiceDeps } from "../src/route-service";
+import { toMercator } from "../src/foundation/geo";
+import { RuleIndex } from "../src/spatial/rules";
 import { RequestQueue, routeCheck } from "../src/route-service";
 import { chartsProviderAt } from "./helpers/charts-provider";
 import {
@@ -146,6 +148,8 @@ describe("planning API v1", () => {
     [{ speed: Number.POSITIVE_INFINITY }, /speed must be/],
     [{ xteLimit: -1 }, /xteLimit must be/],
     [{ draft: 0 }, /draft must be/],
+    [{ airHeight: 0 }, /airHeight must be/],
+    [{ airHeight: 101 }, /airHeight must be/],
     [{ until: NOW - 1 }, /until not before departure/],
     [{ departure: Number.NaN }, /finite epoch ms/]
   ])("a session with %p is refused before it starts", async (over, message) => {
@@ -160,6 +164,57 @@ describe("planning API v1", () => {
     );
     expect(ran).toBe(false);
     expect(r.ok ? "" : `${r.status} ${r.error}`).toMatch(new RegExp(`^400 .*${message.source}`));
+  });
+
+  test("a session's air height holds its legs to a bridge at the window's highest water", async () => {
+    const bridge = {
+      objectClass: "BRIDGE" as const,
+      geom: {
+        type: "line" as const,
+        coords: [toMercator(22.017, 60.005), toMercator(22.017, 60.015)]
+      },
+      cellRef: 0,
+      clearance: 18
+    };
+    const base = fixtureIndex();
+    const index = {
+      ...base,
+      catalogue: {
+        ...base.catalogue,
+        cells: base.catalogue.cells.map((c) => ({ ...c, verticalDatum: 3, soundingDatum: 3 }))
+      },
+      rules: new RuleIndex([bridge])
+    };
+    // High water only late in the window: the leg is held to it whenever the boat arrives.
+    const highWater = (_start: number, end: number) => ({
+      h: end > NOW + HOUR / 2 ? 1 : 0,
+      sigma: 0.1,
+      source: "test"
+    });
+    const tall = planningApi(
+      () => deps({ index, vessel: () => ({ draft: 1.5, length: 12, beam: 4 }), highWater }),
+      "test"
+    );
+    const leg = (airHeight?: number) =>
+      tall.session(
+        { departure: NOW, until: NOW + HOUR, speed: 3, ...(airHeight && { airHeight }) },
+        NEVER,
+        async (s) => ({
+          v: s.segment([22.004, 60.01], [22.03, 60.01]),
+          objects: s.objects([22.0, 60.0], [22.05, 60.02])
+        })
+      );
+    const none = await leg();
+    const mast = await leg(17);
+    expect(none.ok && none.value.v.status).toBe("ok");
+    expect(mast.ok && mast.value.v).toMatchObject({
+      status: "fail",
+      flags: expect.arrayContaining(["AIR_DRAFT"])
+    });
+    expect(mast.ok && mast.value.objects).toEqual([
+      expect.objectContaining({ class: "BRIDGE", clearance: 18 })
+    ]);
+    expect(tall.features).toContain("objects");
   });
 
   test("a leg whose corridor is over 25 km² is refused", async () => {

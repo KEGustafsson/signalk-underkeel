@@ -39,7 +39,13 @@
     "vessel": {
       "type": "object",
       "properties": {
-        "draft": { "description": "metres", "type": "number", "minimum": 0.01, "maximum": 30 }
+        "draft": { "description": "metres", "type": "number", "minimum": 0.01, "maximum": 30 },
+        "airHeight": {
+          "description": "metres above the waterline; bridges and overhead cables are held to it",
+          "type": "number",
+          "minimum": 0.1,
+          "maximum": 100
+        }
       }
     },
     "horizon": { "description": "departure-window only, seconds", "type": "number", "minimum": 0 },

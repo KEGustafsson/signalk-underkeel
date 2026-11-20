@@ -322,6 +322,16 @@ export function lowerLevel(a: WaterLevel | undefined, b: WaterLevel): WaterLevel
   return { ...base, h: Math.min(a.h, b.h), sigma: Math.max(a.sigma, b.sigma) };
 }
 
+/** The times [start, end] is sampled at: both ends, the provider's knots and a fixed step. */
+function sampleTimes(p: WaterLevelProvider | undefined, start: number, end: number): number[] {
+  const step = Math.max(INTERVAL_STEP_MS, (end - start) / MAX_INTERVAL_SAMPLES);
+  const times = [start, end, ...(p?.knots?.(start, end) ?? [])];
+  for (let t = start + step; t < end; t += step) {
+    times.push(t);
+  }
+  return times.sort((a, b) => a - b);
+}
+
 /**
  * The lowest level, with the widest σ, over [start, end]. Any fallback makes
  * the result degraded, at no more water than the lowest level found.
@@ -334,14 +344,42 @@ export function lowestWaterLevel(
   end: number,
   now: number
 ): WaterLevel {
-  const step = Math.max(INTERVAL_STEP_MS, (end - start) / MAX_INTERVAL_SAMPLES);
-  const times = [start, end, ...(p?.knots?.(start, end) ?? [])];
-  for (let t = start + step; t < end; t += step) {
-    times.push(t);
-  }
   let out: WaterLevel | undefined;
-  for (const t of times.sort((a, b) => a - b)) {
+  for (const t of sampleTimes(p, start, end)) {
     out = lowerLevel(out, resolveWaterLevel(p, uses, position, t, now));
+  }
+  return out as WaterLevel;
+}
+
+/** The higher of two levels with the wider σ; a fallback's reason and source win. */
+export function higherLevel(a: WaterLevel | undefined, b: WaterLevel): WaterLevel {
+  if (!a) {
+    return b;
+  }
+  const base = a.degraded === undefined && b.degraded !== undefined ? b : a;
+  return { ...base, h: Math.max(a.h, b.h), sigma: Math.max(a.sigma, b.sigma) };
+}
+
+/**
+ * The highest level, with the widest σ, over [start, end], each cell datum taken on its own,
+ * for what passes overhead: a bridge's clearance shrinks as the water rises. Any fallback
+ * makes the result degraded, and a degraded level is no bound on the water: a fallback stands
+ * at chart datum or below the source's last level.
+ */
+export function highestWaterLevel(
+  p: WaterLevelProvider | undefined,
+  uses: readonly DatumUse[],
+  position: LonLat | undefined,
+  start: number,
+  end: number,
+  now: number
+): WaterLevel {
+  const each = uses.length > 0 ? uses.map((u) => [u]) : [uses];
+  let out: WaterLevel | undefined;
+  for (const t of sampleTimes(p, start, end)) {
+    for (const use of each) {
+      out = higherLevel(out, resolveWaterLevel(p, use, position, t, now));
+    }
   }
   return out as WaterLevel;
 }

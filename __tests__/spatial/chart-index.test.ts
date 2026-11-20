@@ -288,7 +288,9 @@ describe("durable save", () => {
     });
     try {
       saveChartIndex(path.join(dir, "index"), fixtureIndex());
-      const files = ["cells.json", "pyramid.bin", "hazards.bin"].map((f) => `fsync index.tmp/${f}`);
+      const files = ["cells.json", "pyramid.bin", "hazards.bin", "rules.json"].map(
+        (f) => `fsync index.tmp/${f}`
+      );
       // Windows cannot open a directory; NTFS journals the rename itself.
       expect(events).toEqual(
         process.platform === "win32"
