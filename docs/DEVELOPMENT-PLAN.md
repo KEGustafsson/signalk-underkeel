@@ -1486,12 +1486,14 @@ Finnish Transport Infrastructure Agency's navigation lines (`vesivaylatiedot:nav
 CC BY 4.0) as the WFS cell's `NAVLINE` layer, two-way, each with the draft it is laid out for
 (`mitoitussyvays`), read through Charts Provider's proxy when it runs one. No verdict reads them;
 a session's `objects` lists them. A failed download of the lines writes the cell without them,
-since they are a preference, never a depth. The boat's own passages are its accepted soundings
-joined into tracks where they follow within 2 minutes and 200 m (`src/livechart/tracks.ts`), each
-with the highest water level it was sailed at (depth below the surface less below datum). A
-session lists a track as a `TRACK` object only where the window's lowest water at its ends and
-middle is known and no lower than that, so a track lowers a planner's cost, never its risk (its
-invariant 6).
+since they are a preference, never a depth, and a line the WFS sends broken is left out. The
+boat's own passages are its logged soundings joined into tracks where they follow within 2
+minutes and 200 m (`src/livechart/tracks.ts`), each with the highest water level it was sailed at
+(depth below the surface less below datum); below 1 kn the log, thinned to a sounding a cell a
+minute, still keeps one taken at more water than the cell logged that minute. A session lists a
+track as a `TRACK` object only where the window's lowest water is known and no lower than that
+at every point the track keeps, so the planner is offered it only at water it has been sailed in.
+No verdict reads a track: the route check still proves every leg (the planner's invariant 6).
 
 **Planning boxes** (the planner's R2). `prepare(region, signal)` answers with an index over which a
 box's or leg's corridor lying in `region` is judged on the charts, and `session` and `routeCheck`

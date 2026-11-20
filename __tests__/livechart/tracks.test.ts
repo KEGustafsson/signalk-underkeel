@@ -48,4 +48,27 @@ describe("own tracks", () => {
     expect(trackObjects(tracks, ...box, () => undefined)).toEqual([]);
     expect(trackObjects(tracks, [23, 61], [23.1, 61.1], () => 1)).toEqual([]);
   });
+
+  test("the water is asked at every point a track keeps, not its ends and middle alone", () => {
+    const [track] = tracksOf(Array.from({ length: 60 }, (_, i) => at(i, 0.5)));
+    const c = (track as { coordinates: LonLat[] }).coordinates;
+    const shallow = c[1] as LonLat;
+    const low = (points: readonly LonLat[]) =>
+      points.some((p) => p[0] === shallow[0] && p[1] === shallow[1]) ? 0.4 : 0.6;
+    expect(trackObjects([track as never], [21.99, 59.99], [22.01, 60.01], low)).toEqual([]);
+  });
+
+  test("a track is listed where its leg crosses the box with no point inside it", () => {
+    const track = {
+      coordinates: [
+        [22, 60],
+        [22.001, 60]
+      ] as LonLat[],
+      level: 0.2
+    };
+    expect(trackObjects([track], [22.0004, 59.9999], [22.0006, 60.0001], () => 0.5)).toHaveLength(
+      1
+    );
+    expect(trackObjects([track], [22.0004, 60.0001], [22.0006, 60.0002], () => 0.5)).toEqual([]);
+  });
 });

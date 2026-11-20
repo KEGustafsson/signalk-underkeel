@@ -154,7 +154,22 @@ describe("Traficom WFS ingest", () => {
           if (q.has("startIndex")) {
             sorts.push(q.get("sortBy"));
           }
-          return Promise.resolve(reply(q.get("startIndex") === "0" ? [line] : []));
+          // A line the WFS sends broken is left out: it would fail the cell's whole build.
+          const broken = [
+            { ...line, geometry: { type: "LineString", coordinates: [[21.97, 59.97]] } },
+            { ...line, geometry: { type: "LineString", coordinates: null } },
+            {
+              ...line,
+              geometry: {
+                type: "LineString",
+                coordinates: [
+                  [21.97, "x"],
+                  [22, 60]
+                ]
+              }
+            }
+          ];
+          return Promise.resolve(reply(q.get("startIndex") === "0" ? [line, ...broken] : []));
         }
         return Promise.resolve(
           reply(url.includes("DepthArea_A") && url.includes("startIndex=0") ? [area] : [])

@@ -449,3 +449,18 @@ export async function forEachPage(
     }
   }
 }
+
+/** A LineString of at least two positions, each two finite numbers. */
+export function readableLine(f: {
+  geometry?: { type?: string; coordinates?: unknown } | null;
+}): boolean {
+  const c = f.geometry?.coordinates;
+  return (
+    f.geometry?.type === "LineString" &&
+    Array.isArray(c) &&
+    c.length >= 2 &&
+    c.every(
+      (p) => Array.isArray(p) && p.length >= 2 && Number.isFinite(p[0]) && Number.isFinite(p[1])
+    )
+  );
+}

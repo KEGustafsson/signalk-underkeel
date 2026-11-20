@@ -26,6 +26,6 @@
   },
   "anyOf": [
     { "required": ["statePath", "notificationPath"] },
-    { "properties": { "provides": { "items": { "const": "routePlan" } } } }
+    { "properties": { "provides": { "minItems": 1, "items": { "const": "routePlan" } } } }
   ]
 }

@@ -263,6 +263,8 @@ describe("a route planner's manifest section", () => {
       v.validate("service.json", { ...planner, provides: ["routePlan", "lookahead"] })
     ).not.toEqual([]);
     expect(v.validate("service.json", { ...planner, provides: ["routeCheck"] })).not.toEqual([]);
+    // Providing nothing is no exception from the state paths.
+    expect(v.validate("service.json", { ...planner, provides: [] })).not.toEqual([]);
   });
 });
 

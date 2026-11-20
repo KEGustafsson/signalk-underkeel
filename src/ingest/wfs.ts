@@ -6,7 +6,7 @@ import { EARTH_RADIUS } from "../foundation/geo";
 import type { GeoJsonFeatureCollection } from "./s57-geojson";
 import type { Bbox, WfsFeature, WfsFetch } from "./wfs-fetch";
 import type { Limit } from "./wfs-fetch";
-import { fetchLayer, limiter, num, retried, WFS_LIMITS } from "./wfs-fetch";
+import { fetchLayer, limiter, num, readableLine, retried, WFS_LIMITS } from "./wfs-fetch";
 
 export type { Bbox, ByteStream, WfsFetch } from "./wfs-fetch";
 export { WFS_LIMITS } from "./wfs-fetch";
@@ -387,7 +387,9 @@ async function fetchLines(d: WfsDownload, bbox: Bbox): Promise<unknown[] | undef
       sortBy: "navigointilinjaid",
       ...(d.signal && { signal: d.signal })
     });
-    return features.filter((f) => f.geometry?.type === "LineString").map(navigationLine);
+    // A malformed line would fail the cell's whole index build: lines are a preference, never a
+    // depth, so one that cannot be read is left out.
+    return features.filter(readableLine).map(navigationLine);
   } catch (err) {
     if (d.signal?.aborted) {
       throw err;

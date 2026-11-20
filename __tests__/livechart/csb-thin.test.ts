@@ -107,6 +107,28 @@ describe("CSB export thinning", () => {
     expect(t.keep(1, T0 - CSB_CELL_INTERVAL_MS, 0.2)).toBe(true);
   });
 
+  test("below 1 kn a sounding at more water than its cell logged in the interval is logged too", () => {
+    const t = new CsbThinner();
+    expect(t.keep(1, T0, 0.2, 0.4)).toBe(true);
+    expect(t.keep(1, T0 + 1000, 0.2, 0.4)).toBe(false);
+    expect(t.keep(1, T0 + 2000, 0.2, 0.6)).toBe(true);
+    expect(t.keep(1, T0 + 3000, 0.2, 0.5)).toBe(false);
+    // A new interval starts from the level it logs.
+    expect(t.keep(1, T0 + CSB_CELL_INTERVAL_MS, 0.2, 0.3)).toBe(true);
+    expect(t.keep(1, T0 + CSB_CELL_INTERVAL_MS + 1000, 0.2, 0.35)).toBe(true);
+  });
+
+  test("the boat's tracks are made again on every sounding logged, a repeated time too", () => {
+    const svc = service();
+    for (let i = 0; i < 10; i++) {
+      svc.onSounding(raw(6, T0 + i * 1000, north(i * 30), 3));
+    }
+    const before = svc.ownTracks()[0]?.coordinates.length ?? 0;
+    expect(before).toBeGreaterThan(5);
+    svc.onSounding(raw(6, T0 + 9000, north(300), 3));
+    expect(svc.ownTracks()[0]?.coordinates.length).toBe(before + 1);
+  });
+
   test("property: the cells equal those fed every accepted sounding, whatever the thinning", () => {
     const step = fc.record({
       dt: fc.integer({ min: 0, max: 30_000 }),

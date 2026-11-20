@@ -84,19 +84,18 @@ export class LivechartService {
   private dropped = 0;
   private readonly maxCells: number;
   private readonly notes = new NoteSchedule((key) => this.writeNote(key));
+  /** Soundings appended to the sample log since start: the log changed when this did. */
+  private appended = 0;
   /** The tracks of the soundings as they last were, made again when a sounding is added. */
-  private tracksMade?: { count: number; last: number; tracks: OwnTrack[] };
+  private tracksMade?: { appended: number; tracks: OwnTrack[] };
   private readonly settler: PriorSettler;
 
   /** The boat's own passages from its accepted soundings (`livechart/tracks.ts`). */
   ownTracks(): OwnTrack[] {
-    const samples = this.files.samples;
-    const last = samples[samples.length - 1]?.at ?? 0;
-    const made = this.tracksMade;
-    if (made?.count !== samples.length || made.last !== last) {
-      this.tracksMade = { count: samples.length, last, tracks: tracksOf(samples) };
+    if (this.tracksMade?.appended !== this.appended) {
+      this.tracksMade = { appended: this.appended, tracks: tracksOf(this.files.samples) };
     }
-    return (this.tracksMade as { tracks: OwnTrack[] }).tracks;
+    return this.tracksMade.tracks;
   }
 
   constructor(
@@ -247,8 +246,10 @@ export class LivechartService {
     // Every accepted sounding updates its cell; only the CSB export log is thinned.
     const c = this.posteriors.add(r.sounding);
     const key = tileKey(c.z, c.x, c.y);
-    if (this.thinner.keep(key, r.sounding.at, raw.sog)) {
+    const level = r.sounding.belowSurface - r.sounding.depth;
+    if (this.thinner.keep(key, r.sounding.at, raw.sog, level)) {
       this.files.appendSample(r.sounding);
+      this.appended += 1;
     } else {
       this.thinned += 1;
     }

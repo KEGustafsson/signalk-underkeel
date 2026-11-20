@@ -5,8 +5,8 @@ import type { Sounding } from "./soundings";
 /**
  * The boat's own passages (plan §4.13, the planner's R4c): the accepted soundings joined into
  * tracks where they follow each other closely in time and space, each with the highest water
- * level it was sailed at. A planner keeps to a track only at water no lower than that, so a
- * track lowers cost, never risk (invariant 6).
+ * level it was sailed at. A session lists a track only where the water at every point it keeps
+ * is no lower than that (`planning-objects.ts`); no verdict reads it (invariant 6).
  */
 
 export interface OwnTrack {

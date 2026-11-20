@@ -298,6 +298,10 @@ describe("rule features", () => {
     expect(isCurrentRules(text.slice(0, 512))).toBe(true);
     expect(readRules(text).features()).toEqual(index.features());
     expect(() => readRules(text.replace('"version":2', '"version":3'))).toThrow();
+    // An earlier version still loads, for an index whose cells are away, and is not current.
+    const v1 = text.replace('"version":2', '"version":1');
+    expect(readRules(v1).features()).toEqual(index.features());
+    expect(isCurrentRules(v1.slice(0, 512))).toBe(false);
     expect(() => readRules(text.replace('"count":1', '"count":2'))).toThrow();
     // A coordinate past any number is refused rather than looped over.
     const huge = JSON.parse(text) as { features: { geom: { coords: number[][] } }[] };

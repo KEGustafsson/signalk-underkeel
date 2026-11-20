@@ -93,10 +93,41 @@ export function chartObjects(index: ChartIndex, sw: LonLat, ne: LonLat): ChartOb
   });
 }
 
+/** Whether the segment a–b meets the box sw–ne (Liang–Barsky clipping). */
+function segmentMeets(a: LonLat, b: LonLat, sw: LonLat, ne: LonLat): boolean {
+  let t0 = 0;
+  let t1 = 1;
+  const d = [b[0] - a[0], b[1] - a[1]];
+  for (let axis = 0; axis < 2; axis++) {
+    const delta = d[axis] as number;
+    for (const [p, q] of [
+      [-delta, (a[axis] as number) - (sw[axis] as number)],
+      [delta, (ne[axis] as number) - (a[axis] as number)]
+    ] as const) {
+      if (p === 0) {
+        if (q < 0) {
+          return false;
+        }
+        continue;
+      }
+      const r = q / p;
+      if (p < 0) {
+        t0 = Math.max(t0, r);
+      } else {
+        t1 = Math.min(t1, r);
+      }
+      if (t0 > t1) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 /**
  * The boat's own tracks meeting sw–ne as `TRACK` objects, each only where the window's lowest
- * water at its ends and middle (`low`, undefined when not known) is no lower than the highest it
- * was sailed at: a track lowers a planner's cost, never its risk (invariant 6).
+ * water at every point it keeps (`low`, undefined when not known) is no lower than the highest it
+ * was sailed at, so it is listed only at water it has been sailed in.
  */
 export function trackObjects(
   tracks: readonly OwnTrack[],
@@ -104,17 +135,12 @@ export function trackObjects(
   ne: LonLat,
   low: (at: readonly LonLat[]) => number | undefined
 ): ChartObject[] {
-  const meets = (p: LonLat): boolean =>
-    p[0] >= sw[0] && p[0] <= ne[0] && p[1] >= sw[1] && p[1] <= ne[1];
+  const meets = (c: readonly LonLat[]): boolean =>
+    c.some((p, i) => i > 0 && segmentMeets(c[i - 1] as LonLat, p, sw, ne));
   return tracks
-    .filter((t) => t.coordinates.some(meets))
+    .filter((t) => meets(t.coordinates))
     .filter((t) => {
-      const c = t.coordinates;
-      const h = low([
-        c[0] as LonLat,
-        c[Math.floor(c.length / 2)] as LonLat,
-        c[c.length - 1] as LonLat
-      ]);
+      const h = low(t.coordinates);
       return h !== undefined && h >= t.level;
     })
     .map((t) => ({
