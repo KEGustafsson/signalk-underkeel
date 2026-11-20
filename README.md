@@ -534,7 +534,9 @@ their directories overlap the configured `indexDir`.
 
 A session also lists the chart objects in a box (`objects(sw, ne)`, feature `objects`): bridges
 and overhead cables and pipes with their clearance, restricted areas with their restrictions and
-traffic lanes with their direction, so a planner can keep to them. A session's `airHeight`
+traffic lanes with their direction, and the lines a planner keeps to: leading lines, recommended
+tracks, anchorages, with the Traficom WFS the FTIA's fairway navigation lines (CC BY 4.0), and the
+boat's own tracks where the water is no lower than when it sailed them. A session's `airHeight`
 holds its boxes and legs to the bridges at the window's highest water.
 
 A trip longer than a planning box holds is planned in a corridor. With the Traficom WFS depth
