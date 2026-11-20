@@ -100,18 +100,55 @@ export function segmentsMeet(a: XY, b: XY, c: XY, d: XY): boolean {
   );
 }
 
-const edges = (ring: Ring): [XY, XY][] =>
-  ring.map((p, i) => [p, ring[(i + 1) % ring.length] as XY]);
+/**
+ * True when a segment of `path` (closed when `closed`) crosses an edge of `ring`. A segment
+ * whose box misses the ring's box is passed over before any edge is tested: a restricted area
+ * of a thousand vertices meets a corridor at a few of them.
+ */
+function pathMeets(path: Ring, closed: boolean, ring: Ring, box: Rect): boolean {
+  const n = closed ? path.length : path.length - 1;
+  for (let i = 0; i < n; i++) {
+    const a = path[i] as XY;
+    const b = path[(i + 1) % path.length] as XY;
+    if (
+      Math.max(a[0], b[0]) < box.minX ||
+      Math.min(a[0], b[0]) > box.maxX ||
+      Math.max(a[1], b[1]) < box.minY ||
+      Math.min(a[1], b[1]) > box.maxY
+    ) {
+      continue;
+    }
+    for (let k = 0; k < ring.length; k++) {
+      if (segmentsMeet(a, b, ring[k] as XY, ring[(k + 1) % ring.length] as XY)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
 
-/** The segments of `geom`: a line's, a polygon's rings'; none for a point. */
-function segmentsOf(geom: Geom): [XY, XY][] {
+/** Whether an edge of `geom` crosses one of `ring`. */
+function edgesMeet(geom: Geom, ring: Ring, box: Rect): boolean {
   if (geom.type === "point") {
-    return [];
+    return false;
   }
   if (geom.type === "line") {
-    return geom.coords.slice(1).map((p, i) => [geom.coords[i] as XY, p]);
+    return pathMeets(geom.coords, false, ring, box);
   }
-  return geom.polygons.flatMap((poly) => [poly.outer, ...poly.holes].flatMap(edges));
+  return geom.polygons.some((poly) =>
+    [poly.outer, ...poly.holes].some((r) => pathMeets(r, true, ring, box))
+  );
+}
+
+function ringBox(ring: Ring): Rect {
+  const r = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+  for (const [x, y] of ring) {
+    r.minX = Math.min(r.minX, x);
+    r.minY = Math.min(r.minY, y);
+    r.maxX = Math.max(r.maxX, x);
+    r.maxY = Math.max(r.maxY, y);
+  }
+  return r;
 }
 
 /** A point of each part of `geom`: a point's own, a line's first, each polygon's first vertex. */
@@ -133,8 +170,7 @@ export function meetsRing(geom: Geom, ring: Ring): boolean {
   if (partPoints(geom).some((p) => pointInRing(p, ring))) {
     return true;
   }
-  const own = edges(ring);
-  if (segmentsOf(geom).some(([a, b]) => own.some(([c, d]) => segmentsMeet(a, b, c, d)))) {
+  if (edgesMeet(geom, ring, ringBox(ring))) {
     return true;
   }
   const corner = ring[0];

@@ -64,11 +64,15 @@ const PREFERENCES: ReadonlySet<string> = new Set(PREFERENCE_CLASSES);
 const WORLD = 2 * toMercator(180, 0)[0];
 
 /**
- * The rule features `rings` meet, a leg's corridor pieces or a box. A ring is unwrapped from its
- * first vertex, so one across ±180° stays whole, and is looked up a world over too on the side
- * it reaches past, where the features keep their own longitudes.
+ * The rule features `rings` meet that `wanted` reads, a leg's corridor pieces or a box. A ring is
+ * unwrapped from its first vertex, so one across ±180° stays whole, and is looked up a world
+ * over too on the side it reaches past, where the features keep their own longitudes.
  */
-function met(index: ChartIndex, rings: readonly (readonly LonLat[])[]): RuleFeature[] {
+function met(
+  index: ChartIndex,
+  rings: readonly (readonly LonLat[])[],
+  wanted: (f: RuleFeature) => boolean
+): RuleFeature[] {
   if (index.rules.size === 0) {
     return [];
   }
@@ -87,8 +91,7 @@ function met(index: ChartIndex, rings: readonly (readonly LonLat[])[]): RuleFeat
       const moved: XY[] = merc.map((p) => [p[0] + dx, p[1]]);
       const box: Rect = { minX: r.minX + dx, minY: r.minY, maxX: r.maxX + dx, maxY: r.maxY };
       for (const f of index.rules.near(box)) {
-        // A preference (a leading line, an anchorage) is the planner's: no verdict reads it.
-        if (!PREFERENCES.has(f.objectClass) && meetsRing(f.geom, moved)) {
+        if (wanted(f) && meetsRing(f.geom, moved)) {
           out.add(f);
         }
       }
@@ -191,7 +194,15 @@ export function checkRules(
   rings: readonly (readonly LonLat[])[],
   w: RuleWindow
 ): RuleVerdict {
-  const found = met(index, rings);
+  // Without an air height nothing overhead is read: its geometry is not tested either.
+  const overhead = (f: RuleFeature): boolean =>
+    (OVERHEAD_CLASSES as readonly string[]).includes(f.objectClass);
+  // A preference (a leading line, an anchorage) is the planner's: no verdict reads it.
+  const found = met(
+    index,
+    rings,
+    (f) => !PREFERENCES.has(f.objectClass) && (w.airHeight !== undefined || !overhead(f))
+  );
   let status: RuleStatus = "ok";
   const flags = new Set<string>();
   let hw: WaterLevel | undefined;
