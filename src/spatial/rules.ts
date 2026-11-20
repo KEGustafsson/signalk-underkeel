@@ -113,20 +113,23 @@ function segmentsOf(geom: Geom): [XY, XY][] {
   return geom.polygons.flatMap((poly) => [poly.outer, ...poly.holes].flatMap(edges));
 }
 
-function firstPoint(geom: Geom): XY | undefined {
+/** A point of each part of `geom`: a point's own, a line's first, each polygon's first vertex. */
+function partPoints(geom: Geom): XY[] {
   if (geom.type === "point") {
-    return geom.p;
+    return [geom.p];
   }
-  return geom.type === "line" ? geom.coords[0] : geom.polygons[0]?.outer[0];
+  if (geom.type === "line") {
+    return geom.coords.slice(0, 1);
+  }
+  return geom.polygons.flatMap((poly) => poly.outer.slice(0, 1));
 }
 
 /**
  * True when `geom` meets the area inside `ring`, a corridor or a box: an edge of one crosses
- * the other's, `geom` lies inside the ring, or the ring inside a polygon of `geom`.
+ * the other's, a part of `geom` lies inside the ring, or the ring inside a polygon of `geom`.
  */
 export function meetsRing(geom: Geom, ring: Ring): boolean {
-  const inside = firstPoint(geom);
-  if (inside && pointInRing(inside, ring)) {
+  if (partPoints(geom).some((p) => pointInRing(p, ring))) {
     return true;
   }
   const own = edges(ring);
@@ -169,7 +172,28 @@ export function readRules(text: string): RuleIndex {
   if (features.length !== file.count || features.some((f) => !known.has(f.objectClass))) {
     throw new Error("rules.json does not hold the features its header counts");
   }
+  // A coordinate past any number would never let the grid stop: the file is refused, and rebuilt.
+  if (!features.every((f) => finiteGeom(f.geom))) {
+    throw new Error("rules.json holds a coordinate that is not a finite number");
+  }
   return new RuleIndex(features);
+}
+
+const finiteXY = (p: unknown): boolean =>
+  Array.isArray(p) && p.length >= 2 && Number.isFinite(p[0]) && Number.isFinite(p[1]);
+
+function finiteGeom(g: Partial<Geom> | undefined): boolean {
+  if (g?.type === "point") {
+    return finiteXY(g.p);
+  }
+  if (g?.type === "line") {
+    return Array.isArray(g.coords) && g.coords.length > 0 && g.coords.every(finiteXY);
+  }
+  return (
+    g?.type === "polygon" &&
+    Array.isArray(g.polygons) &&
+    g.polygons.every((poly) => [poly.outer, ...poly.holes].every((r) => r.every(finiteXY)))
+  );
 }
 
 /** True when `text`, the head of a `rules.json`, is of this version. */

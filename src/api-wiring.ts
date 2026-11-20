@@ -11,7 +11,9 @@ import { parseConfig } from "./config";
 import type { EngineStatus } from "./foundation/state";
 import type { IndexLoad } from "./index-loader";
 import type { Clock, Monitor } from "./monitor";
+import { airHeightOf } from "./model/vessel";
 import { CHART_DATUM } from "./model/water-level";
+import { asNumber, selfValue } from "./nav-inputs";
 import type { QueryServiceDeps } from "./query-service";
 import { query, ukcTileChangesReply, ukcTileReply } from "./query-service";
 import type { RouteServiceDeps } from "./route-service";
@@ -58,7 +60,7 @@ function livechartReply(s: PluginState, body: (l: LivechartService) => unknown):
 const NO_HIGH_WATER = { ...CHART_DATUM, degraded: "plugin not started" };
 
 export function routeDepsFor(
-  app: Pick<ServerAPI, "resourcesApi">,
+  app: Pick<ServerAPI, "resourcesApi" | "getSelfPath">,
   clock: Clock,
   s: PluginState
 ): RouteServiceDeps {
@@ -67,6 +69,11 @@ export function routeDepsFor(
     indexReason: s.load?.reason ?? "plugin not started",
     config: s.config ?? parseConfig({}),
     vessel: () => s.monitor?.vessel(),
+    airHeight: () =>
+      airHeightOf({
+        config: (s.config ?? parseConfig({})).vessel,
+        signalk: { airHeight: asNumber(selfValue(app, "design.airHeight")) }
+      }),
     waterLevel: (start, end, at, area) =>
       s.monitor?.waterLevelOver(start, end, at, area) ?? CHART_DATUM,
     waterLevelFor: (cells) => (start, end, at, area) =>

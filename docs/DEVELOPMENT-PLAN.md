@@ -1451,25 +1451,33 @@ builds, the build process's hand-over). An index saved before `rules.json` is no
 rebuilt, never read as one with no bridges. `src/engine/rule-check.ts` judges every corridor a
 route check, a box or a leg queries, and its status can only worsen the depth status:
 
-- **Clearance.** Only with an air height (the vessel's, or a request's or session's). A bridge's
-  closed clearance (`VERCCL`) when it opens, else `VERCLR`, else a cable's safe clearance
-  (`VERCSA`), less the water's rise above the clearance's datum, must be at least the air height
-  plus 0.5 m, else `fail` with `AIR_DRAFT`. The rise is 0 above HAT (VERDAT 30) or the highest
+- **Clearance.** Only with an air height (the vessel's, or a request's or session's; the
+  configured one holds when a request gives the draft of an otherwise unresolved vessel). A
+  bridge's closed clearance (`VERCCL`) when it opens, else `VERCLR`; a cable's or pipe's safe
+  clearance (`VERCSA`), which keeps clear of electrical discharge, else `VERCLR`. Less the water's
+  rise above the clearance's datum, it must be at least the air height plus 0.5 m, else `fail`
+  with `AIR_DRAFT`. The datum is the object's own `VERDAT`, else its cell's vertical datum; a
+  cell with datum areas of its own gives none. The rise is 0 above HAT (VERDAT 30) or the highest
   water level (28), 0.5 m above a mean or spring high water datum (16, 17, 18, 20, 21, 29), and on
-  a cell whose heights and depths share one datum the highest water over the window above chart
-  datum plus 2σ (`highestWaterLevel`, each cell datum taken on its own). Otherwise the rise is not
-  known, nor is it with a fallback water level, and a clearance within 2 m of the need is
-  `unverified` with `CLEARANCE_UNKNOWN`, as is an object with no clearance.
+  heights on the cell's sounding datum the highest water over the window above chart datum plus
+  2σ (`highestWaterLevel`, each cell datum taken on its own, rounded up in the departure window).
+  Otherwise the rise is not known, nor is it with a fallback water level or no source at all:
+  it is taken as 2 m, so a clearance below the air height plus 2.5 m is `unverified` with
+  `CLEARANCE_UNKNOWN`, as is an object with no clearance, and a higher one passes marked
+  `CLEARANCE_RISE_ASSUMED`, never silently.
 - **Restricted areas.** `RESTRN` 7 (entry prohibited) fails with `ENTRY_PROHIBITED`; 8 and 14 are
   named (`ENTRY_RESTRICTED`, `AREA_TO_BE_AVOIDED`) and change nothing.
-- **Traffic lanes.** A leg in a `TSSLPT` within 60° of its `ORIENT` follows it, and one within 20°
-  of a right angle crosses it; any other fails with `TSS_WRONG_WAY`. A box has no course, so a lane
+- **Traffic lanes.** A leg in a `TSSLPT` whose rhumb-line course, as the chart draws it, is within
+  60° of its `ORIENT` follows it, and one within 20° of a right angle crosses it; any other fails
+  with `TSS_WRONG_WAY`. A box has no course, so a lane
   is only named there (`TRAFFIC_LANE`), and a search that plans along a lane the wrong way is
   refused at its legs.
 
 The departure window keys its memo on the high water too, since a higher tide gives depth and takes
 clearance. A session takes `airHeight` and lists the objects in a box (`objects(sw, ne)`, feature
-`objects`), in lon/lat with their clearance, restrictions or direction and the cell they are from.
+`objects`), in lon/lat with their clearance, restrictions or direction and the cell they are from;
+a box over 40 000 km² throws RangeError, since the lookup walks the grid over the whole box. A
+corridor across ±180° finds the objects on the far side too.
 
 **Planning boxes** (the planner's R2). `prepare(region, signal)` answers with an index over which a
 box's or leg's corridor lying in `region` is judged on the charts, and `session` and `routeCheck`

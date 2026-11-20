@@ -22,15 +22,17 @@ export interface RuleFeature {
   /** Index into the cell catalogue: the cell's vertical datum relates the clearance to the water. */
   cellRef: number;
   /**
-   * Vertical clearance above the cell's vertical datum, metres: a bridge's closed clearance
-   * (VERCCL) when it opens, else VERCLR, else a cable's safe clearance (VERCSA). Absent when
-   * the object states none.
+   * Vertical clearance above its datum (`verdat`, else the cell's vertical datum), metres: a
+   * bridge's closed clearance (VERCCL) when it opens, else VERCLR; a cable's or pipe's safe
+   * clearance (VERCSA), else VERCLR. Absent when the object states none.
    */
   clearance?: number;
   /** RESARE's RESTRN codes: 7 entry prohibited, 8 entry restricted, 14 area to be avoided. */
   restrictions?: number[];
   /** TSSLPT's ORIENT: the lane's direction of traffic, degrees true. */
   orient?: number;
+  /** The object's own VERDAT, the datum of its clearance, in place of its cell's. */
+  verdat?: number;
   lnam?: string;
 }
 
@@ -50,8 +52,12 @@ function clearanceOf(cls: RuleClass, props: Record<string, unknown>): number | u
   if (!(OVERHEAD_CLASSES as readonly string[]).includes(cls)) {
     return undefined;
   }
-  // An opening bridge is passed closed unless the boat waits for it to open.
-  return number(props.VERCCL) ?? number(props.VERCLR) ?? number(props.VERCSA);
+  // An opening bridge is passed closed unless the boat waits for it to open; a cable at its safe
+  // clearance, which keeps clear of electrical discharge.
+  if (cls === "BRIDGE") {
+    return number(props.VERCCL) ?? number(props.VERCLR);
+  }
+  return number(props.VERCSA) ?? number(props.VERCLR);
 }
 
 /** The rule features of one layer of a cell. Malformed geometry throws with the feature index. */
@@ -73,6 +79,7 @@ export function parseRuleLayer(
     const restrictions = cls === "RESARE" ? codes(props.RESTRN) : undefined;
     const orient = cls === "TSSLPT" ? number(props.ORIENT) : undefined;
     const lnam = typeof props.LNAM === "string" && props.LNAM !== "" ? props.LNAM : undefined;
+    const verdat = clearance === undefined ? undefined : number(props.VERDAT);
     for (const part of parts) {
       out.push({
         objectClass: cls,
@@ -81,6 +88,7 @@ export function parseRuleLayer(
         ...(clearance !== undefined && { clearance }),
         ...(restrictions && { restrictions }),
         ...(orient !== undefined && { orient: ((orient % 360) + 360) % 360 }),
+        ...(verdat !== undefined && { verdat }),
         ...(lnam && { lnam })
       });
     }

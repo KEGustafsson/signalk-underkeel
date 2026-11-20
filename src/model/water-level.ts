@@ -374,6 +374,10 @@ export function highestWaterLevel(
   end: number,
   now: number
 ): WaterLevel {
+  // With no source, chart datum is no bound on the water above it.
+  if (!p) {
+    return { ...CHART_DATUM, degraded: "no water-level source to bound the high water" };
+  }
   const each = uses.length > 0 ? uses.map((u) => [u]) : [uses];
   let out: WaterLevel | undefined;
   for (const t of sampleTimes(p, start, end)) {

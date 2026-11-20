@@ -43,6 +43,15 @@ function rounded(wl: WaterLevel): WaterLevel {
   };
 }
 
+/** A high water rounded up, so what passes overhead is never given more room than it has. */
+function roundedUp(wl: WaterLevel): WaterLevel {
+  return {
+    ...wl,
+    h: Math.ceil(wl.h * 100) / 100,
+    sigma: Math.ceil(wl.sigma * 100) / 100
+  };
+}
+
 /**
  * Reuse across levels only from this accept probability up. A query may
  * stop at a tile whose P bound is below RISK_STOP_BELOW (1e-4), so a direct
@@ -125,7 +134,7 @@ export async function departureWindow(
       const wl = rounded(input.waterLevel(start, end + stepMs, [a, b]));
       // Only a boat with an air height holds a leg to the high water.
       const high = input.vessel.airHeight === undefined ? undefined : input.highWater;
-      const hw = high && rounded(high(start, end + stepMs, [a, b]));
+      const hw = high && roundedUp(high(start, end + stepMs, [a, b]));
       let status = memo.get(i, wl, hw);
       if (status === undefined) {
         checks += 1;

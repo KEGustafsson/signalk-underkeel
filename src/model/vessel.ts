@@ -92,6 +92,11 @@ function positive(v: number | undefined): number | undefined {
   return v !== undefined && Number.isFinite(v) && v > 0 ? v : undefined;
 }
 
+/** The air height, configured or from Signal K, whatever else is known of the vessel. */
+export function airHeightOf(inputs: VesselInputs): number | undefined {
+  return positive(inputs.config.airHeight) ?? positive(inputs.signalk.airHeight);
+}
+
 export function resolveVessel(inputs: VesselInputs): ResolvedVessel {
   const pick = (key: keyof VesselModel) =>
     positive(inputs.config[key]) ?? positive(inputs.signalk[key]);
@@ -111,7 +116,7 @@ export function resolveVessel(inputs: VesselInputs): ResolvedVessel {
     notes.unshift("vessel draft not configured");
     return { notes };
   }
-  const airHeight = pick("airHeight");
+  const airHeight = airHeightOf(inputs);
   if (airHeight === undefined) {
     notes.push("air height unknown: bridges and overhead cables are not checked");
   }

@@ -1,6 +1,9 @@
 import type { RouteCheckInput } from "../../src/engine/route-check";
 import { checkFootprint, checkRoute, corridorRing } from "../../src/engine/route-check";
 import { departureWindow } from "../../src/engine/departure-window";
+import { rhumbCourse } from "../../src/engine/corridor";
+import { highestWaterLevel } from "../../src/model/water-level";
+import { vesselFor } from "../../src/route-service";
 import type { LonLat } from "../../src/foundation/geo";
 import { toMercator } from "../../src/foundation/geo";
 import type { RuleFeature } from "../../src/ingest/rule-features";
@@ -131,8 +134,30 @@ describe("air height under a bridge", () => {
   test("a fallback water level cannot bound the rise: a close clearance is unverified", () => {
     const fallback = () => level(0, { degraded: "no water level" });
     expect(leg(index, input({ highWater: fallback }, 17))?.status).toBe("unverified");
-    // A clearance well over the mast passes anyway.
-    expect(leg(index, input({ highWater: fallback }, 12))?.status).toBe("ok");
+    // A clearance well over the mast passes, marked for the rise it takes, never silently.
+    const clear = leg(index, input({ highWater: fallback }, 12));
+    expect(clear?.status).toBe("ok");
+    expect(clear?.flags).toContain("CLEARANCE_RISE_ASSUMED");
+  });
+
+  test("the object's own datum wins over its cell's, and a cell of datum areas gives none", () => {
+    // Heights above HAT in the cell, but the bridge's clearance is on mean water, as its depths.
+    const own = withRules([{ ...bridge(18), verdat: 3 }], 30);
+    const ownCells = own.catalogue.cells.map((c) => ({ ...c, soundingDatum: 3 }));
+    const mixed = { ...own, catalogue: { ...own.catalogue, cells: ownCells } };
+    expect(leg(mixed, input({ highWater: () => level(1) }, 17))?.flags).toContain("AIR_DRAFT");
+    const areas = withRules([bridge(20)], 30);
+    const withAreas = {
+      ...areas,
+      catalogue: {
+        ...areas.catalogue,
+        cells: areas.catalogue.cells.map((c) => ({ ...c, datumAreas: [3] }))
+      }
+    };
+    expect(leg(withAreas, input({}, 17))).toMatchObject({
+      status: "ok",
+      flags: expect.arrayContaining(["CLEARANCE_RISE_ASSUMED"])
+    });
   });
 
   test("a clearance above HAT holds at any water; one above MHWS allows for a rise past it", () => {
@@ -153,6 +178,18 @@ describe("air height under a bridge", () => {
       });
     expect(box(0).status).toBe("ok");
     expect(box(1)).toMatchObject({ status: "fail", flags: expect.arrayContaining(["AIR_DRAFT"]) });
+  });
+
+  test("the departure window rounds a high water up, never giving the bridge more room", async () => {
+    // 18 m less 0.501 m is under the 17.5 m the mast needs; rounded down it would just pass.
+    const w = await departureWindow(
+      index,
+      input({ highWater: () => level(0.501, { sigma: 0 }) }, 17),
+      NOW,
+      NOW,
+      30 * 60_000
+    );
+    expect(w.steps.map((s) => s.status)).toEqual(["fail"]);
   });
 
   test("the departure window keeps each departure's own high water", async () => {
@@ -232,6 +269,11 @@ describe("rule features", () => {
     expect(opening).toMatchObject({ objectClass: "BRIDGE", clearance: 4.5, cellRef: 2 });
     const [cable] = parseRuleLayer("CBLOHD", collection({ VERCSA: 21 }), 0);
     expect(cable?.clearance).toBe(21);
+    // A cable at its safe clearance, below its physical one.
+    const [safe] = parseRuleLayer("CBLOHD", collection({ VERCLR: 25, VERCSA: 21 }), 0);
+    expect(safe?.clearance).toBe(21);
+    const [bridged] = parseRuleLayer("BRIDGE", collection({ VERCLR: 12, VERDAT: "3" }), 0);
+    expect(bridged).toMatchObject({ clearance: 12, verdat: 3 });
     const [area] = parseRuleLayer("RESARE", collection({ RESTRN: ["7", "14"] }), 0);
     expect(area?.restrictions).toEqual([7, 14]);
     const [listed] = parseRuleLayer("RESARE", collection({ RESTRN: "8,14" }), 0);
@@ -247,6 +289,10 @@ describe("rule features", () => {
     expect(readRules(text).features()).toEqual(index.features());
     expect(() => readRules(text.replace('"version":1', '"version":2'))).toThrow();
     expect(() => readRules(text.replace('"count":1', '"count":2'))).toThrow();
+    // A coordinate past any number is refused rather than looped over.
+    const huge = JSON.parse(text) as { features: { geom: { coords: number[][] } }[] };
+    (huge.features[0]?.geom.coords[0] as number[])[0] = Number.POSITIVE_INFINITY;
+    expect(() => readRules(JSON.stringify(huge).replace("null", "1e309"))).toThrow();
   });
 
   test("a corridor meets a line across it, an area holding it, and nothing beside it", () => {
@@ -268,6 +314,26 @@ describe("rule features", () => {
       ]
     };
     expect(meetsRing(big, ring)).toBe(true);
+    // A second polygon inside the corridor meets it though the first lies outside.
+    const parts = {
+      type: "polygon" as const,
+      polygons: [
+        {
+          outer: [merc([23, 61]), merc([23.1, 61]), merc([23.1, 61.1]), merc([23, 61.1])],
+          holes: []
+        },
+        {
+          outer: [
+            merc([22.0168, 60.0099]),
+            merc([22.0172, 60.0099]),
+            merc([22.0172, 60.0101]),
+            merc([22.0168, 60.0101])
+          ],
+          holes: []
+        }
+      ]
+    };
+    expect(meetsRing(parts, ring)).toBe(true);
   });
 
   test("the planning API lists the objects in a box in lon/lat, with the cell they are from", () => {
@@ -279,5 +345,61 @@ describe("rule features", () => {
     expect(lon).toBeCloseTo(22.017, 6);
     expect(lat).toBeCloseTo(60.005, 6);
     expect(chartObjects(index, [22.1, 60.1], [22.2, 60.2])).toEqual([]);
+    // Its copy of the restrictions cannot change the index.
+    const area = withRules([{ objectClass: "RESARE", geom: OVER, cellRef: 0, restrictions: [7] }]);
+    chartObjects(area, [22.0, 60.0], [22.05, 60.02])[0]?.restrictions?.splice(0);
+    expect(leg(area, input())?.flags).toContain("ENTRY_PROHIBITED");
+    // The lookup walks the grid over the whole box: a box past 40 000 km² is refused.
+    expect(() => chartObjects(index, [0, 50], [10, 70])).toThrow(RangeError);
+  });
+});
+
+describe("rules at the edges of the chart", () => {
+  test("a corridor across ±180° finds the bridge on the far side", () => {
+    const across = {
+      objectClass: "BRIDGE" as const,
+      geom: {
+        type: "line" as const,
+        coords: [merc([-179.9998, 59.999]), merc([-179.9998, 60.001])]
+      },
+      cellRef: 0,
+      clearance: 18
+    };
+    const index = withRules([across]);
+    const r = checkRoute(
+      index,
+      input(
+        {
+          highWater: () => level(1),
+          coordinates: [
+            [179.999, 60],
+            [179.9998, 60]
+          ]
+        },
+        17
+      ),
+      NOW
+    ).legs[0];
+    expect(r?.flags).toContain("AIR_DRAFT");
+  });
+
+  test("a lane's direction is compared with the course the chart draws, the rhumb line", () => {
+    // The tangent plane gives 41°, the rhumb line 38°: a lane at 339° is followed, 59° off it.
+    expect(rhumbCourse([0, 75], [10, 78])).toBeCloseTo(38, 0);
+  });
+
+  test("with no water-level source the high water is no bound on the rise", () => {
+    expect(
+      highestWaterLevel(undefined, [], undefined, NOW, NOW + 60_000, NOW).degraded
+    ).toBeDefined();
+  });
+
+  test("a request's draft for an unresolved vessel keeps the configured air height", () => {
+    const v = vesselFor({ draft: 2 }, { vessel: () => undefined, airHeight: () => 17 });
+    expect(v?.airHeight).toBe(17);
+    expect(
+      vesselFor({ draft: 2, airHeight: 12 }, { vessel: () => undefined, airHeight: () => 17 })
+        ?.airHeight
+    ).toBe(12);
   });
 });

@@ -19,6 +19,13 @@ function nearSide(a: LonLat, b: LonLat): LonLat {
   return [a[0] + wrapLon(b[0] - a[0]), b[1]];
 }
 
+/** The rhumb line's course from a to b, as the chart draws the leg, degrees true 0..360. */
+export function rhumbCourse(a: LonLat, b: LonLat): number {
+  const [ax, ay] = toMercator(a[0], a[1]);
+  const [bx, by] = toMercator(nearSide(a, b)[0], b[1]);
+  return ((Math.atan2(bx - ax, by - ay) * 180) / Math.PI + 360) % 360;
+}
+
 /** True bearing from a to b in the tangent plane at a that `project` offsets in, radians. */
 export function bearing(a: LonLat, b: LonLat): number {
   const east = (nearSide(a, b)[0] - a[0]) / (offset(a, 1, 0)[0] - a[0]);

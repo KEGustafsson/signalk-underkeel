@@ -25,8 +25,29 @@ const lonLat = (p: readonly number[]): LonLat => {
   return [lon, lat];
 };
 
-/** The index's rule features (`spatial/rules.ts`) whose bounds meet sw–ne, in lon/lat. */
+/**
+ * The largest box `objects` takes, km²: its lookup walks the rules grid over the whole box, so
+ * the cost goes with the area. Past a planner's largest region (a 165 km side) with room.
+ */
+export const MAX_OBJECTS_KM2 = 40_000;
+
+/** The box sw–ne's area, km², on the sphere. */
+function boxKm2(sw: LonLat, ne: LonLat): number {
+  const rad = Math.PI / 180;
+  const r = 6371.0088;
+  const w = Math.abs(ne[0] - sw[0]) * rad;
+  return r * r * w * Math.abs(Math.sin(ne[1] * rad) - Math.sin(sw[1] * rad));
+}
+
+/**
+ * The index's rule features (`spatial/rules.ts`) whose bounds meet sw–ne, in lon/lat. A box
+ * over MAX_OBJECTS_KM2 throws RangeError, as an oversized box or leg does.
+ */
 export function chartObjects(index: ChartIndex, sw: LonLat, ne: LonLat): ChartObject[] {
+  const km2 = boxKm2(sw, ne);
+  if (!(km2 <= MAX_OBJECTS_KM2)) {
+    throw new RangeError(`objects box over ${MAX_OBJECTS_KM2} km²`);
+  }
   const [x0, y0] = toMercator(sw[0], sw[1]);
   const [x1, y1] = toMercator(ne[0], ne[1]);
   const r = {
@@ -53,7 +74,7 @@ export function chartObjects(index: ChartIndex, sw: LonLat, ne: LonLat): ChartOb
       class: f.objectClass,
       geometry,
       ...(f.clearance !== undefined && { clearance: f.clearance }),
-      ...(f.restrictions && { restrictions: f.restrictions }),
+      ...(f.restrictions && { restrictions: [...f.restrictions] }),
       ...(f.orient !== undefined && { orient: f.orient }),
       ...(cell !== undefined && { cell })
     };

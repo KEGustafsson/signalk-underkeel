@@ -1,5 +1,5 @@
 import type { LonLat, Rect, XY } from "../foundation/geo";
-import { emptyRect, extendRect, toMercator } from "../foundation/geo";
+import { emptyRect, extendRect, toMercator, wrapLon } from "../foundation/geo";
 import type { CellInfo } from "../ingest/cells";
 import type { RuleFeature } from "../ingest/rule-features";
 import { OVERHEAD_CLASSES } from "../ingest/rule-features";
@@ -32,7 +32,8 @@ const HIGH_WATER_DATUMS = new Set([16, 17, 18, 20, 21, 29]);
 const HIGH_WATER_RISE = 0.5;
 /**
  * How far the water may stand above a clearance's datum when it cannot be related to the water
- * level, metres: a clearance this much over the air height and margin passes anyway.
+ * level, metres: a clearance this much over the air height and margin passes, marked
+ * `CLEARANCE_RISE_ASSUMED`; a lower one is unverified.
  */
 const UNKNOWN_RISE = 2;
 
@@ -51,45 +52,79 @@ export interface RuleWindow {
   airHeight?: number;
   /** The highest water over the corridor's window, above chart datum. */
   highWater?: () => WaterLevel;
-  /** The leg's course, degrees true; absent for a box, whose course is not known. */
+  /** The leg's rhumb-line course, degrees true; absent for a box, whose course is not known. */
   course?: number;
 }
 
 const RANK: Record<RuleStatus, number> = { ok: 0, unverified: 1, fail: 2 };
 
-/** The rule features `rings` meet, Mercator rings of a leg's corridor pieces or a box. */
+/** The width of the Mercator world, metres: a ring past ±180° meets features a world over. */
+const WORLD = 2 * toMercator(180, 0)[0];
+
+/**
+ * The rule features `rings` meet, a leg's corridor pieces or a box. A ring is unwrapped from its
+ * first vertex, so one across ±180° stays whole, and is looked up a world over too on the side
+ * it reaches past, where the features keep their own longitudes.
+ */
 function met(index: ChartIndex, rings: readonly (readonly LonLat[])[]): RuleFeature[] {
   if (index.rules.size === 0) {
     return [];
   }
   const out = new Set<RuleFeature>();
   for (const ring of rings) {
-    const merc: XY[] = ring.map((p) => toMercator(p[0], p[1]));
+    const lon0 = ring[0]?.[0] ?? 0;
+    const merc: XY[] = ring.map((p) => toMercator(lon0 + wrapLon(p[0] - lon0), p[1]));
     const r: Rect = emptyRect();
     merc.forEach((p) => extendRect(r, p[0], p[1]));
-    for (const f of index.rules.near(r)) {
-      if (meetsRing(f.geom, merc)) {
-        out.add(f);
+    const shifts = [
+      0,
+      ...(r.maxX > WORLD / 2 ? [-WORLD] : []),
+      ...(r.minX < -WORLD / 2 ? [WORLD] : [])
+    ];
+    for (const dx of shifts) {
+      const moved: XY[] = merc.map((p) => [p[0] + dx, p[1]]);
+      const box: Rect = { minX: r.minX + dx, minY: r.minY, maxX: r.maxX + dx, maxY: r.maxY };
+      for (const f of index.rules.near(box)) {
+        if (meetsRing(f.geom, moved)) {
+          out.add(f);
+        }
       }
     }
   }
   return [...out];
 }
 
+/** The datum of `f`'s clearance: its own VERDAT, else its cell's, unless the cell has datum areas. */
+function clearanceDatum(f: RuleFeature, cell: CellInfo | undefined): number | undefined {
+  if (f.verdat !== undefined) {
+    return f.verdat;
+  }
+  return cell?.datumAreas === undefined ? cell?.verticalDatum : undefined;
+}
+
 /**
  * How far the water may stand above the datum `f`'s clearance is given from, metres, or
- * undefined when it cannot be told: the datum is unknown, or the level is a fallback.
+ * undefined when it cannot be told: the datum is unknown, or the level is a fallback. The
+ * object's own VERDAT wins over its cell's; a cell with datum areas of its own (M_VDAT, M_SDAT)
+ * gives no one datum for an object that states none.
  */
-function rise(cell: CellInfo | undefined, hw: WaterLevel | undefined): number | undefined {
-  const vdat = cell?.verticalDatum;
-  if (vdat !== undefined && HIGHEST_DATUMS.has(vdat)) {
+function rise(
+  f: RuleFeature,
+  cell: CellInfo | undefined,
+  hw: WaterLevel | undefined
+): number | undefined {
+  const vdat = clearanceDatum(f, cell);
+  if (vdat === undefined) {
+    return undefined;
+  }
+  if (HIGHEST_DATUMS.has(vdat)) {
     return 0;
   }
-  if (vdat !== undefined && HIGH_WATER_DATUMS.has(vdat)) {
+  if (HIGH_WATER_DATUMS.has(vdat)) {
     return HIGH_WATER_RISE;
   }
   // Heights and depths on one datum: the level above chart datum is the rise above the clearance's.
-  const same = vdat !== undefined && (cell?.soundingDatum ?? vdat) === vdat;
+  const same = (cell?.soundingDatum ?? cell?.verticalDatum) === vdat;
   if (!same || !hw || hw.degraded !== undefined) {
     return undefined;
   }
@@ -108,11 +143,12 @@ function clearanceVerdict(
   if (f.clearance < needed) {
     return { status: "fail", flags: ["AIR_DRAFT"] };
   }
-  const up = rise(cell, hw());
+  const up = rise(f, cell, hw());
+  // A rise not known is taken as UNKNOWN_RISE, never silently: the leg is marked for it.
   if (up === undefined) {
     return f.clearance - UNKNOWN_RISE < needed
       ? { status: "unverified", flags: ["CLEARANCE_UNKNOWN"] }
-      : { status: "ok", flags: [] };
+      : { status: "ok", flags: ["CLEARANCE_RISE_ASSUMED"] };
   }
   return f.clearance - up < needed
     ? { status: "fail", flags: ["AIR_DRAFT"] }

@@ -500,7 +500,8 @@ A leg is also held to what the charts say besides depth. With an air height (`ve
 overhead cable or pipe whose clearance, less the water's rise above its datum at the highest
 water while the boat is there, is below the air height plus 0.5 m fails the leg (`AIR_DRAFT`); one
 whose clearance is not charted, or whose datum the water level cannot be related to and which is
-less than 2 m clear, leaves it `unverified` (`CLEARANCE_UNKNOWN`). A restricted area with entry
+below the air height plus 2.5 m, leaves it `unverified` (`CLEARANCE_UNKNOWN`); a higher one
+passes marked `CLEARANCE_RISE_ASSUMED`. A restricted area with entry
 prohibited fails it (`ENTRY_PROHIBITED`), and a traffic separation lane fails a leg that runs
 against its direction or crosses it more than 20° from a right angle (`TSS_WRONG_WAY`). Areas
 with entry restricted or to be avoided, and lanes, are named in the flags. The request and response

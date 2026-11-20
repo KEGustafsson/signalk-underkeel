@@ -742,8 +742,10 @@ Depth is not all a leg is held to. With the boat's air height set (**Air height*
 `design.airHeight`), a bridge or an overhead cable the corridor passes under must clear it by
 0.5 m at the highest water while the boat is there: a 17 m mast passes under an 18 m bridge at
 mean water and fails it (`AIR_DRAFT`) when the sea stands 1 m above. A clearance the chart does
-not give, or one within 2 m of the mast whose datum the water level cannot be related to, leaves
-the leg `unverified`. A restricted area with entry prohibited fails the leg, and so does a traffic
+not give leaves the leg `unverified`, and so does one whose datum the water level cannot be
+related to, or measured against no water-level source, that is below the air height plus 2.5 m
+(2 m of rise taken on top of the 0.5 m margin); a higher one passes, marked
+`CLEARANCE_RISE_ASSUMED`. A restricted area with entry prohibited fails the leg, and so does a traffic
 separation lane sailed against its direction or crossed at a shallow angle.
 
 ### Suggesting a way round
@@ -782,7 +784,10 @@ between two samples is covered too, and returns the intervals in which
 every leg is `ok`, with the worst status of each departure. A leg is checked again only when
 its water level changes. With an accepted P of at least 0.1 %, a leg that passed at one level
 is not checked at a higher level, and a leg that failed at one level is not checked at a lower
-level, since more water never makes a leg worse; below 0.1 % every level is checked. A window over a long route or one of many legs is refused when it
+level, since more water never makes its depth worse; below 0.1 % every level is checked. That
+holds for depth alone: more water takes room under a bridge, so with an air height set a leg's
+results are kept apart for each high water it is held to, and a leg is checked again whenever
+that changes. A window over a long route or one of many legs is refused when it
 would cost one request too much work; a longer step or a shorter horizon fits it. The limits
 are in [plan §4.11](DEVELOPMENT-PLAN.md). In Finnish waters this matters during low-water spells; in tidal waters it works as a tide-gate
 planner.

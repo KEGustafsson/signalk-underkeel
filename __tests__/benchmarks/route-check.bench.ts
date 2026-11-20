@@ -115,6 +115,7 @@ const { DEFAULT_DYNAMICS } = lib("model/vessel");
 const { CHART_DATUM } = lib("model/water-level");
 const { toMercator } = lib("foundation/geo");
 const { HazardIndex } = lib("spatial/hazards");
+const { RuleIndex } = lib("spatial/rules");
 const { buildPyramid } = lib("spatial/pyramid-build");
 const base = { cellRef: 0, band: 5 };
 const box = ([w, s, e, n]) => ({

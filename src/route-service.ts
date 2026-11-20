@@ -28,6 +28,8 @@ export interface RouteServiceDeps {
   indexReason: string | undefined;
   config: PluginConfig;
   vessel(): VesselModel | undefined;
+  /** The configured or Signal K air height, also when the vessel has no draft to resolve. */
+  airHeight?(): number | undefined;
   /**
    * Water level over an arrival interval (epoch ms) at the positions `at`; the lowest
    * applies. With `area`, `at` is a convex ring and the level holds inside it too.
@@ -94,16 +96,24 @@ async function coordinatesOf(
 /** The vessel, with a request's draft and air height in place of the configured ones. */
 export function vesselFor(
   over: { draft?: number; airHeight?: number },
-  deps: Pick<RouteServiceDeps, "vessel">
+  deps: Pick<RouteServiceDeps, "vessel" | "airHeight">
 ): VesselModel | undefined {
   const current = deps.vessel();
   const air = over.airHeight === undefined ? {} : { airHeight: over.airHeight };
   if (over.draft === undefined) {
     return current && { ...current, ...air };
   }
-  return current
-    ? { ...current, draft: over.draft, ...air }
-    : { draft: over.draft, ...FALLBACK_HULL, ...air };
+  if (current) {
+    return { ...current, draft: over.draft, ...air };
+  }
+  // No vessel without a draft, but the air height configured or in Signal K still holds.
+  const own = deps.airHeight?.();
+  return {
+    draft: over.draft,
+    ...FALLBACK_HULL,
+    ...(own !== undefined && { airHeight: own }),
+    ...air
+  };
 }
 
 /** Validates the request and resolves route, vessel and speeds into a route-check input. */

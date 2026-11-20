@@ -12,7 +12,7 @@ import { footprintGeom, mercatorBuffer, minDepthOver } from "../spatial/pyramid"
 import { DEFAULT_BUILD } from "../spatial/pyramid-build";
 import type { Explanation } from "./explain";
 import { explainTile } from "./explain";
-import { bearing, legCorridors } from "./corridor";
+import { bearing, legCorridors, rhumbCourse } from "./corridor";
 import { applyRules } from "./rule-check";
 
 export { corridorRing, legCorridors, RING_REACH } from "./corridor";
@@ -223,7 +223,7 @@ function* legSteps(
   const tile = result.riskTile;
   const why = tile ? explainTile(index, tile, ring, terms, wl) : undefined;
   const rings = legCorridors(from, to, input.xteLimit + input.planningBuffer);
-  const course = ((bearing(from, to) * 180) / Math.PI + 360) % 360;
+  const course = rhumbCourse(from, to);
   const status = applyRules(
     verdictStatus(result.maxRisk, charted, result.flags, land, wl, flags, input),
     { index, input, flags },
