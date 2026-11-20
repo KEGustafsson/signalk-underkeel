@@ -359,6 +359,9 @@ describe("rule features", () => {
     expect(leg(area, input())?.flags).toContain("ENTRY_PROHIBITED");
     // The lookup walks the grid over the whole box: a box past 40 000 km² is refused.
     expect(() => chartObjects(index, [0, 50], [10, 70])).toThrow(RangeError);
+    // A box with no height has no area: its corners are checked first.
+    expect(() => chartObjects(index, [0, 60], [1e20, 60])).toThrow(RangeError);
+    expect(() => chartObjects(index, [0, 86], [0.1, 86])).toThrow(RangeError);
   });
 });
 
@@ -412,6 +415,62 @@ describe("rules at the edges of the chart", () => {
   test("a lane's direction is compared with the course the chart draws, the rhumb line", () => {
     // The tangent plane gives 41°, the rhumb line 38°: a lane at 339° is followed, 59° off it.
     expect(rhumbCourse([0, 75], [10, 78])).toBeCloseTo(38, 0);
+    const sea = {
+      type: "polygon" as const,
+      polygons: [
+        { outer: [merc([-1, 74]), merc([11, 74]), merc([11, 79]), merc([-1, 79])], holes: [] }
+      ]
+    };
+    const index = withRules([{ objectClass: "TSSLPT", geom: sea, cellRef: 0, orient: 339 }]);
+    const r = leg(
+      index,
+      input({
+        coordinates: [
+          [0, 75],
+          [10, 78]
+        ]
+      })
+    );
+    expect(r?.flags).toContain("TRAFFIC_LANE");
+    expect(r?.flags).not.toContain("TSS_WRONG_WAY");
+  });
+
+  test("a bridge across ±180° is cut there: it meets no leg far from it", () => {
+    const collection = {
+      type: "FeatureCollection" as const,
+      features: [
+        {
+          type: "Feature" as const,
+          geometry: {
+            type: "LineString",
+            coordinates: [
+              [179.999, 60.01],
+              [-179.999, 60.01]
+            ]
+          },
+          properties: { VERCLR: 10 }
+        }
+      ]
+    };
+    const parts = parseRuleLayer("BRIDGE", collection, 0);
+    expect(parts).toHaveLength(2);
+    const index = withRules(parts);
+    // The fairway at 22° E crosses 60.01° N, far from the bridge.
+    expect(leg(index, input({ highWater: () => level(1) }, 17))?.flags).not.toContain("AIR_DRAFT");
+    const near = leg(
+      index,
+      input(
+        {
+          highWater: () => level(1),
+          coordinates: [
+            [-179.9995, 60.005],
+            [-179.9995, 60.015]
+          ]
+        },
+        17
+      )
+    );
+    expect(near?.flags).toContain("AIR_DRAFT");
   });
 
   test("with no water-level source the high water is no bound on the rise", () => {
