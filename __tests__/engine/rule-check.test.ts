@@ -431,7 +431,7 @@ describe("rules at the edges of the chart", () => {
     });
     expect(line).toHaveLength(1);
     expect(width(line[0] as Geom)).toBeLessThan(20_000);
-    const ring = (w: number, e: number): [number, number][] => [
+    const ring = (w: number, e: number) => [
       merc([w, 60]),
       merc([e, 60]),
       merc([e, 61]),
