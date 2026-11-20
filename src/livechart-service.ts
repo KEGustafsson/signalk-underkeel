@@ -1,4 +1,6 @@
 import type { ServerAPI } from "@signalk/server-api";
+import type { OwnTrack } from "./livechart/tracks";
+import { tracksOf } from "./livechart/tracks";
 import path from "path";
 import type { CsbPlatform } from "./livechart/csb-export";
 import { csbGeoJson } from "./livechart/csb-export";
@@ -82,7 +84,20 @@ export class LivechartService {
   private dropped = 0;
   private readonly maxCells: number;
   private readonly notes = new NoteSchedule((key) => this.writeNote(key));
+  /** The tracks of the soundings as they last were, made again when a sounding is added. */
+  private tracksMade?: { count: number; last: number; tracks: OwnTrack[] };
   private readonly settler: PriorSettler;
+
+  /** The boat's own passages from its accepted soundings (`livechart/tracks.ts`). */
+  ownTracks(): OwnTrack[] {
+    const samples = this.files.samples;
+    const last = samples[samples.length - 1]?.at ?? 0;
+    const made = this.tracksMade;
+    if (made?.count !== samples.length || made.last !== last) {
+      this.tracksMade = { count: samples.length, last, tracks: tracksOf(samples) };
+    }
+    return (this.tracksMade as { tracks: OwnTrack[] }).tracks;
+  }
 
   constructor(
     private store: NodeStore,

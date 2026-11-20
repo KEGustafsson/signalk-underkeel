@@ -69,6 +69,7 @@ export function routeDepsFor(
     indexReason: s.load?.reason ?? "plugin not started",
     config: s.config ?? parseConfig({}),
     vessel: () => s.monitor?.vessel(),
+    ownTracks: () => s.livechart?.ownTracks() ?? [],
     airHeight: () =>
       airHeightOf({
         config: (s.config ?? parseConfig({})).vessel,

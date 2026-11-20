@@ -25,6 +25,12 @@ export const WFS_SOURCE = "traficom-wfs";
 /** Band 1 (overview), so every ENC cell takes precedence where both cover. */
 export const WFS_CELL_NAME = "FI1WFS01";
 export const DEFAULT_WFS_URL = "https://julkinen.traficom.fi/inspirepalvelu/rajoitettu/wfs";
+/**
+ * The Finnish Transport Infrastructure Agency's open fairway data (CC BY 4.0): its navigation
+ * lines are the cell's `NAVLINE` layer, the lines a planner keeps to.
+ */
+export const FTIA_WFS_URL = "https://avoinapi.vaylapilvi.fi/vaylatiedot/ows";
+const FTIA_LINES = "vesivaylatiedot:navigointilinjat_uusi";
 export const WFS_NOTICE =
   "depths from the Traficom WFS: not for navigational purposes; no rocks, wrecks or survey quality";
 
@@ -347,6 +353,47 @@ export interface WfsDownload {
   /** CATZOC assumed for the whole box; 6 (U) leaves it unassessed. */
   catzoc?: number;
   signal?: AbortSignal;
+  /**
+   * The FTIA's WFS to read navigation lines from (`FTIA_WFS_URL`, or Charts Provider's proxy
+   * of it), with the same fetch. Absent, the cell has no lines.
+   */
+  linesUrl?: string;
+}
+
+/** A navigation line as the cell keeps it: its geometry and the draft it is laid out for. */
+function navigationLine(f: WfsFeature): unknown {
+  return {
+    type: "Feature",
+    geometry: f.geometry,
+    properties: { mitoitussyvays: num(f.properties?.mitoitussyvays) }
+  };
+}
+
+/**
+ * The navigation lines meeting `bbox`, or none when the FTIA's WFS fails: they are a planner's
+ * preference, never a depth, so a cell is written without them rather than not at all.
+ */
+async function fetchLines(d: WfsDownload, bbox: Bbox): Promise<unknown[] | undefined> {
+  if (d.linesUrl === undefined) {
+    return [];
+  }
+  try {
+    const features = await fetchLayer({
+      fetch: d.fetch,
+      base: d.linesUrl,
+      typeName: FTIA_LINES,
+      bbox,
+      limit: limiter(1),
+      sortBy: "navigointilinjaid",
+      ...(d.signal && { signal: d.signal })
+    });
+    return features.filter((f) => f.geometry?.type === "LineString").map(navigationLine);
+  } catch (err) {
+    if (d.signal?.aborted) {
+      throw err;
+    }
+    return undefined;
+  }
 }
 
 const union = (a: Bbox, b: Bbox): Bbox => [
@@ -419,9 +466,13 @@ async function fetchLayers(d: WfsDownload, bbox: Bbox, limit: Limit): Promise<Wf
 }
 
 /** Downloads the box, or its corridor's parts, and writes the cell; resolves with the counts. */
-export async function downloadWfsCell(
-  d: WfsDownload
-): Promise<{ depthAreas: number; dredgedAreas: number; soundings: number }> {
+export async function downloadWfsCell(d: WfsDownload): Promise<{
+  depthAreas: number;
+  dredgedAreas: number;
+  soundings: number;
+  /** Navigation lines written, or false when the FTIA's WFS failed. */
+  lines: number | false;
+}> {
   const parts = d.parts !== undefined && d.parts.length > 0 ? d.parts : [d.bbox];
   const corridor = parts === d.parts;
   const groups = corridor ? partGroups(parts) : [parts];
@@ -445,6 +496,8 @@ export async function downloadWfsCell(
     counts.dredgedAreas += l.dredgedAreas.length;
     counts.soundings += l.soundings.length;
   }
-  writeCell(d.dir, cellLayers(clipped, parts, d.now, d.catzoc));
-  return counts;
+  const lines = await fetchLines(d, d.bbox);
+  const layers = cellLayers(clipped, parts, d.now, d.catzoc);
+  writeCell(d.dir, lines && lines.length > 0 ? { ...layers, NAVLINE: collection(lines) } : layers);
+  return { ...counts, lines: lines ? lines.length : false };
 }

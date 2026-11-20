@@ -85,7 +85,7 @@ describe("WFS refresh job", () => {
         ok: true,
         staging: expect.any(String),
         index: expect.objectContaining({ leafZoom: 16 }),
-        features: { depthAreas: 1, dredgedAreas: 0, soundings: 0 }
+        features: { depthAreas: 1, dredgedAreas: 0, soundings: 0, lines: 0 }
       });
       expect(fs.existsSync(j.build.indexDir)).toBe(false);
       commitChartIndex(j.build.indexDir, r.staging);
