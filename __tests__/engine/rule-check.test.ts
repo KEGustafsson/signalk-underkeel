@@ -7,7 +7,9 @@ import { vesselFor } from "../../src/route-service";
 import type { LonLat } from "../../src/foundation/geo";
 import { toMercator } from "../../src/foundation/geo";
 import type { RuleFeature } from "../../src/ingest/rule-features";
-import { parseRuleLayer } from "../../src/ingest/rule-features";
+import { cutAtAntimeridian, parseRuleLayer } from "../../src/ingest/rule-features";
+import type { Geom } from "../../src/foundation/geometry";
+import { geomBounds } from "../../src/foundation/geometry";
 import type { WaterLevel } from "../../src/model/uncertainty";
 import { DEFAULT_DYNAMICS } from "../../src/model/vessel";
 import { chartObjects } from "../../src/planning-objects";
@@ -389,10 +391,19 @@ describe("rules at the edges of the chart", () => {
   test("a lane's direction is compared with the course the chart draws, the rhumb line", () => {
     // The tangent plane gives 41°, the rhumb line 38°: a lane at 339° is followed, 59° off it.
     expect(rhumbCourse([0, 75], [10, 78])).toBeCloseTo(38, 0);
+    // A lane about the departure, which the leg's corridor meets.
     const sea = {
       type: "polygon" as const,
       polygons: [
-        { outer: [merc([-1, 74]), merc([11, 74]), merc([11, 79]), merc([-1, 79])], holes: [] }
+        {
+          outer: [
+            merc([-0.05, 74.99]),
+            merc([0.05, 74.99]),
+            merc([0.05, 75.01]),
+            merc([-0.05, 75.01])
+          ],
+          holes: []
+        }
       ]
     };
     const index = withRules([{ objectClass: "TSSLPT", geom: sea, cellRef: 0, orient: 339 }]);
@@ -407,6 +418,34 @@ describe("rules at the edges of the chart", () => {
     );
     expect(r?.flags).toContain("TRAFFIC_LANE");
     expect(r?.flags).not.toContain("TSS_WRONG_WAY");
+  });
+
+  test("a shape at ±180° written with +180° among western vertices stays local and whole", () => {
+    const width = (g: Geom) => {
+      const b = geomBounds(g);
+      return b.maxX - b.minX;
+    };
+    const line = cutAtAntimeridian({
+      type: "line",
+      coords: [merc([-179.9, 60]), merc([180, 60])]
+    });
+    expect(line).toHaveLength(1);
+    expect(width(line[0] as Geom)).toBeLessThan(20_000);
+    const ring = (w: number, e: number): [number, number][] => [
+      merc([w, 60]),
+      merc([e, 60]),
+      merc([e, 61]),
+      merc([w, 61])
+    ];
+    const [area] = cutAtAntimeridian({
+      type: "polygon",
+      polygons: [{ outer: ring(-179.8, 180), holes: [ring(-179.95, 180)] }]
+    });
+    expect(area?.type === "polygon" && area.polygons[0]?.holes).toHaveLength(1);
+    expect(width(area as Geom)).toBeLessThan(30_000);
+    // Geometry clear of the meridian keeps its exact coordinates.
+    const fairway = { type: "line" as const, coords: [merc([22, 60]), merc([22.1, 60])] };
+    expect(cutAtAntimeridian(fairway)).toEqual([fairway]);
   });
 
   test("a bridge across ±180° is cut there: it meets no leg far from it", () => {
