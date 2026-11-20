@@ -99,14 +99,12 @@ export function cutAtAntimeridian(geom: Geom): Geom[] {
     return [geom];
   }
   const whole = geom.polygons.filter((_, i) => !spansWorlds(outers[i] as LonLat[]));
-  const cut = outers
-    .filter(spansWorlds)
-    .flatMap((outer) =>
-      splitRing(outer).map((ring): Geom => ({
-        type: "polygon",
-        polygons: [{ outer: mercator(ring), holes: [] }]
-      }))
-    );
+  const cut = outers.filter(spansWorlds).flatMap((outer) =>
+    splitRing(outer).map((ring): Geom => ({
+      type: "polygon",
+      polygons: [{ outer: mercator(ring), holes: [] }]
+    }))
+  );
   return whole.length > 0 ? [{ type: "polygon", polygons: whole }, ...cut] : cut;
 }
 
