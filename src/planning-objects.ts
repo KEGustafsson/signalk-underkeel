@@ -41,9 +41,13 @@ function boxKm2(sw: LonLat, ne: LonLat): number {
 
 /**
  * The index's rule features (`spatial/rules.ts`) whose bounds meet sw–ne, in lon/lat. A box
- * over MAX_OBJECTS_KM2 throws RangeError, as an oversized box or leg does.
+ * over MAX_OBJECTS_KM2, or with a corner past ±180° or ±85°, throws RangeError, as an
+ * oversized box or leg does.
  */
 export function chartObjects(index: ChartIndex, sw: LonLat, ne: LonLat): ChartObject[] {
+  if (![sw, ne].every(([lon, lat]) => Math.abs(lon) <= 180 && Math.abs(lat) <= 85)) {
+    throw new RangeError("objects corners must lie within ±180° longitude and ±85° latitude");
+  }
   const km2 = boxKm2(sw, ne);
   if (!(km2 <= MAX_OBJECTS_KM2)) {
     throw new RangeError(`objects box over ${MAX_OBJECTS_KM2} km²`);
