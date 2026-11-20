@@ -1,7 +1,7 @@
 import { splitLine, splitRing } from "../foundation/antimeridian";
 import type { LonLat, XY } from "../foundation/geo";
 import { fromMercator, toMercator, wrapLon } from "../foundation/geo";
-import type { Geom } from "../foundation/geometry";
+import type { Geom, PolygonGeom } from "../foundation/geometry";
 import type { GeoJsonFeatureCollection } from "./s57-geojson";
 import { toParts } from "./s57-geojson";
 
@@ -112,48 +112,80 @@ function lineAttributes(
   };
 }
 
-/** The points in lon/lat, each within 180° of the one before: continuous across ±180°. */
-function unwrapped(points: readonly XY[]): LonLat[] {
-  const out: LonLat[] = [];
+/** The width of the world in Web Mercator metres: 360° of longitude. */
+const WORLD = 2 * toMercator(180, 0)[0];
+
+/**
+ * Per point, the whole turns that make the line continuous across ±180°: each point within
+ * 180° of the one before, the first within 180° of `ref` when given.
+ */
+function turnsOf(points: readonly XY[], ref?: number): number[] {
+  const turns: number[] = [];
+  let before = ref;
   for (const [x, y] of points) {
-    const [lon, lat] = fromMercator(x, y);
-    const before = out[out.length - 1];
-    out.push([before ? before[0] + wrapLon(lon - before[0]) : lon, lat]);
+    const lon = fromMercator(x, y)[0];
+    const at = before === undefined ? lon : before + wrapLon(lon - before);
+    turns.push(Math.round((at - lon) / 360));
+    before = at;
   }
-  return out;
+  return turns;
 }
+
+const lonLatOf = (points: readonly XY[], turns: readonly number[]): LonLat[] =>
+  points.map(([x, y], i) => {
+    const [lon, lat] = fromMercator(x, y);
+    return [lon + 360 * (turns[i] ?? 0), lat];
+  });
 
 const spansWorlds = (points: readonly LonLat[]): boolean =>
   points.some((p) => p[0] < -180 || p[0] > 180);
 
 const mercator = (points: readonly LonLat[]): XY[] => points.map((p) => toMercator(p[0], p[1]));
 
+/** `points` moved by their turns: exactly as they were when none is needed. */
+function shifted(points: readonly XY[], turns: readonly number[]): readonly XY[] {
+  return turns.every((k) => k === 0)
+    ? points
+    : points.map(([x, y], i): XY => [x + WORLD * (turns[i] ?? 0), y]);
+}
+
 /**
  * `geom` cut where it crosses ±180°, each part within [-180°, 180°], so its bounds stay local:
- * stored whole, a bridge across the meridian would span the world. A polygon cut there keeps
- * its outer ring alone: the area only grows, so no rule is lost. Anything else is unchanged.
+ * stored whole, a bridge across the meridian would span the world. A shape that only touches
+ * the meridian, with a vertex at +180° where its others lie east of -180°, has that vertex
+ * moved to its side. A polygon cut there keeps its outer ring alone: the area only grows, so
+ * no rule is lost. Anything else is unchanged.
  */
 export function cutAtAntimeridian(geom: Geom): Geom[] {
   if (geom.type === "point") {
     return [geom];
   }
   if (geom.type === "line") {
-    const line = unwrapped(geom.coords);
+    const turns = turnsOf(geom.coords);
+    const line = lonLatOf(geom.coords, turns);
     return spansWorlds(line)
       ? splitLine(line).map((part) => ({ type: "line", coords: mercator(part) }))
-      : [geom];
+      : [
+          turns.every((k) => k === 0) ? geom : { type: "line", coords: shifted(geom.coords, turns) }
+        ];
   }
-  const outers = geom.polygons.map((p) => unwrapped(p.outer));
-  if (!outers.some(spansWorlds)) {
-    return [geom];
+  const whole: PolygonGeom[] = [];
+  const cut: Geom[] = [];
+  for (const p of geom.polygons) {
+    const turns = turnsOf(p.outer);
+    const outer = lonLatOf(p.outer, turns);
+    if (spansWorlds(outer)) {
+      for (const ring of splitRing(outer)) {
+        cut.push({ type: "polygon", polygons: [{ outer: mercator(ring), holes: [] }] });
+      }
+      continue;
+    }
+    const ref = outer[0]?.[0];
+    whole.push({
+      outer: shifted(p.outer, turns),
+      holes: p.holes.map((h) => shifted(h, turnsOf(h, ref)))
+    });
   }
-  const whole = geom.polygons.filter((_, i) => !spansWorlds(outers[i] as LonLat[]));
-  const cut = outers.filter(spansWorlds).flatMap((outer) =>
-    splitRing(outer).map((ring): Geom => ({
-      type: "polygon",
-      polygons: [{ outer: mercator(ring), holes: [] }]
-    }))
-  );
   return whole.length > 0 ? [{ type: "polygon", polygons: whole }, ...cut] : cut;
 }
 
