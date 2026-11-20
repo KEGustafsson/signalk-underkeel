@@ -3,7 +3,7 @@ import type { WfsConfig } from "./config";
 import { cellSources, cellsMissing, savedCatalogue, sourceKeys } from "./index-loader";
 import type { EncReader } from "./ingest/enc-read-process";
 import type { Bbox, WfsDownload, WfsFetch } from "./ingest/wfs";
-import { downloadWfsCell, WFS_SOURCE } from "./ingest/wfs";
+import { downloadWfsCell, FTIA_WFS_URL, WFS_SOURCE } from "./ingest/wfs";
 import type { ChartIndex } from "./spatial/chart-index";
 import { readBox } from "./spatial/build-box";
 import { reportProgress } from "./spatial/build-progress";
@@ -72,7 +72,9 @@ export function refreshJob(
       ...(parts && { parts }),
       dir: cellDir,
       now: new Date(now).toISOString(),
-      catzoc: wfs.catzoc
+      catzoc: wfs.catzoc,
+      // The FTIA's navigation lines beside the depths: a planner's preference, CC BY 4.0.
+      linesUrl: wfsUrl(FTIA_WFS_URL, wfs.viaChartsProvider)
     },
     cellsDir,
     // WFS depths are built whatever ENC the charts provider has, but an index of charted
@@ -92,7 +94,7 @@ export function refreshJob(
 
 export type WfsCounts = Awaited<ReturnType<typeof downloadWfsCell>>;
 
-export const NO_FEATURES: WfsCounts = { depthAreas: 0, dredgedAreas: 0, soundings: 0 };
+export const NO_FEATURES: WfsCounts = { depthAreas: 0, dredgedAreas: 0, soundings: 0, lines: 0 };
 
 export interface WfsReply extends BuildReply {
   features?: WfsCounts;

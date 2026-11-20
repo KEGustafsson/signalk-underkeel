@@ -110,7 +110,9 @@ describe("WFS box around the vessel", () => {
     h.t.pos = [22.08, 60.07];
     await h.service.check();
     // A count, then one page, per layer.
-    expect(h.fetched).toHaveLength(6);
+    // Three Traficom layers, each counted then read, and the FTIA's navigation lines.
+    expect(h.fetched.filter((u) => u.startsWith("https://wfs.test/"))).toHaveLength(6);
+    expect(h.fetched.filter((u) => u.includes("navigointilinjat"))).toHaveLength(2);
     expect(h.built).toEqual([[ENC, path.join(TMP, "FI1WFS01")]]);
     expect(h.indexes).toHaveLength(1);
     expect(h.service.status().box?.centre).toEqual([22.08, 60.07]);

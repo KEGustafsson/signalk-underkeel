@@ -176,7 +176,7 @@ describe("corridor", () => {
       jobs.push(job);
       return Promise.resolve({
         index: fixtureIndex(),
-        features: { depthAreas: 0, dredgedAreas: 0, soundings: 0 }
+        features: { depthAreas: 0, dredgedAreas: 0, soundings: 0, lines: 0 }
       });
     };
     // The box with its reach is about 25 km² by 10 km; the corridor's boxes 14 km².
@@ -203,7 +203,7 @@ describe("corridor", () => {
       jobs.push(job);
       return Promise.resolve({
         index: fixtureIndex(),
-        features: { depthAreas: 0, dredgedAreas: 0, soundings: 0 }
+        features: { depthAreas: 0, dredgedAreas: 0, soundings: 0, lines: 0 }
       });
     };
     const b = boxes({
@@ -222,7 +222,7 @@ describe("corridor", () => {
     const refresh: WfsRefresher = () =>
       Promise.resolve({
         index: fixtureIndex(),
-        features: { depthAreas: 0, dredgedAreas: 0, soundings: 0 }
+        features: { depthAreas: 0, dredgedAreas: 0, soundings: 0, lines: 0 }
       });
     const b = boxes({
       refresh,
@@ -256,7 +256,7 @@ describe("corridor", () => {
     const refresh: WfsRefresher = () =>
       Promise.resolve({
         index: fixtureIndex(),
-        features: { depthAreas: 0, dredgedAreas: 0, soundings: 0 }
+        features: { depthAreas: 0, dredgedAreas: 0, soundings: 0, lines: 0 }
       });
     // A corridor 1.6° long: its box is past the WFS's 1.5° span, its boxes are not.
     const long: Bbox[] = [

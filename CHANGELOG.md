@@ -6,6 +6,10 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Added
 
+- What a planner keeps to: leading lines, recommended tracks and anchorage areas from the charts,
+  the Finnish Transport Infrastructure Agency's fairway navigation lines with the Traficom WFS
+  (CC BY 4.0), and the boat's own passages from its soundings, each only at water no lower than it
+  was sailed at, listed by a planning session's `objects`.
 - Bridges, overhead cables and pipes, restricted areas and traffic separation lanes. The index
   reads `BRIDGE`, `CBLOHD`, `PIPOHD`, `RESARE` and `TSSLPT` from each cell and keeps them in
   `rules.json` (an index saved before it is rebuilt once). With the boat's air height (**Air

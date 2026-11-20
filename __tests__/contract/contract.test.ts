@@ -255,6 +255,17 @@ describe("signalk-underkeel satisfies the contract", () => {
   });
 });
 
+describe("a route planner's manifest section", () => {
+  test("a plan-only provider needs no state or notification path", () => {
+    const planner = { apiVersion: "1", base: "/plugins/signalk-route-planner/v1" };
+    expectValid("service.json", { ...planner, provides: ["routePlan"] });
+    expect(
+      v.validate("service.json", { ...planner, provides: ["routePlan", "lookahead"] })
+    ).not.toEqual([]);
+    expect(v.validate("service.json", { ...planner, provides: ["routeCheck"] })).not.toEqual([]);
+  });
+});
+
 describe("a second provider satisfies the same contract", () => {
   test("the stub's manifest section and responses validate", () => {
     const stub = stubProvider();

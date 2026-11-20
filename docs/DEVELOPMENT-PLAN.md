@@ -1479,6 +1479,20 @@ clearance. A session takes `airHeight` and lists the objects in a box (`objects(
 a box over 40 000 km² throws RangeError, since the lookup walks the grid over the whole box. A
 corridor across ±180° finds the objects on the far side too.
 
+**What a planner keeps to** (the planner's R4c). The index keeps `NAVLNE` leading lines,
+`RECTRC` recommended tracks (two-way where `TRAFIC` is 4) and `ACHARE` anchorage areas beside the
+rules (`rules.json` version 2; an index of version 1 is rebuilt), and with the Traficom WFS the
+Finnish Transport Infrastructure Agency's navigation lines (`vesivaylatiedot:navigointilinjat_uusi`,
+CC BY 4.0) as the WFS cell's `NAVLINE` layer, two-way, each with the draft it is laid out for
+(`mitoitussyvays`), read through Charts Provider's proxy when it runs one. No verdict reads them;
+a session's `objects` lists them. A failed download of the lines writes the cell without them,
+since they are a preference, never a depth. The boat's own passages are its accepted soundings
+joined into tracks where they follow within 2 minutes and 200 m (`src/livechart/tracks.ts`), each
+with the highest water level it was sailed at (depth below the surface less below datum). A
+session lists a track as a `TRACK` object only where the window's lowest water at its ends and
+middle is known and no lower than that, so a track lowers a planner's cost, never its risk (its
+invariant 6).
+
 **Planning boxes** (the planner's R2). `prepare(region, signal)` answers with an index over which a
 box's or leg's corridor lying in `region` is judged on the charts, and `session` and `routeCheck`
 over it (`features` lists `prepare`):

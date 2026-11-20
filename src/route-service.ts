@@ -1,4 +1,5 @@
 import type { ApiReply } from "./api/routes";
+import type { OwnTrack } from "./livechart/tracks";
 import {
   corridorBudgetError,
   parseRouteRequest,
@@ -42,6 +43,8 @@ export interface RouteServiceDeps {
    * another index's queries (a planning box). Absent, `waterLevel` serves them too.
    */
   waterLevelFor?: (cells: readonly CellInfo[]) => RouteServiceDeps["waterLevel"];
+  /** The boat's own passages, a planner's preference (`livechart/tracks.ts`). */
+  ownTracks?(): readonly OwnTrack[];
   /** The highest water level over an interval, for clearances (`RouteCheckInput.highWater`). */
   highWater?: RouteServiceDeps["waterLevel"];
   /** `highWater` related to the vertical datums of `cells`, as `waterLevelFor`. */

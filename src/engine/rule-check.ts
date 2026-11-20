@@ -2,7 +2,7 @@ import type { LonLat, Rect, XY } from "../foundation/geo";
 import { emptyRect, extendRect, toMercator, wrapLon } from "../foundation/geo";
 import type { CellInfo } from "../ingest/cells";
 import type { RuleFeature } from "../ingest/rule-features";
-import { OVERHEAD_CLASSES } from "../ingest/rule-features";
+import { OVERHEAD_CLASSES, PREFERENCE_CLASSES } from "../ingest/rule-features";
 import type { WaterLevel } from "../model/uncertainty";
 import type { ChartIndex } from "../spatial/chart-index";
 import { meetsRing } from "../spatial/rules";
@@ -57,6 +57,8 @@ export interface RuleWindow {
 }
 
 const RANK: Record<RuleStatus, number> = { ok: 0, unverified: 1, fail: 2 };
+
+const PREFERENCES: ReadonlySet<string> = new Set(PREFERENCE_CLASSES);
 
 /** The width of the Mercator world, metres: a ring past ±180° meets features a world over. */
 const WORLD = 2 * toMercator(180, 0)[0];
@@ -195,7 +197,12 @@ export function checkRules(
   // Without an air height nothing overhead is read: its geometry is not tested either.
   const overhead = (f: RuleFeature): boolean =>
     (OVERHEAD_CLASSES as readonly string[]).includes(f.objectClass);
-  const found = met(index, rings, (f) => w.airHeight !== undefined || !overhead(f));
+  // A preference (a leading line, an anchorage) is the planner's: no verdict reads it.
+  const found = met(
+    index,
+    rings,
+    (f) => !PREFERENCES.has(f.objectClass) && (w.airHeight !== undefined || !overhead(f))
+  );
   let status: RuleStatus = "ok";
   const flags = new Set<string>();
   let hw: WaterLevel | undefined;
@@ -214,8 +221,11 @@ export function checkRules(
       );
     } else if (f.objectClass === "RESARE") {
       v = areaVerdict(f);
-    } else {
+    } else if (f.objectClass === "TSSLPT") {
       v = laneVerdict(f, w.course);
+    } else {
+      // A preference (a leading line, an anchorage) is the planner's: no verdict reads it.
+      continue;
     }
     v.flags.forEach((x) => flags.add(x));
     if (RANK[v.status] > RANK[status]) {

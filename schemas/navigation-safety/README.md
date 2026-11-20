@@ -25,6 +25,10 @@ Plotter Extensions manifest. `signalk-underkeel` is the first provider.
 publishers, outside the HTTP contract above and outside the plugin's configured inputs; see
 [the RFC draft](../../docs/rfcs/crowdsourced-depth-cells.md).
 
+A provider that only plans routes (`provides: ["routePlan"]`, such as signalk-route-planner)
+publishes no safety state and may leave out `statePath` and `notificationPath`; every other
+provider names both.
+
 Errors are `{ "errors": [string, …] }` with a 4xx or 5xx status (`defs.json#/$defs/errors`).
 
 The request schemas bound each field by what it means: speeds, drafts, buffers, the

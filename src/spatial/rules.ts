@@ -14,7 +14,8 @@ import { RULE_LAYERS } from "../ingest/rule-features";
 const CELL = 2000;
 
 const MAGIC = "underkeel-rules";
-export const RULES_VERSION = 1;
+/** 2 added the preference objects: an index saved with 1 is rebuilt to hold them. */
+export const RULES_VERSION = 2;
 
 export class RuleIndex {
   private readonly grid = new Map<string, number[]>();

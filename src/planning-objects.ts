@@ -1,5 +1,7 @@
 import type { LonLat } from "./foundation/geo";
 import { fromMercator, toMercator } from "./foundation/geo";
+import type { OwnTrack } from "./livechart/tracks";
+import type { WaterLevel } from "./model/uncertainty";
 import type { ChartIndex } from "./spatial/chart-index";
 
 /**
@@ -16,6 +18,10 @@ export interface ChartObject {
   clearance?: number;
   restrictions?: number[];
   orient?: number;
+  /** A line with traffic both ways along it, which a boat keeps to starboard of. */
+  twoWay?: boolean;
+  /** The draft a fairway's navigation line is laid out for, metres. */
+  designDraft?: number;
   /** The S-57 cell it is from. */
   cell?: string;
 }
@@ -80,7 +86,62 @@ export function chartObjects(index: ChartIndex, sw: LonLat, ne: LonLat): ChartOb
       ...(f.clearance !== undefined && { clearance: f.clearance }),
       ...(f.restrictions && { restrictions: [...f.restrictions] }),
       ...(f.orient !== undefined && { orient: f.orient }),
+      ...(f.twoWay && { twoWay: true }),
+      ...(f.designDraft !== undefined && { designDraft: f.designDraft }),
       ...(cell !== undefined && { cell })
     };
   });
+}
+
+/**
+ * The boat's own tracks meeting sw–ne as `TRACK` objects, each only where the window's lowest
+ * water at its ends and middle (`low`, undefined when not known) is no lower than the highest it
+ * was sailed at: a track lowers a planner's cost, never its risk (invariant 6).
+ */
+export function trackObjects(
+  tracks: readonly OwnTrack[],
+  sw: LonLat,
+  ne: LonLat,
+  low: (at: readonly LonLat[]) => number | undefined
+): ChartObject[] {
+  const meets = (p: LonLat): boolean =>
+    p[0] >= sw[0] && p[0] <= ne[0] && p[1] >= sw[1] && p[1] <= ne[1];
+  return tracks
+    .filter((t) => t.coordinates.some(meets))
+    .filter((t) => {
+      const c = t.coordinates;
+      const h = low([
+        c[0] as LonLat,
+        c[Math.floor(c.length / 2)] as LonLat,
+        c[c.length - 1] as LonLat
+      ]);
+      return h !== undefined && h >= t.level;
+    })
+    .map((t) => ({
+      class: "TRACK",
+      geometry: {
+        type: "LineString" as const,
+        coordinates: t.coordinates.map((p): LonLat => [p[0], p[1]])
+      }
+    }));
+}
+
+/**
+ * A session's objects in sw–ne: the index's, and the boat's own tracks wherever the window's
+ * lowest water (`level`) is known and no lower than they were sailed at.
+ */
+export function sessionObjects(
+  index: ChartIndex,
+  tracks: readonly OwnTrack[],
+  sw: LonLat,
+  ne: LonLat,
+  level: (at: readonly LonLat[]) => WaterLevel
+): ChartObject[] {
+  return [
+    ...chartObjects(index, sw, ne),
+    ...trackObjects(tracks, sw, ne, (at) => {
+      const low = level(at);
+      return low.degraded === undefined ? low.h : undefined;
+    })
+  ];
 }

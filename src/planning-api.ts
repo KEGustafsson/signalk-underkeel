@@ -7,8 +7,7 @@ import { EARTH_RADIUS, haversine } from "./foundation/geo";
 import type { Bbox } from "./ingest/wfs";
 import type { HeldBox, PlanningBoxes } from "./planning-box";
 import { carryAdjustments, holds, regionError } from "./planning-box";
-import type { ChartObject } from "./planning-objects";
-import { chartObjects } from "./planning-objects";
+import { type ChartObject, sessionObjects } from "./planning-objects";
 import type { RouteQueue, RouteServiceDeps } from "./route-service";
 import { routeCheck, vesselFor } from "./route-service";
 import type { SurveyResult } from "./planning-survey";
@@ -303,7 +302,8 @@ function sessionFor(
         worst: c.leg.worst?.position
       };
     },
-    objects: (sw, ne) => chartObjects(index, sw, ne),
+    objects: (sw, ne) =>
+      sessionObjects(index, deps.ownTracks?.() ?? [], sw, ne, (at) => level(whole, at)),
     work: () => work,
     pause: pauseFor(signal)
   };
