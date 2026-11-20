@@ -1,4 +1,6 @@
 import type { ServerAPI } from "@signalk/server-api";
+import type { OwnTrack } from "./livechart/tracks";
+import { tracksOf } from "./livechart/tracks";
 import path from "path";
 import type { CsbPlatform } from "./livechart/csb-export";
 import { csbGeoJson } from "./livechart/csb-export";
@@ -82,7 +84,19 @@ export class LivechartService {
   private dropped = 0;
   private readonly maxCells: number;
   private readonly notes = new NoteSchedule((key) => this.writeNote(key));
+  /** Soundings appended to the sample log since start: the log changed when this did. */
+  private appended = 0;
+  /** The tracks of the soundings as they last were, made again when a sounding is added. */
+  private tracksMade?: { appended: number; tracks: OwnTrack[] };
   private readonly settler: PriorSettler;
+
+  /** The boat's own passages from its accepted soundings (`livechart/tracks.ts`). */
+  ownTracks(): OwnTrack[] {
+    if (this.tracksMade?.appended !== this.appended) {
+      this.tracksMade = { appended: this.appended, tracks: tracksOf(this.files.samples) };
+    }
+    return this.tracksMade.tracks;
+  }
 
   constructor(
     private store: NodeStore,
@@ -232,8 +246,10 @@ export class LivechartService {
     // Every accepted sounding updates its cell; only the CSB export log is thinned.
     const c = this.posteriors.add(r.sounding);
     const key = tileKey(c.z, c.x, c.y);
-    if (this.thinner.keep(key, r.sounding.at, raw.sog)) {
+    const level = r.sounding.belowSurface - r.sounding.depth;
+    if (this.thinner.keep(key, r.sounding.at, raw.sog, level)) {
       this.files.appendSample(r.sounding);
+      this.appended += 1;
     } else {
       this.thinned += 1;
     }

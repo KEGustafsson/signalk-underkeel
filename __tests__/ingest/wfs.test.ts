@@ -108,7 +108,7 @@ describe("Traficom WFS ingest", () => {
       now: new Date("2026-10-18T07:00:00Z"),
       catzoc: 3
     });
-    expect(counts).toEqual({ depthAreas: 1, dredgedAreas: 0, soundings: 1 });
+    expect(counts).toEqual({ depthAreas: 1, dredgedAreas: 0, soundings: 1, lines: 0 });
     const q = new URL(urls[0] as string).searchParams;
     expect(q.get("bbox")).toBe("59.95,21.95,60.05,22.05,urn:ogc:def:crs:EPSG::4326");
     expect(q.get("srsName")).toBe("EPSG:4326");
@@ -128,6 +128,76 @@ describe("Traficom WFS ingest", () => {
     });
     const depths = cell.features.flatMap((f) => (f.role === "depth" ? [f.depth] : [])).sort();
     expect(depths).toEqual([3, 4.2]);
+  });
+
+  test("the FTIA's navigation lines are the cell's NAVLINE layer, two-way, with their draft", async () => {
+    const line = {
+      type: "Feature",
+      geometry: {
+        type: "LineString",
+        coordinates: [
+          [21.96, 59.96],
+          [22.04, 60.04]
+        ]
+      },
+      properties: { navigointilinjaid: 1, mitoitussyvays: 2.4, tosisuunta: 45 }
+    };
+    const sorts: (string | null)[] = [];
+    const fetch =
+      (lines: "ok" | "down"): WfsFetch =>
+      (url) => {
+        if (url.startsWith("https://ftia.test/")) {
+          if (lines === "down") {
+            return Promise.reject(new Error("ECONNREFUSED"));
+          }
+          const q = new URL(url).searchParams;
+          if (q.has("startIndex")) {
+            sorts.push(q.get("sortBy"));
+          }
+          // A line the WFS sends broken is left out: it would fail the cell's whole build.
+          const broken = [
+            { ...line, geometry: { type: "LineString", coordinates: [[21.97, 59.97]] } },
+            { ...line, geometry: { type: "LineString", coordinates: null } },
+            {
+              ...line,
+              geometry: {
+                type: "LineString",
+                coordinates: [
+                  [21.97, "x"],
+                  [22, 60]
+                ]
+              }
+            }
+          ];
+          return Promise.resolve(reply(q.get("startIndex") === "0" ? [line, ...broken] : []));
+        }
+        return Promise.resolve(
+          reply(url.includes("DepthArea_A") && url.includes("startIndex=0") ? [area] : [])
+        );
+      };
+    const dir = path.join(TMP, "FI1WFS01");
+    const d = {
+      url: "https://wfs.test/wfs",
+      linesUrl: "https://ftia.test/ows",
+      bbox: [21.95, 59.95, 22.05, 60.05] as [number, number, number, number],
+      dir,
+      now: new Date("2026-10-18T07:00:00Z"),
+      catzoc: 3
+    };
+    await expect(downloadWfsCell({ ...d, fetch: fetch("ok") })).resolves.toMatchObject({
+      lines: 1
+    });
+    // The FTIA's layer has no IDENTIFIER: its pages are ordered by its own id.
+    expect(sorts.length > 0 && sorts.every((x) => x === "navigointilinjaid")).toBe(true);
+    expect(readCellDirectory(dir, 0).rules).toEqual([
+      expect.objectContaining({ objectClass: "NAVLINE", twoWay: true, designDraft: 2.4 })
+    ]);
+    // The lines are a preference: a cell is written without them when their WFS is down.
+    await expect(downloadWfsCell({ ...d, fetch: fetch("down") })).resolves.toMatchObject({
+      depthAreas: 1,
+      lines: false
+    });
+    expect(readCellDirectory(dir, 0).rules).toEqual([]);
   });
 
   test("pages are fetched until one comes back empty", async () => {

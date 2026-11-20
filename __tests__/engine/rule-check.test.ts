@@ -282,6 +282,14 @@ describe("rule features", () => {
     expect(listed?.restrictions).toEqual([8, 14]);
     const [lane] = parseRuleLayer("TSSLPT", collection({ ORIENT: -90 }), 0);
     expect(lane?.orient).toBe(270);
+    // What a planner keeps to: a leading line with its direction, a two-way recommended track.
+    const [leading] = parseRuleLayer("NAVLNE", collection({ ORIENT: 135 }), 0);
+    expect(leading).toMatchObject({ objectClass: "NAVLNE", orient: 135 });
+    expect(leading?.twoWay).toBeUndefined();
+    const [both] = parseRuleLayer("RECTRC", collection({ TRAFIC: "4" }), 0);
+    expect(both?.twoWay).toBe(true);
+    const [inbound] = parseRuleLayer("RECTRC", collection({ TRAFIC: 1 }), 0);
+    expect(inbound?.twoWay).toBeUndefined();
   });
 
   test("rules.json round-trips; another version or a short file is refused", () => {
@@ -289,7 +297,11 @@ describe("rule features", () => {
     const text = serializeRules(index);
     expect(isCurrentRules(text.slice(0, 512))).toBe(true);
     expect(readRules(text).features()).toEqual(index.features());
-    expect(() => readRules(text.replace('"version":1', '"version":2'))).toThrow();
+    expect(() => readRules(text.replace('"version":2', '"version":3'))).toThrow();
+    // An earlier version still loads, for an index whose cells are away, and is not current.
+    const v1 = text.replace('"version":2', '"version":1');
+    expect(readRules(v1).features()).toEqual(index.features());
+    expect(isCurrentRules(v1.slice(0, 512))).toBe(false);
     expect(() => readRules(text.replace('"count":1', '"count":2'))).toThrow();
     // A coordinate past any number is refused rather than looped over.
     const huge = JSON.parse(text) as { features: { geom: { coords: number[][] } }[] };
@@ -356,6 +368,24 @@ describe("rule features", () => {
     // A box with no height has no area: its corners are checked first.
     expect(() => chartObjects(index, [0, 60], [1e20, 60])).toThrow(RangeError);
     expect(() => chartObjects(index, [0, 86], [0.1, 86])).toThrow(RangeError);
+  });
+});
+
+describe("what a planner keeps to", () => {
+  test("leading lines, tracks and anchorages are listed, and no verdict reads them", () => {
+    const index = withRules([
+      { objectClass: "NAVLNE", geom: ACROSS, cellRef: 0, orient: 0 },
+      { objectClass: "ACHARE", geom: OVER, cellRef: 0 },
+      { objectClass: "NAVLINE", geom: ACROSS, cellRef: 0, twoWay: true, designDraft: 2.4 }
+    ]);
+    // The leg is just what it is without them.
+    expect(leg(index, input({}, 30))).toEqual(leg(withRules([]), input({}, 30)));
+    const objects = chartObjects(index, [22.0, 60.0], [22.05, 60.02]);
+    expect(objects.map((o) => o.class).sort()).toEqual(["ACHARE", "NAVLINE", "NAVLNE"]);
+    expect(objects.find((o) => o.class === "NAVLINE")).toMatchObject({
+      twoWay: true,
+      designDraft: 2.4
+    });
   });
 });
 

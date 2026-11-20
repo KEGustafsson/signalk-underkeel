@@ -14,7 +14,8 @@ import { RULE_LAYERS } from "../ingest/rule-features";
 const CELL = 2000;
 
 const MAGIC = "underkeel-rules";
-export const RULES_VERSION = 1;
+/** 2 added the preference objects: an index saved with 1 is rebuilt to hold them. */
+export const RULES_VERSION = 2;
 
 export class RuleIndex {
   private readonly grid = new Map<string, number[]>();
@@ -197,11 +198,22 @@ export function serializeRules(index: RuleIndex): string {
   return JSON.stringify(file);
 }
 
-/** `rules.json` read back; a file of another version, or short of its count, is refused. */
+/**
+ * `rules.json` read back; a file of a later version, or short of its count, is refused. An
+ * earlier version holds the same features but fewer classes: it is read, so an index whose
+ * cells are away still loads, and it is rebuilt once they are back (`isCurrentRules`).
+ */
 export function readRules(text: string): RuleIndex {
   const file = JSON.parse(text) as Partial<RulesFile>;
-  if (file.magic !== MAGIC || file.version !== RULES_VERSION) {
-    throw new Error(`rules.json is not version ${RULES_VERSION} of ${MAGIC}`);
+  const version = file.version;
+  if (
+    file.magic !== MAGIC ||
+    typeof version !== "number" ||
+    !Number.isInteger(version) ||
+    version < 1 ||
+    version > RULES_VERSION
+  ) {
+    throw new Error(`rules.json is not version 1..${RULES_VERSION} of ${MAGIC}`);
   }
   const features = Array.isArray(file.features) ? file.features : [];
   const known = new Set<string>(RULE_LAYERS);

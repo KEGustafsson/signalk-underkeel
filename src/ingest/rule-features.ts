@@ -7,15 +7,27 @@ import { toParts } from "./s57-geojson";
 
 /**
  * S-57 objects a leg is held to besides depth (plan §4.11): what passes overhead, with its
- * vertical clearance, and the areas with a hard rule. Kept apart from the depth features, in
+ * vertical clearance, and the areas with a hard rule; and the lines and areas a planner keeps
+ * to or waits at. Kept apart from the depth features, in
  * Web Mercator metres like them, and saved with the index (`spatial/rules.ts`).
  */
 
 /** Overhead objects with a vertical clearance. */
 export const OVERHEAD_CLASSES = ["BRIDGE", "CBLOHD", "PIPOHD"] as const;
 
-/** The object layers read for rules. */
-export const RULE_LAYERS = [...OVERHEAD_CLASSES, "RESARE", "TSSLPT"] as const;
+/**
+ * Objects a planner keeps to or waits at, which no verdict reads: leading lines, recommended
+ * tracks, anchorage areas, and the fairway navigation lines of a WFS cell (`NAVLINE`).
+ */
+export const PREFERENCE_CLASSES = ["NAVLNE", "RECTRC", "ACHARE", "NAVLINE"] as const;
+
+/** The object layers read for rules and preferences. */
+export const RULE_LAYERS = [
+  ...OVERHEAD_CLASSES,
+  "RESARE",
+  "TSSLPT",
+  ...PREFERENCE_CLASSES
+] as const;
 
 export type RuleClass = (typeof RULE_LAYERS)[number];
 
@@ -36,6 +48,10 @@ export interface RuleFeature {
   orient?: number;
   /** The object's own VERDAT, the datum of its clearance, in place of its cell's. */
   verdat?: number;
+  /** A line with traffic both ways along it: RECTRC with TRAFIC 4, a WFS navigation line. */
+  twoWay?: boolean;
+  /** The draft a fairway's navigation line is laid out for, metres. */
+  designDraft?: number;
   lnam?: string;
 }
 
@@ -61,6 +77,39 @@ function clearanceOf(cls: RuleClass, props: Record<string, unknown>): number | u
     return number(props.VERCCL) ?? number(props.VERCLR);
   }
   return number(props.VERCSA) ?? number(props.VERCLR);
+}
+
+/** A feature's attributes as a rule feature keeps them, each only when the object states it. */
+function attributesOf(
+  cls: RuleClass,
+  props: Record<string, unknown>
+): Omit<RuleFeature, "objectClass" | "geom" | "cellRef"> {
+  const clearance = clearanceOf(cls, props);
+  const restrictions = cls === "RESARE" ? codes(props.RESTRN) : undefined;
+  const lnam = typeof props.LNAM === "string" && props.LNAM !== "" ? props.LNAM : undefined;
+  const verdat = clearance === undefined ? undefined : number(props.VERDAT);
+  return {
+    ...(clearance !== undefined && { clearance }),
+    ...(restrictions && { restrictions }),
+    ...(verdat !== undefined && { verdat }),
+    ...lineAttributes(cls, props),
+    ...(lnam && { lnam })
+  };
+}
+
+/** A line's direction, whether traffic runs both ways along it, and its design draft. */
+function lineAttributes(
+  cls: RuleClass,
+  props: Record<string, unknown>
+): Pick<RuleFeature, "orient" | "twoWay" | "designDraft"> {
+  const orient = cls === "TSSLPT" || cls === "NAVLNE" ? number(props.ORIENT) : undefined;
+  const twoWay = (cls === "RECTRC" && number(props.TRAFIC) === 4) || cls === "NAVLINE";
+  const designDraft = cls === "NAVLINE" ? number(props.mitoitussyvays) : undefined;
+  return {
+    ...(orient !== undefined && { orient: ((orient % 360) + 360) % 360 }),
+    ...(twoWay && { twoWay: true }),
+    ...(designDraft !== undefined && { designDraft })
+  };
 }
 
 /** The width of the world in Web Mercator metres: 360° of longitude. */
@@ -155,22 +204,9 @@ export function parseRuleLayer(
     } catch (err) {
       throw new Error(`${cls} feature ${i}: ${(err as Error).message}`, { cause: err });
     }
-    const clearance = clearanceOf(cls, props);
-    const restrictions = cls === "RESARE" ? codes(props.RESTRN) : undefined;
-    const orient = cls === "TSSLPT" ? number(props.ORIENT) : undefined;
-    const lnam = typeof props.LNAM === "string" && props.LNAM !== "" ? props.LNAM : undefined;
-    const verdat = clearance === undefined ? undefined : number(props.VERDAT);
+    const attributes = attributesOf(cls, props);
     for (const geom of parts.flatMap((part) => cutAtAntimeridian(part.geom))) {
-      out.push({
-        objectClass: cls,
-        geom,
-        cellRef,
-        ...(clearance !== undefined && { clearance }),
-        ...(restrictions && { restrictions }),
-        ...(orient !== undefined && { orient: ((orient % 360) + 360) % 360 }),
-        ...(verdat !== undefined && { verdat }),
-        ...(lnam && { lnam })
-      });
+      out.push({ objectClass: cls, geom, cellRef, ...attributes });
     }
   });
   return out;

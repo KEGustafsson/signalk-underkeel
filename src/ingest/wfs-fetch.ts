@@ -97,6 +97,8 @@ export interface LayerRequest {
   bbox: Bbox;
   limit: Limit;
   signal?: AbortSignal;
+  /** The property pages are sorted by; Traficom's IDENTIFIER unless the service names another. */
+  sortBy?: string;
 }
 
 function query(r: LayerRequest, extra: Record<string, string>): string {
@@ -115,13 +117,13 @@ function query(r: LayerRequest, extra: Record<string, string>): string {
 }
 
 /**
- * Pages are sorted by IDENTIFIER, so concurrent requests for different start indexes split
- * one ordering: without a sort the server may order each request differently.
+ * Pages are sorted by IDENTIFIER (`sortBy`), so concurrent requests for different start indexes
+ * split one ordering: without a sort the server may order each request differently.
  */
 const pageUrl = (r: LayerRequest, start: number, count: number): string =>
   query(r, {
     outputFormat: "application/json",
-    sortBy: "IDENTIFIER",
+    sortBy: r.sortBy ?? "IDENTIFIER",
     count: String(count),
     startIndex: String(start)
   });
@@ -446,4 +448,19 @@ export async function forEachPage(
       return read;
     }
   }
+}
+
+/** A LineString of at least two positions, each two finite numbers. */
+export function readableLine(f: {
+  geometry?: { type?: string; coordinates?: unknown } | null;
+}): boolean {
+  const c = f.geometry?.coordinates;
+  return (
+    f.geometry?.type === "LineString" &&
+    Array.isArray(c) &&
+    c.length >= 2 &&
+    c.every(
+      (p) => Array.isArray(p) && p.length >= 2 && Number.isFinite(p[0]) && Number.isFinite(p[1])
+    )
+  );
 }

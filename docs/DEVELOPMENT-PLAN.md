@@ -1479,6 +1479,23 @@ clearance. A session takes `airHeight` and lists the objects in a box (`objects(
 a box over 40 000 km² throws RangeError, since the lookup walks the grid over the whole box. A
 corridor across ±180° finds the objects on the far side too.
 
+**What a planner keeps to** (the planner's R4c). The index keeps `NAVLNE` leading lines,
+`RECTRC` recommended tracks (two-way where `TRAFIC` is 4) and `ACHARE` anchorage areas beside the
+rules (`rules.json` version 2; an index of version 1 is rebuilt), and with the Traficom WFS the
+Finnish Transport Infrastructure Agency's navigation lines (`vesivaylatiedot:navigointilinjat_uusi`,
+CC BY 4.0) as the WFS cell's `NAVLINE` layer, two-way, each with the draft it is laid out for
+(`mitoitussyvays`), read through Charts Provider's proxy when it runs one. No verdict reads them;
+a session's `objects` lists them. A failed download of the lines writes the cell without them,
+since they are a preference, never a depth, and a line the WFS sends broken is left out. The
+boat's own passages are its logged soundings joined into tracks, a gap in time or a jump in
+position starting a new one (`src/livechart/tracks.ts`), each with the highest water level it was
+sailed at (depth below the surface less below datum); where the log is thinned at low speed
+(`src/livechart/csb-thin.ts`), it still keeps a sounding taken at more water than the cell logged
+since, so a track's highest level is kept. A track across ±180° is listed cut there. A session lists a
+track as a `TRACK` object only where the window's lowest water is known and no lower than that
+at every point the track keeps, so the planner is offered it only at water it has been sailed in.
+No verdict reads a track: the route check still proves every leg (the planner's invariant 6).
+
 **Planning boxes** (the planner's R2). `prepare(region, signal)` answers with an index over which a
 box's or leg's corridor lying in `region` is judged on the charts, and `session` and `routeCheck`
 over it (`features` lists `prepare`):

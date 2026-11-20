@@ -85,7 +85,7 @@ function fakeRefresh(index: ChartIndex, fake: Fake): WfsRefresher {
     });
 }
 
-const fakeCounts = { depthAreas: 0, dredgedAreas: 0, soundings: 0 };
+const fakeCounts = { depthAreas: 0, dredgedAreas: 0, soundings: 0, lines: 0 };
 
 const flush = async (): Promise<void> => {
   for (let i = 0; i < 10; i++) {

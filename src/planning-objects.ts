@@ -1,5 +1,8 @@
+import { splitLine } from "./foundation/antimeridian";
 import type { LonLat } from "./foundation/geo";
-import { fromMercator, toMercator } from "./foundation/geo";
+import { fromMercator, toMercator, wrapLon } from "./foundation/geo";
+import type { OwnTrack } from "./livechart/tracks";
+import type { WaterLevel } from "./model/uncertainty";
 import type { ChartIndex } from "./spatial/chart-index";
 
 /**
@@ -16,6 +19,10 @@ export interface ChartObject {
   clearance?: number;
   restrictions?: number[];
   orient?: number;
+  /** A line with traffic both ways along it, which a boat keeps to starboard of. */
+  twoWay?: boolean;
+  /** The draft a fairway's navigation line is laid out for, metres. */
+  designDraft?: number;
   /** The S-57 cell it is from. */
   cell?: string;
 }
@@ -80,7 +87,101 @@ export function chartObjects(index: ChartIndex, sw: LonLat, ne: LonLat): ChartOb
       ...(f.clearance !== undefined && { clearance: f.clearance }),
       ...(f.restrictions && { restrictions: [...f.restrictions] }),
       ...(f.orient !== undefined && { orient: f.orient }),
+      ...(f.twoWay && { twoWay: true }),
+      ...(f.designDraft !== undefined && { designDraft: f.designDraft }),
       ...(cell !== undefined && { cell })
     };
   });
+}
+
+/** Whether the segment a–b meets the box sw–ne (Liang–Barsky clipping). */
+function segmentMeets(a: LonLat, b: LonLat, sw: LonLat, ne: LonLat): boolean {
+  let t0 = 0;
+  let t1 = 1;
+  const d = [b[0] - a[0], b[1] - a[1]];
+  for (let axis = 0; axis < 2; axis++) {
+    const delta = d[axis] as number;
+    for (const [p, q] of [
+      [-delta, (a[axis] as number) - (sw[axis] as number)],
+      [delta, (ne[axis] as number) - (a[axis] as number)]
+    ] as const) {
+      if (p === 0) {
+        if (q < 0) {
+          return false;
+        }
+        continue;
+      }
+      const r = q / p;
+      if (p < 0) {
+        t0 = Math.max(t0, r);
+      } else {
+        t1 = Math.min(t1, r);
+      }
+      if (t0 > t1) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+/**
+ * The boat's own tracks meeting sw–ne as `TRACK` objects, each only where the window's lowest
+ * water at every point it keeps (`low`, undefined when not known) is no lower than the highest it
+ * was sailed at, so it is listed only at water it has been sailed in.
+ */
+export function trackObjects(
+  tracks: readonly OwnTrack[],
+  sw: LonLat,
+  ne: LonLat,
+  low: (at: readonly LonLat[]) => number | undefined
+): ChartObject[] {
+  const meets = (c: readonly LonLat[]): boolean =>
+    c.some((p, i) => i > 0 && segmentMeets(c[i - 1] as LonLat, p, sw, ne));
+  return tracks
+    .flatMap((t) => localParts(t.coordinates).map((c) => ({ coordinates: c, level: t.level })))
+    .filter((t) => meets(t.coordinates))
+    .filter((t) => {
+      const h = low(t.coordinates);
+      return h !== undefined && h >= t.level;
+    })
+    .map((t) => ({
+      class: "TRACK",
+      geometry: { type: "LineString" as const, coordinates: t.coordinates }
+    }));
+}
+
+/**
+ * A track's points as lines within [-180°, 180°]: a passage across the antimeridian is cut
+ * there, so no leg of it spans the world and meets a box it never came near.
+ */
+function localParts(points: readonly LonLat[]): LonLat[][] {
+  const line: LonLat[] = [];
+  for (const [lon, lat] of points) {
+    const before = line[line.length - 1];
+    line.push([before ? before[0] + wrapLon(lon - before[0]) : lon, lat]);
+  }
+  return line.some((p) => p[0] < -180 || p[0] > 180)
+    ? splitLine(line)
+    : [points.map((p): LonLat => [p[0], p[1]])];
+}
+
+/**
+ * A session's objects in sw–ne: the index's, and the boat's own tracks wherever the window's
+ * lowest water (`level`) is known and no lower than they were sailed at.
+ */
+export function sessionObjects(
+  index: ChartIndex,
+  tracks: readonly OwnTrack[],
+  sw: LonLat,
+  ne: LonLat,
+  level: (at: readonly LonLat[]) => WaterLevel
+): ChartObject[] {
+  return [
+    ...chartObjects(index, sw, ne),
+    ...trackObjects(tracks, sw, ne, (at) => {
+      const low = level(at);
+      return low.degraded === undefined ? low.h : undefined;
+    })
+  ];
 }
