@@ -56,8 +56,12 @@ function livechartReply(s: PluginState, body: (l: LivechartService) => unknown):
 }
 
 /** The route services' view of the plugin's current state: REST and the planning API. */
-/** With no monitor running there is no level to hold a clearance to. */
-const NO_HIGH_WATER = { ...CHART_DATUM, degraded: "plugin not started" };
+/**
+ * With no monitor running the level is unknown: chart datum stands in, marked so nothing
+ * takes it as measured (a clearance, an own track sailable at it).
+ */
+const NO_LOW_WATER = { ...CHART_DATUM, degraded: "plugin not started" };
+const NO_HIGH_WATER = NO_LOW_WATER;
 
 export function routeDepsFor(
   app: Pick<ServerAPI, "resourcesApi" | "getSelfPath">,
@@ -76,9 +80,9 @@ export function routeDepsFor(
         signalk: { airHeight: asNumber(selfValue(app, "design.airHeight")) }
       }),
     waterLevel: (start, end, at, area) =>
-      s.monitor?.waterLevelOver(start, end, at, area) ?? CHART_DATUM,
+      s.monitor?.waterLevelOver(start, end, at, area) ?? NO_LOW_WATER,
     waterLevelFor: (cells) => (start, end, at, area) =>
-      s.monitor?.levels.over(start, end, at, clock.now(), area, cells) ?? CHART_DATUM,
+      s.monitor?.levels.over(start, end, at, clock.now(), area, cells) ?? NO_LOW_WATER,
     highWater: (start, end, at, area) =>
       s.monitor?.levels.highest(start, end, at, clock.now(), area) ?? NO_HIGH_WATER,
     highWaterFor: (cells) => (start, end, at, area) =>
