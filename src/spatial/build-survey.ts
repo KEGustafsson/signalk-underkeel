@@ -4,6 +4,7 @@ import { isEncFile } from "../ingest/cell-source";
 import type { EncReader } from "../ingest/enc-read-process";
 import type { EncLayers } from "../ingest/enc-wasm";
 import type { DepthFeature } from "../ingest/features";
+import type { RuleFeature } from "../ingest/rule-features";
 import type { CellReach } from "./build-items";
 import { cellReach, DEFAULT_BUILD } from "./build-items";
 import { reportProgress } from "./build-progress";
@@ -75,6 +76,7 @@ export class EncReads {
 export interface Survey {
   infos: CellInfo[];
   hazards: DepthFeature[];
+  rules: RuleFeature[];
   reaches: CellReach[];
   /** Catalogue indices of the cells read anew: all of them without a saved index. */
   changed: number[];
@@ -82,8 +84,8 @@ export interface Survey {
 
 /**
  * Reads each cell once for what the index keeps of it: provenance, named
- * hazards and reach. A cell the saved index holds unchanged keeps its saved
- * hazards and reach, and only its DSID is read. Against a box index a cell is
+ * hazards, rule features and reach. A cell the saved index holds unchanged keeps its saved
+ * hazards, rules and reach, and only its DSID is read. Against a box index a cell is
  * unchanged when its identity (`ids`, `sourceIdentity`) is the one saved.
  */
 export async function survey(
@@ -93,7 +95,7 @@ export async function survey(
   ids?: string[]
 ): Promise<Survey> {
   const opts = { ...DEFAULT_BUILD, leafZoom: job.leafZoom };
-  const out: Survey = { infos: [], hazards: [], reaches: [], changed: [] };
+  const out: Survey = { infos: [], hazards: [], rules: [], reaches: [], changed: [] };
   const kept = job.dirs.map((dir, i) => {
     const j = saved?.refs[i];
     const was = j === undefined ? undefined : saved?.cells[j];
@@ -113,12 +115,15 @@ export async function survey(
       out.infos.push(info);
       const hazards = saved.hazards.get(j) ?? [];
       out.hazards.push(...(j === i ? hazards : hazards.map((f) => ({ ...f, cellRef: i }))));
+      const rules = saved.rules.get(j) ?? [];
+      out.rules.push(...(j === i ? rules : rules.map((f) => ({ ...f, cellRef: i }))));
       out.reaches.push(saved.reaches[j] as CellReach);
       continue;
     }
     const cell = reads.cell(dir, i);
     out.infos.push(cell.info);
     out.hazards.push(...cell.features.filter(isNamedHazard));
+    out.rules.push(...cell.rules);
     out.reaches.push(cellReach(cell.features, opts));
     out.changed.push(i);
   }

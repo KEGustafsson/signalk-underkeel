@@ -6,6 +6,7 @@ import { parseLayer, S57_LAYERS } from "../../src/ingest/s57-geojson";
 import type { ChartFeature } from "../../src/ingest/features";
 import type { ChartIndex } from "../../src/spatial/chart-index";
 import { HazardIndex } from "../../src/spatial/hazards";
+import { RuleIndex } from "../../src/spatial/rules";
 import { FLAGS } from "../../src/spatial/node-store";
 import { footprintGeom, minDepthOver } from "../../src/spatial/pyramid";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
@@ -101,7 +102,8 @@ describe("skin-of-earth objects without a depth", () => {
     const index: ChartIndex = {
       catalogue: { version: 1, cells: [] },
       pyramid: buildPyramid(cell("UNSARE"), OPTS),
-      hazards: new HazardIndex([])
+      hazards: new HazardIndex([]),
+      rules: new RuleIndex([])
     };
 
     test("a route leg across it is unverified", () => {

@@ -9,6 +9,7 @@ import { pointInPolygon, pointSegmentDistance } from "../../src/foundation/geome
 import type { ChartIndex } from "../../src/spatial/chart-index";
 import type { Catzoc } from "../../src/ingest/features";
 import { HazardIndex } from "../../src/spatial/hazards";
+import { RuleIndex } from "../../src/spatial/rules";
 import * as pyramid from "../../src/spatial/pyramid";
 import { FLAGS } from "../../src/spatial/node-store";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
@@ -218,7 +219,8 @@ describe("corridor route check on the synthetic chart", () => {
         minZoom: 12,
         leafZoom: 18
       }),
-      hazards: new HazardIndex([decoy, rock])
+      hazards: new HazardIndex([decoy, rock]),
+      rules: new RuleIndex([])
     };
     const leg: LonLat[] = [
       [22.005, 60.005],
@@ -236,7 +238,8 @@ describe("unassessed survey", () => {
     const index: ChartIndex = {
       catalogue: { version: 1, cells: [] },
       pyramid: buildPyramid([coverage(box), area(box, 20)], { minZoom: 12, leafZoom: 17 }),
-      hazards: new HazardIndex([])
+      hazards: new HazardIndex([]),
+      rules: new RuleIndex([])
     };
     const r = checkRoute(
       index,
@@ -421,7 +424,8 @@ describe("long legs", () => {
         ],
         { minZoom: 10, leafZoom: 20 }
       ),
-      hazards: new HazardIndex([])
+      hazards: new HazardIndex([]),
+      rules: new RuleIndex([])
     };
     const leg = checkRoute(index, input([a, b], 1.8, { xteLimit: 30 }), NOW).legs[0];
     expect(leg?.status).toBe("fail");
@@ -451,7 +455,8 @@ describe("chart position uncertainty", () => {
         ],
         { minZoom: 12, leafZoom: 20 }
       ),
-      hazards: new HazardIndex([])
+      hazards: new HazardIndex([]),
+      rules: new RuleIndex([])
     };
   };
 

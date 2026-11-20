@@ -5,6 +5,7 @@ import initGdalJs = require("gdal3.js/node.js");
 import type { CellLayers, ReadCell } from "./cell-reader";
 import { readCellLayers } from "./cell-reader";
 import type { GeoJsonFeature, GeoJsonFeatureCollection } from "./s57-geojson";
+import { RULE_LAYERS } from "./rule-features";
 import { POSITION_LAYER, S57_LAYERS } from "./s57-geojson";
 
 /**
@@ -34,14 +35,15 @@ const LOW_ACCURACY_WHERE =
   "(QUAPOS IS NOT NULL AND QUAPOS NOT IN (1, 10, 11)) OR POSACC IS NOT NULL";
 
 /**
- * The layers read, with their ogr2ogr options: the object layers the reader parses, the
- * provenance layers, and the primitives QUAPOS is built from. Edges and isolated nodes are
+ * The layers read, with their ogr2ogr options: the object layers the reader parses, its rule
+ * layers (`rule-features.ts`), the provenance layers, and the primitives QUAPOS is built from. Edges and isolated nodes are
  * filtered in GDAL (Edge on US5FL61M: 736 of 3 352, 147 ms instead of 439); connected nodes
  * are read whole, since the low-accuracy edges' end nodes come along.
  */
 const LAYERS: [string, string[]][] = [
   ...["DSID", "M_SDAT", "M_VDAT"].map((l): [string, string[]] => [l, []]),
   ...S57_LAYERS.filter((l) => l !== POSITION_LAYER).map((l): [string, string[]] => [l, []]),
+  ...RULE_LAYERS.map((l): [string, string[]] => [l, []]),
   ["Edge", ["-where", LOW_ACCURACY_WHERE]],
   ["ConnectedNode", []],
   ["IsolatedNode", ["-where", LOW_ACCURACY_WHERE]]

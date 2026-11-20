@@ -492,8 +492,19 @@ server log keeps.
 A route-check body carries `route` (a GeoJSON LineString) or `routeRef`
 (`/resources/routes/<id>`), and optionally `departure` (ISO 8601), `speed` (m/s: one value,
 one per leg, `{ "default": … }` or `{ "legs": […] }`), `xteLimit` (m), `probability` and
-`vessel.draft` (m). Each leg is checked over a corridor of the cross-track limit plus a
-planning buffer at the lowest water level expected while on it. The request and response
+`vessel.draft` and `vessel.airHeight` (m). Each leg is checked over a corridor of the
+cross-track limit plus a planning buffer at the lowest water level expected while on it.
+
+A leg is also held to what the charts say besides depth. With an air height (`vessel.airHeight`,
+**Air height** under the expert boat settings, or Signal K `design.airHeight`), a bridge or an
+overhead cable or pipe whose clearance, less the water's rise above its datum at the highest
+water while the boat is there, is below the air height plus 0.5 m fails the leg (`AIR_DRAFT`); one
+whose clearance is not charted, or whose datum the water level cannot be related to and which is
+below the air height plus 2.5 m, leaves it `unverified` (`CLEARANCE_UNKNOWN`); a higher one
+passes marked `CLEARANCE_RISE_ASSUMED`. A restricted area with entry
+prohibited fails it (`ENTRY_PROHIBITED`), and a traffic separation lane fails a leg that runs
+against its direction or crosses it more than 20° from a right angle (`TSS_WRONG_WAY`). Areas
+with entry restricted or to be avoided, and lanes, are named in the flags. The request and response
 schemas are in [`schemas/navigation-safety/`](schemas/navigation-safety/README.md), which also
 lists the size limits that can refuse a valid request (for example route length times corridor
 width at most 200 km²). Route checks, repairs, departure windows and queries run one at a time
@@ -520,6 +531,11 @@ gives way to the chart box around the vessel; a planning box is at most the char
 cap (`boxMaxRadiusKm`, or the automatic cap for the machine's memory), within the Traficom WFS's
 span when that source is on, and is released after 10 minutes unused. Planning boxes are off when
 their directories overlap the configured `indexDir`.
+
+A session also lists the chart objects in a box (`objects(sw, ne)`, feature `objects`): bridges
+and overhead cables and pipes with their clearance, restricted areas with their restrictions and
+traffic lanes with their direction, so a planner can keep to them. A session's `airHeight`
+holds its boxes and legs to the bridges at the window's highest water.
 
 A trip longer than a planning box holds is planned in a corridor. With the Traficom WFS depth
 source on, a planner first asks for a coarse depth survey of the trip's region, downloaded tile by

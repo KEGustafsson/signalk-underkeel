@@ -5,11 +5,12 @@ import type { RouteCheckInput } from "./engine/route-check";
 import type { LonLat } from "./foundation/geo";
 import { EARTH_RADIUS, haversine } from "./foundation/geo";
 import type { Bbox } from "./ingest/wfs";
-import { FALLBACK_HULL } from "./model/vessel";
 import type { HeldBox, PlanningBoxes } from "./planning-box";
 import { carryAdjustments, holds, regionError } from "./planning-box";
+import type { ChartObject } from "./planning-objects";
+import { chartObjects } from "./planning-objects";
 import type { RouteQueue, RouteServiceDeps } from "./route-service";
-import { routeCheck } from "./route-service";
+import { routeCheck, vesselFor } from "./route-service";
 import type { SurveyResult } from "./planning-survey";
 import { corridorError, surveyOver } from "./planning-survey";
 import { growBbox } from "./spatial/build-box";
@@ -23,6 +24,8 @@ import { MAX_CHART_BUFFER } from "./spatial/chart-position";
  */
 
 export const PLANNING_API = Symbol.for("signalk-underkeel.planning");
+
+export type { ChartObject } from "./planning-objects";
 
 export type Status = "ok" | "marginal" | "fail" | "unverified";
 
@@ -48,6 +51,8 @@ export interface SessionParams {
   xteLimit?: number;
   probability?: number;
   draft?: number;
+  /** Air height, metres, in place of the vessel's: bridges and overhead cables are held to it. */
+  airHeight?: number;
 }
 
 export interface Session {
@@ -60,6 +65,8 @@ export interface Session {
    * corridor (length plus both ends, times twice halfWidth) is over 25 km² throws RangeError.
    */
   segment(a: LonLat, b: LonLat, window?: Window): Verdict;
+  /** The chart objects whose bounds meet the box sw–ne, in this session's index. */
+  objects(sw: LonLat, ne: LonLat): ChartObject[];
   /** Work done so far, in work units (src/engine/work.ts). */
   work(): number;
   /** Yields to the event loop; rejects once the request is aborted. */
@@ -95,7 +102,7 @@ export type PrepareResult =
   { ok: true; value: Prepared } | { ok: false; status: number; error: string };
 
 /** What this provider adds to version 1, for a planner to test before it calls it. */
-export const FEATURES = ["prepare", "corridor", "survey"] as const;
+export const FEATURES = ["prepare", "corridor", "survey", "objects"] as const;
 
 export interface PlanningApiV1 {
   readonly version: 1;
@@ -225,17 +232,14 @@ export function paramsError(
   if (p.draft !== undefined && !within(p.draft, LIMITS.minDraft, LIMITS.maxDraft)) {
     return `draft must be ${LIMITS.minDraft}..${LIMITS.maxDraft} m`;
   }
+  if (p.airHeight !== undefined && !within(p.airHeight, LIMITS.minAirHeight, LIMITS.maxAirHeight)) {
+    return `airHeight must be ${LIMITS.minAirHeight}..${LIMITS.maxAirHeight} m`;
+  }
   return undefined;
 }
 
 function inputFor(deps: RouteServiceDeps, p: SessionParams): RouteCheckInput | string {
-  const current = deps.vessel();
-  const vessel =
-    p.draft === undefined
-      ? current
-      : current
-        ? { ...current, draft: p.draft }
-        : { draft: p.draft, ...FALLBACK_HULL };
+  const vessel = vesselFor(p, deps);
   if (!vessel) {
     return "vessel draft not configured";
   }
@@ -248,6 +252,7 @@ function inputFor(deps: RouteServiceDeps, p: SessionParams): RouteCheckInput | s
     vessel,
     dynamics: deps.config.dynamics,
     waterLevel: deps.waterLevel,
+    ...(deps.highWater && { highWater: deps.highWater }),
     waveHeight: deps.waveHeight(),
     probability: p.probability ?? deps.config.routeCheck.probability
   };
@@ -281,7 +286,14 @@ function sessionFor(
         throw new RangeError(`leg corridor over ${MAX_BOX_KM2} km²`);
       }
       // The leg's own level is the window's lowest, whatever its arrival time.
-      const leg = { ...input, coordinates: [a, b], waterLevel: () => level(window, [a, b]) };
+      const high = deps.highWater;
+      const leg = {
+        ...input,
+        coordinates: [a, b],
+        waterLevel: () => level(window, [a, b]),
+        // The leg's clearances at the window's highest water, whatever its arrival time.
+        ...(high && { highWater: () => high(window.start, window.end, [a, b]) })
+      };
       const c = checkLeg(index, leg, 0, window.start);
       work += c.work;
       return {
@@ -291,6 +303,7 @@ function sessionFor(
         worst: c.leg.worst?.position
       };
     },
+    objects: (sw, ne) => chartObjects(index, sw, ne),
     work: () => work,
     pause: pauseFor(signal)
   };
@@ -406,6 +419,7 @@ function onPlanningBox(deps: () => RouteServiceDeps, held: HeldBox, boxes: Plann
       index: held.index,
       chartBox: () => held.bbox,
       waterLevel: d.waterLevelFor?.(cells) ?? d.waterLevel,
+      ...(d.highWater && { highWater: d.highWaterFor?.(cells) ?? d.highWater }),
       queue
     };
   };

@@ -12,6 +12,7 @@ import { DEFAULT_DYNAMICS } from "../../src/model/vessel";
 import type { WaterLevel } from "../../src/model/uncertainty";
 import type { ChartIndex } from "../../src/spatial/chart-index";
 import { HazardIndex } from "../../src/spatial/hazards";
+import { RuleIndex } from "../../src/spatial/rules";
 import * as pyramid from "../../src/spatial/pyramid";
 import { footprintGeom, minDepthOver } from "../../src/spatial/pyramid";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
@@ -29,7 +30,8 @@ function shoalIndex(): ChartIndex {
       [...basin([22.0, 60.0, 22.06, 60.03], 10), area([22.027, 60.012, 22.033, 60.018], 1)],
       { minZoom: 12, leafZoom: 18 }
     ),
-    hazards: new HazardIndex([])
+    hazards: new HazardIndex([]),
+    rules: new RuleIndex([])
   };
 }
 

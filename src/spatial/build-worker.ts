@@ -15,6 +15,7 @@ import { clipRange, EncReads, survey } from "./build-survey";
 import type { ChartIndex } from "./chart-index";
 import { stageChartIndex } from "./chart-index";
 import { HazardIndex } from "./hazards";
+import { RuleIndex } from "./rules";
 import type { IndexParts } from "./index-parts";
 import { indexParts } from "./index-parts";
 import type { NodeColumns } from "./node-store";
@@ -198,6 +199,7 @@ async function buildRegions(
     catalogue: { version: 1, cells: s.infos },
     pyramid: storeOnBody(minZoom, job.leafZoom, body, cols),
     hazards: new HazardIndex(s.hazards),
+    rules: new RuleIndex(s.rules),
     reaches: s.reaches,
     cols,
     roots: { built: roots.length - copies.size, copied: copies.size, nodesCopied },

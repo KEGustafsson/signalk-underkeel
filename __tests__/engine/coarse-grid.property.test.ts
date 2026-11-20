@@ -13,6 +13,7 @@ import type { VesselModel } from "../../src/model/vessel";
 import { DEFAULT_DYNAMICS, vesselTerms } from "../../src/model/vessel";
 import type { ChartIndex } from "../../src/spatial/chart-index";
 import { HazardIndex } from "../../src/spatial/hazards";
+import { RuleIndex } from "../../src/spatial/rules";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
 import { uniform } from "../helpers/arbitraries";
 import { CHART_DATUM } from "../helpers/engine";
@@ -49,7 +50,8 @@ function rockField(): ChartIndex {
       minZoom: 12,
       leafZoom: 16
     }),
-    hazards: new HazardIndex([])
+    hazards: new HazardIndex([]),
+    rules: new RuleIndex([])
   };
 }
 

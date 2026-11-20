@@ -277,7 +277,8 @@ export function parseConfig(raw: unknown): PluginConfig {
     vessel: {
       draft: optionalPositive(v.draft),
       length: optionalPositive(v.length),
-      beam: optionalPositive(v.beam)
+      beam: optionalPositive(v.beam),
+      airHeight: optionalPositive(v.airHeight)
     },
     dynamics: parseDynamics(v),
     waterLevel: parseWaterLevel(record(r.waterLevel)),

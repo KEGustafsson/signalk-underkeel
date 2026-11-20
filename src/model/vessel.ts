@@ -14,6 +14,11 @@ export interface VesselModel {
   length: number;
   /** Beam in metres. */
   beam: number;
+  /**
+   * Height of the highest point above the waterline, metres (Signal K `design.airHeight`):
+   * bridges and overhead cables are checked against it. Absent, they are not checked.
+   */
+  airHeight?: number;
 }
 
 export interface DynamicsOptions {
@@ -66,7 +71,7 @@ export function vesselTerms(
 export interface VesselInputs {
   /** Plugin configuration; overrides Signal K values when set. */
   config: Partial<VesselModel>;
-  /** `design.draft.maximum`, `design.length.overall`, `design.beam` from Signal K. */
+  /** `design.draft.maximum`, `design.length.overall`, `design.beam`, `design.airHeight` from Signal K. */
   signalk: Partial<VesselModel>;
 }
 
@@ -85,6 +90,11 @@ export interface ResolvedVessel {
 
 function positive(v: number | undefined): number | undefined {
   return v !== undefined && Number.isFinite(v) && v > 0 ? v : undefined;
+}
+
+/** The air height, configured or from Signal K, whatever else is known of the vessel. */
+export function airHeightOf(inputs: VesselInputs): number | undefined {
+  return positive(inputs.config.airHeight) ?? positive(inputs.signalk.airHeight);
 }
 
 export function resolveVessel(inputs: VesselInputs): ResolvedVessel {
@@ -106,5 +116,9 @@ export function resolveVessel(inputs: VesselInputs): ResolvedVessel {
     notes.unshift("vessel draft not configured");
     return { notes };
   }
-  return { vessel: { draft, length, beam }, notes };
+  const airHeight = airHeightOf(inputs);
+  if (airHeight === undefined) {
+    notes.push("air height unknown: bridges and overhead cables are not checked");
+  }
+  return { vessel: { draft, length, beam, ...(airHeight !== undefined && { airHeight }) }, notes };
 }

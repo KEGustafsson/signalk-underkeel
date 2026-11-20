@@ -6,6 +6,7 @@ import { currentInfo, sourceName } from "../ingest/cell-source";
 import { boxRect, readBox } from "./build-box";
 import type { CellInfo } from "../ingest/cells";
 import type { DepthFeature } from "../ingest/features";
+import type { RuleFeature } from "../ingest/rule-features";
 import type { CellReach } from "./build-items";
 import { DEFAULT_BUILD } from "./build-items";
 import { loadChartIndex } from "./chart-index";
@@ -58,6 +59,8 @@ export interface SavedIndex {
   reaches: CellReach[];
   /** Named hazards by catalogue index, in feature order. */
   hazards: Map<number, DepthFeature[]>;
+  /** Rule features by catalogue index, in feature order. */
+  rules: Map<number, RuleFeature[]>;
   pyramid: NodeStore;
   /** For each source of the build, the saved catalogue index of the cell of its name. */
   refs: (number | undefined)[];
@@ -143,13 +146,23 @@ function loadSaved(indexDir: string, leafZoom: number): Omit<SavedIndex, "refs">
   if (pyramid.minZoom !== DEFAULT_BUILD.minZoom || pyramid.leafZoom !== leafZoom) {
     return undefined;
   }
-  const hazards = new Map<number, DepthFeature[]>();
-  for (const f of saved.hazards.features()) {
-    const own = hazards.get(f.cellRef) ?? [];
+  return {
+    cells: catalogue.cells,
+    reaches,
+    hazards: byCell(saved.hazards.features()),
+    rules: byCell(saved.rules.features()),
+    pyramid
+  };
+}
+
+function byCell<T extends { cellRef: number }>(features: Iterable<T>): Map<number, T[]> {
+  const out = new Map<number, T[]>();
+  for (const f of features) {
+    const own = out.get(f.cellRef) ?? [];
     own.push(f);
-    hazards.set(f.cellRef, own);
+    out.set(f.cellRef, own);
   }
-  return { cells: catalogue.cells, reaches, hazards, pyramid };
+  return out;
 }
 
 /**

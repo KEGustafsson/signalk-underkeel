@@ -6,6 +6,15 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Added
 
+- Bridges, overhead cables and pipes, restricted areas and traffic separation lanes. The index
+  reads `BRIDGE`, `CBLOHD`, `PIPOHD`, `RESARE` and `TSSLPT` from each cell and keeps them in
+  `rules.json` (an index saved before it is rebuilt once). With the boat's air height (**Air
+  height**, Signal K `design.airHeight` or `vessel.airHeight` in a request), a clearance less the
+  water's rise above its datum at the highest water fails the leg (`AIR_DRAFT`) or, where the
+  clearance or its datum is not known, leaves it `unverified` (`CLEARANCE_UNKNOWN`). Entry-prohibited
+  areas fail a leg (`ENTRY_PROHIBITED`), and so does running against a lane or crossing it at a
+  shallow angle (`TSS_WRONG_WAY`). The planning API's boxes and legs are held to the same, a
+  session takes an `airHeight`, and `objects(sw, ne)` lists the objects in a box.
 - Corridors for long trips in the planning API. A depth survey (`survey`) gives a planner a
   coarse grid of the deepest charted depth across a region far larger than a planning box,
   downloaded from the Traficom WFS tile by tile in the build process, so its memory stays that of

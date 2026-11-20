@@ -9,6 +9,7 @@ import { toMercator } from "../../src/foundation/geo";
 import type { VesselModel } from "../../src/model/vessel";
 import type { ChartIndex } from "../../src/spatial/chart-index";
 import { HazardIndex } from "../../src/spatial/hazards";
+import { RuleIndex } from "../../src/spatial/rules";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
 import { uniform } from "../helpers/arbitraries";
 import { ctx } from "../helpers/engine";
@@ -28,7 +29,8 @@ const KEEL: VesselModel = { draft: 1.9, length: 12, beam: 4 };
 const index: ChartIndex = {
   catalogue: { version: 1, cells: [] },
   pyramid: buildPyramid(basin([21.9, 59.95, 22.1, 60.05], 20), { minZoom: 12, leafZoom: 16 }),
-  hazards: new HazardIndex([])
+  hazards: new HazardIndex([]),
+  rules: new RuleIndex([])
 };
 
 /** Whether `p` lies in the convex ring, taken in Mercator, within `slack` metres. */

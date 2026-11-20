@@ -2,6 +2,7 @@ import fc from "fast-check";
 import { evaluateLookahead } from "../../src/engine/lookahead";
 import type { HeelModel } from "../../src/model/allowances";
 import { HazardIndex } from "../../src/spatial/hazards";
+import { RuleIndex } from "../../src/spatial/rules";
 import { RISK_STOP_BELOW } from "../../src/spatial/pyramid";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
 import { CHART_DATUM, ctx } from "../helpers/engine";
@@ -20,7 +21,8 @@ describe("risk monotonicity in draft with roll (property)", () => {
   const indexes = [0.2, 1, 3].map((depth) => ({
     catalogue: { version: 1 as const, cells: [] },
     pyramid: buildPyramid(basin([22.0, 60.0, 22.04, 60.02], depth), { minZoom: 12, leafZoom: 16 }),
-    hazards: new HazardIndex([])
+    hazards: new HazardIndex([]),
+    rules: new RuleIndex([])
   }));
   const keels: HeelModel[] = [
     { kind: "fin" },

@@ -32,7 +32,7 @@ describe("an indexDir with a trailing separator", () => {
     saveChartIndex(target, empty());
     saveChartIndex(target, synth());
     expect(names(dir)).toEqual(["index"]);
-    expect(names(target)).toEqual(["cells.json", "hazards.bin", "pyramid.bin"]);
+    expect(names(target)).toEqual(["cells.json", "hazards.bin", "pyramid.bin", "rules.json"]);
     expect(loadChartIndex(target).catalogue.cells.map((c) => c.name)).toEqual(["FI5SYNTH"]);
     fs.renameSync(path.join(dir, "index"), path.join(dir, "index.old-1-0-aa"));
     expect(recoverChartIndex(target)).toBe(true);
@@ -85,7 +85,7 @@ describe("an indexDir holding more than an index", () => {
     fs.writeFileSync(path.join(target, "reach.json"), "{}");
     fs.writeFileSync(path.join(target, "box.json"), "{}");
     saveChartIndex(target, synth());
-    expect(names(target)).toEqual(["cells.json", "hazards.bin", "pyramid.bin"]);
+    expect(names(target)).toEqual(["cells.json", "hazards.bin", "pyramid.bin", "rules.json"]);
     expect(names(dir)).toEqual(["index"]);
   });
 });

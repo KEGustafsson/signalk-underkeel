@@ -11,6 +11,8 @@ import type { WaterLevel } from "./model/uncertainty";
 import type { ProviderHealth, WaterLevelProvider } from "./model/water-level";
 import {
   lowerLevel,
+  highestWaterLevel,
+  higherLevel,
   lowestWaterLevel,
   manualProvider,
   resolveWaterLevel,
@@ -154,6 +156,33 @@ export class WaterLevelService {
       out = lowerLevel(out, lowestWaterLevel(this.provider, datums, reach.centre, start, end, now));
     }
     return out ?? lowestWaterLevel(this.provider, datums, undefined, start, end, now);
+  }
+
+  /**
+   * The highest level over [start, end] at any of `at`, each cell datum on its own, for what
+   * passes overhead; with `area`, also within the source's reach where it can meet the ring.
+   */
+  highest(
+    start: number,
+    end: number,
+    at: readonly LonLat[],
+    now: number,
+    area = false,
+    cells?: readonly CellInfo[]
+  ): WaterLevel {
+    const datums = cells ? this.datumsOf(cells) : this.datums;
+    let out: WaterLevel | undefined;
+    for (const p of at) {
+      out = higherLevel(out, highestWaterLevel(this.provider, datums, p, start, end, now));
+    }
+    const reach = area ? this.provider?.reach?.() : undefined;
+    if (reach && mayMeet(at, reach.centre, reach.metres)) {
+      out = higherLevel(
+        out,
+        highestWaterLevel(this.provider, datums, reach.centre, start, end, now)
+      );
+    }
+    return out ?? highestWaterLevel(this.provider, datums, undefined, start, end, now);
   }
 
   /** The datum uses of another index's cells (a planning box), mapped once per catalogue. */

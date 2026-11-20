@@ -1,6 +1,9 @@
 import { LOOKAHEAD_LIMITS } from "./engine/lookahead";
 import type { ProviderChoices } from "./config-charts";
 import { chartFields } from "./config-charts";
+import { flatten } from "./config-schema-flatten";
+
+export { flatten } from "./config-schema-flatten";
 
 /**
  * JSON schema of the plugin configuration, as shown in the Signal K admin UI.
@@ -68,6 +71,12 @@ const VESSEL_EXPERT = {
   properties: {
     length: { type: "number", title: "Length overall (m)" },
     beam: { type: "number", title: "Beam (m)" },
+    airHeight: {
+      type: "number",
+      title: "Air height (m)",
+      description:
+        "Highest point above the waterline, mast and antennas included. Leave empty to use Signal K design.airHeight; without either, bridges and overhead cables are not checked."
+    },
     draftSigma: { type: "number", title: "Draft uncertainty 1σ (m)", default: 0.05 },
     blockCoefficient: { type: "number", title: "Block coefficient Cb (squat)", default: 0.4 },
     confined: { type: "boolean", title: "Double squat (narrow channels)", default: false },
@@ -391,51 +400,6 @@ export function adminSchema(hints: SchemaHints = {}): Json {
     },
     dependencies: whenOn("showExpert", EXPERT)
   };
-}
-
-function isObject(v: unknown): v is Json {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-
-/** Two object schemas as one: `b`'s fields after `a`'s, a field in both merged the same way. */
-function mergeObjects(a: Json, b: Json): Json {
-  const properties: Json = { ...(a.properties as Json) };
-  for (const [key, value] of Object.entries(b.properties as Json)) {
-    const prev = properties[key];
-    if (prev === undefined) {
-      properties[key] = value;
-    } else if (isObject(prev) && isObject(value) && isObject(prev.properties)) {
-      properties[key] = mergeObjects(prev, value);
-    }
-  }
-  const dependencies = { ...(a.dependencies as Json), ...(b.dependencies as Json) };
-  return { ...a, properties, ...(Object.keys(dependencies).length ? { dependencies } : {}) };
-}
-
-/**
- * The schema with every field shown at once: the fields of every
- * `dependencies` branch merged into `properties`, all but the field that
- * switches the branch, and without showExpert, which then shows nothing.
- */
-export function flatten(schema: Json): Json {
-  if (!isObject(schema.properties)) {
-    return schema;
-  }
-  const { dependencies, ...rest } = schema;
-  let merged: Json = rest;
-  for (const [key, dep] of Object.entries(isObject(dependencies) ? dependencies : {})) {
-    for (const branch of (isObject(dep) && Array.isArray(dep.oneOf) ? dep.oneOf : []) as Json[]) {
-      const { [key]: _switch, ...fields } = (branch.properties ?? {}) as Json;
-      merged = mergeObjects(merged, { properties: fields });
-    }
-  }
-  const properties = Object.fromEntries(
-    Object.entries(merged.properties as Json)
-      .filter(([key]) => key !== "showExpert")
-      .map(([key, value]) => [key, isObject(value) ? flatten(value) : value])
-  );
-  const { dependencies: _left, ...flat } = merged;
-  return { ...flat, properties };
 }
 
 /** Every setting at once, as the admin UI of Signal K before 2.32 shows it. */

@@ -6,6 +6,7 @@ import { parseQueryRequest } from "../../src/api/query-request";
 import { CHART_DATUM } from "../helpers/engine";
 import { BANK, fixtureIndex, ROCK } from "../helpers/fixture-index";
 import { HazardIndex } from "../../src/spatial/hazards";
+import { RuleIndex } from "../../src/spatial/rules";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
 import { area, coverage, quality } from "../helpers/synthetic";
 
@@ -191,7 +192,8 @@ describe("chart position uncertainty", () => {
         ],
         { minZoom: 12, leafZoom: 20 }
       ),
-      hazards: new HazardIndex([])
+      hazards: new HazardIndex([]),
+      rules: new RuleIndex([])
     };
     const r = queryUkc(charted, {
       ring: [[22.03, 60.015]],
@@ -223,7 +225,8 @@ describe("chart position uncertainty", () => {
         ],
         { minZoom: 12, leafZoom: 20 }
       ),
-      hazards: new HazardIndex([])
+      hazards: new HazardIndex([]),
+      rules: new RuleIndex([])
     };
     const r = queryUkc(charted, {
       ring: [[22.03, 60.015]],
