@@ -10,16 +10,20 @@ All notable changes to signalk-underkeel are documented here.
   their swept depth as dredged areas, and a cell's depth areas give way to its dredged areas where
   they cover a tile; tiles across their edges split two zooms finer than the leaf zoom. The
   index is rebuilt once (pyramid version 12).
-- Gaps a swept fairway leaves under a bridge are bridged by a strip along its navigation line at
-  the line's safe clearance depth (`haraussyvyys`; its design draft where it states none), never
-  deeper than the sweeps on either side, where the line and both sweeps state one reference level
-  (`vertaustaso`), and never across a hole in them (plan §4.11, swept fairways and pilotage); the
-  FTIA's areas and the strips are swept areas too, so a tile the sweeps cover side by side keeps
-  the swept σ.
+- Gaps a swept fairway leaves under a bridge get a strip along its navigation line, at most 10 m
+  each side, at the line's safe clearance depth (`haraussyvyys`; its design draft where it states
+  none), never deeper than the sweeps it reaches into, where the line and those sweeps state one
+  reference level (`vertaustaso`), and never across a hole in them (plan §4.11, swept fairways
+  and pilotage). The FTIA's areas are swept areas too, so a tile the sweeps cover side by side
+  keeps the swept σ.
 - Pilotage (`pilotage: true` in a route check or planning session, feature `pilotage`): boxes
   and legs in swept or dredged water all through are checked at kp · σ of the measured fix, at
   least 2 m, flagged `PILOTAGE`; the rest at the least position buffer. The fix is read as each
   box, leg or queued route check runs, so one that fails meanwhile leaves the least buffer.
+  Through a fairway gap only pilotage reads the strip: the stretch of a leg whose corridor at that
+  buffer lies inside the strip is held to the strip's depth, so the leg keeps to the line; a check
+  without pilotage reads the gap at its charted depth. The cell keeps the strips as `FAIRWAYGAP`,
+  in `rules.json` (version 3: an index saved before it is rebuilt once).
 
 - The navigation-safety service schema accepts `routePlan` in `provides`; a provider that only
   plans routes, as signalk-route-planner does, may leave out `statePath` and `notificationPath`.

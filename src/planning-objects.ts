@@ -3,6 +3,7 @@ import type { LonLat } from "./foundation/geo";
 import { fromMercator, toMercator, wrapLon } from "./foundation/geo";
 import type { OwnTrack } from "./livechart/tracks";
 import type { WaterLevel } from "./model/uncertainty";
+import { FAIRWAY_GAP } from "./ingest/rule-features";
 import type { ChartIndex } from "./spatial/chart-index";
 
 /**
@@ -67,31 +68,35 @@ export function chartObjects(index: ChartIndex, sw: LonLat, ne: LonLat): ChartOb
     maxX: Math.max(x0, x1),
     maxY: Math.max(y0, y1)
   };
-  return index.rules.near(r).map((f) => {
-    const g = f.geom;
-    const geometry: ChartObject["geometry"] =
-      g.type === "point"
-        ? { type: "Point", coordinates: lonLat(g.p) }
-        : g.type === "line"
-          ? { type: "LineString", coordinates: g.coords.map(lonLat) }
-          : {
-              type: "MultiPolygon",
-              coordinates: g.polygons.map((p) =>
-                [p.outer, ...p.holes].map((ring) => ring.map(lonLat))
-              )
-            };
-    const cell = index.catalogue.cells[f.cellRef]?.name;
-    return {
-      class: f.objectClass,
-      geometry,
-      ...(f.clearance !== undefined && { clearance: f.clearance }),
-      ...(f.restrictions && { restrictions: [...f.restrictions] }),
-      ...(f.orient !== undefined && { orient: f.orient }),
-      ...(f.twoWay && { twoWay: true }),
-      ...(f.designDraft !== undefined && { designDraft: f.designDraft }),
-      ...(cell !== undefined && { cell })
-    };
-  });
+  // A fairway gap strip is no chart object: only a pilotage check reads it (`engine/gap-strips.ts`).
+  return index.rules
+    .near(r)
+    .filter((f) => f.objectClass !== FAIRWAY_GAP)
+    .map((f) => {
+      const g = f.geom;
+      const geometry: ChartObject["geometry"] =
+        g.type === "point"
+          ? { type: "Point", coordinates: lonLat(g.p) }
+          : g.type === "line"
+            ? { type: "LineString", coordinates: g.coords.map(lonLat) }
+            : {
+                type: "MultiPolygon",
+                coordinates: g.polygons.map((p) =>
+                  [p.outer, ...p.holes].map((ring) => ring.map(lonLat))
+                )
+              };
+      const cell = index.catalogue.cells[f.cellRef]?.name;
+      return {
+        class: f.objectClass,
+        geometry,
+        ...(f.clearance !== undefined && { clearance: f.clearance }),
+        ...(f.restrictions && { restrictions: [...f.restrictions] }),
+        ...(f.orient !== undefined && { orient: f.orient }),
+        ...(f.twoWay && { twoWay: true }),
+        ...(f.designDraft !== undefined && { designDraft: f.designDraft }),
+        ...(cell !== undefined && { cell })
+      };
+    });
 }
 
 /** Whether the segment a–b meets the box sw–ne (Liang–Barsky clipping). */

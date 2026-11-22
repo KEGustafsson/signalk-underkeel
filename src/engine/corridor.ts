@@ -66,7 +66,7 @@ export function corridorRing(a: LonLat, b: LonLat, rMetres: number): LonLat[] {
 }
 
 /** The point `t` of the way along the rhumb line a→b, the line drawn straight on the chart. */
-function alongRhumb(a: LonLat, b: LonLat, t: number): LonLat {
+export function alongRhumb(a: LonLat, b: LonLat, t: number): LonLat {
   const near = nearSide(a, b);
   const [ax, ay] = toMercator(a[0], a[1]);
   const [bx, by] = toMercator(near[0], near[1]);
@@ -96,7 +96,7 @@ function alongGreatCircle(a: LonLat, b: LonLat, t: number): LonLat {
 }
 
 /** Upper bound of the gap between a leg's rhumb line and its great circle, metres. */
-function greatCircleOffset(a: LonLat, b: LonLat): number {
+export function greatCircleOffset(a: LonLat, b: LonLat): number {
   let gap = 0;
   for (let i = 1; i < 8; i++) {
     gap = Math.max(gap, haversine(alongRhumb(a, b, i / 8), alongGreatCircle(a, b, i / 8)));

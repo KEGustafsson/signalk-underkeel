@@ -349,7 +349,7 @@ describe("Traficom WFS ingest", () => {
     });
   });
 
-  test("a fairway gap is bridged only where its line and areas state one reference level", async () => {
+  test("a fairway gap is bridged apart from the depths, and only where its line and areas state one reference level", async () => {
     const at = (x0: number, x1: number): number[][][] => [
       [
         [x0, 59.9998],
@@ -403,15 +403,24 @@ describe("Traficom WFS ingest", () => {
       dir,
       now: new Date("2026-10-18T07:00:00Z")
     };
+    const cell = () => readCellDirectory(dir, 0);
     const sweeps = () =>
-      readCellDirectory(dir, 0)
-        .features.filter((f) => f.role === "swept")
-        .map((f) => f.lnam)
+      cell()
+        .features.filter((f) => f.role === "swept" || (f.role === "depth" && f.dredged))
+        .map((f) => `${f.objectClass} ${String(f.lnam)}`)
         .sort();
+    const strips = () =>
+      cell()
+        .rules.filter((f) => f.objectClass === "FAIRWAYGAP")
+        .map((f) => ({ lnam: f.lnam, depth: f.depth }));
     await downloadWfsCell({ ...d, fetch: fetch("MW2020") });
-    expect(sweeps()).toEqual(["FTIA-GAP-FTIA-VA-1-FTIA-VA-2", "FTIA-VA-1", "FTIA-VA-2"]);
+    // The strip is no depth of the cell: only a pilotage check reads it (`engine/gap-strips.ts`).
+    const areas = ["DRGARE FTIA-VA-1", "DRGARE FTIA-VA-2", "SWPARE FTIA-VA-1", "SWPARE FTIA-VA-2"];
+    expect(sweeps()).toEqual(areas);
+    expect(strips()).toEqual([{ lnam: "FTIA-GAP-FTIA-VA-1-FTIA-VA-2", depth: 2.7 }]);
     await downloadWfsCell({ ...d, fetch: fetch("MW2005") });
-    expect(sweeps()).toEqual(["FTIA-VA-1", "FTIA-VA-2"]);
+    expect(sweeps()).toEqual(areas);
+    expect(strips()).toEqual([]);
   });
 
   describe("with a count from a hits request, pages are read side by side", () => {

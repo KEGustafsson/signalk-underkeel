@@ -9,8 +9,10 @@ import { buildPyramid } from "../../src/spatial/pyramid-build";
 import { edgeZoomFor, pluginBuild } from "../../src/spatial/build-items";
 import type { Box } from "../helpers/synthetic";
 import { CHART_DATUM } from "../helpers/engine";
-import { CHANNEL_LAT, gappedChannel } from "../helpers/swept-channel";
-import { area, boxRing, coverage, quality, swept } from "../helpers/synthetic";
+import { HALF_MAX } from "../../src/ingest/fairway-gaps";
+import { HazardIndex } from "../../src/spatial/hazards";
+import { BRIDGE_GAP, bridgedChannel, CHANNEL_LAT, gappedChannel } from "../helpers/swept-channel";
+import { area, boxRing, coverage, point, quality, swept } from "../helpers/synthetic";
 
 /**
  * A fairway swept to its marks in a cell that charts it with its banks (the Traficom WFS with
@@ -173,5 +175,129 @@ describe("pilotage on a swept fairway", () => {
     expect(fallback.flags).not.toContain("PILOTAGE");
     expect({ ...fallback, work: 0 }).toEqual({ ...least, work: 0 });
     expect(fallback.work).toBeGreaterThan(least.work);
+  });
+});
+
+describe("pilotage through a fairway gap", () => {
+  const index = bridgedChannel();
+  const NOW = Date.parse("2026-10-18T07:00:00Z");
+  /** Metres north of the line, in degrees of latitude. */
+  const north = (m: number) => m / 111_320;
+  const input = (
+    coordinates: LonLat[],
+    pilot?: number,
+    extra: Partial<RouteCheckInput> = {}
+  ): RouteCheckInput => ({
+    coordinates,
+    departure: NOW,
+    speeds: [2.5],
+    // The planner's narrows: the boat on its leg, its own fix the only width.
+    xteLimit: 0,
+    planningBuffer: 10,
+    ...(pilot !== undefined && { pilotBuffer: pilot }),
+    vessel: { draft: 1.5, length: 8, beam: 2.5 },
+    dynamics: DEFAULT_DYNAMICS,
+    waterLevel: () => CHART_DATUM,
+    probability: 0.01,
+    ...extra
+  });
+  /** A leg through the gap `off` metres north of the line. */
+  const through = (off = 0): LonLat[] => [
+    [22.006, CHANNEL_LAT + north(off)],
+    [22.014, CHANNEL_LAT + north(off)]
+  ];
+  const leg = (i: RouteCheckInput) => checkRoute(index, i, NOW).legs[0];
+
+  test("the strip is none of the index's depths", () => {
+    const inGap = footprintGeom([[(BRIDGE_GAP[0] + BRIDGE_GAP[1]) / 2, CHANNEL_LAT]]);
+    const q = minDepthOver(index.pyramid, inGap, { bufferMetres: 3, sweptOnly: true });
+    expect(q.dMin).toBe(0);
+    expect(q.unswept).toBe(true);
+  });
+
+  test("a check without pilotage reads the gap at its charted depth and refuses it", () => {
+    const plain = leg(input(through()));
+    expect(plain?.status).toBe("fail");
+    expect(plain?.charted).toBe(0);
+    expect(plain?.flags).not.toContain("PILOTAGE");
+  });
+
+  test("with a good fix a leg on the line is held to the strip's depth, flagged PILOTAGE", () => {
+    const piloted = leg(input(through(), 3));
+    expect(piloted?.status).toBe("ok");
+    expect(piloted?.charted).toBe(2.7);
+    expect(piloted?.flags).toEqual(expect.arrayContaining(["PILOTAGE", "SWEPT"]));
+    // A leg ending under the bridge, and the next leaving from there, are held to it as well.
+    const mid = (BRIDGE_GAP[0] + BRIDGE_GAP[1]) / 2;
+    const legs = checkRoute(
+      index,
+      {
+        ...input(
+          [
+            [22.006, CHANNEL_LAT],
+            [mid, CHANNEL_LAT],
+            [22.014, CHANNEL_LAT]
+          ],
+          3
+        ),
+        speeds: [2.5, 2.5]
+      },
+      NOW
+    ).legs;
+    expect(legs.map((l) => [l.status, l.flags.includes("PILOTAGE")])).toEqual([
+      ["ok", true],
+      ["ok", true]
+    ]);
+  });
+
+  test("off the line by more than the strip's half-width less the pilotage buffer, refused", () => {
+    // 6 m off with a 3 m buffer reaches 9 m, inside the strip's 10 m.
+    expect(leg(input(through(6), 3))?.flags).toContain("PILOTAGE");
+    expect(leg(input(through(6), 3))?.charted).toBe(2.7);
+    // 8 m off reaches 11 m: past the strip, into the gap's charted 0 m.
+    const off = leg(input(through(8), 3));
+    expect(off?.status).toBe("fail");
+    expect(off?.charted).toBe(0);
+    expect(off?.flags).not.toContain("PILOTAGE");
+    // The cross-track limit widens the corridor as it does in swept water: 3 m and 3 m, 8 m off.
+    expect(leg(input(through(5), 3, { xteLimit: 3 }))?.charted).toBe(0);
+  });
+
+  test("a pilotage buffer as wide as the strip's half-width closes it", () => {
+    const wide = leg(input(through(), HALF_MAX, { planningBuffer: 15 }));
+    expect(wide?.status).toBe("fail");
+    expect(wide?.charted).toBe(0);
+    expect(wide?.flags).not.toContain("PILOTAGE");
+  });
+
+  test("a fix too poor for pilotage closes it", () => {
+    const poor = { sigmaPos: 1.5, ok: false, reasons: [], divergence: null };
+    const buffer = pilotBuffer(poor, 2, 10);
+    expect(buffer).toBeUndefined();
+    const refused = leg(input(through(), buffer));
+    expect(refused?.status).toBe("fail");
+    expect(refused?.flags).not.toContain("PILOTAGE");
+  });
+
+  test("a charted sounding in the strip shallower than it closes it", () => {
+    const mid = (BRIDGE_GAP[0] + BRIDGE_GAP[1]) / 2;
+    const shoal = { ...index, hazards: new HazardIndex([point(mid, CHANNEL_LAT + north(7), 1.2)]) };
+    const r = checkRoute(shoal, input(through(), 3), NOW).legs[0];
+    expect(r?.flags).not.toContain("PILOTAGE");
+    expect(r?.charted).toBe(0);
+  });
+
+  test("a box inside the strip is held to its depth; one reaching past it is not", () => {
+    const window = { start: NOW, end: NOW + 3_600_000 };
+    const mid = (BRIDGE_GAP[0] + BRIDGE_GAP[1]) / 2;
+    const box = (half: number) =>
+      boxRing([mid - 0.0002, CHANNEL_LAT - north(half), mid + 0.0002, CHANNEL_LAT + north(half)]);
+    const inside = { ring: box(13), narrow: box(6) };
+    const held = pilotedBox(index, input([]), inside, 2.5, window);
+    expect(held.status).toBe("ok");
+    expect(held.flags).toEqual(expect.arrayContaining(["PILOTAGE", "SWEPT"]));
+    const past = pilotedBox(index, input([]), { ring: box(13), narrow: box(11) }, 2.5, window);
+    expect(past.flags).not.toContain("PILOTAGE");
+    expect(past.status).toBe("fail");
   });
 });

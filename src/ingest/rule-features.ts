@@ -21,12 +21,19 @@ export const OVERHEAD_CLASSES = ["BRIDGE", "CBLOHD", "PIPOHD"] as const;
  */
 export const PREFERENCE_CLASSES = ["NAVLNE", "RECTRC", "ACHARE", "NAVLINE"] as const;
 
-/** The object layers read for rules and preferences. */
+/**
+ * A WFS cell's strips along a fairway's line through the gaps of its swept areas
+ * (`ingest/fairway-gaps.ts`), which only a pilotage check reads (`engine/gap-strips.ts`).
+ */
+export const FAIRWAY_GAP = "FAIRWAYGAP";
+
+/** The object layers read for rules, preferences and fairway gap strips. */
 export const RULE_LAYERS = [
   ...OVERHEAD_CLASSES,
   "RESARE",
   "TSSLPT",
-  ...PREFERENCE_CLASSES
+  ...PREFERENCE_CLASSES,
+  FAIRWAY_GAP
 ] as const;
 
 export type RuleClass = (typeof RULE_LAYERS)[number];
@@ -52,6 +59,8 @@ export interface RuleFeature {
   twoWay?: boolean;
   /** The draft a fairway's navigation line is laid out for, metres. */
   designDraft?: number;
+  /** The depth a fairway gap strip holds a pilotage check to, metres (DRVAL1). */
+  depth?: number;
   lnam?: string;
 }
 
@@ -88,8 +97,10 @@ function attributesOf(
   const restrictions = cls === "RESARE" ? codes(props.RESTRN) : undefined;
   const lnam = typeof props.LNAM === "string" && props.LNAM !== "" ? props.LNAM : undefined;
   const verdat = clearance === undefined ? undefined : number(props.VERDAT);
+  const depth = cls === FAIRWAY_GAP ? number(props.DRVAL1) : undefined;
   return {
     ...(clearance !== undefined && { clearance }),
+    ...(depth !== undefined && { depth }),
     ...(restrictions && { restrictions }),
     ...(verdat !== undefined && { verdat }),
     ...lineAttributes(cls, props),

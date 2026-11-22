@@ -13,6 +13,9 @@ import { DEFAULT_BUILD } from "../spatial/pyramid-build";
 import type { Explanation } from "./explain";
 import { explainTile } from "./explain";
 import { bearing, legCorridors, rhumbCourse } from "./corridor";
+import { heldDepth, stripHolding } from "./gap-strips";
+import type { LegDepth, Scoring } from "./leg-depth";
+import { bridgedSteps, CLEARANCE_RESOLUTION, corridorSteps } from "./leg-depth";
 import { applyRules } from "./rule-check";
 
 export { corridorRing, legCorridors, RING_REACH } from "./corridor";
@@ -40,7 +43,8 @@ export interface RouteCheckInput {
   planningBuffer: number;
   /**
    * Pilotage (`pilotage.ts`): a narrower buffer a leg is checked at first, kept where its
-   * corridor lies in swept or dredged water all through; absent, every leg at `planningBuffer`.
+   * corridor lies in swept or dredged water all through, or inside a fairway gap strip where it
+   * is not (`gap-strips.ts`); absent, every leg at `planningBuffer`.
    */
   pilotBuffer?: number;
   vessel: VesselModel;
@@ -99,21 +103,6 @@ export interface RouteCheckResult {
   legs: LegResult[];
 }
 
-interface LegDepth {
-  result: DepthResult;
-  ring: LonLat[];
-  /** Work its corridor queries did (work.ts). */
-  work: number;
-}
-
-/** Depths deeper than the UKC-zero depth plus this are reported as a lower bound. */
-const CLEARANCE_RESOLUTION = 5;
-
-interface Scoring {
-  threshold: number;
-  sigmaExtra: number;
-}
-
 /** A check split at its corridor queries, so a caller can let other work in between them. */
 export type Steps<T> = Generator<void, T, void>;
 
@@ -124,51 +113,6 @@ export function drain<T>(steps: Steps<T>): T {
       return r.value;
     }
   }
-}
-
-function* corridorSteps(
-  index: ChartIndex,
-  a: LonLat,
-  b: LonLat,
-  r: number,
-  s: Scoring,
-  sweptOnly = false
-): Steps<LegDepth> {
-  let unswept = false;
-  let best: Omit<LegDepth, "work"> | undefined;
-  let flags = 0;
-  let covered = Infinity;
-  let work = 0;
-  const cells = new Set<number>();
-  for (const ring of legCorridors(a, b, r)) {
-    const result = minDepthOver(index.pyramid, footprintGeom(ring), {
-      chartPosition: true,
-      clearAbove: s.threshold + CLEARANCE_RESOLUTION,
-      risk: { threshold: s.threshold, sigmaExtra: s.sigmaExtra },
-      sweptOnly
-    });
-    work += queryWork(result);
-    unswept ||= result.unswept === true;
-    flags |= result.flags;
-    covered = Math.min(covered, result.coveredDMin);
-    result.cellRefs.forEach((c) => cells.add(c));
-    if (best === undefined || result.maxRisk > best.result.maxRisk) {
-      best = { result, ring };
-    }
-    yield;
-  }
-  const leg = best as Omit<LegDepth, "work">;
-  return {
-    ...leg,
-    work,
-    result: {
-      ...leg.result,
-      flags,
-      coveredDMin: covered,
-      cellRefs: [...cells],
-      ...(sweptOnly && { unswept })
-    }
-  };
 }
 
 /** P at or above this fails a leg whatever the accepted probability. */
@@ -260,8 +204,9 @@ function* legSteps(
 }
 
 /**
- * A leg's corridor at the pilotage buffer when it lies in swept or dredged water all through,
- * else at the planning buffer (`pilotage.ts`), with the half-width it was taken at.
+ * A leg's corridor at the pilotage buffer when it lies in swept or dredged water all through, or
+ * in fairway gap strips where it is not, else at the planning buffer (`pilotage.ts`), with the
+ * half-width it was taken at.
  */
 function* pilotedSteps(
   index: ChartIndex,
@@ -280,6 +225,13 @@ function* pilotedSteps(
       return { ...piloted, width };
     }
     work = piloted.work;
+    const bridged = yield* bridgedSteps(index, from, to, width, s);
+    if (bridged) {
+      work += bridged.work;
+      if (bridged.result.unswept === false) {
+        return { ...bridged, work, width };
+      }
+    }
   }
   const d = yield* corridorSteps(index, from, to, full, s);
   return { ...d, work: work + d.work, width: full };
@@ -353,6 +305,37 @@ export function checkFootprint(
     risk: { threshold: s.threshold, sigmaExtra: s.sigmaExtra },
     sweptOnly
   });
+  return footprintVerdict(index, input, ring, { result, work: queryWork(result), wl }, window);
+}
+
+/**
+ * The ring `ring` scored as `checkFootprint` scores it, at the depth of the fairway gap strip
+ * holding the whole of it (`gap-strips.ts`); undefined when no strip does.
+ */
+export function checkStripFootprint(
+  index: ChartIndex,
+  input: RouteCheckInput,
+  ring: LonLat[],
+  speed: number,
+  window: { start: number; end: number; at: readonly LonLat[] }
+): FootprintVerdict | undefined {
+  const hold = stripHolding(index, ring);
+  if (!hold) {
+    return undefined;
+  }
+  const wl = input.waterLevel(window.start, window.end, window.at, true);
+  const { s } = scoringFor(input, speed, wl);
+  return footprintVerdict(index, input, ring, { ...heldDepth(index, ring, hold, s), wl }, window);
+}
+
+function footprintVerdict(
+  index: ChartIndex,
+  input: RouteCheckInput,
+  ring: LonLat[],
+  depth: { result: DepthResult; work: number; wl: WaterLevel },
+  window: { start: number; end: number; at: readonly LonLat[] }
+): FootprintVerdict {
+  const { result, wl } = depth;
   const covered = result.coveredDMin;
   const land = covered === -Infinity;
   const charted = covered === Infinity || land ? null : covered;
@@ -370,7 +353,7 @@ export function checkFootprint(
     risk: Math.round(result.maxRisk * 10000) / 10000,
     flags,
     worst: result.riskTile?.center,
-    work: queryWork(result),
+    work: depth.work,
     unswept: result.unswept !== false
   };
 }

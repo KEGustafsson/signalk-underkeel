@@ -472,12 +472,18 @@ export async function downloadWfsCell(d: WfsDownload): Promise<{
   }
   const lines = await fetchLines(d, d.bbox);
   const swept = await fetchSweptAreas(d, d.bbox);
-  // The gaps the swept areas leave along the lines, under a bridge (`fairway-gaps.ts`).
-  const filled = [...swept, ...fairwayGaps((lines ?? []) as WfsFeature[], swept)];
-  const ftia = { depthAreas: [], dredgedAreas: filled, sweptAreas: filled, soundings: [] };
+  const ftia = { depthAreas: [], dredgedAreas: swept, sweptAreas: swept, soundings: [] };
   clipTo(ftia, parts, clipped, corridor);
-  counts.dredgedAreas += filled.length;
-  const layers = cellLayers(clipped, parts, d.now, d.catzoc);
-  writeCell(d.dir, lines && lines.length > 0 ? { ...layers, NAVLINE: collection(lines) } : layers);
+  counts.dredgedAreas += swept.length;
+  // The gaps the swept areas leave along the lines, under a bridge (`fairway-gaps.ts`): apart
+  // from the depths, for pilotage alone.
+  const gaps = fairwayGaps((lines ?? []) as WfsFeature[], swept);
+  const strips = parts.flatMap((p) => areas(gaps, p));
+  const layers = {
+    ...cellLayers(clipped, parts, d.now, d.catzoc),
+    ...(lines && lines.length > 0 && { NAVLINE: collection(lines) }),
+    ...(strips.length > 0 && { FAIRWAYGAP: collection(strips) })
+  };
+  writeCell(d.dir, layers);
   return { ...counts, lines: lines ? lines.length : false };
 }

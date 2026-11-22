@@ -1482,9 +1482,10 @@ corridor across ±180° finds the objects on the far side too.
 
 **What a planner keeps to** (the planner's R4c). The index keeps `NAVLNE` leading lines,
 `RECTRC` recommended tracks (two-way where `TRAFIC` is 4) and `ACHARE` anchorage areas beside the
-rules (`rules.json` version 2; an index of version 1 is rebuilt), and with the Traficom WFS the
-Finnish Transport Infrastructure Agency's navigation lines (`vesivaylatiedot:navigointilinjat_uusi`,
-CC BY 4.0) as the WFS cell's `NAVLINE` layer, two-way, each with the draft it is laid out for
+rules (`rules.json` version 2, version 3 adding the fairway gap strips, §4.11; an index of an
+earlier version is rebuilt), and with the Traficom WFS the Finnish Transport Infrastructure
+Agency's navigation lines (`vesivaylatiedot:navigointilinjat_uusi`, CC BY 4.0) as the WFS cell's
+`NAVLINE` layer, two-way, each with the draft it is laid out for
 (`mitoitussyvays`), read through Charts Provider's proxy when it runs one. No verdict reads them;
 a session's `objects` lists them. A failed download of the lines writes the cell without them,
 since they are a preference, never a depth, and a line the WFS sends broken is left out. The
@@ -1562,34 +1563,67 @@ stay. A tile across a dredged area's edge over its cell's depth area splits to `
 or leg asked with it is checked first at kp · σ of the fix as it is when that check runs (a
 session's box or leg, a queued route check at its turn), at least 2 m, and that verdict, flagged
 `PILOTAGE`, is kept only where every tile within that buffer is swept or dredged (a query's
-`sweptOnly` descends split tiles carrying those flags, which are their children's union);
-otherwise at the least position buffer. Decided: the least buffer keeps open water; between the
-marks of a swept fairway the boat's own position quality decides, measured, never assumed.
+`sweptOnly` descends split tiles carrying those flags, which are their children's union), or the
+footprint lies inside a fairway gap strip where it is not (below); otherwise at the least position
+buffer. Decided: the least buffer keeps open water; between the marks of a swept fairway the
+boat's own position quality decides, measured, never assumed.
+
 The FTIA leaves a fairway's areas off under a bridge: at Lillholmen its boat route 3530 is swept
-to 2.7 m both sides and nothing is published for the 70 m between. Where one navigation line runs
-from a swept area into another within 150 m (`ingest/fairway-gaps.ts`), the gap gets a strip along
-the line, each side the narrower of the two areas' widest cross-section within 20 m of the gap
-and at most 10 m (an opening may be narrower than the fairway), reaching 10 m into each area, at
-the line's safe clearance depth (`haraussyvyys`) or the least swept depth of the areas holding the
-line where it leaves and enters the gap, whichever is less. A line along an area's edge has no
-width on the edge's side, so it gets no strip, and a line that leaves an area and comes back into
-the same one (a hole in it, or one of its parts) gets none either. A hole of an area the strip
-reaches into bounds its width on that side anywhere along it, and a gap in such a hole gets no
-strip. The FTIA gives each line's and area's depths from the reference level it states
-(`vertaustaso`: the mean water of an epoch, MW1990 to MW2025 off Turku, or N2000), and the cell
-keeps every depth as given, the Traficom WFS's stating none (§4.5: the cell states no datum), so a
-strip is made only where the line and every area holding it at both ends state the same one. The
-FTIA's areas and these strips are written as `SWPARE` beside their `DRGARE`: a tile the sweeps
-cover, alone or side by side, is `SWEPT`, and where the least of the sweeps reaching it is its
-least depth, that depth's σ is the sweep's (`sweptDepth`). The safe clearance depth is the depth
+to 2.7 m (MW2020) both sides and nothing is published for the 70 m between, where the Traficom WFS
+charts the 0–3 m band of the banks. The FTIA's areas are written as `SWPARE` beside their `DRGARE`:
+a tile the sweeps cover, alone or side by side, is `SWEPT`, and where the least of the sweeps
+reaching it is its least depth, that depth's σ is the sweep's (`sweptDepth`). Through the gap only
+the navigation line carries a guarantee: its safe clearance depth (`haraussyvyys`) is the depth
 the fairway authority keeps the line clear to and answers for (Traficom's depth instructions,
-2021); a line that states none gives its design draft, the static draft of the vessel it is laid
-out for, less than that depth by the gross under-keel clearance (0.2–0.6 m on a boat route). The
-strip's 10 m into each area takes the least depth there, so it lowers a sweep there unless its
-depth equals that sweep's: with sweeps of 3 m and 4 m either side and a line kept to 4 m, the
-strip is 3 m and lowers the 4 m sweep's 10 m. At the line's safe clearance depth it leaves route
-3530's 2.7 m sweeps as they are, while one at the design draft lowered them to 2.1 m at both ends
-of each gap.
+2021), and a line that states none gives its design draft, the static draft of the vessel it is
+laid out for, less than that depth by the gross under-keel clearance (0.2–0.6 m on a boat route).
+No width around the line is guaranteed there, and none can be bounded: neither the FTIA's WFS
+(lines, fairway areas) nor the Traficom WFS (depth areas, dredged areas, soundings) publishes the
+fairway's extent inside the gap, so no polygon can hold a strip to the fairway. Where one
+navigation line runs from a swept area into another within 150 m (`ingest/fairway-gaps.ts`), the
+gap gets a strip along the line, each side the narrower of the two areas' widest cross-section
+within 20 m of the gap and at most 10 m (an opening may be narrower than the fairway), at the
+line's safe clearance depth or the least swept depth of the areas it reaches into, whichever is
+less. A line along an area's edge has no width on the edge's side, so it gets no strip, and a line
+that leaves an area and comes back into the same one (a hole in it, or one of its parts) gets none
+either. A hole of an area the strip reaches into bounds its width on that side anywhere along it,
+and a gap in such a hole gets no strip. The FTIA gives each line's and area's depths from the
+reference level it states (`vertaustaso`: the mean water of an epoch, MW1990 to MW2025 off Turku,
+or N2000), and the cell keeps every depth as given, the Traficom WFS's stating none (§4.5: the
+cell states no datum), so a strip is made only where the line and every area it reaches into state
+the same one.
+
+The strip is the line's guarantee, used only under pilotage. The cell keeps it apart from its
+depths, as `FAIRWAYGAP`, which the index keeps with its rules (`rules.json`) and never builds into
+a tile: every check without pilotage reads the gap at its charted depth, 0 m at Lillholmen, as it
+would without the FTIA, and refuses the passage. A pilotage check (a route check with `pilotage`,
+or a planning session's box or leg with it, at the buffer the fix gives as that check runs) holds
+the stretch of a leg whose narrow corridor (xteLimit + the pilotage buffer each side) lies inside
+the strip to the strip's depth at the swept σ, `SWEPT`, and checks the corridor before and after
+that stretch through the index, swept or dredged all through (`engine/gap-strips.ts`,
+`engine/leg-depth.ts`); a box is held to it only when its narrow footprint lies inside one strip.
+The leg must keep to the line: its corridor is off the line by at most the strip's half-width less
+its own, so the width the check works with comes from the boat's GNSS accuracy (kp · σ of the fix),
+and a buffer as wide as the strip's half-width closes the gap. A fix that fails between checks
+leaves the next at the least buffer, which reads the gap at 0 m. Such a leg is flagged `PILOTAGE`,
+the skipper's cue to keep between the marks. The corridor before the stretch reaches its half-width
+past the point the stretch begins, itself at least that half-width inside the strip's end, so the
+strip reaches 30 m back into each area while the line is in it: twice the widest corridor it can
+hold (10 m), a tile of the edge zoom across the area's end (about 5 m at 60° N) and the sampling.
+Past the 20 m its width is taken from, the strip is no wider than the areas holding the line. A
+strip is not used where a charted sounding, rock, wreck or obstruction in it is shallower than its
+depth, where the index has land, no coverage or drying water under the stretch, or where the
+living chart adjusted a tile under it; past the narrow corridor the chart's position spread is not
+counted inside the strip, whose width the fix decides. Rules (bridges' clearances) hold over the
+whole corridor as on any leg. Decided, beside invariant 1: `minDepthOver` is unchanged, since the
+strip is none of its source features, but a pilotage verdict reads a strip's stretch at the
+line's safe clearance depth where the chart reads shallower, on the FTIA's guarantee for the line
+and the boat's measured fix (tested in `__tests__/spatial/swept-fairway.test.ts`).
+
+Later: a strip could be narrowed or confirmed by evidence of passages, vessels of known draft that
+AIS shows have passed through the gap (draft and track from their static and position reports);
+and the boat's own soundings could lower one, which they do not now: the living chart adjusts a
+cell only where it reads shallower than the chart, and the gap is charted at 0 m.
 
 Decided, against invariant 1 as written: within one cell, a depth area that the cell's own
 dredged areas cover over a tile is not a source feature of that tile, so `minDepthOver` may

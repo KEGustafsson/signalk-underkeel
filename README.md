@@ -547,17 +547,23 @@ way to them. Tiles across their edges split two zooms finer than the leaf zoom (
 5 m at 60° N). Soundings and rocks inside them still count. They are written as swept areas too,
 so where the sweeps cover a tile, alone or side by side, the swept depth's small uncertainty
 applies. Where the FTIA leaves a fairway's areas off under a bridge and its navigation line runs on
-from one swept area into the next, the gap gets a narrow swept strip along the line, at the line's
-safe clearance depth (its design draft where it states none) and never deeper than the sweeps on
-either side (`docs/DEVELOPMENT-PLAN.md` §4.11, swept fairways and pilotage).
+from one swept area into the next, the gap gets a strip along the line, at most 10 m each side, at
+the line's safe clearance depth (its design draft where it states none) and never deeper than the
+sweeps on either side. The FTIA's guarantee is the line's, and no FTIA or Traficom layer publishes
+the fairway inside the gap, so the strip is none of the index's depths: the cell keeps it apart
+(`FAIRWAYGAP`), a check without pilotage reads the gap at its charted depth, and only pilotage
+holds a leg to it (`docs/DEVELOPMENT-PLAN.md` §4.11, swept fairways and pilotage).
 
 A session or route check with `pilotage: true` (feature `pilotage`) checks each box and leg first
 at the boat's pilotage buffer, kp · σ of its fix as the integrity monitor measures it and at least
 2 m, while that is narrower than the **Least position buffer**, and keeps that verdict, flagged
 `PILOTAGE`, only where the footprint at it lies in swept or dredged water all through: a fairway
-swept to its marks, which a boat keeps between. Anywhere else, or without a good fix, the box or
-leg is checked at the least buffer as any other. The fix is read as each box or leg is checked,
-and as a route check leaves the request queue, not when the session or request was admitted.
+swept to its marks, which a boat keeps between. Through a fairway gap the stretch of a leg whose
+footprint at that buffer lies inside the strip is read at the strip's depth, so the leg must keep
+to the line, off it by at most the strip's half-width less the buffer and the cross-track limit;
+a buffer as wide as the strip closes the gap. Anywhere else, or without a good fix, the box or leg
+is checked at the least buffer as any other. The fix is read as each box or leg is checked, and as
+a route check leaves the request queue, not when the session or request was admitted.
 
 A trip longer than a planning box holds is planned in a corridor. With the Traficom WFS depth
 source on, a planner first asks for a coarse depth survey of the trip's region, downloaded tile by

@@ -20,7 +20,7 @@ import {
   seedFixtureIndex
 } from "./helpers/fixture-index";
 import { fakeApp, fakeClock, T0 } from "./helpers/plugin-harness";
-import { CHANNEL_LAT, gappedChannel } from "./helpers/swept-channel";
+import { BRIDGE_GAP, bridgedChannel, CHANNEL_LAT, gappedChannel } from "./helpers/swept-channel";
 
 /** The in-process planning API signalk-route-planner searches against. */
 
@@ -252,6 +252,39 @@ describe("planning API v1", () => {
     expect(r.value.lost).toEqual(least.value);
     expect(least.value.leg.flags).not.toContain("PILOTAGE");
     expect(r.value.back.flags).toContain("PILOTAGE");
+  });
+
+  test("a pilotage session holds a leg through a fairway gap to its strip while the fix is good", async () => {
+    let buffer: number | undefined = 3;
+    const bridged = planningApi(
+      () =>
+        deps({
+          index: bridgedChannel(),
+          vessel: () => ({ draft: 1.5, length: 8, beam: 2.5 }),
+          pilotBuffer: () => buffer
+        }),
+      "test"
+    );
+    const a: LonLat = [22.006, CHANNEL_LAT];
+    const b: LonLat = [22.014, CHANNEL_LAT];
+    const mid = (BRIDGE_GAP[0] + BRIDGE_GAP[1]) / 2;
+    const sw: LonLat = [mid - 0.0002, CHANNEL_LAT];
+    const ne: LonLat = [mid + 0.0002, CHANNEL_LAT];
+    const params = { departure: NOW, until: NOW + HOUR, speed: 3, xteLimit: 0 };
+    const r = await bridged.session({ ...params, pilotage: true }, NEVER, async (s) => {
+      const good = { leg: s.segment(a, b), box: s.box(sw, ne) };
+      buffer = undefined;
+      return { good, lost: s.segment(a, b) };
+    });
+    const plain = await bridged.session(params, NEVER, async (s) => s.segment(a, b));
+    if (!r.ok || !plain.ok) {
+      throw new Error("session refused");
+    }
+    expect(r.value.good.leg.status).toBe("ok");
+    expect(r.value.good.leg.flags).toContain("PILOTAGE");
+    expect(r.value.good.box.flags).toContain("PILOTAGE");
+    expect(r.value.lost.status).toBe("fail");
+    expect(r.value.lost).toEqual(plain.value);
   });
 
   test("a leg whose corridor is over 25 km² is refused", async () => {

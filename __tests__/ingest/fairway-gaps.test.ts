@@ -3,7 +3,8 @@ import type { WfsFeature } from "../../src/ingest/wfs-fetch";
 
 /**
  * Gaps in a swept fairway (`ingest/fairway-gaps.ts`): two swept areas of a fairway, 40 m wide,
- * a 70 m gap between them where a bridge spans it, and the fairway's line through all three.
+ * a 70 m gap between them where a bridge spans it, and the fairway's line through all three. A
+ * pilotage check reads the strips (`__tests__/spatial/swept-fairway.test.ts`).
  */
 
 const M = 1 / 111_320;
@@ -66,7 +67,7 @@ describe("gaps in a swept fairway", () => {
     expect(Math.max(...xs)).toBeGreaterThan(220);
   });
 
-  test("at the line's safe clearance depth, not its design draft, so it never lowers a sweep", () => {
+  test("at the line's safe clearance depth, not its design draft", () => {
     // Route 3530 at Pargas: laid out for 2.1 m, kept clear to 2.7 m, swept to 2.7 m both sides.
     const gaps = fairwayGaps([line(2.1, 2.7)], [area("A", 0, 150), area("B", 220, 400)]);
     expect(gaps[0]?.properties?.DRVAL1).toBe(2.7);
@@ -195,5 +196,53 @@ describe("gaps in a swept fairway", () => {
     const gaps = fairwayGaps([line(2.1, 2.7)], [holed, area("B", 220, 400)]);
     const ring = (gaps[0]?.geometry?.coordinates as number[][][])[0] as number[][];
     expect(Math.max(...ring.map((p) => ((p[1] as number) - 60) / M))).toBeLessThanOrEqual(3 + 1e-6);
+  });
+
+  test("the strip reaches 30 m into each area while the line is in it, never past its far end", () => {
+    const xs = (gaps: WfsFeature[]) =>
+      ((gaps[0]?.geometry?.coordinates as number[][][])[0] as number[][]).map(
+        (p) => ((p[0] as number) - 22) / K
+      );
+    const long = xs(fairwayGaps([line(2.1, 2.7)], [area("A", 0, 150), area("B", 220, 400)]));
+    expect(Math.min(...long)).toBeCloseTo(118, 0);
+    expect(Math.max(...long)).toBeCloseTo(250, 0);
+    // An area 20 m long before the gap: the strip starts where it does.
+    const short = xs(fairwayGaps([line(2.1, 2.7)], [area("A", 130, 150), area("B", 220, 400)]));
+    expect(Math.min(...short)).toBeGreaterThanOrEqual(130);
+  });
+
+  test("past the cross-sections its width is taken from, the strip is no wider than the area", () => {
+    // A: 10 m wide up to 125 m, 40 m wide from there to the gap at 150 m.
+    const flared = feature("A", [
+      [
+        [0, -5],
+        [125, -5],
+        [125, -20],
+        [150, -20],
+        [150, 20],
+        [125, 20],
+        [125, 5],
+        [0, 5],
+        [0, -5]
+      ].map(([x, y]) => [22 + (x as number) * K, 60 + (y as number) * M])
+    ]);
+    const gaps = fairwayGaps([line(2.1, 2.7)], [flared, area("B", 220, 400)]);
+    const ring = (gaps[0]?.geometry?.coordinates as number[][][])[0] as number[][];
+    const at = ring.map((p) => [((p[0] as number) - 22) / K, ((p[1] as number) - 60) / M]);
+    const narrow = at.filter(([x]) => (x as number) < 125).map(([, y]) => Math.abs(y as number));
+    expect(narrow.length).toBeGreaterThan(0);
+    expect(Math.max(...narrow)).toBeLessThanOrEqual(5 + 1e-6);
+    expect(Math.max(...at.map(([, y]) => y as number))).toBeCloseTo(HALF_MAX, 0);
+  });
+
+  test("the strip takes the least depth of every sweep it reaches into, on the line's level", () => {
+    // A2 holds the line 20–50 m before the gap, inside the strip's reach but not where it leaves A.
+    const shallow = feature("A2", [box(100, 130, -20, 20)], 1.8);
+    const swept = [area("A", 0, 150), shallow, area("B", 220, 400)];
+    expect(fairwayGaps([line(2.1, 2.7)], swept).map((g) => g.properties?.DRVAL1)).toEqual([1.8]);
+    const other = feature("A2", [box(100, 130, -20, 20)], 2.7, "MW2005");
+    expect(fairwayGaps([line(2.1, 2.7)], [area("A", 0, 150), other, area("B", 220, 400)])).toEqual(
+      []
+    );
   });
 });
