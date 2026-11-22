@@ -198,6 +198,9 @@ export function paramsError(
   if (p.airHeight !== undefined && !within(p.airHeight, LIMITS.minAirHeight, LIMITS.maxAirHeight)) {
     return `airHeight must be ${LIMITS.minAirHeight}..${LIMITS.maxAirHeight} m`;
   }
+  if (p.waveHeight !== undefined && !within(p.waveHeight, 0, LIMITS.maxWaveHeight)) {
+    return `waveHeight must be 0..${LIMITS.maxWaveHeight} m`;
+  }
   return undefined;
 }
 
@@ -231,7 +234,7 @@ function sessionFor(
   signal: AbortSignal
 ): Session {
   const halfWidth = input.xteLimit + input.planningBuffer;
-  // Read at each check, not at admission: the fix may fail while the session runs.
+  // Read at each check, not at admission: the fix history may widen it while the session runs.
   const piloted = (): RouteCheckInput => ({ ...input, ...pilotFor(p.pilotage, deps) });
   const whole: Window = { start: p.departure, end: p.until };
   let work = 0;

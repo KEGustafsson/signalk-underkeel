@@ -42,6 +42,10 @@
       "minimum": 0,
       "maximum": 10
     },
+    "pilotage": {
+      "description": "check legs in swept or dredged water at the pilotage buffer",
+      "type": "boolean"
+    },
     "vessel": {
       "type": "object",
       "properties": {

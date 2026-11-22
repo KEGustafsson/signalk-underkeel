@@ -150,6 +150,9 @@ describe("planning API v1", () => {
     [{ draft: 0 }, /draft must be/],
     [{ airHeight: 0 }, /airHeight must be/],
     [{ airHeight: 101 }, /airHeight must be/],
+    [{ waveHeight: -0.1 }, /waveHeight must be/],
+    [{ waveHeight: 10.1 }, /waveHeight must be/],
+    [{ waveHeight: Number.NaN }, /waveHeight must be/],
     [{ until: NOW - 1 }, /until not before departure/],
     [{ departure: Number.NaN }, /finite epoch ms/]
   ])("a session with %p is refused before it starts", async (over, message) => {
