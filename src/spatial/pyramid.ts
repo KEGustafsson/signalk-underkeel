@@ -27,7 +27,7 @@ import {
 import type { NodeStore, NodeValues } from "./node-store";
 import { EMPTY, FLAGS, NO_DATA } from "./node-store";
 import type { Walk } from "./walk";
-import { certain, foldFlags, REACH_FLAGS, riskAt, take, takeStandIn } from "./walk";
+import { SWEPT_FLAGS, certain, foldFlags, REACH_FLAGS, riskAt, take, takeStandIn } from "./walk";
 import { chartReach, chartSigma, flagReach, MAX_CHART_SIGMA } from "./chart-position";
 import { flagsShadowed, shadedRisk, shadedWeight, shadowFor } from "./survey-shadow";
 
@@ -84,6 +84,8 @@ export interface DepthResult extends NodeValues {
   /** With `risk` set: the highest per-tile P(UKC < 0) over charted tiles, else 0. */
   maxRisk: number;
   riskTile?: RiskTile;
+  /** With `sweptOnly`: some tile within the buffer is not swept or dredged water. */
+  unswept?: boolean;
 }
 
 export interface QueryOptions {
@@ -119,6 +121,11 @@ export interface QueryOptions {
    * decides the state. Route checks never set it.
    */
   stopWhenCertain?: boolean;
+  /**
+   * Also say whether every tile within the buffer is swept or dredged water (`unswept` in the
+   * result): a pilotage check holds only there (`engine/pilotage.ts`).
+   */
+  sweptOnly?: boolean;
 }
 
 /** A footprint ring in WGS84, as a Mercator polygon. */
@@ -399,7 +406,9 @@ function visit(w: Walk, z: number, x: number, y: number, inside: boolean): void 
     return;
   }
   const v = w.store.values(i);
-  if (!w.store.isSplit(i) || canStop(w, v)) {
+  // A split tile's SWEPT or DREDGED is its children's union: descended to tell which are.
+  const sweptToTell = w.sweptOnly === true && !w.unswept && (v.flags & SWEPT_FLAGS) !== 0;
+  if (!w.store.isSplit(i) || (canStop(w, v) && !sweptToTell)) {
     take(w, v, z, x, y);
     return;
   }
@@ -495,6 +504,7 @@ function walkFor(store: NodeStore, geom: Geom, opts: QueryOptions): Walk {
     risk: opts.risk,
     maxRisk: 0,
     stopWhenCertain: opts.stopWhenCertain === true,
+    ...(opts.sweptOnly && { sweptOnly: true, unswept: false }),
     reachSource: "survey",
     result: { ...EMPTY },
     rect: { minX: 0, minY: 0, maxX: 0, maxY: 0 },
@@ -541,7 +551,8 @@ export function minDepthOver(store: NodeStore, geom: Geom, opts: QueryOptions = 
     coveredDMin: w.coveredDMin,
     cellRefs: [...w.cells].sort((a, b) => a - b),
     visits: w.visits,
-    maxRisk: w.maxRisk
+    maxRisk: w.maxRisk,
+    ...(w.sweptOnly && { unswept: w.unswept === true })
   };
   if (w.riskTile) {
     const t = w.riskTile;

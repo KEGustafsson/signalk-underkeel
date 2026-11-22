@@ -151,6 +151,9 @@ describe("Traficom WFS ingest", () => {
             return Promise.reject(new Error("ECONNREFUSED"));
           }
           const q = new URL(url).searchParams;
+          if (q.get("typeNames") !== "vesivaylatiedot:navigointilinjat_uusi") {
+            return Promise.resolve(reply([]));
+          }
           if (q.has("startIndex")) {
             sorts.push(q.get("sortBy"));
           }
@@ -271,6 +274,63 @@ describe("Traficom WFS ingest", () => {
       /at most/
     );
     expect(fs.readFileSync(path.join(dir, "marker"), "utf8")).toBe("old");
+  });
+
+  test("the FTIA's fairway areas swept to a depth are the cell's dredged areas at that depth", async () => {
+    const fairway = (id: number, swept?: number) => ({
+      type: "Feature",
+      geometry: {
+        type: "Polygon",
+        coordinates: [
+          [
+            [21.98, 59.99],
+            [22.02, 59.99],
+            [22.02, 60.01],
+            [21.98, 60.01],
+            [21.98, 59.99]
+          ]
+        ]
+      },
+      properties: { id, ...(swept !== undefined && { haraussyvyys: swept }) }
+    });
+    const fetch =
+      (ftia: "ok" | "down"): WfsFetch =>
+      (url) => {
+        if (url.startsWith("https://ftia.test/")) {
+          if (ftia === "down") {
+            return Promise.reject(new Error("ECONNREFUSED"));
+          }
+          const q = new URL(url).searchParams;
+          const areas = q.get("typeNames") === "vesivaylatiedot:vaylaalueet_uusi";
+          const first = q.get("startIndex") === "0";
+          // One swept to 2.7 m; one with no swept depth, which says nothing of the depth.
+          return Promise.resolve(reply(areas && first ? [fairway(1, 2.7), fairway(2)] : []));
+        }
+        return Promise.resolve(
+          reply(url.includes("DepthArea_A") && url.includes("startIndex=0") ? [area] : [])
+        );
+      };
+    const dir = path.join(TMP, "FI1WFS01");
+    const d = {
+      url: "https://wfs.test/wfs",
+      linesUrl: "https://ftia.test/ows",
+      bbox: [21.95, 59.95, 22.05, 60.05] as [number, number, number, number],
+      dir,
+      now: new Date("2026-10-18T07:00:00Z"),
+      catzoc: 3
+    };
+    await expect(downloadWfsCell({ ...d, fetch: fetch("ok") })).resolves.toMatchObject({
+      dredgedAreas: 1
+    });
+    const dredged = readCellDirectory(dir, 0).features.filter(
+      (f) => f.role === "depth" && f.dredged
+    );
+    expect(dredged).toEqual([expect.objectContaining({ depth: 2.7, lnam: "FTIA-VA-1" })]);
+    // Without the FTIA's WFS the depth areas stand alone: never deeper.
+    await expect(downloadWfsCell({ ...d, fetch: fetch("down") })).resolves.toMatchObject({
+      depthAreas: 1,
+      dredgedAreas: 0
+    });
   });
 
   describe("with a count from a hits request, pages are read side by side", () => {

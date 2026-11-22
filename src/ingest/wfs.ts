@@ -6,7 +6,8 @@ import { EARTH_RADIUS } from "../foundation/geo";
 import type { GeoJsonFeatureCollection } from "./s57-geojson";
 import type { Bbox, WfsFeature, WfsFetch } from "./wfs-fetch";
 import type { Limit } from "./wfs-fetch";
-import { fetchLayer, limiter, num, readableLine, retried, WFS_LIMITS } from "./wfs-fetch";
+import { fetchLayer, limiter, num, retried, WFS_LIMITS } from "./wfs-fetch";
+import { fetchLines, fetchSweptAreas } from "./wfs-ftia";
 
 export type { Bbox, ByteStream, WfsFetch } from "./wfs-fetch";
 export { WFS_LIMITS } from "./wfs-fetch";
@@ -30,7 +31,6 @@ export const DEFAULT_WFS_URL = "https://julkinen.traficom.fi/inspirepalvelu/rajo
  * lines are the cell's `NAVLINE` layer, the lines a planner keeps to.
  */
 export const FTIA_WFS_URL = "https://avoinapi.vaylapilvi.fi/vaylatiedot/ows";
-const FTIA_LINES = "vesivaylatiedot:navigointilinjat_uusi";
 export const WFS_NOTICE =
   "depths from the Traficom WFS: not for navigational purposes; no rocks, wrecks or survey quality";
 
@@ -360,44 +360,6 @@ export interface WfsDownload {
   linesUrl?: string;
 }
 
-/** A navigation line as the cell keeps it: its geometry and the draft it is laid out for. */
-function navigationLine(f: WfsFeature): unknown {
-  return {
-    type: "Feature",
-    geometry: f.geometry,
-    properties: { mitoitussyvays: num(f.properties?.mitoitussyvays) }
-  };
-}
-
-/**
- * The navigation lines meeting `bbox`, or none when the FTIA's WFS fails: they are a planner's
- * preference, never a depth, so a cell is written without them rather than not at all.
- */
-async function fetchLines(d: WfsDownload, bbox: Bbox): Promise<unknown[] | undefined> {
-  if (d.linesUrl === undefined) {
-    return [];
-  }
-  try {
-    const features = await fetchLayer({
-      fetch: d.fetch,
-      base: d.linesUrl,
-      typeName: FTIA_LINES,
-      bbox,
-      limit: limiter(1),
-      sortBy: "navigointilinjaid",
-      ...(d.signal && { signal: d.signal })
-    });
-    // A malformed line would fail the cell's whole index build: lines are a preference, never a
-    // depth, so one that cannot be read is left out.
-    return features.filter(readableLine).map(navigationLine);
-  } catch (err) {
-    if (d.signal?.aborted) {
-      throw err;
-    }
-    return undefined;
-  }
-}
-
 const union = (a: Bbox, b: Bbox): Bbox => [
   Math.min(a[0], b[0]),
   Math.min(a[1], b[1]),
@@ -499,6 +461,9 @@ export async function downloadWfsCell(d: WfsDownload): Promise<{
     counts.soundings += l.soundings.length;
   }
   const lines = await fetchLines(d, d.bbox);
+  const swept = await fetchSweptAreas(d, d.bbox);
+  clipTo({ depthAreas: [], dredgedAreas: swept, soundings: [] }, parts, clipped, corridor);
+  counts.dredgedAreas += swept.length;
   const layers = cellLayers(clipped, parts, d.now, d.catzoc);
   writeCell(d.dir, lines && lines.length > 0 ? { ...layers, NAVLINE: collection(lines) } : layers);
   return { ...counts, lines: lines ? lines.length : false };

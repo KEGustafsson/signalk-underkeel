@@ -8,7 +8,7 @@ import type { CellInfo } from "../ingest/cells";
 import type { DepthFeature } from "../ingest/features";
 import type { RuleFeature } from "../ingest/rule-features";
 import type { CellReach } from "./build-items";
-import { DEFAULT_BUILD } from "./build-items";
+import { DEFAULT_BUILD, edgeZoomFor } from "./build-items";
 import { loadChartIndex } from "./chart-index";
 import type { NodeColumns, NodeStore } from "./node-store";
 import type { RootRange } from "./pyramid-build";
@@ -120,7 +120,12 @@ export function savedBoxIndex(
   const box = readBox(indexDir);
   const saved = box?.leafZoom === leafZoom ? loadSaved(indexDir, leafZoom) : undefined;
   const tiles =
-    saved && readTiles(indexDir, { minZoom: saved.pyramid.minZoom, leafZoom }, saved.cells.length);
+    saved &&
+    readTiles(
+      indexDir,
+      { minZoom: saved.pyramid.minZoom, leafZoom: saved.pyramid.leafZoom },
+      saved.cells.length
+    );
   if (!box || !saved || !tiles || !rectsEqual(tiles.box, boxRect(box.bbox))) {
     return undefined;
   }
@@ -143,7 +148,8 @@ function loadSaved(indexDir: string, leafZoom: number): Omit<SavedIndex, "refs">
     return undefined;
   }
   const { pyramid, catalogue } = saved;
-  if (pyramid.minZoom !== DEFAULT_BUILD.minZoom || pyramid.leafZoom !== leafZoom) {
+  // The saved pyramid reaches the edge zoom of the leaf zoom it was built for.
+  if (pyramid.minZoom !== DEFAULT_BUILD.minZoom || pyramid.leafZoom !== edgeZoomFor(leafZoom)) {
     return undefined;
   }
   return {

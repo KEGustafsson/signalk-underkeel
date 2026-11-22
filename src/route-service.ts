@@ -52,6 +52,8 @@ export interface RouteServiceDeps {
   getRoute(id: string): Promise<unknown>;
   now(): number;
   queue: RouteQueue;
+  /** The pilotage buffer while the fix is good (`engine/pilotage.ts`); none otherwise. */
+  pilotBuffer?(): number | undefined;
   /** The box the index in use was built in around the vessel; none for a whole index. */
   chartBox?: () => Bbox | undefined;
   /** The box saved with the index in use (`box.json`), known before the box service's. */
@@ -159,6 +161,7 @@ async function prepare(
       speeds,
       xteLimit,
       planningBuffer,
+      ...pilotFor(req.pilotage, deps),
       vessel,
       dynamics: deps.config.dynamics,
       waterLevel: deps.waterLevel,
@@ -167,6 +170,15 @@ async function prepare(
       probability: req.probability ?? deps.config.routeCheck.probability
     }
   };
+}
+
+/** The pilotage buffer for a request that asks for it, when there is one. */
+export function pilotFor(
+  asked: boolean | undefined,
+  deps: Pick<RouteServiceDeps, "pilotBuffer">
+): { pilotBuffer?: number } {
+  const buffer = asked === true ? deps.pilotBuffer?.() : undefined;
+  return buffer === undefined ? {} : { pilotBuffer: buffer };
 }
 
 const isReply = (v: unknown): v is ApiReply => typeof (v as ApiReply).status === "number";

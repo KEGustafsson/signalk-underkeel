@@ -38,6 +38,11 @@ export interface RouteCheckInput {
   xteLimit: number;
   /** Planning position uncertainty added to the corridor, metres. */
   planningBuffer: number;
+  /**
+   * Pilotage (`pilotage.ts`): a narrower buffer a leg is checked at first, kept where its
+   * corridor lies in swept or dredged water all through; absent, every leg at `planningBuffer`.
+   */
+  pilotBuffer?: number;
   vessel: VesselModel;
   dynamics: DynamicsOptions;
   /**
@@ -126,8 +131,10 @@ function* corridorSteps(
   a: LonLat,
   b: LonLat,
   r: number,
-  s: Scoring
+  s: Scoring,
+  sweptOnly = false
 ): Steps<LegDepth> {
+  let unswept = false;
   let best: Omit<LegDepth, "work"> | undefined;
   let flags = 0;
   let covered = Infinity;
@@ -137,9 +144,11 @@ function* corridorSteps(
     const result = minDepthOver(index.pyramid, footprintGeom(ring), {
       chartPosition: true,
       clearAbove: s.threshold + CLEARANCE_RESOLUTION,
-      risk: { threshold: s.threshold, sigmaExtra: s.sigmaExtra }
+      risk: { threshold: s.threshold, sigmaExtra: s.sigmaExtra },
+      sweptOnly
     });
     work += queryWork(result);
+    unswept ||= result.unswept === true;
     flags |= result.flags;
     covered = Math.min(covered, result.coveredDMin);
     result.cellRefs.forEach((c) => cells.add(c));
@@ -152,7 +161,13 @@ function* corridorSteps(
   return {
     ...leg,
     work,
-    result: { ...leg.result, flags, coveredDMin: covered, cellRefs: [...cells] }
+    result: {
+      ...leg.result,
+      flags,
+      coveredDMin: covered,
+      cellRefs: [...cells],
+      ...(sweptOnly && { unswept })
+    }
   };
 }
 
@@ -206,13 +221,7 @@ function* legSteps(
   const end = start + (length / speed) * 1000;
   const wl = input.waterLevel(start, end, [from, to]);
   const { terms, s } = scoringFor(input, speed, wl);
-  const { result, ring, work } = yield* corridorSteps(
-    index,
-    from,
-    to,
-    input.xteLimit + input.planningBuffer,
-    s
-  );
+  const { result, ring, work, width } = yield* pilotedSteps(index, input, from, to, s);
   const covered = result.coveredDMin;
   const land = covered === -Infinity;
   const charted = covered === Infinity || land ? null : covered;
@@ -220,9 +229,12 @@ function* legSteps(
   if (land) {
     flags.push("LAND");
   }
+  if (width < input.xteLimit + input.planningBuffer) {
+    flags.push("PILOTAGE");
+  }
   const tile = result.riskTile;
   const why = tile ? explainTile(index, tile, ring, terms, wl) : undefined;
-  const rings = legCorridors(from, to, input.xteLimit + input.planningBuffer);
+  const rings = legCorridors(from, to, width);
   const course = rhumbCourse(from, to);
   const status = applyRules(
     verdictStatus(result.maxRisk, charted, result.flags, land, wl, flags, input),
@@ -245,6 +257,32 @@ function* legSteps(
     explanation: why?.explanation
   };
   return { leg, cellRefs: result.cellRefs, work };
+}
+
+/**
+ * A leg's corridor at the pilotage buffer when it lies in swept or dredged water all through,
+ * else at the planning buffer (`pilotage.ts`), with the half-width it was taken at.
+ */
+function* pilotedSteps(
+  index: ChartIndex,
+  input: RouteCheckInput,
+  from: LonLat,
+  to: LonLat,
+  s: Scoring
+): Steps<LegDepth & { width: number }> {
+  const full = input.xteLimit + input.planningBuffer;
+  const pilot = input.pilotBuffer;
+  let work = 0;
+  if (pilot !== undefined && pilot < input.planningBuffer) {
+    const width = input.xteLimit + pilot;
+    const piloted = yield* corridorSteps(index, from, to, width, s, true);
+    if (piloted.result.unswept === false) {
+      return { ...piloted, width };
+    }
+    work = piloted.work;
+  }
+  const d = yield* corridorSteps(index, from, to, full, s);
+  return { ...d, work: work + d.work, width: full };
 }
 
 function scoringFor(
@@ -283,6 +321,8 @@ export interface FootprintVerdict {
   worst?: LonLat;
   /** Work its query did (work.ts). */
   work: number;
+  /** Some of the footprint is not swept or dredged water, or it was not asked (`sweptOnly`). */
+  unswept: boolean;
 }
 
 /**
@@ -302,14 +342,16 @@ export function checkFootprint(
   input: RouteCheckInput,
   ring: LonLat[],
   speed: number,
-  window: { start: number; end: number; at: readonly LonLat[] }
+  window: { start: number; end: number; at: readonly LonLat[] },
+  sweptOnly = false
 ): FootprintVerdict {
   const wl = input.waterLevel(window.start, window.end, window.at, true);
   const { s } = scoringFor(input, speed, wl);
   const result = minDepthOver(index.pyramid, footprintGeom(ring), {
     chartPosition: true,
     clearAbove: s.threshold + CLEARANCE_RESOLUTION,
-    risk: { threshold: s.threshold, sigmaExtra: s.sigmaExtra }
+    risk: { threshold: s.threshold, sigmaExtra: s.sigmaExtra },
+    sweptOnly
   });
   const covered = result.coveredDMin;
   const land = covered === -Infinity;
@@ -328,7 +370,8 @@ export function checkFootprint(
     risk: Math.round(result.maxRisk * 10000) / 10000,
     flags,
     worst: result.riskTile?.center,
-    work: queryWork(result)
+    work: queryWork(result),
+    unswept: result.unswept !== false
   };
 }
 

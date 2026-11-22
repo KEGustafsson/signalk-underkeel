@@ -44,6 +44,8 @@ export interface RouteRequest {
   airHeight?: number;
   /** Accept threshold for P(UKC < 0). */
   probability?: number;
+  /** Check legs in swept or dredged water at the pilotage buffer (`engine/pilotage.ts`). */
+  pilotage?: boolean;
 }
 
 export type Parsed<T> = { ok: true; value: T } | { ok: false; errors: string[] };
@@ -142,6 +144,13 @@ export function parseRouteRequest(body: unknown, now: number = Date.now()): Pars
       req.probability = b.probability;
     } else {
       errors.push(`probability must be ${LIMITS.minProbability}..${LIMITS.maxProbability}`);
+    }
+  }
+  if (b.pilotage !== undefined) {
+    if (typeof b.pilotage === "boolean") {
+      req.pilotage = b.pilotage;
+    } else {
+      errors.push("pilotage must be true or false");
     }
   }
   vesselOverrides(b.vessel as Record<string, unknown> | undefined, req, errors);

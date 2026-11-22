@@ -1,3 +1,4 @@
+import { pilotBuffer } from "./engine/pilotage";
 import type { ServerAPI } from "@signalk/server-api";
 import type { AckStore } from "./ack-store";
 import type { AckServiceDeps } from "./ack-service";
@@ -91,6 +92,10 @@ export function routeDepsFor(
     getRoute: (id) => app.resourcesApi.getResource("routes", id),
     now: () => clock.now(),
     queue: s.requests,
+    pilotBuffer: () => {
+      const l = (s.config ?? parseConfig({})).lookahead;
+      return pilotBuffer(s.monitor?.integrityResult, l.kp, l.positionBuffer);
+    },
     chartBox: () => s.wfs?.view().bbox,
     indexBox: () => (s.load?.indexDir === undefined ? undefined : readBox(s.load.indexDir)?.bbox)
   };

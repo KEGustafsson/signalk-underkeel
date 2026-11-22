@@ -6,6 +6,14 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Added
 
+- Swept fairways: with the FTIA's lines, the Traficom WFS cell takes the FTIA's fairway areas at
+  their swept depth as dredged areas, and a cell's depth areas give way to its dredged areas where
+  they cover a tile; tiles across their edges split two zooms finer than the leaf zoom. The
+  index is rebuilt once (pyramid version 12).
+- Pilotage (`pilotage: true` in a route check or planning session, feature `pilotage`): boxes
+  and legs in swept or dredged water all through are checked at kp · σ of the measured fix, at
+  least 2 m, flagged `PILOTAGE`; the rest at the least position buffer.
+
 - The navigation-safety service schema accepts `routePlan` in `provides`; a provider that only
   plans routes, as signalk-route-planner does, may leave out `statePath` and `notificationPath`.
 - What a planner keeps to: leading lines, recommended tracks and anchorage areas from the charts,

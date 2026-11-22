@@ -34,6 +34,7 @@ import type { RegionJob, RegionResult, RegionRunner, RegionSharing } from "./reg
 import { regionGroups, runRegions } from "./region-jobs";
 import type { TileDigest } from "./tile-reuse";
 import { writeTiles } from "./tile-reuse";
+import { edgeZoomFor } from "./build-items";
 
 export type { RegionJob, RegionResult, RegionRunner, RegionSharing } from "./region-jobs";
 export { runRegions } from "./region-jobs";
@@ -194,10 +195,12 @@ async function buildRegions(
     region,
     cols: (copies.get(k) ?? built.get(k)) as NodeColumns
   }));
-  const { body, cols } = joinParts(minZoom, job.leafZoom, parts);
+  // Down to the edge zoom: a tile across a swept area's edge splits past the leaf zoom.
+  const deepest = edgeZoomFor(job.leafZoom);
+  const { body, cols } = joinParts(minZoom, deepest, parts);
   return {
     catalogue: { version: 1, cells: s.infos },
-    pyramid: storeOnBody(minZoom, job.leafZoom, body, cols),
+    pyramid: storeOnBody(minZoom, deepest, body, cols),
     hazards: new HazardIndex(s.hazards),
     rules: new RuleIndex(s.rules),
     reaches: s.reaches,

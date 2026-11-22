@@ -539,6 +539,20 @@ tracks, anchorages, with the Traficom WFS the FTIA's fairway navigation lines (C
 boat's own tracks where the water is no lower than when it sailed them. A session's `airHeight`
 holds its boxes and legs to the bridges at the window's highest water.
 
+With the FTIA's lines, the Traficom WFS cell also takes the FTIA's fairway areas
+(`vaylaalueet`, CC BY 4.0) at the depth each is swept to (`haraussyvyys`), as dredged areas: the
+WFS charts a fairway as part of the depth area around it, a 0–3 m area over a channel swept to
+2.7 m, and where a cell's dredged areas cover a tile, alone or side by side, its depth area gives
+way to them. Tiles across their edges split two zooms finer than the leaf zoom (at most 22, about
+5 m at 60° N). Soundings and rocks inside them still count.
+
+A session or route check with `pilotage: true` (feature `pilotage`) checks each box and leg first
+at the boat's pilotage buffer, kp · σ of its fix as the integrity monitor measures it and at least
+2 m, while that is narrower than the **Least position buffer**, and keeps that verdict, flagged
+`PILOTAGE`, only where the footprint at it lies in swept or dredged water all through: a fairway
+swept to its marks, which a boat keeps between. Anywhere else, or without a good fix, the box or
+leg is checked at the least buffer as any other.
+
 A trip longer than a planning box holds is planned in a corridor. With the Traficom WFS depth
 source on, a planner first asks for a coarse depth survey of the trip's region, downloaded tile by
 tile so its memory stays small however large the region. It finds a corridor a few kilometres wide

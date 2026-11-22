@@ -1,3 +1,4 @@
+import { pluginBuild } from "../../src/spatial/build-items";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -36,9 +37,10 @@ const inProcess = (j: Parameters<typeof runRegions>[0]) => Promise.resolve(runRe
 describe("pyramid built region by region", () => {
   test.each([16, 18])("equals the build of all cells at leaf zoom %i", async (leafZoom) => {
     const job: BuildJob = { dirs, leafZoom, indexDir: path.join(tmp, "index"), threads: 1 };
+    // As the plugin builds: tiles across a swept area's edge to the edge zoom.
     const whole = buildChartIndex(
       dirs.map((d, i) => readCellDirectory(d, i)),
-      { leafZoom }
+      pluginBuild(leafZoom)
     );
     const regions = await buildByRegion(job, inProcess);
     expect(serializePyramid(regions.pyramid).equals(serializePyramid(whole.pyramid))).toBe(true);

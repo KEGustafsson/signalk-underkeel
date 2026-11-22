@@ -1,3 +1,4 @@
+import { pluginBuild } from "../src/spatial/build-items";
 import childProcess from "child_process";
 import fs from "fs";
 import os from "os";
@@ -241,9 +242,10 @@ describe("workerBuilder (compiled lib/)", () => {
     const { serializePyramid } = (await import(LIB_STORE)) as {
       serializePyramid: (s: unknown) => Buffer;
     };
+    // As the plugin builds: tiles across a swept area's edge to the edge zoom.
     const whole = buildChartIndex(
       cells.map((d, i) => readCellDirectory(d, i)),
-      { leafZoom: 16 }
+      pluginBuild(16)
     );
     expect(
       fs.readFileSync(path.join(one, "pyramid.bin")).equals(serializePyramid(whole.pyramid))

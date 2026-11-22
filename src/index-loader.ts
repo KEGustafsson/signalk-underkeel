@@ -1,3 +1,4 @@
+import { pluginBuild } from "./spatial/build-items";
 import fs from "fs";
 import path from "path";
 import type { PluginConfig } from "./config";
@@ -203,7 +204,7 @@ async function settle(p: IndexPlan): Promise<IndexLoad> {
     for (const [i, d] of p.build.dirs.entries()) {
       cells.push(await readCell(d, i));
     }
-    const index = buildChartIndex(cells, { leafZoom: p.build.leafZoom });
+    const index = buildChartIndex(cells, pluginBuild(p.build.leafZoom));
     const { source } = p.build;
     saveChartIndex(p.indexDir, index, source ? (dir) => writeSource(dir, source) : undefined);
     return builtLoad(p, index);

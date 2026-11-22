@@ -1549,6 +1549,21 @@ so a corridor 3 km wide along a 50 nm trip fits a 2 GB machine. With S-57 cells 
 spans the whole box, which is then the area held to the cap. An index already held that covers
 every box is given instead, and judges on the charts across all it holds.
 
+**Swept fairways and pilotage.** The Traficom WFS charts a fairway as part of the depth area
+around it: Sattmarkssundet at Pargas is one 0–3 m area, read at 0 m, though the FTIA has swept its
+boat route to 2.7 m. With the FTIA's lines the WFS cell takes the FTIA's fairway areas at their
+swept depth as `DRGARE` (`ingest/wfs-ftia.ts`). An ENC's depth and dredged areas never overlap,
+so where a cell's dredged areas cover a tile, alone or side by side, its `DEPARE` gives way to
+them (`spatial/give-way.ts`), and the tile is `DREDGED`; soundings, rocks, land and other cells
+stay. A tile across a dredged area's edge over its cell's depth area splits to `edgeZoomFor`
+(leaf zoom + 2, at most 22): at the leaf zoom alone a 19 m tile across the edge keeps the bank's
+0 m, and the fairway is 25–50 m wide. Pilotage (`engine/pilotage.ts`, feature `pilotage`): a box
+or leg asked with it is checked first at kp · σ of the fix, at least 2 m, and that verdict, flagged
+`PILOTAGE`, is kept only where every tile within that buffer is swept or dredged (a query's
+`sweptOnly` descends split tiles carrying those flags, which are their children's union);
+otherwise at the least position buffer. Decided: the least buffer keeps open water; between the
+marks of a swept fairway the boat's own position quality decides, measured, never assumed.
+
 ### 4.12 Acknowledged passages
 
 On acknowledge, Freeboard POSTs to `/acks` with:
