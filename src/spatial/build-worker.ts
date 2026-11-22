@@ -306,7 +306,7 @@ function stage(job: BuildJob, index: BuiltIndex): { staging: string; index: Inde
   reportProgress({ phase: "save" });
   const staging = stageChartIndex(job.indexDir, index);
   try {
-    writeReach(staging, index.reaches);
+    writeReach(staging, index.reaches, job.leafZoom);
     if (job.box) {
       writeBox(staging, { ...job.box, leafZoom: job.leafZoom });
     }

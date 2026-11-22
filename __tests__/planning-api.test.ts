@@ -20,6 +20,7 @@ import {
   seedFixtureIndex
 } from "./helpers/fixture-index";
 import { fakeApp, fakeClock, T0 } from "./helpers/plugin-harness";
+import { CHANNEL_LAT, gappedChannel } from "./helpers/swept-channel";
 
 /** The in-process planning API signalk-route-planner searches against. */
 
@@ -215,6 +216,42 @@ describe("planning API v1", () => {
       expect.objectContaining({ class: "BRIDGE", clearance: 18 })
     ]);
     expect(tall.features).toContain("objects");
+  });
+
+  test("each pilotage check takes the fix as it is then, the least buffer once it fails", async () => {
+    let buffer: number | undefined = 3;
+    const swept = planningApi(
+      () =>
+        deps({
+          index: gappedChannel(),
+          vessel: () => ({ draft: 1.5, length: 8, beam: 2.5 }),
+          pilotBuffer: () => buffer
+        }),
+      "test"
+    );
+    const sw: LonLat = [22.002, CHANNEL_LAT];
+    const ne: LonLat = [22.007, CHANNEL_LAT];
+    // A grown box reaches r·√2 plus a metre past sw–ne: at xteLimit 0 it stays in the channel.
+    const params = { departure: NOW, until: NOW + HOUR, speed: 3, xteLimit: 0 };
+    const r = await swept.session({ ...params, pilotage: true }, NEVER, async (s) => {
+      const good = { box: s.box(sw, ne), leg: s.segment(sw, ne) };
+      buffer = undefined;
+      const lost = { box: s.box(sw, ne), leg: s.segment(sw, ne) };
+      buffer = 3;
+      return { good, lost, back: s.segment(sw, ne) };
+    });
+    const least = await swept.session(params, NEVER, async (s) => ({
+      box: s.box(sw, ne),
+      leg: s.segment(sw, ne)
+    }));
+    if (!r.ok || !least.ok) {
+      throw new Error("session refused");
+    }
+    expect(r.value.good.box.flags).toContain("PILOTAGE");
+    expect(r.value.good.leg.flags).toContain("PILOTAGE");
+    expect(r.value.lost).toEqual(least.value);
+    expect(least.value.leg.flags).not.toContain("PILOTAGE");
+    expect(r.value.back.flags).toContain("PILOTAGE");
   });
 
   test("a leg whose corridor is over 25 km² is refused", async () => {

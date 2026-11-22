@@ -121,12 +121,19 @@ export function vesselFor(
   };
 }
 
+interface PreparedCheck {
+  index: ChartIndex;
+  /** Without a pilotage buffer: `atStart` adds the one the fix gives when the job starts. */
+  input: RouteCheckInput;
+  pilotage: boolean | undefined;
+}
+
 /** Validates the request and resolves route, vessel and speeds into a route-check input. */
 async function prepare(
   body: unknown,
   deps: RouteServiceDeps,
   signal: AbortSignal
-): Promise<{ index: ChartIndex; input: RouteCheckInput } | ApiReply> {
+): Promise<PreparedCheck | ApiReply> {
   const parsed = parseRouteRequest(body, deps.now());
   if (!parsed.ok) {
     return { status: 400, body: { errors: parsed.errors } };
@@ -155,13 +162,13 @@ async function prepare(
   }
   return {
     index: deps.index,
+    pilotage: req.pilotage,
     input: {
       coordinates: coords,
       departure: req.departure ?? deps.now(),
       speeds,
       xteLimit,
       planningBuffer,
-      ...pilotFor(req.pilotage, deps),
       vessel,
       dynamics: deps.config.dynamics,
       waterLevel: deps.waterLevel,
@@ -179,6 +186,14 @@ export function pilotFor(
 ): { pilotBuffer?: number } {
   const buffer = asked === true ? deps.pilotBuffer?.() : undefined;
   return buffer === undefined ? {} : { pilotBuffer: buffer };
+}
+
+/**
+ * The request's input with the pilotage buffer of the fix as its job starts: a fix that fails
+ * while the request waits in the queue leaves every leg at the least buffer.
+ */
+function atStart(p: PreparedCheck, deps: Pick<RouteServiceDeps, "pilotBuffer">): RouteCheckInput {
+  return { ...p.input, ...pilotFor(p.pilotage, deps) };
 }
 
 const isReply = (v: unknown): v is ApiReply => typeof (v as ApiReply).status === "number";
@@ -303,7 +318,7 @@ export async function routeCheck(
   return deps.queue.run(scoped, async (signal) => ({
     status: 200,
     body: explainOutsideBox(
-      await checkRouteYielding(p.index, p.input, deps.now(), pauseFor(signal)),
+      await checkRouteYielding(p.index, atStart(p, deps), deps.now(), pauseFor(signal)),
       deps.chartBox?.(),
       halfWidth
     )
@@ -325,7 +340,7 @@ export async function routeRepair(
     const checkedAt = new Date(deps.now()).toISOString();
     const { repairs, route } = await repairRoute(
       p.index,
-      p.input,
+      atStart(p, deps),
       DEFAULT_REPAIR,
       pauseFor(signal)
     );
@@ -362,7 +377,7 @@ export async function departureWindowReply(
     status: 200,
     body: await departureWindow(
       p.index,
-      p.input,
+      atStart(p, deps),
       from,
       to,
       opts.value.step * 1000,

@@ -668,15 +668,16 @@ class drawn over it` still tests.
   changed file fails the load and the index is rebuilt; an index saved with `hazards.json` is
   rebuilt too.
 - `reach.json` holds each cell's reach: the box of its features, its widest burn radius and
-  its coverage box. A build told which cells changed (the WFS cell after each download) copies
-  from the saved index every z10 root that none of them reaches, by the saved reach or the new
-  one, nor any cell whose DSID differs from `cells.json`: the features reaching such a root are
-  those of the saved build. The result is byte-identical to building every root (tested for
-  boxes moved within a root, across root edges, over ENC cells and out of or back into the
-  roots of the ENC cells). Every root is built when the saved
-  index holds other cells or another order, another leaf zoom, no `reach.json`, or fails to
-  read. As at start, a cell with the same DSID edition, update, issue date and datum areas is
-  taken as unchanged. A box build copies tiles instead (§4.2, `tiles.json`).
+  its coverage box, and the leaf zoom of the build, which the pyramid's deepest zoom does not
+  tell apart (leaf zooms 20–22 all reach edge zoom 22). A build told which cells changed (the
+  WFS cell after each download) copies from the saved index every z10 root that none of them
+  reaches, by the saved reach or the new one, nor any cell whose DSID differs from
+  `cells.json`: the features reaching such a root are those of the saved build. The result is
+  byte-identical to building every root (tested for boxes moved within a root, across root
+  edges, over ENC cells and out of or back into the roots of the ENC cells). Every root is built
+  when the saved index holds other cells or another order, another leaf zoom, no `reach.json`
+  or one without its leaf zoom, or fails to read. As at start, a cell with the same DSID
+  edition, update, issue date and datum areas is taken as unchanged. A box build copies tiles instead (§4.2, `tiles.json`).
 - `tiles.json` (box indexes) holds the digests a box refresh copies tiles by (§4.2); 64 KB for
   the 10 km Waddenzee box. `cells.json` is written as `parseCatalogue` reads it back, so a
   cell's entry taken from the saved catalogue has the bytes of one read from the cell.
@@ -1558,7 +1559,8 @@ them (`spatial/give-way.ts`), and the tile is `DREDGED`; soundings, rocks, land 
 stay. A tile across a dredged area's edge over its cell's depth area splits to `edgeZoomFor`
 (leaf zoom + 2, at most 22): at the leaf zoom alone a 19 m tile across the edge keeps the bank's
 0 m, and the fairway is 25–50 m wide. Pilotage (`engine/pilotage.ts`, feature `pilotage`): a box
-or leg asked with it is checked first at kp · σ of the fix, at least 2 m, and that verdict, flagged
+or leg asked with it is checked first at kp · σ of the fix as it is when that check runs (a
+session's box or leg, a queued route check at its turn), at least 2 m, and that verdict, flagged
 `PILOTAGE`, is kept only where every tile within that buffer is swept or dredged (a query's
 `sweptOnly` descends split tiles carrying those flags, which are their children's union);
 otherwise at the least position buffer. Decided: the least buffer keeps open water; between the

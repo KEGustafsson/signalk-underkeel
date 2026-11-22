@@ -293,6 +293,16 @@ describe("Traficom WFS ingest", () => {
       },
       properties: { id, ...(swept !== undefined && { haraussyvyys: swept }) }
     });
+    const square = fairway(0).geometry.coordinates;
+    const malformed = [
+      { type: "Polygon", coordinates: null },
+      { type: "Polygon", coordinates: [] },
+      { type: "Polygon", coordinates: [square[0]?.slice(0, 3)] },
+      { type: "Polygon", coordinates: [[...(square[0] ?? []).slice(0, 4), ["22", 60]]] },
+      { type: "Polygon", coordinates: [[...(square[0] ?? []).slice(0, 4), [22, null]]] },
+      { type: "MultiPolygon", coordinates: [square, []] },
+      { type: "MultiPolygon", coordinates: square }
+    ].map((geometry, i) => ({ ...fairway(10 + i, 2.7), geometry }));
     const fetch =
       (ftia: "ok" | "down"): WfsFetch =>
       (url) => {
@@ -303,8 +313,11 @@ describe("Traficom WFS ingest", () => {
           const q = new URL(url).searchParams;
           const areas = q.get("typeNames") === "vesivaylatiedot:vaylaalueet_uusi";
           const first = q.get("startIndex") === "0";
-          // One swept to 2.7 m; one with no swept depth, which says nothing of the depth.
-          return Promise.resolve(reply(areas && first ? [fairway(1, 2.7), fairway(2)] : []));
+          // One swept to 2.7 m; one with no swept depth, which says nothing of the depth; and
+          // malformed ones, which are left out.
+          return Promise.resolve(
+            reply(areas && first ? [fairway(1, 2.7), fairway(2), ...malformed] : [])
+          );
         }
         return Promise.resolve(
           reply(url.includes("DepthArea_A") && url.includes("startIndex=0") ? [area] : [])

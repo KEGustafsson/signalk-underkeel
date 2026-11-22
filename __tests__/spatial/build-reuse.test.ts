@@ -194,6 +194,20 @@ describe("WFS refresh reusing the saved index's roots", () => {
     const s = await saved("other-zoom", [22.65, 60.15], 14);
     expect((await rebuilt(s, 15, true)).index.roots.copied).toBe(0);
   });
+
+  test.each([
+    // Leaf zooms 20–22 all reach edge zoom 22: the pyramid's deepest zoom cannot tell them apart.
+    ["records another leaf zoom", 15],
+    ["predates the leaf zoom", undefined]
+  ])("a saved index whose reach file %s is not reused", async (name, recorded) => {
+    const s = await saved(`reach-${name.replace(/\W+/g, "-")}`, [22.65, 60.15], 14);
+    const file = path.join(s.indexDir, REACH_FILE);
+    const reach = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+    expect(reach.leafZoom).toBe(14);
+    fs.writeFileSync(file, JSON.stringify({ ...reach, leafZoom: recorded }));
+    writeWfsCell(s.wfs, [22.7, 60.16], 4);
+    expect((await rebuilt(s, 14, true)).index.roots.copied).toBe(0);
+  });
 });
 
 describe("one root's nodes copied out of a store", () => {

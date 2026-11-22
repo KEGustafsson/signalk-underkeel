@@ -15,7 +15,8 @@ All notable changes to signalk-underkeel are documented here.
   strips are swept areas too, so a tile the sweeps cover side by side keeps the swept σ.
 - Pilotage (`pilotage: true` in a route check or planning session, feature `pilotage`): boxes
   and legs in swept or dredged water all through are checked at kp · σ of the measured fix, at
-  least 2 m, flagged `PILOTAGE`; the rest at the least position buffer.
+  least 2 m, flagged `PILOTAGE`; the rest at the least position buffer. The fix is read as each
+  box, leg or queued route check runs, so one that fails meanwhile leaves the least buffer.
 
 - The navigation-safety service schema accepts `routePlan` in `provides`; a provider that only
   plans routes, as signalk-route-planner does, may leave out `statePath` and `notificationPath`.

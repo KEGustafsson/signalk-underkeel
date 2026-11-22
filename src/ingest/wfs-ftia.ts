@@ -50,6 +50,27 @@ export async function fetchLines(d: WfsDownload, bbox: Bbox): Promise<unknown[] 
   }
 }
 
+const isPosition = (p: unknown): boolean =>
+  Array.isArray(p) && p.length >= 2 && Number.isFinite(p[0]) && Number.isFinite(p[1]);
+
+const isRing = (r: unknown): boolean => Array.isArray(r) && r.length >= 4 && r.every(isPosition);
+
+const isPolygon = (rings: unknown): boolean =>
+  Array.isArray(rings) && rings.length > 0 && rings.every(isRing);
+
+/**
+ * Whether `g` is a Polygon or MultiPolygon whose rings each hold four or more finite positions.
+ * A swept area is optional, so a malformed one is left out rather than fail the clip, the fairway
+ * gaps or the cell's index build; without it the depth area stands alone, which is never deeper.
+ */
+function readableArea(g: WfsFeature["geometry"]): boolean {
+  if (g?.type === "Polygon") {
+    return isPolygon(g.coordinates);
+  }
+  const c = g?.type === "MultiPolygon" ? g.coordinates : undefined;
+  return Array.isArray(c) && c.length > 0 && c.every(isPolygon);
+}
+
 /**
  * A fairway area swept to a depth, as a dredged area of the cell at that depth. The Traficom
  * WFS charts a fairway as part of the depth area around it (one 0–3 m area over a channel
@@ -58,8 +79,7 @@ export async function fetchLines(d: WfsDownload, bbox: Bbox): Promise<unknown[] 
  */
 function sweptArea(f: WfsFeature): WfsFeature | undefined {
   const depth = num(f.properties?.haraussyvyys);
-  const type = f.geometry?.type;
-  if (depth === undefined || depth <= 0 || (type !== "Polygon" && type !== "MultiPolygon")) {
+  if (depth === undefined || depth <= 0 || !readableArea(f.geometry)) {
     return undefined;
   }
   return {

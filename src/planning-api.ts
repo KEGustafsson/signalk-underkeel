@@ -210,7 +210,6 @@ function inputFor(deps: RouteServiceDeps, p: SessionParams): RouteCheckInput | s
     speeds: [p.speed],
     xteLimit: p.xteLimit ?? deps.config.routeCheck.xteLimit,
     planningBuffer: deps.config.lookahead.positionBuffer,
-    ...pilotFor(p.pilotage, deps),
     vessel,
     dynamics: deps.config.dynamics,
     waterLevel: deps.waterLevel,
@@ -229,7 +228,8 @@ function sessionFor(
   signal: AbortSignal
 ): Session {
   const halfWidth = input.xteLimit + input.planningBuffer;
-  const pilot = input.pilotBuffer === undefined ? undefined : input.xteLimit + input.pilotBuffer;
+  // Read at each check, not at admission: the fix may fail while the session runs.
+  const piloted = (): RouteCheckInput => ({ ...input, ...pilotFor(p.pilotage, deps) });
   const whole: Window = { start: p.departure, end: p.until };
   let work = 0;
   return {
@@ -239,8 +239,10 @@ function sessionFor(
       if (areaKm2(ring) > MAX_BOX_KM2) {
         throw new RangeError(`box over ${MAX_BOX_KM2} km² with its buffer`);
       }
-      const narrow = pilot === undefined ? undefined : grownBox(sw, ne, pilot);
-      const v = pilotedBox(index, input, { ring, narrow }, p.speed, window);
+      const now = piloted();
+      const pilot = now.pilotBuffer;
+      const narrow = pilot === undefined ? undefined : grownBox(sw, ne, now.xteLimit + pilot);
+      const v = pilotedBox(index, now, { ring, narrow }, p.speed, window);
       work += v.work;
       return { status: v.status, risk: v.risk, flags: v.flags, worst: v.worst };
     },
@@ -252,7 +254,7 @@ function sessionFor(
       // The leg's own level is the window's lowest, whatever its arrival time.
       const high = deps.highWater;
       const leg = {
-        ...input,
+        ...piloted(),
         coordinates: [a, b],
         waterLevel: () => level(window, [a, b]),
         // The leg's clearances at the window's highest water, whatever its arrival time.

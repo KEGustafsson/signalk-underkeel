@@ -17,6 +17,9 @@ import {
   routeRepair
 } from "../../src/route-service";
 import { fixtureIndex } from "../helpers/fixture-index";
+import { CHANNEL_LAT, gappedChannel } from "../helpers/swept-channel";
+
+const NEVER_ABORTED = new AbortController().signal;
 
 const LINE = {
   type: "LineString",
@@ -243,6 +246,47 @@ describe("route-check service", () => {
   test("resolves a route reference", async () => {
     expect((await routeCheck({ routeRef: "/resources/routes/known" }, deps())).status).toBe(200);
     expect((await routeCheck({ routeRef: "/resources/routes/missing" }, deps())).status).toBe(404);
+  });
+
+  test("a queued pilotage check takes the fix as its turn comes, the least buffer once it fails", async () => {
+    let buffer: number | undefined = 3;
+    const queue = new RequestQueue();
+    const d = deps({
+      index: gappedChannel(),
+      vessel: () => ({ draft: 1.5, length: 8, beam: 2.5 }),
+      pilotBuffer: () => buffer,
+      queue
+    });
+    const body = (pilotage?: boolean) => ({
+      route: {
+        type: "LineString",
+        coordinates: [
+          [22.002, CHANNEL_LAT],
+          [22.007, CHANNEL_LAT]
+        ]
+      },
+      xteLimit: 3,
+      ...(pilotage !== undefined && { pilotage })
+    });
+    const flagsOf = async (reply: Promise<{ body: unknown }>) =>
+      ((await reply).body as { legs: { flags: string[] }[] }).legs[0]?.flags;
+    const queued = async (pilotage: boolean, during: () => void) => {
+      let release = (): void => undefined;
+      const busy = queue.run(
+        NEVER_ABORTED,
+        () => new Promise((resolve) => (release = () => resolve({ status: 200, body: null })))
+      );
+      const reply = routeCheck(body(pilotage), d);
+      await new Promise((resolve) => setImmediate(resolve));
+      during();
+      release();
+      await busy;
+      return flagsOf(reply);
+    };
+    expect(await queued(true, () => undefined)).toContain("PILOTAGE");
+    const lost = await queued(true, () => (buffer = undefined));
+    expect(lost).not.toContain("PILOTAGE");
+    expect(lost).toEqual(await flagsOf(routeCheck(body(), d)));
   });
 
   test("errors carry a status and never a partial result", async () => {

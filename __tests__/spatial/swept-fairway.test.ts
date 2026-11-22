@@ -1,10 +1,16 @@
-import { pilotBuffer } from "../../src/engine/pilotage";
+import { pilotBuffer, pilotedBox } from "../../src/engine/pilotage";
+import type { RouteCheckInput } from "../../src/engine/route-check";
+import { checkRoute } from "../../src/engine/route-check";
+import type { LonLat } from "../../src/foundation/geo";
+import { DEFAULT_DYNAMICS } from "../../src/model/vessel";
 import { FLAGS } from "../../src/spatial/node-store";
 import { footprintGeom, minDepthOver } from "../../src/spatial/pyramid";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
 import { edgeZoomFor, pluginBuild } from "../../src/spatial/build-items";
 import type { Box } from "../helpers/synthetic";
-import { area, coverage, quality, swept } from "../helpers/synthetic";
+import { CHART_DATUM } from "../helpers/engine";
+import { CHANNEL_LAT, gappedChannel } from "../helpers/swept-channel";
+import { area, boxRing, coverage, quality, swept } from "../helpers/synthetic";
 
 /**
  * A fairway swept to its marks in a cell that charts it with its banks (the Traficom WFS with
@@ -102,5 +108,70 @@ describe("the pilotage buffer", () => {
     expect(pilotBuffer(fix(1.5, false), 2, 10)).toBeUndefined();
     expect(pilotBuffer(undefined, 2, 10)).toBeUndefined();
     expect(pilotBuffer(fix(Number.NaN), 2, 10)).toBeUndefined();
+  });
+});
+
+describe("pilotage on a swept fairway", () => {
+  const index = gappedChannel();
+  const NOW = Date.parse("2026-10-18T07:00:00Z");
+  const input = (coordinates: LonLat[], pilot?: number): RouteCheckInput => ({
+    coordinates,
+    departure: NOW,
+    speeds: [2.5],
+    xteLimit: 3,
+    planningBuffer: 10,
+    ...(pilot !== undefined && { pilotBuffer: pilot }),
+    vessel: { draft: 1.5, length: 8, beam: 2.5 },
+    dynamics: DEFAULT_DYNAMICS,
+    waterLevel: () => CHART_DATUM,
+    probability: 0.01
+  });
+  const west: LonLat[] = [
+    [22.002, CHANNEL_LAT],
+    [22.007, CHANNEL_LAT]
+  ];
+  const across: LonLat[] = [
+    [22.006, CHANNEL_LAT],
+    [22.014, CHANNEL_LAT]
+  ];
+
+  test("a leg swept all through at the pilotage buffer keeps that verdict, flagged PILOTAGE", () => {
+    const least = checkRoute(index, input(west), NOW).legs[0];
+    // At the least buffer, 13 m each side, the corridor reaches the 0 m banks.
+    expect(least?.charted).toBe(0);
+    expect(least?.flags).not.toContain("PILOTAGE");
+    const piloted = checkRoute(index, input(west, 3), NOW).legs[0];
+    expect(piloted?.charted).toBe(2.7);
+    expect(piloted?.flags).toEqual(expect.arrayContaining(["PILOTAGE", "DREDGED"]));
+  });
+
+  test("a leg across the gap is checked at the least buffer, as without pilotage", () => {
+    const least = checkRoute(index, input(across), NOW);
+    const piloted = checkRoute(index, input(across, 3), NOW);
+    expect(piloted.legs).toEqual(least.legs);
+    expect(piloted.legs[0]?.flags).not.toContain("PILOTAGE");
+  });
+
+  test("a box swept all through at the pilotage buffer keeps that verdict; one across the gap not", () => {
+    const window = { start: NOW, end: NOW + 3_600_000 };
+    // ±6 m and ±13 m about the channel's line: xteLimit plus each buffer, as `grownBox` grows it.
+    const narrow = (a: number, b: number) =>
+      boxRing([a, CHANNEL_LAT - 0.000054, b, CHANNEL_LAT + 0.000054]);
+    const ring = (a: number, b: number) =>
+      boxRing([a, CHANNEL_LAT - 0.000117, b, CHANNEL_LAT + 0.000117]);
+    const inWest = { ring: ring(22.002, 22.007), narrow: narrow(22.002, 22.007) };
+    const kept = pilotedBox(index, input([]), inWest, 2.5, window);
+    expect(kept.flags).toEqual(expect.arrayContaining(["PILOTAGE", "DREDGED"]));
+    expect(kept.unswept).toBe(false);
+    const leastOnly = pilotedBox(index, input([]), { ...inWest, narrow: undefined }, 2.5, window);
+    expect(leastOnly.flags).not.toContain("PILOTAGE");
+    expect(kept.risk).toBeLessThan(leastOnly.risk);
+
+    const gap = { ring: ring(22.006, 22.014), narrow: narrow(22.006, 22.014) };
+    const fallback = pilotedBox(index, input([]), gap, 2.5, window);
+    const least = pilotedBox(index, input([]), { ...gap, narrow: undefined }, 2.5, window);
+    expect(fallback.flags).not.toContain("PILOTAGE");
+    expect({ ...fallback, work: 0 }).toEqual({ ...least, work: 0 });
+    expect(fallback.work).toBeGreaterThan(least.work);
   });
 });

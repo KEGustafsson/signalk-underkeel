@@ -24,11 +24,18 @@ import { boxReuse, readTiles, rootColumns } from "./tile-reuse";
  * builds the roots around the old and new boxes, not every ENC cell's.
  */
 
-/** Each cell's reach, beside the catalogue: the saved build's reach of a cell that has changed. */
+/**
+ * Each cell's reach, beside the catalogue: the saved build's reach of a cell that has changed.
+ * With the leaf zoom the build was asked for, which its pyramid's deepest zoom does not tell
+ * apart: leaf zooms 20 to 22 all reach the edge zoom 22 (`edgeZoomFor`).
+ */
 export const REACH_FILE = "reach.json";
 
-export function writeReach(staging: string, reaches: readonly CellReach[]): void {
-  writeFileDurable(path.join(staging, REACH_FILE), JSON.stringify({ version: 1, cells: reaches }));
+export function writeReach(staging: string, reaches: readonly CellReach[], leafZoom: number): void {
+  writeFileDurable(
+    path.join(staging, REACH_FILE),
+    JSON.stringify({ version: 1, leafZoom, cells: reaches })
+  );
 }
 
 const isRect = (r: unknown): r is Rect =>
@@ -36,9 +43,13 @@ const isRect = (r: unknown): r is Rect =>
   r !== null &&
   ["minX", "minY", "maxX", "maxY"].every((k) => Number.isFinite((r as Record<string, unknown>)[k]));
 
-function readReach(dir: string, count: number): CellReach[] {
+function readReach(
+  dir: string,
+  count: number
+): { cells: CellReach[]; leafZoom: number | undefined } {
   const json = JSON.parse(fs.readFileSync(path.join(dir, REACH_FILE), "utf8")) as {
     version?: unknown;
+    leafZoom?: unknown;
     cells?: unknown;
   };
   const cells = json.cells as CellReach[];
@@ -50,13 +61,15 @@ function readReach(dir: string, count: number): CellReach[] {
   ) {
     throw new Error(`${REACH_FILE} does not match the catalogue`);
   }
-  return cells;
+  return { cells, leafZoom: typeof json.leafZoom === "number" ? json.leafZoom : undefined };
 }
 
 /** The saved index a build can take roots from. */
 export interface SavedIndex {
   cells: CellInfo[];
   reaches: CellReach[];
+  /** The leaf zoom the saved build was asked for; none in a reach file older than it. */
+  leafZoom: number | undefined;
   /** Named hazards by catalogue index, in feature order. */
   hazards: Map<number, DepthFeature[]>;
   /** Rule features by catalogue index, in feature order. */
@@ -101,7 +114,11 @@ export function savedIndex(
 ): SavedIndex | undefined {
   const saved = loadSaved(indexDir, leafZoom);
   const names = dirs.map(sourceName);
-  if (!saved || names.join("\n") !== saved.cells.map((c) => c.name).join("\n")) {
+  if (
+    !saved ||
+    saved.leafZoom !== leafZoom ||
+    names.join("\n") !== saved.cells.map((c) => c.name).join("\n")
+  ) {
     return undefined;
   }
   return { ...saved, refs: dirs.map((_, i) => i) };
@@ -139,11 +156,11 @@ const rectsEqual = (a: Rect, b: Rect): boolean =>
 /** The index saved in `indexDir` with each cell's reach, when built at `leafZoom`. */
 function loadSaved(indexDir: string, leafZoom: number): Omit<SavedIndex, "refs"> | undefined {
   let saved: ReturnType<typeof loadChartIndex>;
-  let reaches: CellReach[];
+  let reach: ReturnType<typeof readReach>;
   try {
     // Copying roots reads every level, so the blocks are joined rather than read on demand.
     saved = loadChartIndex(indexDir, { whole: true });
-    reaches = readReach(indexDir, saved.catalogue.cells.length);
+    reach = readReach(indexDir, saved.catalogue.cells.length);
   } catch {
     return undefined;
   }
@@ -154,7 +171,8 @@ function loadSaved(indexDir: string, leafZoom: number): Omit<SavedIndex, "refs">
   }
   return {
     cells: catalogue.cells,
-    reaches,
+    reaches: reach.cells,
+    leafZoom: reach.leafZoom,
     hazards: byCell(saved.hazards.features()),
     rules: byCell(saved.rules.features()),
     pyramid
