@@ -245,4 +245,60 @@ describe("gaps in a swept fairway", () => {
       []
     );
   });
+
+  test("a hole inside the strip's ring where the line turns rejects the strip", () => {
+    // East to 202 m, then north. The right side joins (200, -10) to (212, 0) at the turn, over a
+    // hole at x 203–204, y −5 to −4 no cross-section reaches.
+    const turning: WfsFeature = {
+      ...line(2.1, 2.7),
+      geometry: {
+        type: "LineString",
+        coordinates: [
+          [22, 60],
+          [22 + 202 * K, 60],
+          [22 + 202 * K, 60 + 200 * M]
+        ]
+      }
+    };
+    const corner = (hole: boolean) =>
+      feature("B", [box(190, 260, -20, 200), ...(hole ? [box(203, 204, -5, -4)] : [])]);
+    expect(fairwayGaps([turning], [area("A", 0, 150), corner(false)])).toHaveLength(1);
+    expect(fairwayGaps([turning], [area("A", 0, 150), corner(true)])).toEqual([]);
+  });
+
+  test("the strip reaches 30 m into each area along the line, however close its vertices", () => {
+    const dense: WfsFeature = {
+      ...line(2.1, 2.7),
+      geometry: {
+        type: "LineString",
+        coordinates: Array.from({ length: 801 }, (_, k) => [22 + k * 0.5 * K, 60])
+      }
+    };
+    const ring = (
+      fairwayGaps([dense], [area("A", 0, 150), area("B", 220, 400)])[0]?.geometry
+        ?.coordinates as number[][][]
+    )[0] as number[][];
+    const xs = ring.map((p) => ((p[0] as number) - 22) / K);
+    expect(Math.min(...xs)).toBeCloseTo(119.5, 0);
+    expect(Math.max(...xs)).toBeCloseTo(250, 0);
+  });
+
+  test("a sweep beside the line inside the strip counts for its depth and reference level", () => {
+    const beside = (depth: number, level = "MW2020") =>
+      feature("A2", [box(130, 140, 2, 8)], depth, level);
+    const swept = (a2: WfsFeature) => [area("A", 0, 150), a2, area("B", 220, 400)];
+    expect(
+      fairwayGaps([line(2.1, 2.7)], swept(beside(1.8))).map((g) => g.properties?.DRVAL1)
+    ).toEqual([1.8]);
+    expect(fairwayGaps([line(2.1, 2.7)], swept(beside(2.7, "MW2005")))).toEqual([]);
+    // One touching the strip's edge counts too; one past it does not.
+    const touching = feature("A3", [box(130, 140, HALF_MAX, 14)], 1.8);
+    expect(fairwayGaps([line(2.1, 2.7)], swept(touching)).map((g) => g.properties?.DRVAL1)).toEqual(
+      [1.8]
+    );
+    const past = feature("A3", [box(130, 140, HALF_MAX + 1, 14)], 1.8);
+    expect(fairwayGaps([line(2.1, 2.7)], swept(past)).map((g) => g.properties?.DRVAL1)).toEqual([
+      2.7
+    ]);
+  });
 });

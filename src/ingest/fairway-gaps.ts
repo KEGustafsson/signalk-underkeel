@@ -1,3 +1,4 @@
+import { pointSegmentDistance } from "../foundation/geometry";
 import type { WfsFeature } from "./wfs-fetch";
 import { num } from "./wfs-fetch";
 
@@ -33,16 +34,18 @@ export const HALF_MAX = 10;
 /** Sampling step along a line, metres. */
 const STEP = 2;
 /**
- * Samples a strip reaches back into each area it joins, while the line is in swept water. A
- * pilotage check holds a leg to a strip from where the leg's narrow corridor lies inside it, at
- * least that corridor's half-width past the strip's end, and checks the corridor before that
- * point through the index, which reaches another half-width on (`engine/gap-strips.ts`): with
- * half-widths up to HALF_MAX, twice that, a tile of the edge zoom (about 5 m at 60° N) across the
- * area's end, and room for the sampling.
+ * How far a strip reaches back into each area it joins, metres along the line, while the line is
+ * in swept water. A pilotage check holds a leg to a strip from where the leg's narrow corridor
+ * lies inside it, at least that corridor's half-width past the strip's end, and checks the
+ * corridor before that point through the index, which reaches another half-width on
+ * (`engine/gap-strips.ts`): with half-widths up to HALF_MAX, twice that, a tile of the edge zoom
+ * (about 5 m at 60° N) across the area's end, and room for the sampling.
  */
-const OVERLAP = Math.ceil(30 / STEP);
+const OVERLAP = 30;
 /** How far a cross-section looks for an area's edge, metres. */
 const REACH = 100;
+/** How near two rings' edges come before they meet, metres: rounding, not water. */
+const EPS = 1e-6;
 
 type XY = [number, number];
 
@@ -293,20 +296,108 @@ function between(before: Sample, after: Sample | undefined): [number, number] | 
 
 /**
  * The samples from `i - 1`, the last before a gap, to `j`, the first after it, and on up to
- * OVERLAP samples each way while the line is in swept water: a strip never reaches past the areas
- * it joins into water no sweep covers.
+ * OVERLAP metres along the line each way while the line is in swept water: a strip never reaches
+ * past the areas it joins into water no sweep covers.
  */
 function runAround(samples: Sample[], i: number, j: number): Sample[] {
   const swept = (k: number): boolean => (samples[k]?.areas.length ?? 0) > 0;
+  const along = (k: number): number => (samples[k] as Sample).along;
   let lo = i - 1;
-  while (lo > 0 && i - 1 - lo < OVERLAP && swept(lo - 1)) {
+  while (lo > 0 && along(i - 1) - along(lo - 1) <= OVERLAP && swept(lo - 1)) {
     lo--;
   }
   let hi = j;
-  while (hi < samples.length - 1 && hi - j < OVERLAP && swept(hi + 1)) {
+  while (hi < samples.length - 1 && along(hi + 1) - along(j) <= OVERLAP && swept(hi + 1)) {
     hi++;
   }
   return samples.slice(lo, hi + 1);
+}
+
+type Bounds = [number, number, number, number];
+
+function boundsOf(ring: XY[]): Bounds {
+  const xs = ring.map((p) => p[0]);
+  const ys = ring.map((p) => p[1]);
+  return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+}
+
+/** The edges of a ring, the last vertex joined to the first. */
+function edgesOf(ring: XY[]): [XY, XY][] {
+  return ring.map((p, i) => [ring[(i + ring.length - 1) % ring.length] as XY, p]);
+}
+
+/** The distance from `p` to the nearest edge of `ring`. */
+function toRing(p: XY, ring: XY[]): number {
+  return Math.min(...edgesOf(ring).map(([a, b]) => pointSegmentDistance(p, a, b)));
+}
+
+/** How far `r` lies left of the line through a and b, negative right of it. */
+function side(a: XY, b: XY, r: XY): number {
+  return (
+    ((b[0] - a[0]) * (r[1] - a[1]) - (b[1] - a[1]) * (r[0] - a[0])) /
+    Math.hypot(b[0] - a[0], b[1] - a[1])
+  );
+}
+
+/** Whether ab and cd cross, each end more than `eps` to its side of the other's line. */
+function crosses(a: XY, b: XY, c: XY, d: XY, eps: number): boolean {
+  const apart = (x: number, y: number): boolean => (x > eps && y < -eps) || (x < -eps && y > eps);
+  return apart(side(a, b, c), side(a, b, d)) && apart(side(c, d, a), side(c, d, b));
+}
+
+/** Whether rings `a` and `b` meet, touching included. */
+function ringsMeet(a: XY[], b: XY[]): boolean {
+  if (a.some((p) => inRing(p, b)) || b.some((p) => inRing(p, a))) {
+    return true;
+  }
+  const eb = edgesOf(b);
+  return edgesOf(a).some(([p, q]) =>
+    eb.some(
+      ([r, t]) =>
+        crosses(p, q, r, t, 0) ||
+        Math.min(
+          pointSegmentDistance(p, r, t),
+          pointSegmentDistance(q, r, t),
+          pointSegmentDistance(r, p, q),
+          pointSegmentDistance(t, p, q)
+        ) <= EPS
+    )
+  );
+}
+
+/** Whether the inside of ring `hole` reaches the inside of `ring`, past their shared edges. */
+function holeWithin(ring: XY[], hole: XY[]): boolean {
+  const deep = (p: XY, r: XY[]): boolean => inRing(p, r) && toRing(p, r) > EPS;
+  if (hole.some((p) => deep(p, ring)) || ring.some((p) => deep(p, hole))) {
+    return true;
+  }
+  const eh = edgesOf(hole);
+  return edgesOf(ring).some(([p, q]) => eh.some(([r, t]) => crosses(p, q, r, t, EPS)));
+}
+
+/**
+ * The areas whose outer rings meet `ring`, the strip's, touching included, or undefined when a
+ * hole of one reaches inside it. The cross-sections `clearOfHoles` checks miss water between
+ * them, as where the line turns and the ring's outer side joins two offset points on a chord.
+ */
+function areasMeeting(ring: XY[], areas: Area[]): number[] | undefined {
+  const [x0, y0, x1, y1] = boundsOf(ring);
+  const out: number[] = [];
+  for (const [k, a] of areas.entries()) {
+    for (const [outer, ...holes] of a.polygons) {
+      const b = outer ? boundsOf(outer) : undefined;
+      const near =
+        b && b[0] <= x1 + EPS && b[2] >= x0 - EPS && b[1] <= y1 + EPS && b[3] >= y0 - EPS;
+      if (!outer || !near || !ringsMeet(ring, outer)) {
+        continue;
+      }
+      if (holes.some((h) => holeWithin(ring, h))) {
+        return undefined;
+      }
+      out.push(k);
+    }
+  }
+  return [...new Set(out)];
 }
 
 /**
@@ -375,8 +466,9 @@ function gapsAlong(
 
 /**
  * The strip over the gap from sample `i - 1` to sample `j` between areas `ends`, its ring in the
- * local plane, or undefined when an area it reaches into states another reference level, or it
- * has no width on a side.
+ * local plane, or undefined when it has no width on a side, or an area its ring meets, the line
+ * in it or not, states another reference level or has a hole inside the ring. Its depth is the
+ * least of every such area's.
  */
 function stripOver(
   samples: Sample[],
@@ -387,10 +479,6 @@ function stripOver(
   const [before, after] = gap.ends;
   const [ka, kb] = [before.areas[0] as number, after.areas[0] as number];
   const run = runAround(samples, gap.i, gap.j);
-  const held = [...new Set(run.flatMap((s) => s.areas))];
-  if (!held.every((k) => areas[k]?.reference === line.reference)) {
-    return undefined;
-  }
   const [al, ar] = widest(samples, before, ka, areas);
   const [bl, br] = widest(samples, after, kb, areas);
   const holes = clearOfHoles(run, areas) ?? [0, 0];
@@ -398,10 +486,16 @@ function stripOver(
   if (!(half[0] > 0 && half[1] > 0 && Number.isFinite(half[0] + half[1]))) {
     return undefined;
   }
+  const ring = strip(run, halvesAlong(run, half, { before, after }, areas));
+  const met = areasMeeting(ring, areas);
+  const reached = met && [...new Set([...run.flatMap((s) => s.areas), ...met])];
+  if (!reached?.every((k) => areas[k]?.reference === line.reference)) {
+    return undefined;
+  }
   return {
-    ring: strip(run, halvesAlong(run, half, { before, after }, areas)),
+    ring,
     properties: {
-      DRVAL1: Math.min(line.kept, ...run.map((s) => s.depth)),
+      DRVAL1: Math.min(line.kept, ...reached.map((k) => (areas[k] as Area).depth)),
       IDENTIFIER: `FTIA-GAP-${(areas[ka] as Area).id}-${(areas[kb] as Area).id}`
     }
   };

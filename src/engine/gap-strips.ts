@@ -209,11 +209,11 @@ export function stripHolding(index: ChartIndex, ring: readonly LonLat[]): StripH
 }
 
 /**
- * The footprint `ring`, inside a strip, read at the strip's depth: SWEPT, with the coverage and
- * survey flags, σP and cells the index gives over it. `unswept` when the index has land, no
- * coverage or water the chart has drying over it, where the chart and the line's guarantee
- * disagree, or the boat's own soundings made it shallower (invariant 5): the strip then holds
- * nothing.
+ * The footprint `ring`, inside a strip, read at the strip's depth: SWEPT, with the survey flags,
+ * σP and cells the index gives over it. `unswept` when the index has land, no coverage over any
+ * part of it, nothing charted or water the chart has drying over it, where the chart and the
+ * line's guarantee disagree, or the boat's own soundings made it shallower (invariant 5): the
+ * strip then holds nothing.
  */
 export function heldDepth(
   index: ChartIndex,
@@ -222,7 +222,8 @@ export function heldDepth(
   risk: { threshold: number; sigmaExtra: number }
 ): { result: DepthResult; work: number } {
   const q = minDepthOver(index.pyramid, footprintGeom(ring), {});
-  if (q.dMin < 0 || (q.flags & FLAGS.LIVECHART_ADJUSTED) !== 0) {
+  const uncovered = (q.flags & FLAGS.NO_COVERAGE) !== 0 || !(q.dMin >= 0 && q.dMin < Infinity);
+  if (uncovered || (q.flags & FLAGS.LIVECHART_ADJUSTED) !== 0) {
     return { result: { ...q, maxRisk: 0, unswept: true }, work: queryWork(q) };
   }
   const v = {

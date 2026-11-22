@@ -1613,7 +1613,9 @@ line's safe clearance depth or the least swept depth of the areas it reaches int
 less. A line along an area's edge has no width on the edge's side, so it gets no strip, and a line
 that leaves an area and comes back into the same one (a hole in it, or one of its parts) gets none
 either. A hole of an area the strip reaches into bounds its width on that side anywhere along it,
-and a gap in such a hole gets no strip. The FTIA gives each line's and area's depths from the
+and a gap in such a hole gets no strip; nor does a strip whose ring holds part of a hole the
+cross-sections pass by, as where the line turns. Every area the strip's ring meets, beside the line
+or under it, touching included, counts for its depth and reference level. The FTIA gives each line's and area's depths from the
 reference level it states (`vertaustaso`: the mean water of an epoch, MW1990 to MW2025 off Turku,
 or N2000), and the cell keeps every depth as given, the Traficom WFS's stating none (§4.5: the
 cell states no datum), so a strip is made only where the line and every area it reaches into state

@@ -1,7 +1,9 @@
+import { heldDepth } from "../../src/engine/gap-strips";
 import { pilotedBox, plannedPilotBuffer, roomOf } from "../../src/engine/pilotage";
 import type { RouteCheckInput } from "../../src/engine/route-check";
 import { checkRoute } from "../../src/engine/route-check";
 import type { LonLat } from "../../src/foundation/geo";
+import { toMercator } from "../../src/foundation/geo";
 import { DEFAULT_DYNAMICS } from "../../src/model/vessel";
 import { FLAGS } from "../../src/spatial/node-store";
 import { footprintGeom, minDepthOver } from "../../src/spatial/pyramid";
@@ -11,7 +13,13 @@ import type { Box } from "../helpers/synthetic";
 import { CHART_DATUM } from "../helpers/engine";
 import { HALF_MAX } from "../../src/ingest/fairway-gaps";
 import { HazardIndex } from "../../src/spatial/hazards";
-import { BRIDGE_GAP, bridgedChannel, CHANNEL_LAT, gappedChannel } from "../helpers/swept-channel";
+import {
+  BRIDGE_GAP,
+  bridgedChannel,
+  CHANNEL_AREA,
+  CHANNEL_LAT,
+  gappedChannel
+} from "../helpers/swept-channel";
 import { area, boxRing, coverage, point, quality, swept } from "../helpers/synthetic";
 
 /**
@@ -314,6 +322,25 @@ describe("pilotage through a fairway gap", () => {
     const r = checkRoute(shoal, input(through(), 3), NOW).legs[0];
     expect(r?.flags).not.toContain("PILOTAGE");
     expect(r?.charted).toBe(0);
+  });
+
+  test("a footprint in the strip that the index does not cover all through is unswept", () => {
+    const mid = (BRIDGE_GAP[0] + BRIDGE_GAP[1]) / 2;
+    const [w, s] = toMercator(CHANNEL_AREA[0], CHANNEL_AREA[1]);
+    const [e, n] = toMercator(mid, CHANNEL_AREA[3]);
+    // Charted water to the gap's middle, and past it only kept for its reach into the box.
+    const pyramid = buildPyramid(
+      [coverage(CHANNEL_AREA), quality(CHANNEL_AREA, 1), area(CHANNEL_AREA, 0)],
+      { minZoom: 12, ...pluginBuild(20), within: { minX: w, minY: s, maxX: e, maxY: n } }
+    );
+    const box = (west: number, east: number) =>
+      boxRing([west, CHANNEL_LAT - north(3), east, CHANNEL_LAT + north(3)]);
+    const read = (ring: LonLat[]) =>
+      heldDepth({ ...index, pyramid }, ring, { depth: 2.7, cellRef: 0 }, risk).result;
+    const risk = { threshold: 1.5, sigmaExtra: 0 };
+    expect(read(box(mid - 0.003, mid - 0.002)).unswept).toBe(false);
+    const across = read(box(mid - 0.0001, mid + 0.0001));
+    expect([across.unswept, across.flags & FLAGS.SWEPT]).toEqual([true, 0]);
   });
 
   test("a box inside the strip is held to its depth; one reaching past it is not", () => {
