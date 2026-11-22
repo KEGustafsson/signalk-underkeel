@@ -28,7 +28,7 @@ import {
 } from "./polygon-index";
 import { REACH_SLACK } from "./pyramid";
 import { chartPosition, NO_POSITION } from "./build-position";
-import { dredgedCells, giveWay, isDredgedArea, tileFlags } from "./give-way";
+import { dredgedCells, giveWay, isDredgedArea, sweptDepth, tileFlags } from "./give-way";
 import { sigmaFor, SWEPT_SIGMA_D } from "./quality";
 
 /**
@@ -123,6 +123,8 @@ interface Analysis {
   sweptEdge: boolean;
   /** Dredged areas cover the whole tile, alone or side by side (`dredgedCells`). */
   dredgedCover: boolean;
+  /** The depth sweeps guarantee over the whole tile (`sweptDepth`), if they cover it. */
+  sweptCover: number | undefined;
 }
 
 /** Ground metres around the equator: a tile of zoom z is this / 2^z across, or less. */
@@ -198,6 +200,7 @@ function analyse(all: Hit[], rect: Rect, tileGround: number): Analysis {
   const hits = giveWay(reaching, covers);
   // Dredged all over, by one area or by several meeting along a seam: DREDGED.
   const dredgedCover = dredgedCells(hits, covers).size > 0;
+  const sweptCover = sweptDepth(hits, covers);
   const shallowest = minFullDepth(hits);
   const depthEdge = hits.some((h) => {
     const d = depthOf(h.item.f);
@@ -233,7 +236,8 @@ function analyse(all: Hit[], rect: Rect, tileGround: number): Analysis {
     needsSplit,
     finest,
     sweptEdge,
-    dredgedCover
+    dredgedCover,
+    sweptCover
   };
 }
 
@@ -352,7 +356,12 @@ function uniformValues(a: Analysis, rect: Rect, opts: BuildOptions): NodeValues 
   const advisory = a.advisoryCell !== undefined || a.hits.some((h) => h.item.f.advisory);
   const unsurveyed = a.hits.filter((h) => h.item.f.role === "unsurveyed");
   const flags =
-    tileFlags(a.hits, { bandFull: a.bandFull, assessed, dredged: a.dredgedCover }) |
+    tileFlags(a.hits, {
+      bandFull: a.bandFull,
+      assessed,
+      dredged: a.dredgedCover,
+      swept: a.sweptCover !== undefined
+    }) |
     (advisory ? FLAGS.NOT_FOR_NAVIGATION : 0) |
     (unsurveyed.length > 0 ? FLAGS.NO_COVERAGE : 0);
   const area = a.hits.some(isArea);
@@ -367,9 +376,7 @@ function uniformValues(a: Analysis, rect: Rect, opts: BuildOptions): NodeValues 
   const s = sigmas(a.hits, dMin, assessed, opts);
   // The sweep guarantees its own depth only; a rock or sounding charted
   // shallower inside it keeps the survey's σ.
-  const sweptDecides = a.hits.some(
-    (h) => h.full && h.item.f.role === "swept" && h.item.f.depth <= dMin
-  );
+  const sweptDecides = a.sweptCover !== undefined && a.sweptCover <= dMin;
   return {
     dMin,
     sigmaD: sweptDecides ? SWEPT_SIGMA_D : s.sigmaD,

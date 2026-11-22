@@ -4,7 +4,7 @@ import { footprintGeom, minDepthOver } from "../../src/spatial/pyramid";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
 import { edgeZoomFor, pluginBuild } from "../../src/spatial/build-items";
 import type { Box } from "../helpers/synthetic";
-import { area, coverage, quality } from "../helpers/synthetic";
+import { area, coverage, quality, swept } from "../helpers/synthetic";
 
 /**
  * A fairway swept to its marks in a cell that charts it with its banks (the Traficom WFS with
@@ -71,6 +71,21 @@ describe("a swept fairway charted with its banks", () => {
     const geom = footprintGeom([[22.005, 60.005]]);
     expect(minDepthOver(open, geom, { bufferMetres: 3, sweptOnly: true }).unswept).toBe(true);
     expect(minDepthOver(open, geom, { bufferMetres: 3 }).unswept).toBeUndefined();
+  });
+});
+
+describe("sweeps side by side", () => {
+  test("two swept areas meeting along a seam guarantee their depth across it", () => {
+    const west = { ...swept(WEST, 2.7), objectClass: "SWPARE" };
+    const east = swept(EAST, 2.1);
+    const features = [...chart(), west, east];
+    const store = buildPyramid(features, { minZoom: 12, ...pluginBuild(20) });
+    const seam = along(store, 22.0099, 22.0101, 3);
+    expect(seam.dMin).toBe(2.1);
+    expect(seam.flags & FLAGS.SWEPT).toBe(FLAGS.SWEPT);
+    // The guarantee decides the depth's σ: the swept σ, not the survey's.
+    const open = buildPyramid(chart(), { minZoom: 12, ...pluginBuild(20) });
+    expect(seam.sigmaD).toBeLessThan(along(open, 22.0099, 22.0101, 3).sigmaD);
   });
 });
 

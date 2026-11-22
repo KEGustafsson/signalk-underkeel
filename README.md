@@ -544,7 +544,11 @@ With the FTIA's lines, the Traficom WFS cell also takes the FTIA's fairway areas
 WFS charts a fairway as part of the depth area around it, a 0–3 m area over a channel swept to
 2.7 m, and where a cell's dredged areas cover a tile, alone or side by side, its depth area gives
 way to them. Tiles across their edges split two zooms finer than the leaf zoom (at most 22, about
-5 m at 60° N). Soundings and rocks inside them still count.
+5 m at 60° N). Soundings and rocks inside them still count. They are written as swept areas too,
+so where the sweeps cover a tile, alone or side by side, the swept depth's small uncertainty
+applies. Where the FTIA leaves a fairway's areas off for up to 150 m, under a bridge, and its
+navigation line runs on from one swept area into the next, the gap gets a strip along the line
+at the line's design draft, at most 10 m each side.
 
 A session or route check with `pilotage: true` (feature `pilotage`) checks each box and leg first
 at the boat's pilotage buffer, kp · σ of its fix as the integrity monitor measures it and at least

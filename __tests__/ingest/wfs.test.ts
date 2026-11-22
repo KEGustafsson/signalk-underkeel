@@ -326,6 +326,9 @@ describe("Traficom WFS ingest", () => {
       (f) => f.role === "depth" && f.dredged
     );
     expect(dredged).toEqual([expect.objectContaining({ depth: 2.7, lnam: "FTIA-VA-1" })]);
+    // Swept to that depth too: the guarantee is a sweep's (SWPARE beside the DRGARE).
+    const sweeps = readCellDirectory(dir, 0).features.filter((f) => f.role === "swept");
+    expect(sweeps).toEqual([expect.objectContaining({ depth: 2.7, lnam: "FTIA-VA-1" })]);
     // Without the FTIA's WFS the depth areas stand alone: never deeper.
     await expect(downloadWfsCell({ ...d, fetch: fetch("down") })).resolves.toMatchObject({
       depthAreas: 1,

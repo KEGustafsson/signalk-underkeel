@@ -1563,6 +1563,16 @@ or leg asked with it is checked first at kp · σ of the fix, at least 2 m, and 
 `sweptOnly` descends split tiles carrying those flags, which are their children's union);
 otherwise at the least position buffer. Decided: the least buffer keeps open water; between the
 marks of a swept fairway the boat's own position quality decides, measured, never assumed.
+The FTIA leaves a fairway's areas off under a bridge: at Lillholmen its boat route 3530 is swept
+to 2.7 m both sides and nothing is published for the 70 m between. Where one navigation line runs
+from a swept area into another within 150 m (`ingest/fairway-gaps.ts`), the gap gets a strip along
+the line, each side the narrower of the two areas' widest cross-section within 20 m of the gap
+and at most 10 m (an opening may be narrower than the fairway), reaching 10 m into each area, at
+the line's design draft or the swept depth, whichever is less. The FTIA's areas and these strips
+are written as `SWPARE` beside their `DRGARE`: a tile the sweeps cover, alone or side by side, is
+`SWEPT`, and where the least of the sweeps reaching it is its least depth, that depth's σ is the
+sweep's (`sweptDepth`). The design draft is less than the depth the authority keeps for it.
+
 Decided, against invariant 1 as written: within one cell, a depth area that the cell's own
 dredged areas cover over a tile is not a source feature of that tile, so `minDepthOver` may
 return the dredged depth there though the depth area reads shallower. An ENC never overlaps the

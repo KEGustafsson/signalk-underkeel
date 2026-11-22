@@ -45,17 +45,36 @@ export function dredgedCells<H extends Reaching>(
 }
 
 /**
+ * The depth sweeps guarantee over the whole tile, when one swept area contains it or several
+ * cover it side by side (`covers`): the least of every swept area reaching it, so a part swept
+ * shallower counts. Undefined when the sweeps leave part of it open.
+ */
+export function sweptDepth<H extends Reaching>(
+  hits: H[],
+  covers: (own: H[]) => boolean
+): number | undefined {
+  const swept = hits.filter((h) => h.item.f.role === "swept" && h.item.f.geom.type === "polygon");
+  if (!swept.some((h) => h.full) && !(swept.length > 1 && covers(swept))) {
+    return undefined;
+  }
+  return Math.min(...swept.map((h) => (h.item.f.role === "swept" ? h.item.f.depth : Infinity)));
+}
+
+/**
  * A leaf's flags from what reaches it: NO_COVERAGE without a covering band, SWEPT or DREDGED
  * where such an area covers it (`dredged`: several side by side, `dredgedCells`), and
  * UNASSESSED without an assessed survey.
  */
 export function tileFlags(
   hits: Reaching[],
-  t: { bandFull: number | undefined; assessed: boolean; dredged: boolean }
+  t: { bandFull: number | undefined; assessed: boolean; dredged: boolean; swept: boolean }
 ): number {
   let flags = t.bandFull === undefined ? FLAGS.NO_COVERAGE : 0;
   if (t.dredged) {
     flags |= FLAGS.DREDGED;
+  }
+  if (t.swept) {
+    flags |= FLAGS.SWEPT;
   }
   for (const h of hits) {
     const f = h.item.f;

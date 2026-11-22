@@ -7,6 +7,7 @@ import type { GeoJsonFeatureCollection } from "./s57-geojson";
 import type { Bbox, WfsFeature, WfsFetch } from "./wfs-fetch";
 import type { Limit } from "./wfs-fetch";
 import { fetchLayer, limiter, num, retried, WFS_LIMITS } from "./wfs-fetch";
+import { fairwayGaps } from "./fairway-gaps";
 import { fetchLines, fetchSweptAreas } from "./wfs-ftia";
 
 export type { Bbox, ByteStream, WfsFetch } from "./wfs-fetch";
@@ -178,6 +179,8 @@ function soundings(features: WfsFeature[]): unknown[] {
 export interface WfsLayers {
   depthAreas: WfsFeature[];
   dredgedAreas: WfsFeature[];
+  /** Areas swept to a depth (the FTIA's fairway areas): SWPARE as well as DRGARE. */
+  sweptAreas?: WfsFeature[];
   soundings: WfsFeature[];
 }
 
@@ -202,6 +205,7 @@ const inside = (p: unknown, [w, s, e, n]: Bbox): boolean => {
 export interface ClippedLayers {
   depthAreas: unknown[];
   dredgedAreas: unknown[];
+  sweptAreas?: unknown[];
   soundings: unknown[];
 }
 
@@ -223,6 +227,9 @@ export function clipTo(
     }
     for (const f of areas(l.dredgedAreas, p)) {
       out.dredgedAreas.push(f);
+    }
+    for (const f of areas(l.sweptAreas ?? [], p)) {
+      (out.sweptAreas ??= []).push(f);
     }
   }
   const points = soundings(l.soundings) as { geometry: { coordinates: unknown } }[];
@@ -293,6 +300,9 @@ export function cellLayers(
     ),
     DEPARE: collection(clipped.depthAreas),
     DRGARE: collection(clipped.dredgedAreas),
+    // A swept area's depth is guaranteed (SWEPT_SIGMA_D): written beside its DRGARE, which the
+    // depth area gives way to (`spatial/give-way.ts`).
+    ...(clipped.sweptAreas?.length && { SWPARE: collection(clipped.sweptAreas) }),
     SOUNDG: collection(clipped.soundings)
   };
 }
@@ -462,8 +472,11 @@ export async function downloadWfsCell(d: WfsDownload): Promise<{
   }
   const lines = await fetchLines(d, d.bbox);
   const swept = await fetchSweptAreas(d, d.bbox);
-  clipTo({ depthAreas: [], dredgedAreas: swept, soundings: [] }, parts, clipped, corridor);
-  counts.dredgedAreas += swept.length;
+  // The gaps the swept areas leave along the lines, under a bridge (`fairway-gaps.ts`).
+  const filled = [...swept, ...fairwayGaps((lines ?? []) as WfsFeature[], swept)];
+  const ftia = { depthAreas: [], dredgedAreas: filled, sweptAreas: filled, soundings: [] };
+  clipTo(ftia, parts, clipped, corridor);
+  counts.dredgedAreas += filled.length;
   const layers = cellLayers(clipped, parts, d.now, d.catzoc);
   writeCell(d.dir, lines && lines.length > 0 ? { ...layers, NAVLINE: collection(lines) } : layers);
   return { ...counts, lines: lines ? lines.length : false };
