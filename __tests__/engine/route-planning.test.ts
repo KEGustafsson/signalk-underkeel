@@ -547,7 +547,8 @@ describe("repair work limits", () => {
 describe("departure window", () => {
   const index = shoalIndex();
   // Over the shoal at 1 m charted: a 0.3 m draft passes only when the water is high.
-  const shallow = { draft: 0.3, length: 6, beam: 2 };
+  // 0.44 m: the 0.3 m keel and the 0.14 m squat at 3 m/s these windows were laid out for.
+  const shallow = { draft: 0.44, length: 6, beam: 2 };
   // Water above chart datum: 1.5 m in the first 6 hours, 0 m after.
   const tide = (start: number): WaterLevel => ({
     h: start < NOW + 6 * HOUR ? 1.5 : 0,

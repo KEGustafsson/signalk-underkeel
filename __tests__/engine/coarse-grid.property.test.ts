@@ -82,7 +82,7 @@ const navArb = fc.record({
 });
 
 test("an off-grid coarse footprint takes in every plan step it stands for", () => {
-  const terms = vesselTerms(KEEL, { speed: 0, roll: undefined }, DEFAULT_DYNAMICS);
+  const terms = vesselTerms(KEEL, {}, DEFAULT_DYNAMICS);
   const s: Scoring = {
     terms,
     threshold: thresholdDepth(terms, CHART_DATUM),

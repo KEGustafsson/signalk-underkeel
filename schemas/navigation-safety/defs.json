@@ -74,8 +74,6 @@
         "sigmaWaterLevel",
         "waterLevelSource",
         "draft",
-        "heel",
-        "squat",
         "wave",
         "margin",
         "mean",
@@ -92,8 +90,6 @@
         "sigmaWaterLevel": { "type": "number", "minimum": 0 },
         "waterLevelSource": { "type": "string" },
         "draft": { "type": "number" },
-        "heel": { "type": "number" },
-        "squat": { "type": "number" },
         "wave": { "type": "number" },
         "margin": { "type": "number" },
         "chartPosition": {

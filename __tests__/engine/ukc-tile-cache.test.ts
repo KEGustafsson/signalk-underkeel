@@ -336,7 +336,6 @@ describe("UKC tiles served from the cache", () => {
           heading: 0,
           hdop: 0.9,
           methodQuality: "GNSS Fix",
-          roll: 0,
           waterLevel: WL
         });
       }

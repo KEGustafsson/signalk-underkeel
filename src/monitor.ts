@@ -264,7 +264,7 @@ export class Monitor {
   }
 
   /** The navigation inputs that are still fresh, for living-chart samples. */
-  fresh(): Pick<RawSounding, "position" | "heading" | "hdop" | "methodQuality" | "roll" | "sog"> {
+  fresh(): Pick<RawSounding, "position" | "heading" | "hdop" | "methodQuality" | "sog"> {
     const now = this.clock.now();
     const limit = this.config.lookahead.staleAfter * 1000;
     const f = <T>(x: Sample<T> | undefined): T | undefined =>
@@ -275,7 +275,6 @@ export class Monitor {
       heading: f(n.heading),
       hdop: f(n.hdop),
       methodQuality: f(n.methodQuality),
-      roll: f(n.roll),
       sog: f(n.sog)
     };
   }

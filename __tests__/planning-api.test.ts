@@ -34,7 +34,6 @@ function deps(over: Partial<RouteServiceDeps> = {}): RouteServiceDeps {
     config: parseConfig({}),
     vessel: () => ({ draft: 3.6, length: 12, beam: 4 }),
     waterLevel: () => ({ h: 0, sigma: 0.3, source: "chart-datum" }),
-    waveHeight: () => undefined,
     getRoute: () => Promise.reject(new Error("no routes")),
     now: () => NOW,
     queue: new RequestQueue(),

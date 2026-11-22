@@ -19,11 +19,12 @@ import { queryWork } from "./work";
  * navigation line clear to its safe clearance depth through the gaps its swept areas leave under
  * a bridge, and publishes no fairway area there, so the strip along the line
  * (`ingest/fairway-gaps.ts`) is never built into the index's tiles: an ordinary check reads the
- * gap at its charted depth. A pilotage check, at the buffer the fix gives as it runs, holds the
+ * gap at its charted depth. A pilotage check, at the planned pilotage buffer, holds the
  * stretches of a leg whose narrow corridor lies inside a strip to the strip's depth, the
  * guarantee's σ (SWEPT_SIGMA_D), and checks the rest of the corridor through the index, swept or
  * dredged all through (`route-check.ts`). The boat keeps to the line, its corridor off it by at
- * most the strip's half-width less the corridor's: a fix too poor for that closes the passage.
+ * most the strip's half-width less the corridor's: a buffer too wide for that closes the
+ * passage, and underway a live fix wider than the leg's room is warned of (`pilotage-watch.ts`).
  */
 
 /** Sampling step along a leg, ground metres. */

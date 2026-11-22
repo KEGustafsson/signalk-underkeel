@@ -36,6 +36,12 @@
     },
     "xteLimit": { "description": "metres", "type": "number", "minimum": 0, "maximum": 2000 },
     "probability": { "type": "number", "minimum": 1e-6, "maximum": 0.5 },
+    "waveHeight": {
+      "description": "metres: the significant wave height to allow for; the configured planned value when absent, never the wave sensor of the moment",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 10
+    },
     "vessel": {
       "type": "object",
       "properties": {

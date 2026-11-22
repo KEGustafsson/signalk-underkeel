@@ -30,10 +30,6 @@ const INPUTS: Record<string, { key: keyof NavState; read: (v: unknown) => unknow
   "navigation.speedThroughWater": { key: "stw", read: (v) => asNumber(v) },
   "navigation.gnss.horizontalDilution": { key: "hdop", read: (v) => asNumber(v) },
   "navigation.gnss.methodQuality": { key: "methodQuality", read: asString },
-  "navigation.attitude": {
-    key: "roll",
-    read: (v) => asNumber((v as { roll?: unknown } | null)?.roll)
-  },
   "environment.water.waves.significantHeight": { key: "waveHeight", read: (v) => asNumber(v) }
 };
 

@@ -13,6 +13,8 @@ export const PATHS = {
   waterLevel: "navigation.underKeel.waterLevel",
   notification: "notifications.navigation.underKeel",
   positionIntegrity: "notifications.navigation.positionIntegrity",
+  /** The live fix held to the room of the active route's swept leg (`engine/pilotage-watch.ts`). */
+  pilotage: "notifications.navigation.underKeel.pilotage",
   /** Written only by the optional grounding detector (safety invariant 7). */
   grounding: "notifications.grounding"
 } as const;

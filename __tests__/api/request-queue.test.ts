@@ -80,7 +80,6 @@ describe("request queue", () => {
       config: parseConfig({}),
       vessel: () => ({ draft: 1.2, length: 12, beam: 4 }),
       waterLevel: () => ({ h: 0, sigma: 0.3, source: "chart-datum" }),
-      waveHeight: () => undefined,
       getRoute: () => Promise.reject(new Error("unused")),
       now: () => Date.parse("2026-10-18T07:00:00Z"),
       queue: new RequestQueue()

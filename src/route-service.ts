@@ -36,8 +36,6 @@ export interface RouteServiceDeps {
    * applies. With `area`, `at` is a convex ring and the level holds inside it too.
    */
   waterLevel(start: number, end: number, at: readonly LonLat[], area?: boolean): WaterLevel;
-  /** Current significant wave height, if known, metres. */
-  waveHeight(): number | undefined;
   /**
    * `waterLevel` related to the vertical datums of `cells` rather than the index in use's: for
    * another index's queries (a planning box). Absent, `waterLevel` serves them too.
@@ -123,7 +121,7 @@ export function vesselFor(
 
 interface PreparedCheck {
   index: ChartIndex;
-  /** Without a pilotage buffer: `atStart` adds the one the fix gives when the job starts. */
+  /** Without a pilotage buffer: `atStart` adds the planned one when the job starts. */
   input: RouteCheckInput;
   pilotage: boolean | undefined;
 }
@@ -173,7 +171,8 @@ async function prepare(
       dynamics: deps.config.dynamics,
       waterLevel: deps.waterLevel,
       ...(deps.highWater && { highWater: deps.highWater }),
-      waveHeight: deps.waveHeight(),
+      // A planned wave height, never the sensor's: the route is sailed later and elsewhere.
+      waveHeight: req.waveHeight ?? deps.config.routeCheck.waveHeight,
       probability: req.probability ?? deps.config.routeCheck.probability
     }
   };
@@ -189,8 +188,8 @@ export function pilotFor(
 }
 
 /**
- * The request's input with the pilotage buffer of the fix as its job starts: a fix that fails
- * while the request waits in the queue leaves every leg at the least buffer.
+ * The request's input with the planned pilotage buffer as its job starts
+ * (`model/fix-history.ts`): the planning σ, never the fix of the moment.
  */
 function atStart(p: PreparedCheck, deps: Pick<RouteServiceDeps, "pilotBuffer">): RouteCheckInput {
   return { ...p.input, ...pilotFor(p.pilotage, deps) };

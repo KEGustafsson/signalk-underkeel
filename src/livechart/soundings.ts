@@ -30,8 +30,6 @@ export interface RawSounding {
   heading?: number;
   hdop?: number;
   methodQuality?: string;
-  /** Roll, radians. */
-  roll?: number;
   /** Speed over ground, m/s, when fresh; only the CSB export log reads it. */
   sog?: number;
   waterLevel: WaterLevel;
@@ -58,7 +56,6 @@ const GOOD_FIX = new Set([
   "RTK float"
 ]);
 const MAX_HDOP = 2;
-const MAX_ROLL = (15 * Math.PI) / 180;
 /** Readings outside this range are sounder errors, not depths. */
 const MIN_DEPTH = 0.3;
 const MAX_DEPTH = 200;
@@ -89,9 +86,6 @@ function gate(raw: RawSounding): string | undefined {
   }
   if (raw.hdop === undefined || !(raw.hdop < MAX_HDOP)) {
     return `HDOP ${raw.hdop ?? "unknown"}`;
-  }
-  if (raw.roll !== undefined && Math.abs(raw.roll) >= MAX_ROLL) {
-    return "roll over 15°";
   }
   if (!Number.isFinite(raw.depth) || raw.depth < MIN_DEPTH || raw.depth > MAX_DEPTH) {
     return `depth ${raw.depth} out of range`;

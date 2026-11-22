@@ -25,8 +25,6 @@ export interface Explanation {
   sigmaWaterLevel: number;
   waterLevelSource: string;
   draft: number;
-  heel: number;
-  squat: number;
   wave: number;
   margin: number;
   /**
@@ -75,8 +73,6 @@ export function explain(
     sigmaWaterLevel: r2(wl.sigma),
     waterLevelSource: wl.source,
     draft: r2(v.draft.value),
-    heel: r2(v.heel.value),
-    squat: r2(v.squat.value),
     wave: r2(v.wave.value),
     margin: r2(v.margin),
     ...(c && {
@@ -186,8 +182,6 @@ export function sentence(e: Explanation): string {
     charted,
     `${signed(e.waterLevel)} water level (${e.waterLevelSource})`,
     `− draft ${m(e.draft)}`,
-    `− squat ${m(e.squat)}`,
-    `${e.heel > 0 ? "−" : "+"} heel ${m(Math.abs(e.heel))}`,
     `− wave ${m(e.wave)}`
   ];
   if (e.margin > 0) {

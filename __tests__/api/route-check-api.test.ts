@@ -152,7 +152,6 @@ function deps(over: Partial<RouteServiceDeps> = {}): RouteServiceDeps {
     config: parseConfig({}),
     vessel: () => ({ draft: 3.6, length: 12, beam: 4 }),
     waterLevel: () => ({ h: 0, sigma: 0.3, source: "chart-datum" }),
-    waveHeight: () => undefined,
     getRoute: (id) =>
       id === "known"
         ? Promise.resolve({ feature: { geometry: LINE } })
@@ -214,6 +213,21 @@ describe("route-check service", () => {
       deps({ vessel: () => undefined })
     );
     expect(none.status).toBe(200);
+  });
+
+  test("waves are planned: the request's, else the configured; never the sensor's", async () => {
+    type Legs = { legs: { minUkc: number }[] };
+    const ukc = async (body: object, d = deps()): Promise<number> =>
+      ((await routeCheck({ route: LINE, vessel: { draft: 1.2 }, ...body }, d)).body as Legs).legs[0]
+        ?.minUkc as number;
+    const calm = await ukc({});
+    // The wave allowance is 0.4 × the significant height (DEFAULT_DYNAMICS.waveFactor).
+    expect(await ukc({ waveHeight: 1 })).toBeCloseTo(calm - 0.4, 2);
+    const configured = deps({ config: parseConfig({ routeCheck: { waveHeight: 2 } }) });
+    expect(await ukc({}, configured)).toBeCloseTo(calm - 0.8, 2);
+    expect(await ukc({ waveHeight: 0 }, configured)).toBeCloseTo(calm, 2);
+    const bad = await routeCheck({ route: LINE, waveHeight: 11 }, deps());
+    expect((bad.body as { errors: string[] }).errors).toContain("waveHeight must be 0..10 m");
   });
 
   test("a corridor too wide for the route's length is refused before any work", async () => {

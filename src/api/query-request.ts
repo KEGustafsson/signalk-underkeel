@@ -4,14 +4,13 @@ import type { Parsed } from "./route-request";
 
 /**
  * Validation of the `POST /query` body: a GeoJSON Point or Polygon (outer
- * ring only), with an optional buffer, draft and speed.
+ * ring only), with an optional buffer and draft.
  */
 
 export const QUERY_LIMITS = {
   maxPoints: 500,
   maxBuffer: 2000,
   maxDraft: 30,
-  maxSpeed: 30,
   /** Polygon bounding-box diagonal, metres. */
   maxPolygonMetres: 50_000,
   /** Bounding box widened by the buffer, km². */
@@ -29,8 +28,6 @@ export interface QueryRequest {
   ring: LonLat[];
   bufferMetres?: number;
   draft?: number;
-  /** Speed for squat, m/s; 0 when not given. */
-  speed?: number;
 }
 
 function inRange(v: unknown, min: number, max: number): v is number {
@@ -115,7 +112,7 @@ export function parseQueryRequest(body: unknown): Parsed<QueryRequest> {
   const errors: string[] = [];
   const ring = parseGeometry(b.geometry, errors);
   const out: QueryRequest = { ring: ring ?? [] };
-  const optional = (key: "bufferMetres" | "draft" | "speed", min: number, max: number) => {
+  const optional = (key: "bufferMetres" | "draft", min: number, max: number) => {
     const v = b[key];
     if (v === undefined) {
       return;
@@ -128,7 +125,6 @@ export function parseQueryRequest(body: unknown): Parsed<QueryRequest> {
   };
   optional("bufferMetres", 0, QUERY_LIMITS.maxBuffer);
   optional("draft", 0.1, QUERY_LIMITS.maxDraft);
-  optional("speed", 0, QUERY_LIMITS.maxSpeed);
   const km2 = errors.length === 0 ? areaKm2(out.ring, out.bufferMetres ?? 0) : 0;
   if (km2 > QUERY_LIMITS.maxAreaKm2) {
     errors.push(`geometry and buffer must fit in ${QUERY_LIMITS.maxAreaKm2} km²`);

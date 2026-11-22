@@ -63,7 +63,8 @@ describe("corridor route check on the synthetic chart", () => {
       waterLevelSource: "chart-datum",
       flags: ["SWEPT"]
     });
-    expect(leg?.explanation?.squat).toBeGreaterThan(0);
+    // No squat: the explanation names draft, heel, waves and margin alone.
+    expect(leg?.explanation).not.toHaveProperty("squat");
     expect(r.charts).toEqual([{ cell: "FI5SYNTH", edition: 3, update: 1 }]);
     expect(r.waterLevelSource).toBe("chart-datum");
   });
@@ -491,9 +492,9 @@ const THREE_POINT_ROUTE_GOLDEN = {
       to: [22.02, 60.01],
       length: 917,
       eta: { start: "2026-10-18T07:00:00.000Z", end: "2026-10-18T07:07:38.325Z" },
-      minUkc: -0.16,
+      minUkc: -0.1,
       sigma: 0.62,
-      risk: 0.6028,
+      risk: 0.5645,
       charted: 3.5,
       flags: ["SWEPT"],
       worst: {
@@ -510,13 +511,11 @@ const THREE_POINT_ROUTE_GOLDEN = {
         sigmaWaterLevel: 0.3,
         waterLevelSource: "chart-datum",
         draft: 3.6,
-        heel: 0,
-        squat: 0.06,
         wave: 0,
         margin: 0,
-        mean: -0.16,
+        mean: -0.1,
         sigma: 0.62,
-        risk: 0.6028
+        risk: 0.5645
       }
     },
     {
@@ -526,9 +525,9 @@ const THREE_POINT_ROUTE_GOLDEN = {
       to: [22.02, 60.018],
       length: 890,
       eta: { start: "2026-10-18T07:07:38.325Z", end: "2026-10-18T07:11:20.715Z" },
-      minUkc: -0.34,
+      minUkc: -0.1,
       sigma: 0.62,
-      risk: 0.7094,
+      risk: 0.5645,
       charted: 3.5,
       flags: ["SWEPT"],
       worst: {
@@ -545,13 +544,11 @@ const THREE_POINT_ROUTE_GOLDEN = {
         sigmaWaterLevel: 0.3,
         waterLevelSource: "chart-datum",
         draft: 3.6,
-        heel: 0,
-        squat: 0.24,
         wave: 0,
         margin: 0,
-        mean: -0.34,
+        mean: -0.1,
         sigma: 0.62,
-        risk: 0.7094
+        risk: 0.5645
       }
     }
   ]

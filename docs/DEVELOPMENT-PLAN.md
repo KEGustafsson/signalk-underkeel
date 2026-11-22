@@ -20,7 +20,7 @@ combines three things:
 
 - **Charted depth and its survey quality.** S-57 `CATZOC` zones of confidence.
 - **Real water level.** Baltic sea level moves ±0.5–1 m with weather, with no tides.
-- **The boat's own state.** Squat, heel, sea state, and GNSS integrity.
+- **The boat's own state.** Sea state and GNSS integrity.
 
 The output is a single, explainable number per point, leg and moment:
 **P(under-keel clearance < 0)**. The boat also keeps learning, comparing its own soundings
@@ -70,8 +70,8 @@ depth**. This design differs in eight ways.
 
 1. **Probabilistic UKC with an explanation for every alarm.** Each warning breaks down its
    terms, for example: _charted 2.4 m (CATZOC C, ±1.1 m) + water level −0.31 m (FMI forecast)
-   − draft 1.9 m − squat 0.08 m − heel 0.0 m − wave allowance 0.15 m → μ = −0.04 m,
-   σ = 0.58 m, P = 53 %_. The crew can see why it is shouting, which is the cure for alarm
+   − draft 1.9 m − wave allowance 0.15 m → μ = 0.04 m, σ = 0.58 m,
+   P = 47 %_. The crew can see why it is shouting, which is the cure for alarm
    fatigue.
 2. **Time-to-shoal (TTS), the seabed's equivalent of TCPA.** The look-ahead is a predicted
    trajectory fan from a constant-turn-rate model (SOG, COG, ROT). It bends with the turn and
@@ -129,7 +129,7 @@ Planning features follow from the same model.
 │  │ Ingest (gdal3.js, in the index worker) → cells read in place     │  │
 │  │ Index builder (worker) → min-depth pyramid + hazard R-tree      │  │
 │  │ Water level (FMI / tide provider / manual) ──┐                   │  │
-│  │ Vessel model (draft, heel, squat) ───────────┤                   │  │
+│  │ Vessel model (draft, waves) ─────────────────┤                   │  │
 │  │ Integrity monitor (GNSS vs DR) ──────────────┤                   │  │
 │  │                                               ▼                   │  │
 │  │ Risk engine ── Look-ahead (1 Hz) ──→ deltas + notification       │  │
@@ -172,7 +172,7 @@ signalk-underkeel/
 │   │   ├── quality.ts            # CATZOC / M_QUAL / SWPARE → σ_depth, σ_pos
 │   │   └── store.ts              # on-disk format, blocks, versioning
 │   ├── model/
-│   │   ├── vessel.ts             # draft, heel curve, beam, squat coefficients
+│   │   ├── vessel.ts             # draft, beam, wave factor
 │   │   ├── water-level.ts        # provider interface + FMI + tide + manual
 │   │   ├── uncertainty.ts        # σ composition, P(UKC<0)
 │   │   └── integrity.ts          # GNSS vs DR divergence → σ_pos inflation
@@ -897,24 +897,29 @@ and `h = 0` would then assume more water than was last observed.
 Read from Signal K where available (`design.draft.maximum`, `design.beam`, `design.length`),
 with plugin configuration overriding.
 
-| Term               | Model                                                  | Notes                                                                                                          |
-| ------------------ | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
-| Static draft `T`   | config / `design.draft.maximum`                        | plus load allowance                                                                                            |
-| Heel `Δh(φ)`       | user curve: table of heel° → draft change              | fin keel ≈ `T·(cos φ − 1)` (reduces draft); bilge/wing keels can _increase_ it; use `navigation.attitude.roll` |
-| Squat `S`          | Barrass, open water: `S = Cb·V²/100` (V in kn, S in m) | ×2 when the check is inside a narrow-channel geofence or `FAIRWAY` width < k·beam; σ = 30 % of S               |
-| Wave allowance `W` | `c·Hs`                                                 | Hs from `environment.water.waves.significantHeight` or weather provider; c ≈ 0.3–0.5 (config), σ = 50 % of W   |
-| Transducer offset  | `environment.depth.transducerToKeel`                   | for the living chart                                                                                           |
+| Term               | Model                                | Notes                                                                                                                                                                                   |
+| ------------------ | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Static draft `T`   | config / `design.draft.maximum`      | plus load allowance                                                                                                                                                                     |
+| Wave allowance `W` | `c·Hs`                               | Hs underway from `environment.water.waves.significantHeight`; for a plan the request's `waveHeight` or the configured planned Hs, never the sensor; c ≈ 0.3–0.5 (config), σ = 50 % of W |
+| Transducer offset  | `environment.depth.transducerToKeel` | for the living chart                                                                                                                                                                    |
 
-Heel uses the range of absolute roll over the last 10 s: a fin keel takes the least roll, a
-table its largest change over the range. Roll above 60° or stale is no roll, which gives a fin
-keel no lift and a table its largest change.
+Decision (configuration v2, safety invariant 2): the boat is its keel's lowest point. The wave
+allowance only adds depth and stays automatic.
 
-Decision (configuration v2, safety invariant 2): the boat is its keel's lowest point. Squat and
-the wave allowance only add depth and stay automatic. Heel is the one term that lowers the
-draft, and its credit assumes the boat stays heeled across the look-ahead, which a tack, a
-bear-away or dropped sails ends; so `keel` defaults to `none`, the version 1 default, and the
-fin and table models are expert settings. No hull choice is asked: without heel it would only
-pick Cb, a few centimetres of squat at yacht speeds.
+Decided, removing heel (settings `keel` and `heelTable` gone, their saved values ignored): heel
+was the one term that could lower the draft, and its credit assumed the boat stays heeled across
+the look-ahead, which a tack, a bear-away or dropped sails ends; upright the keel is at its
+lowest. The table model could also deepen a bilge or wing keel, which the draft the crew sets is
+the place for. Roll is not read at all: the living chart's gate on |roll| < 15° went with it,
+since a heeled transducer's slant reads deeper than the water and the living chart only marks
+water shallower than charted, never deeper.
+
+Decided, removing squat (configuration settings `blockCoefficient` and `confined` gone, their
+saved values ignored): Barrass's `S = Cb·V²/100` was fitted to ships in channels. A small boat at
+displacement speeds sinks a few centimetres, which the margin and the draft's σ cover; toward
+planing speed the formula grows past any sinkage a planing hull has (0.9 m at 15 kn at Cb 0.4).
+Its 9 cm at the planning speed of 2.5 m/s only ever moved a route at the edge of a margin another
+term had already spent. Speed still times a route; it no longer deepens the keel.
 
 ### 4.7 Risk model (core math)
 
@@ -923,8 +928,8 @@ For a footprint `F` at time `t`:
 ```
 d   = pyramid.minDepthOver(F ⊕ buffer(k_p · σ_pos(t)))       // charted, conservative
 h   = waterLevel.levelAt(F.center, t)
-UKC = d + h.h − T − Δh(φ) − S(V) − W
-σ²  = σ_d² + h.σ² + σ_S² + σ_W² + σ_T²                        // independent terms
+UKC = d + h.h − T − W
+σ²  = σ_d² + h.σ² + σ_W² + σ_T²                               // independent terms
 P   = Φ(−UKC / σ)                                            // P(UKC < 0)
 ```
 
@@ -972,7 +977,7 @@ window (`alarmWithin` for `alarm`, `warnWithin` for `warn`, the whole horizon fo
 
 - `navigation.position` and `navigation.courseOverGroundTrue`
 - `navigation.speedOverGround` and `navigation.rateOfTurn`
-- `navigation.headingTrue` and `navigation.attitude`
+- `navigation.headingTrue`
 - `navigation.gnss.*`
 - Water level and the vessel model
 
@@ -1303,7 +1308,6 @@ keep the full reasons.
         "catzoc": "C",
         "waterLevel": -0.21,
         "draft": 1.9,
-        "squat": 0.06,
         "wave": 0.12
       }
     }
@@ -1560,13 +1564,35 @@ them (`spatial/give-way.ts`), and the tile is `DREDGED`; soundings, rocks, land 
 stay. A tile across a dredged area's edge over its cell's depth area splits to `edgeZoomFor`
 (leaf zoom + 2, at most 22): at the leaf zoom alone a 19 m tile across the edge keeps the bank's
 0 m, and the fairway is 25–50 m wide. Pilotage (`engine/pilotage.ts`, feature `pilotage`): a box
-or leg asked with it is checked first at kp · σ of the fix as it is when that check runs (a
-session's box or leg, a queued route check at its turn), at least 2 m, and that verdict, flagged
-`PILOTAGE`, is kept only where every tile within that buffer is swept or dredged (a query's
-`sweptOnly` descends split tiles carrying those flags, which are their children's union), or the
-footprint lies inside a fairway gap strip where it is not (below); otherwise at the least position
-buffer. Decided: the least buffer keeps open water; between the marks of a swept fairway the
-boat's own position quality decides, measured, never assumed.
+or leg asked with it is checked first at the planned pilotage buffer, kp · the planning σ, at
+least 2 m, and that verdict, flagged `PILOTAGE`, is kept only where every tile within that buffer
+is swept or dredged (a query's `sweptOnly` descends split tiles carrying those flags, which are
+their children's union), or the footprint lies inside a fairway gap strip where it is not
+(below); otherwise at the least position buffer.
+
+The planning σ (`model/fix-history.ts`) is the configured **Planned position σ for pilotage**
+(1.5 m), or the 95th percentile of the σ the integrity monitor measured over the last seven days
+when that is wider: a histogram per hour, sampled every 10 s while the position is fresh, kept in
+`fix-history.json`. The boat's own history only widens it (invariant 6). Each leg a route check
+pilots carries its room (`engine/room.ts`): the widest buffer, up to the least one, it still
+passes at, swept all through or held to a gap strip, found by halving to 0.25 m. Underway
+(`pilotage-watch.ts`), on a leg of the active route (the course API's `activeRoute`, any route,
+planned or drawn) whose room is narrower than the least buffer, kp · σ of the live fix wider than
+the room, or a failing integrity check, raises `notifications.navigation.underKeel.pilotage` at
+`warn`: steer by the marks and slow down.
+
+Decided, replacing the earlier decision that the fix of the moment sets the pilotage buffer: a
+plan is sailed later and elsewhere than it is made, so it is checked at what the boat's fix has
+shown over days, and the same request gives the same route whatever the HDOP at the berth (one
+reading of HDOP 0.6 for 0.5 turned Pargas–Nagu from 13.96 to 19.96 nm). The live fix is held to
+the plan where it matters, on the swept leg the boat is on.
+
+Decided, on the same ground: nothing a plan reads is a measurement of the moment. Its wave
+allowance is the request's `waveHeight` or the configured **Planned significant wave height**,
+never `environment.water.waves.significantHeight`, which the look-ahead and the UKC tiles of now
+keep. Its water level is the forecast over the hours the boat is on each leg, its departure the
+request's; the boat's own tracks only lower a route's cost and the living chart only adds
+caution (invariant 6); acknowledged passages and mooring zones act on the look-ahead alone.
 
 The FTIA leaves a fairway's areas off under a bridge: at Lillholmen its boat route 3530 is swept
 to 2.7 m (MW2020) both sides and nothing is published for the 70 m between, where the Traficom WFS
@@ -1597,7 +1623,7 @@ The strip is the line's guarantee, used only under pilotage. The cell keeps it a
 depths, as `FAIRWAYGAP`, which the index keeps with its rules (`rules.json`) and never builds into
 a tile: every check without pilotage reads the gap at its charted depth, 0 m at Lillholmen, as it
 would without the FTIA, and refuses the passage. A pilotage check (a route check with `pilotage`,
-or a planning session's box or leg with it, at the buffer the fix gives as that check runs) holds
+or a planning session's box or leg with it, at the planned pilotage buffer) holds
 the stretch of a leg whose narrow corridor (xteLimit + the pilotage buffer each side) lies inside
 the strip to the strip's depth at the swept σ, `SWEPT`, and checks the corridor before and after
 that stretch through the index, swept or dredged all through (`engine/gap-strips.ts`,
@@ -1614,11 +1640,11 @@ Past the 20 m its width is taken from, the strip is no wider than the areas hold
 strip is not used where a charted sounding, rock, wreck or obstruction in it is shallower than its
 depth, where the index has land, no coverage or drying water under the stretch, or where the
 living chart adjusted a tile under it; past the narrow corridor the chart's position spread is not
-counted inside the strip, whose width the fix decides. Rules (bridges' clearances) hold over the
+counted inside the strip, whose width the planned buffer decides. Rules (bridges' clearances) hold over the
 whole corridor as on any leg. Decided, beside invariant 1: `minDepthOver` is unchanged, since the
 strip is none of its source features, but a pilotage verdict reads a strip's stretch at the
 line's safe clearance depth where the chart reads shallower, on the FTIA's guarantee for the line
-and the boat's measured fix (tested in `__tests__/spatial/swept-fairway.test.ts`).
+and the boat's planned position accuracy, the live fix held to the leg's room underway (tested in `__tests__/spatial/swept-fairway.test.ts`).
 
 Later: a strip could be narrowed or confirmed by evidence of passages, vessels of known draft that
 AIS shows have passed through the gap (draft and track from their static and position reports);
@@ -1695,8 +1721,8 @@ closing repeat would drop a vertex and could enlarge the zone.
 
 **Each sample goes through these steps:**
 
-1. **Quality gate.** Keep the sample only if fix type is 3D, HDOP < 2, the depth is valid,
-   and |roll| < 15°.
+1. **Quality gate.** Keep the sample only if fix type is 3D, HDOP < 2 and the depth is valid
+   (no roll gate, §4.6).
 2. **Datum reduction.** `z_datum = depth_belowSurface − waterLevel(t)`, using the
    observation, not the forecast.
 3. **Position correction.** Correct for transducer lever arm and heading.
@@ -1716,7 +1742,7 @@ closing repeat would drop a vertex and could enlarge the zone.
 
 **As built (M5).** The living chart is off by default and reads one depth path
 (`belowSurface`, or `belowTransducer` plus the configured transducer depth). The gate needs a
-known HDOP below 2, a satellite `methodQuality`, |roll| < 15°, a depth of 0.3–200 m, a
+known HDOP below 2, a satellite `methodQuality`, a depth of 0.3–200 m, a
 position measured within 2 s of the depth and a water level that is not a fallback. Cells are the pyramid's z18 tiles (z = leaf zoom when the
 leaf is coarser); the prior is the cell's charted depth and σD without adjustments, and a pass
 starts after a 10-minute gap. On an index read block by block the prior is read only from a
@@ -1992,7 +2018,7 @@ version 2 configuration as `config-v2.json`.
 
 - **One schema.** `adminSchema()` in `src/config-schema.ts` is written by hand with
   `dependencies`: expert fields behind `showExpert`, a source's fields behind `source`, a
-  feature's behind `enabled`, the heel table behind `keel: table`. `SCHEMA` is the same schema
+  feature's behind `enabled`. `SCHEMA` is the same schema
   flattened, every field at once, and is served to admin UIs before Signal K 2.32, which drop
   `dependencies` (server commit 257ccf9, "forward a plugin's whole schema"); an unknown server
   version gets it too. The plugin's `schema()` builds the form when the admin page opens and
@@ -2298,7 +2324,7 @@ it is distributed. Needed from the start:
    Extensions section? A server API would let KIP and others use it without the extension
    host. **Current leaning: start as a Plotter Extensions service for speed, migrate to a
    server API at M6.**
-6. Heel-to-draft curves for common keel types: ship presets, or require user entry?
+6. ~~Heel-to-draft curves for common keel types~~: no heel term (§4.6, decided).
 7. Do the route repair work limits hold on a Raspberry Pi 4? `maxWork` 600 000 and
    `maxRequestWork` 1 800 000 (§4.11) come from laptop rates (0.34–0.66 µs per unit in plain
    Node on an i5-8350U) and an assumed 3–5× Pi 4 slowdown, so on a Pi 4 600 000 units may take

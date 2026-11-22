@@ -81,10 +81,7 @@ export function settingsReply(app: Pick<ServerAPI, "getSelfPath">, s: PluginStat
       suggestedSource: suggestedSource(facts.datums) ?? null,
       checks: setupChecks(s, facts),
       presets: { warningStyles: WARNING_PRESETS },
-      defaults: {
-        blockCoefficient: DEFAULT_DYNAMICS.blockCoefficient,
-        waveFactor: DEFAULT_DYNAMICS.waveFactor
-      },
+      defaults: { waveFactor: DEFAULT_DYNAMICS.waveFactor },
       schema: SCHEMA
     }
   };

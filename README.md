@@ -25,7 +25,7 @@ Every second the plugin predicts where the boat will be over the next minutes, f
 position, course and speed over ground and rate of turn, as a fan of five tracks. Along each
 track it lays the hull footprint, widened by the position uncertainty, and looks up the
 shallowest charted depth under it. From that depth, the chart's survey quality (CATZOC), the
-draft, squat, heel, a wave allowance and the water level it computes the probability that the
+draft, a wave allowance and the water level it computes the probability that the
 under-keel clearance (UKC) falls below zero, written P(UKC < 0), and sets a state:
 
 | State     | When                                                                             | Notification                       |
@@ -41,7 +41,7 @@ The percentages and times in the table are the Balanced warning style; Early and
 values (Settings), and an expert value overrides its own. A state rises after 2 s at
 its level and falls after 5 s below 80 % of its threshold, so a footprint grazing a shoal edge does
 not toggle the alarm. Every notification carries the reason and the terms behind the number: the
-deciding depth, its uncertainty, the water level, squat, heel and waves.
+deciding depth, its uncertainty, the water level and waves.
 
 Besides the look-ahead the plugin:
 
@@ -63,8 +63,8 @@ and never steers the boat. The full list is under [Guarantees](#guarantees).
 - Unencrypted S-57 ENC cells for your area. The plugin reads them with its own WebAssembly
   build of GDAL; nothing needs installing. Encrypted S-63 cells are not supported.
 - The vessel's draft, set in the plugin or in Signal K `design.draft.maximum`.
-- GNSS position, course and speed over ground. Heading, rate of turn, attitude (roll), speed
-  through water, significant wave height and depth are used when present.
+- GNSS position, course and speed over ground. Heading, rate of turn, speed through water,
+  significant wave height and depth are used when present; roll (attitude) is not read.
 - Optional: a Freeboard-SK build with the Plotter Extensions API to see the plugin on the chart;
   internet access for the FMI water level and the Traficom WFS depths.
 
@@ -186,13 +186,13 @@ There are two places to set the plugin up, and both write the same configuration
 
 ![The setup steps: boat, water level and warnings](docs/images/how-it-works/setup-panel.png)
 
-| Setting           | What it does                                                                                                                                                                 |
-| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Charts provider   | the chart provider service whose ENC cells are read: signalk-charts-provider-simple; empty: no ENC                                                                           |
-| Boat              | draft (empty uses Signal K `design.draft.maximum`) and safety margin under the keel (0 m); only the keel's lowest point counts, and squat and waves are added on top (below) |
-| Water level       | source (`none`, `manual`, `signalk-tide`, `fmi`, see below); only the chosen source's fields are shown                                                                       |
-| Warnings          | Early, Balanced or Late, in the table below                                                                                                                                  |
-| Optional features | living chart (own soundings), Traficom WFS depths, grounding detector; each off until enabled                                                                                |
+| Setting           | What it does                                                                                                                                                       |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Charts provider   | the chart provider service whose ENC cells are read: signalk-charts-provider-simple; empty: no ENC                                                                 |
+| Boat              | draft (empty uses Signal K `design.draft.maximum`) and safety margin under the keel (0 m); only the keel's lowest point counts, and waves are added on top (below) |
+| Water level       | source (`none`, `manual`, `signalk-tide`, `fmi`, see below); only the chosen source's fields are shown                                                             |
+| Warnings          | Early, Balanced or Late, in the table below                                                                                                                        |
+| Optional features | living chart (own soundings), Traficom WFS depths, grounding detector; each off until enabled                                                                      |
 
 | Warning style      | Looks ahead | Alert at | Warn at, within | Alarm at, within | Alarm on negative mean UKC |
 | ------------------ | ----------- | -------- | --------------- | ---------------- | -------------------------- |
@@ -202,25 +202,24 @@ There are two places to set the plugin up, and both write the same configuration
 
 Early is at least as cautious as Balanced in every column, and Balanced as Late.
 
-The boat is its keel's lowest point, the draft, plus the safety margin. Two corrections that
-only add depth are applied on top. **Squat**: a hull under way sits deeper in the water, by
-Cb × V² / 100 m at V knots (Barrass), where Cb, the block coefficient, says how full the hull is
-below the water; at the default 0.40 that is 14 cm at 6 kn and nothing when stopped. A planing
-boat rises at planing speed, but its drive or propeller stays the deepest point and it squats
-most just before planing, so no lift is subtracted. **Waves**: 0.4 × the significant wave
-height, when Signal K has `environment.water.waves.significantHeight`.
+The boat is its keel's lowest point, the draft, plus the safety margin. One correction that
+only adds depth is applied on top; speed adds none: a small boat at its speeds sinks only a few
+centimetres, which the margin and the draft's σ cover, so there is no squat term. **Waves**:
+0.4 × the significant wave height: underway the look-ahead takes Signal K's
+`environment.water.waves.significantHeight`; a route check or planning session takes the
+request's `waveHeight`, else the **Planned significant wave height** (0 m by default), never the
+sensor of the moment, since the route is sailed later and elsewhere.
 
-**Heel** gives no credit: a boat leaning over lifts its keel tip, but a tack, a bear-away or
-dropping the sails puts the keel back at full depth within the look-ahead, so the keel counts at
-full depth. Under expert settings, **Heel effect on draft** can credit a fin keel, draft ×
-(1 − cos heel) at the least roll of the last 10 s, or a table of heel to draft change.
+There is no **heel** term: upright the keel is at its lowest, and a boat leaning over is put back
+upright by a tack, a bear-away or dropping the sails within the look-ahead, so the keel counts at
+full depth whatever the roll.
 
 Expert settings, with their defaults:
 
 | Group        | Settings                                                                                                                                                                                                                               |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Chart index  | index directory, rebuild at start, index leaf zoom (20), box around the vessel (10 km)                                                                                                                                                 |
-| Boat         | length, beam (fallback: Signal K `design.*`); draft σ (0.05 m); block coefficient and heel effect (none, fin keel or a table); double squat in narrow channels; wave allowance factor (0.4 × Hs)                                       |
+| Boat         | length, beam (fallback: Signal K `design.*`); draft σ (0.05 m); wave allowance factor (0.4 × Hs)                                                                                                                                       |
 | Look-ahead   | minimum horizon (60 s); position buffer (10 m, 2σ); fan spread (COG 5°, rate of turn 0.1°/s); escape-heading rate of turn (3°/s); and the distance, probabilities and windows of the warning style, each overriding the style when set |
 | Water level  | manual height and σ; FMI refresh (600 s); chart-datum mappings for FMI                                                                                                                                                                 |
 | Route check  | planning speed (2.5 m/s), cross-track limit (30 m), accepted P(UKC < 0) (1 %)                                                                                                                                                          |
@@ -317,7 +316,7 @@ example, `Monitoring: unknown — position stale`. Each value is sent when it ch
 - **Mooring zones.** Inside a listed Signal K region, `warn` and `alarm` are published as
   `alert` with the zone named.
 - **Living chart** (off by default). Depth readings that pass a quality gate (good fix, HDOP
-  under 2, small roll, a real water level) are reduced to chart datum per ~76 m cell. After five
+  under 2, a real water level) are reduced to chart datum per ~76 m cell. After five
   readings on two passes 10 minutes apart put a cell more than 2σ shallower than charted, the
   cell is lowered for every check and a Signal K note marks it. Own soundings never make a cell
   deeper. `GET /livechart/csb.geojson` exports them in the IHO crowd-sourced bathymetry format
@@ -384,7 +383,7 @@ them whole.
 ```mermaid
 flowchart LR
   ENC[S-57 ENC cells,<br/>read with GDAL] --> IDX[(chart index:<br/>min-depth pyramid<br/>and hazard tree)]
-  NAV[Signal K position,<br/>course, attitude] --> LA
+  NAV[Signal K position,<br/>course, heading] --> LA
   WL[water level] --> LA
   IDX --> LA[look-ahead, 1 Hz]
   IDX --> RC[route check,<br/>repair, window]
@@ -448,7 +447,7 @@ no network. The compiled-worker tests need `lib/`, so run `npm run build` first.
 hook formats and lints staged files.
 
 Tests are behaviour tests under `__tests__/`, mirroring `src/`. Property tests use fast-check;
-the conservative-depth query, monotonic risk, heel and the coverage mosaic have them. Contract
+the conservative-depth query, monotonic risk and the coverage mosaic have them. Contract
 tests check the REST responses and request parsers against the schemas in
 `schemas/navigation-safety/`. `scripts/make-synthetic-enc.js` regenerates the GeoJSON fixtures
 in `fixtures/enc/`, and `fixtures/s57/generate.js` writes the same scenario as S-57 cells from
@@ -555,15 +554,22 @@ the fairway inside the gap, so the strip is none of the index's depths: the cell
 holds a leg to it (`docs/DEVELOPMENT-PLAN.md` §4.11, swept fairways and pilotage).
 
 A session or route check with `pilotage: true` (feature `pilotage`) checks each box and leg first
-at the boat's pilotage buffer, kp · σ of its fix as the integrity monitor measures it and at least
-2 m, while that is narrower than the **Least position buffer**, and keeps that verdict, flagged
-`PILOTAGE`, only where the footprint at it lies in swept or dredged water all through: a fairway
-swept to its marks, which a boat keeps between. Through a fairway gap the stretch of a leg whose
-footprint at that buffer lies inside the strip is read at the strip's depth, so the leg must keep
-to the line, off it by at most the strip's half-width less the buffer and the cross-track limit;
-a buffer as wide as the strip closes the gap. Anywhere else, or without a good fix, the box or leg
-is checked at the least buffer as any other. The fix is read as each box or leg is checked, and as
-a route check leaves the request queue, not when the session or request was admitted.
+at the planned pilotage buffer, **Position buffer in σ** times the **Planned position σ for
+pilotage** (1.5 m) and at least 2 m, while that is narrower than the **Least position buffer**,
+and keeps that verdict, flagged `PILOTAGE`, only where the footprint at it lies in swept or
+dredged water all through: a fairway swept to its marks, which a boat keeps between. Through a
+fairway gap the stretch of a leg whose footprint at that buffer lies inside the strip is read at
+the strip's depth, so the leg must keep to the line, off it by at most the strip's half-width
+less the buffer and the cross-track limit; a buffer as wide as the strip closes the gap. Anywhere
+else the box or leg is checked at the least buffer as any other. The plan never reads the fix of
+the moment, so the same request gives the same route: the planned σ is the configured one, or
+what the boat's own fix has shown over the last week (its 95th percentile, kept in
+`fix-history.json`) when that is wider. Each piloted leg of a route check carries
+`pilotage: { buffer, room }`, its room the widest buffer it still passes at.
+
+Underway, on a leg of the active route in swept water narrower than the least buffer, the live
+fix is held to that room: twice its σ wider than the room, or a failing integrity check, raises
+`notifications.navigation.underKeel.pilotage` at `warn`, to steer by the marks and slow down.
 
 A trip longer than a planning box holds is planned in a corridor. With the Traficom WFS depth
 source on, a planner first asks for a coarse depth survey of the trip's region, downloaded tile by

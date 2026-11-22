@@ -32,7 +32,7 @@ received for 15 s as unknown.
 `notifications.navigation.underKeel` carries the state with `message` and `data`:
 `engineState`, `clearance`, `clearanceSigma`, `risk`, `timeToShoal` and an optional
 `explanation` object with every term (charted depth and σ, water level and source, draft,
-heel, squat, wave allowance, margin, mean, σ, P). The JSON Schema is
+wave allowance, margin, mean, σ, P). The JSON Schema is
 `schemas/navigation-safety/notification.json`.
 
 `notifications.navigation.positionIntegrity` (`warn`) reports GNSS that leaves dead reckoning,

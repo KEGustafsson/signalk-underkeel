@@ -56,6 +56,8 @@ export interface SessionParams {
   airHeight?: number;
   /** Feature "pilotage": swept water at the pilotage buffer (`engine/pilotage.ts`). */
   pilotage?: boolean;
+  /** Significant wave height to allow for, metres; absent, the configured planned value. */
+  waveHeight?: number;
 }
 
 export interface Session {
@@ -214,7 +216,8 @@ function inputFor(deps: RouteServiceDeps, p: SessionParams): RouteCheckInput | s
     dynamics: deps.config.dynamics,
     waterLevel: deps.waterLevel,
     ...(deps.highWater && { highWater: deps.highWater }),
-    waveHeight: deps.waveHeight(),
+    // A planned wave height, never the sensor's: the route is sailed later and elsewhere.
+    waveHeight: p.waveHeight ?? deps.config.routeCheck.waveHeight,
     probability: p.probability ?? deps.config.routeCheck.probability
   };
 }

@@ -17,6 +17,7 @@ import { heldDepth, stripHolding } from "./gap-strips";
 import type { LegDepth, Scoring } from "./leg-depth";
 import { bridgedSteps, CLEARANCE_RESOLUTION, corridorSteps } from "./leg-depth";
 import { applyRules } from "./rule-check";
+import { roomSteps } from "./room";
 
 export { corridorRing, legCorridors, RING_REACH } from "./corridor";
 import { queryWork } from "./work";
@@ -92,6 +93,13 @@ export interface LegResult {
   explanation?: Explanation;
   /** Why the leg is unverified, when the flags alone do not say (`chart-box.ts`). */
   reason?: string;
+  /**
+   * A leg checked at the pilotage buffer (`pilotage.ts`): that buffer and the leg's room, the
+   * widest buffer its corridor stays in swept or dredged water at, up to the planning buffer,
+   * metres. The room is the plan's tolerance: how far off the line, past the cross-track limit,
+   * the boat may be there; the live fix is held to it underway (`pilotage-watch.ts`).
+   */
+  pilotage?: { buffer: number; room: number };
 }
 
 export interface RouteCheckResult {
@@ -165,7 +173,9 @@ function* legSteps(
   const end = start + (length / speed) * 1000;
   const wl = input.waterLevel(start, end, [from, to]);
   const { terms, s } = scoringFor(input, speed, wl);
-  const { result, ring, work, width } = yield* pilotedSteps(index, input, from, to, s);
+  const { result, ring, work: depthWork, width } = yield* pilotedSteps(index, input, from, to, s);
+  const { pilotage, work: roomWork } = yield* pilotageSteps(index, input, [from, to], width);
+  const work = depthWork + roomWork;
   const covered = result.coveredDMin;
   const land = covered === -Infinity;
   const charted = covered === Infinity || land ? null : covered;
@@ -198,7 +208,8 @@ function* legSteps(
     charted: charted === null ? null : finiteOrNull(charted),
     flags,
     worst: tile && { position: tile.center, hazard: why?.hazard },
-    explanation: why?.explanation
+    explanation: why?.explanation,
+    ...(pilotage && { pilotage })
   };
   return { leg, cellRefs: result.cellRefs, work };
 }
@@ -237,12 +248,56 @@ function* pilotedSteps(
   return { ...d, work: work + d.work, width: full };
 }
 
+/** Scoring for a swept-water test alone: its risk is not read. */
+const SWEPT_TEST: Scoring = { threshold: 0, sigmaExtra: 1 };
+
+/**
+ * Whether the corridor of the leg `ends` at cross-track `xte` plus a buffer passes pilotage: in
+ * swept or dredged water all through (`QueryOptions.sweptOnly`), or so through a fairway gap's
+ * strip (`leg-depth.ts`, `bridgedSteps`); its queries' work added to `work.n`.
+ */
+export function sweptAt(
+  index: ChartIndex,
+  [from, to]: [LonLat, LonLat],
+  xte: number,
+  work: { n: number } = { n: 0 }
+): (buffer: number) => Steps<boolean> {
+  return function* (buffer) {
+    const d = yield* corridorSteps(index, from, to, xte + buffer, SWEPT_TEST, true);
+    work.n += d.work;
+    if (d.result.unswept === false) {
+      return true;
+    }
+    // Through a fairway gap: the stretches inside a strip held to it, the rest swept.
+    const bridged = yield* bridgedSteps(index, from, to, xte + buffer, SWEPT_TEST);
+    work.n += bridged?.work ?? 0;
+    return bridged?.result.unswept === false;
+  };
+}
+
+/** A piloted leg's buffer and room (`room.ts`), with the work it took. */
+function* pilotageSteps(
+  index: ChartIndex,
+  input: RouteCheckInput,
+  ends: [LonLat, LonLat],
+  width: number
+): Steps<{ pilotage?: LegResult["pilotage"]; work: number }> {
+  const pilot = input.pilotBuffer;
+  if (pilot === undefined || width >= input.xteLimit + input.planningBuffer) {
+    return { work: 0 };
+  }
+  const work = { n: 0 };
+  const test = sweptAt(index, ends, input.xteLimit, work);
+  const room = yield* roomSteps(test, [pilot, input.planningBuffer]);
+  return { pilotage: { buffer: pilot, room }, work: work.n };
+}
+
 function scoringFor(
   input: RouteCheckInput,
   speed: number,
   wl: WaterLevel
 ): { terms: VesselTerms; s: Scoring } {
-  const terms = vesselTerms(input.vessel, { speed, waveHeight: input.waveHeight }, input.dynamics);
+  const terms = vesselTerms(input.vessel, { waveHeight: input.waveHeight }, input.dynamics);
   return { terms, s: { threshold: thresholdDepth(terms, wl), sigmaExtra: sigmaExtra(terms, wl) } };
 }
 

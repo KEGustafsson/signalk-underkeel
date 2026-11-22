@@ -47,7 +47,6 @@ function raw(depth: number, at: number, extra: Partial<RawSounding> = {}): RawSo
     heading: 0,
     hdop: 0.9,
     methodQuality: "GNSS Fix",
-    roll: 0,
     // Passes under way: the CSB log keeps every sounding (csb-thin.test.ts covers the thinning).
     sog: 3,
     waterLevel: WL,
@@ -90,13 +89,12 @@ describe("sounding reduction", () => {
     }
   });
 
-  test("the quality gate keeps only good fixes, valid depths, small roll and a real water level", () => {
+  test("the quality gate keeps only good fixes, valid depths and a real water level", () => {
     const bad: [Partial<RawSounding>, RegExp][] = [
       [{ position: undefined }, /no position/],
       [{ methodQuality: "Estimated (DR) mode" }, /fix quality/],
       [{ hdop: 2.5 }, /HDOP/],
       [{ hdop: undefined }, /HDOP unknown/],
-      [{ roll: 0.3 }, /roll/],
       [{ depth: 0.1 }, /out of range/],
       [{ depth: NaN }, /out of range/],
       [{ waterLevel: { ...WL, degraded: "water level from fmi is 40 min old" } }, /water level/],

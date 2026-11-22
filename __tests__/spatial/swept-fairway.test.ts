@@ -1,4 +1,4 @@
-import { pilotBuffer, pilotedBox } from "../../src/engine/pilotage";
+import { pilotedBox, plannedPilotBuffer, roomOf } from "../../src/engine/pilotage";
 import type { RouteCheckInput } from "../../src/engine/route-check";
 import { checkRoute } from "../../src/engine/route-check";
 import type { LonLat } from "../../src/foundation/geo";
@@ -98,18 +98,15 @@ describe("sweeps side by side", () => {
 });
 
 describe("the pilotage buffer", () => {
-  const fix = (sigmaPos: number, ok = true) => ({ sigmaPos, ok, reasons: [], divergence: null });
-
-  test("kp times the fix's σ, at least 2 m, while narrower than the least buffer", () => {
-    expect(pilotBuffer(fix(1.5), 2, 10)).toBe(3);
-    expect(pilotBuffer(fix(0.3), 2, 10)).toBe(2);
-    expect(pilotBuffer(fix(6), 2, 10)).toBeUndefined();
+  test("kp times the planning σ, at least 2 m, while narrower than the least buffer", () => {
+    expect(plannedPilotBuffer(1.5, 2, 10)).toBe(3);
+    expect(plannedPilotBuffer(0.3, 2, 10)).toBe(2);
+    expect(plannedPilotBuffer(6, 2, 10)).toBeUndefined();
   });
 
-  test("none without a good, measured fix", () => {
-    expect(pilotBuffer(fix(1.5, false), 2, 10)).toBeUndefined();
-    expect(pilotBuffer(undefined, 2, 10)).toBeUndefined();
-    expect(pilotBuffer(fix(Number.NaN), 2, 10)).toBeUndefined();
+  test("none without a σ to plan at", () => {
+    expect(plannedPilotBuffer(0, 2, 10)).toBeUndefined();
+    expect(plannedPilotBuffer(Number.NaN, 2, 10)).toBeUndefined();
   });
 });
 
@@ -145,6 +142,26 @@ describe("pilotage on a swept fairway", () => {
     const piloted = checkRoute(index, input(west, 3), NOW).legs[0];
     expect(piloted?.charted).toBe(2.7);
     expect(piloted?.flags).toEqual(expect.arrayContaining(["PILOTAGE", "DREDGED"]));
+  });
+
+  test("a piloted leg gives its room: the widest buffer still in the dredged water", () => {
+    const leg = checkRoute(index, input(west, 3), NOW).legs[0];
+    const room = leg?.pilotage?.room as number;
+    expect(leg?.pilotage?.buffer).toBe(3);
+    // The pieces reach 11 m each side; less the 3 m cross-track limit, and a tile at the edge.
+    expect(room).toBeGreaterThanOrEqual(3);
+    expect(room).toBeLessThanOrEqual(8);
+    expect(roomOf(index, [west[0] as LonLat, west[1] as LonLat], 3, [3, 10])).toBe(room);
+    // Wider than the room the corridor reaches past the dredged water; at the room it does not.
+    const wider = checkRoute(index, input(west, room + 0.5), NOW).legs[0];
+    expect(wider?.flags).not.toContain("PILOTAGE");
+    expect(checkRoute(index, input(west, room), NOW).legs[0]?.flags).toContain("PILOTAGE");
+  });
+
+  test("no room off the dredged water, nor on a leg checked at the least buffer", () => {
+    expect(checkRoute(index, input(west), NOW).legs[0]?.pilotage).toBeUndefined();
+    expect(checkRoute(index, input(across, 3), NOW).legs[0]?.pilotage).toBeUndefined();
+    expect(roomOf(index, [across[0] as LonLat, across[1] as LonLat], 3, [2, 10])).toBeUndefined();
   });
 
   test("a leg across the gap is checked at the least buffer, as without pilotage", () => {
@@ -270,13 +287,25 @@ describe("pilotage through a fairway gap", () => {
     expect(wide?.flags).not.toContain("PILOTAGE");
   });
 
-  test("a fix too poor for pilotage closes it", () => {
-    const poor = { sigmaPos: 1.5, ok: false, reasons: [], divergence: null };
-    const buffer = pilotBuffer(poor, 2, 10);
+  test("without a pilotage buffer the gap stays closed", () => {
+    // A planning σ as wide as the least buffer gives no pilotage buffer at all.
+    const buffer = plannedPilotBuffer(6, 2, 10);
     expect(buffer).toBeUndefined();
     const refused = leg(input(through(), buffer));
     expect(refused?.status).toBe("fail");
     expect(refused?.flags).not.toContain("PILOTAGE");
+  });
+
+  test("a leg through the gap gets its room from the strip", () => {
+    const piloted = leg(input(through(), 3));
+    const room = piloted?.pilotage?.room as number;
+    // Held to the strip's 10 m each side, less a tile at its edge where the sweeps meet it.
+    expect(room).toBeGreaterThanOrEqual(3);
+    expect(room).toBeLessThanOrEqual(HALF_MAX);
+    expect(leg(input(through(), room))?.flags).toContain("PILOTAGE");
+    expect(leg(input(through(), room + 0.5, { planningBuffer: 15 }))?.flags).not.toContain(
+      "PILOTAGE"
+    );
   });
 
   test("a charted sounding in the strip shallower than it closes it", () => {
