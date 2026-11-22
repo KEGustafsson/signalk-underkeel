@@ -1563,6 +1563,13 @@ or leg asked with it is checked first at kp · σ of the fix, at least 2 m, and 
 `sweptOnly` descends split tiles carrying those flags, which are their children's union);
 otherwise at the least position buffer. Decided: the least buffer keeps open water; between the
 marks of a swept fairway the boat's own position quality decides, measured, never assumed.
+Decided, against invariant 1 as written: within one cell, a depth area that the cell's own
+dredged areas cover over a tile is not a source feature of that tile, so `minDepthOver` may
+return the dredged depth there though the depth area reads shallower. An ENC never overlaps the
+two, so its answers are unchanged; the Traficom WFS cell is the one that does, its depth area a
+generalised band over the channel the FTIA swept. Every other source feature, soundings, rocks,
+land and other cells' areas, still bounds the depth (`spatial/give-way.ts`, tested in
+`__tests__/spatial/swept-fairway.test.ts`).
 
 ### 4.12 Acknowledged passages
 
