@@ -1,6 +1,7 @@
 import type { Bbox, WfsFeature } from "./wfs-fetch";
 import { fetchLayer, limiter, num, readableLine } from "./wfs-fetch";
 import type { WfsDownload } from "./wfs";
+import { referenceOf } from "./fairway-gaps";
 
 /**
  * What the cell takes from the Finnish Transport Infrastructure Agency's open WFS (CC BY 4.0)
@@ -13,9 +14,9 @@ const FTIA_LINES = "vesivaylatiedot:navigointilinjat_uusi";
 const FTIA_AREAS = "vesivaylatiedot:vaylaalueet_uusi";
 
 /**
- * A navigation line as the cell keeps it: its geometry, the draft it is laid out for and the
- * depth the authority keeps it clear to (`haraussyvyys`, the safe clearance depth), both from
- * its reference level (`vertaustaso`, a mean water epoch such as MW2020, or N2000).
+ * A navigation line as the cell keeps it: its geometry, the draft it is laid out for, the depth
+ * the authority keeps it clear to (`haraussyvyys`, the safe clearance depth) and the reference
+ * level both are from (`vertaustaso`, a mean water epoch such as MW2020, or N2000).
  */
 function navigationLine(f: WfsFeature): unknown {
   return {
@@ -23,7 +24,8 @@ function navigationLine(f: WfsFeature): unknown {
     geometry: f.geometry,
     properties: {
       mitoitussyvays: num(f.properties?.mitoitussyvays),
-      haraussyvyys: num(f.properties?.haraussyvyys)
+      haraussyvyys: num(f.properties?.haraussyvyys),
+      vertaustaso: referenceOf(f)
     }
   };
 }
@@ -91,7 +93,12 @@ function sweptArea(f: WfsFeature): WfsFeature | undefined {
   }
   return {
     ...f,
-    properties: { DRVAL1: depth, IDENTIFIER: `FTIA-VA-${String(f.properties?.id ?? "")}` }
+    properties: {
+      DRVAL1: depth,
+      IDENTIFIER: `FTIA-VA-${String(f.properties?.id ?? "")}`,
+      // The gaps compare it with the lines' (`fairway-gaps.ts`); the cell's DRGARE drops it.
+      vertaustaso: referenceOf(f)
+    }
   };
 }
 

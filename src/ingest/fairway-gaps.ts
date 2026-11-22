@@ -7,18 +7,22 @@ import { num } from "./wfs-fetch";
  * both sides of the bridge, about 36 m wide, and nothing is published for the 70 m under it,
  * where the Traficom WFS charts the 0–3 m band of the banks. The fairway's navigation line runs
  * on through the gap with its own safe clearance depth (`haraussyvyys`), the depth the fairway
- * authority keeps the line clear to and answers for, from the same reference level as the
- * areas. Where one line leaves a swept area and enters another within GAP_MAX metres, the gap is
- * given a strip along the line, as wide each side as the narrower of the two areas where the line
- * leaves and enters them and at most HALF_MAX metres (a bridge's opening may be narrower than the
- * fairway), at the line's safe clearance depth or the areas' swept depth, whichever is less:
- * never more than was swept on either side. A line without a safe clearance depth gives its
- * design draft (`mitoitussyvays`) instead, the static draft of the vessel it is laid out for,
- * which is less than the depth by the gross under-keel clearance (0.2–0.6 m on a boat route,
+ * authority keeps the line clear to and answers for. Where one line leaves a swept area and
+ * enters another within GAP_MAX metres, the gap is given a strip along the line, as wide each
+ * side as the narrower of the two areas where the line leaves and enters them and at most
+ * HALF_MAX metres (a bridge's opening may be narrower than the fairway), at the line's safe
+ * clearance depth or the areas' swept depth, whichever is less: never more than was swept on
+ * either side. A line without a safe clearance depth gives its design draft (`mitoitussyvays`)
+ * instead, the static draft of the vessel it is laid out for, which is less than the depth by the
+ * gross under-keel clearance (0.2–0.6 m on a boat route,
  * Traficom's depth instructions). Like the swept areas, the cell holds the strip as a guaranteed
  * depth (SWPARE beside DRGARE, `wfs.ts`). It reaches OVERLAP samples into each area it joins,
- * where the least depth of the two holds (`spatial/give-way.ts`): at the swept depth of the area
- * it never lowers it, so a strip at the design draft would.
+ * where the least depth of the two holds (`spatial/give-way.ts`): it leaves a sweep as it is
+ * only where its depth is that sweep's, so a strip at the design draft lowered route 3530's. The
+ * FTIA states each line's and area's reference level (`vertaustaso`, the mean water of an epoch
+ * such as MW2005 or MW2020, or N2000), and the cell keeps their depths as given, stating no datum
+ * (`wfs.ts`): a strip is made only where the line and the areas holding it at both ends state
+ * the same one.
  */
 
 /** The longest gap along a line that is bridged, metres. */
@@ -40,6 +44,7 @@ type XY = [number, number];
 interface Area {
   id: string;
   depth: number;
+  reference: string | undefined;
   /** Outer rings and holes, in the local plane. */
   polygons: XY[][][];
 }
@@ -54,6 +59,12 @@ function planeAt(origin: XY): { to(p: XY): XY; from(p: XY): XY } {
     to: (p) => [(p[0] - origin[0]) * k, (p[1] - origin[1]) * R * RAD],
     from: (p) => [origin[0] + p[0] / k, origin[1] + p[1] / (R * RAD)]
   };
+}
+
+/** A feature's reference level (`vertaustaso`), which the FTIA spells in either case at times. */
+export function referenceOf(f: WfsFeature): string | undefined {
+  const v = f.properties?.vertaustaso;
+  return typeof v === "string" && v.trim() !== "" ? v.trim().toUpperCase() : undefined;
 }
 
 function inRing(p: XY, ring: XY[]): boolean {
@@ -74,27 +85,25 @@ const inArea = (p: XY, a: Area): boolean =>
   );
 
 /**
- * Distance from `p` along unit `v` to the first edge of `a`, or Infinity within REACH. A `p` on
- * an edge is 0 from it: a line along an area's edge has no width of it on that side.
+ * Distance from `p` along unit `v` to the first edge of `rings`, or Infinity within REACH. A `p`
+ * on an edge is 0 from it: a line along an area's edge has no width of it on that side.
  */
-function toEdge(p: XY, v: XY, a: Area): number {
+function toEdge(p: XY, v: XY, rings: XY[][]): number {
   let best = Infinity;
-  for (const rings of a.polygons) {
-    for (const ring of rings) {
-      for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-        const [ax, ay] = ring[j] as XY;
-        const [bx, by] = ring[i] as XY;
-        const ex = bx - ax;
-        const ey = by - ay;
-        const den = v[0] * ey - v[1] * ex;
-        if (Math.abs(den) < 1e-12) {
-          continue;
-        }
-        const t = ((ax - p[0]) * ey - (ay - p[1]) * ex) / den;
-        const u = ((ax - p[0]) * v[1] - (ay - p[1]) * v[0]) / den;
-        if (t >= 0 && t <= REACH && u >= 0 && u <= 1) {
-          best = Math.min(best, t);
-        }
+  for (const ring of rings) {
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [ax, ay] = ring[j] as XY;
+      const [bx, by] = ring[i] as XY;
+      const ex = bx - ax;
+      const ey = by - ay;
+      const den = v[0] * ey - v[1] * ex;
+      if (Math.abs(den) < 1e-12) {
+        continue;
+      }
+      const t = ((ax - p[0]) * ey - (ay - p[1]) * ex) / den;
+      const u = ((ax - p[0]) * v[1] - (ay - p[1]) * v[0]) / den;
+      if (t >= 0 && t <= REACH && u >= 0 && u <= 1) {
+        best = Math.min(best, t);
       }
     }
   }
@@ -161,7 +170,11 @@ const BACK = 20;
 function halves(s: Sample, a: Area): [number, number] {
   const left: XY = [-s.t[1], s.t[0]];
   const right: XY = [s.t[1], -s.t[0]];
-  return [Math.min(HALF_MAX, toEdge(s.p, left, a)), Math.min(HALF_MAX, toEdge(s.p, right, a))];
+  const rings = a.polygons.flat();
+  return [
+    Math.min(HALF_MAX, toEdge(s.p, left, rings)),
+    Math.min(HALF_MAX, toEdge(s.p, right, rings))
+  ];
 }
 
 /**
@@ -182,6 +195,37 @@ function widest(samples: Sample[], at: Sample, area: number, areas: Area[]): [nu
   return [own[0] === 0 ? 0 : best[0], own[1] === 0 ? 0 : best[1]];
 }
 
+/**
+ * How far the strip along `run` may reach left and right before a hole of an area it reaches
+ * into, or undefined when its gap lies in one. A hole is water left out of the sweep, and
+ * `widest` takes the strip's width further into the area than a hole beside the line, so each
+ * hole is checked along the whole strip: across the line at each sample, and at each of its
+ * corners within half a STEP along the line of one, which the cross-sections can pass between.
+ */
+function clearOfHoles(run: Sample[], areas: Area[]): [number, number] | undefined {
+  const reach: [number, number] = [Infinity, Infinity];
+  const held = [...new Set(run.flatMap((s) => s.areas))];
+  for (const hole of held.flatMap((k) => (areas[k] as Area).polygons.flatMap((r) => r.slice(1)))) {
+    for (const s of run) {
+      if (s.areas.length === 0 && inRing(s.p, hole)) {
+        return undefined;
+      }
+      reach[0] = Math.min(reach[0], toEdge(s.p, [-s.t[1], s.t[0]], [hole]));
+      reach[1] = Math.min(reach[1], toEdge(s.p, [s.t[1], -s.t[0]], [hole]));
+      for (const q of hole) {
+        const dx = q[0] - s.p[0];
+        const dy = q[1] - s.p[1];
+        if (Math.abs(dx * s.t[0] + dy * s.t[1]) <= STEP / 2) {
+          const left = s.t[0] * dy - s.t[1] * dx;
+          const side = left > 0 ? 0 : 1;
+          reach[side] = Math.min(reach[side], Math.abs(left));
+        }
+      }
+    }
+  }
+  return reach;
+}
+
 /** The strip from sample `from` to sample `to` along `run`, left and right `half` metres. */
 function strip(run: Sample[], half: [number, number]): XY[] {
   const left = run.map((s) => [s.p[0] - s.t[1] * half[0], s.p[1] + s.t[0] * half[0]] as XY);
@@ -193,7 +237,7 @@ function strip(run: Sample[], half: [number, number]): XY[] {
 /**
  * The strips bridging the gaps of the swept areas `swept` (dredged areas, DRVAL1 their swept
  * depth) along the navigation lines `lines` (with `haraussyvyys`, else `mitoitussyvays`), as
- * dredged areas.
+ * dredged areas. Each line and area carries its `vertaustaso`.
  */
 export function fairwayGaps(
   lines: readonly WfsFeature[],
@@ -207,13 +251,15 @@ export function fairwayGaps(
   const areas: Area[] = swept.map((f) => ({
     id: String(f.properties?.IDENTIFIER ?? ""),
     depth: num(f.properties?.DRVAL1) ?? 0,
+    reference: referenceOf(f),
     polygons: polygonsOf(f.geometry).map((rings) => rings.map((r) => r.map((p) => plane.to(p))))
   }));
   const out: WfsFeature[] = [];
   for (const line of lines) {
     // The safe clearance depth the line is kept to, else the draft it is laid out for.
     const kept = num(line.properties?.haraussyvyys) ?? num(line.properties?.mitoitussyvays);
-    if (kept === undefined || kept <= 0) {
+    const reference = referenceOf(line);
+    if (kept === undefined || kept <= 0 || reference === undefined) {
       continue;
     }
     for (const part of linePartsOf(line.geometry)) {
@@ -221,10 +267,29 @@ export function fairwayGaps(
         part.map((p) => plane.to(p)),
         areas
       );
-      out.push(...gapsAlong(samples, areas, kept, plane.from));
+      out.push(...gapsAlong(samples, areas, { kept, reference }, plane.from));
     }
   }
   return out;
+}
+
+/**
+ * The areas a gap from `before` to `after` lies between, or undefined when it crosses a hole or a
+ * part one area leaves out, or an area holding either end states another reference level.
+ */
+function between(
+  before: Sample,
+  after: Sample | undefined,
+  areas: Area[],
+  reference: string
+): [number, number] | undefined {
+  const [ka, kb] = [before.areas[0], after?.areas[0]];
+  if (after === undefined || ka === undefined || kb === undefined) {
+    return undefined;
+  }
+  const crosses = after.areas.some((k) => before.areas.includes(k));
+  const level = [...before.areas, ...after.areas].every((k) => areas[k]?.reference === reference);
+  return crosses || !level ? undefined : [ka, kb];
 }
 
 /**
@@ -235,7 +300,7 @@ export function fairwayGaps(
 function gapsAlong(
   samples: Sample[],
   areas: Area[],
-  kept: number,
+  line: { kept: number; reference: string },
   from: (p: XY) => XY
 ): WfsFeature[] {
   const out: WfsFeature[] = [];
@@ -251,29 +316,25 @@ function gapsAlong(
     }
     const before = samples[i - 1] as Sample;
     const after = samples[j];
-    const [ka, kb] = [before.areas[0], after?.areas[0]];
-    const between =
-      after &&
-      ka !== undefined &&
-      kb !== undefined &&
-      !after.areas.some((k) => before.areas.includes(k));
-    if (between && after.along - before.along <= GAP_MAX) {
+    const ends = between(before, after, areas, line.reference);
+    if (after && ends && after.along - before.along <= GAP_MAX) {
+      const [ka, kb] = ends;
       const a = areas[ka] as Area;
       const b = areas[kb] as Area;
+      const run = samples.slice(Math.max(0, i - 1 - OVERLAP), j + 1 + OVERLAP);
       const [al, ar] = widest(samples, before, ka, areas);
       const [bl, br] = widest(samples, after, kb, areas);
-      const half: [number, number] = [Math.min(al, bl), Math.min(ar, br)];
+      const holes = clearOfHoles(run, areas) ?? [0, 0];
+      const half: [number, number] = [Math.min(al, bl, holes[0]), Math.min(ar, br, holes[1])];
       if (half[0] > 0 && half[1] > 0 && Number.isFinite(half[0] + half[1])) {
         out.push({
           type: "Feature",
           geometry: {
             type: "Polygon",
-            coordinates: [
-              strip(samples.slice(Math.max(0, i - 1 - OVERLAP), j + 1 + OVERLAP), half).map(from)
-            ]
+            coordinates: [strip(run, half).map(from)]
           },
           properties: {
-            DRVAL1: Math.min(kept, before.depth, after.depth),
+            DRVAL1: Math.min(line.kept, before.depth, after.depth),
             IDENTIFIER: `FTIA-GAP-${a.id}-${b.id}`
           }
         });

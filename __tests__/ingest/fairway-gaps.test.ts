@@ -18,10 +18,15 @@ const box = (x0: number, x1: number, y0: number, y1: number): number[][] => [
   [22 + x0 * K, 60 + y0 * M]
 ];
 
-const feature = (id: string, rings: number[][][], depth = 2.7): WfsFeature => ({
+const feature = (
+  id: string,
+  rings: number[][][],
+  depth = 2.7,
+  vertaustaso = "MW2020"
+): WfsFeature => ({
   type: "Feature",
   geometry: { type: "Polygon", coordinates: rings },
-  properties: { DRVAL1: depth, IDENTIFIER: id }
+  properties: { DRVAL1: depth, IDENTIFIER: id, vertaustaso }
 });
 
 /** A box `w` metres wide across the line y = 0, from x0 to x1 metres east of 22° E, 60° N. */
@@ -29,7 +34,7 @@ function area(id: string, x0: number, x1: number, w = 40, depth = 2.7): WfsFeatu
   return feature(id, [box(x0, x1, -w / 2, w / 2)], depth);
 }
 
-const line = (draft?: number, kept?: number): WfsFeature => ({
+const line = (draft?: number, kept?: number, vertaustaso = "MW2020"): WfsFeature => ({
   type: "Feature",
   geometry: {
     type: "LineString",
@@ -40,7 +45,8 @@ const line = (draft?: number, kept?: number): WfsFeature => ({
   },
   properties: {
     ...(draft !== undefined && { mitoitussyvays: draft }),
-    ...(kept !== undefined && { haraussyvyys: kept })
+    ...(kept !== undefined && { haraussyvyys: kept }),
+    vertaustaso
   }
 });
 
@@ -148,5 +154,46 @@ describe("gaps in a swept fairway", () => {
     ]) {
       expect(fairwayGaps([line(2.4)], swept).map((g) => g.properties?.DRVAL1)).toEqual([1.8]);
     }
+  });
+
+  test("only where the line and the sweeps on both sides state the same reference level", () => {
+    const swept = (b: string) => [
+      area("A", 0, 150),
+      feature("B", [box(220, 400, -20, 20)], 2.7, b)
+    ];
+    expect(fairwayGaps([line(2.1, 2.7, "Mw2020")], swept("MW2020 "))).toHaveLength(1);
+    expect(fairwayGaps([line(2.1, 2.7)], swept("MW2005"))).toEqual([]);
+    expect(fairwayGaps([line(2.1, 2.7, "N2000")], swept("N2000"))).toEqual([]);
+    const unstated = { ...line(), properties: { haraussyvyys: 2.7 } };
+    expect(fairwayGaps([unstated], swept("MW2020"))).toEqual([]);
+    // An area that overlaps one side on another level counts too.
+    const other = feature("A2", [box(100, 150, -20, 20)], 2.7, "MW2005");
+    expect(fairwayGaps([line(2.1, 2.7)], [...swept("MW2020"), other])).toEqual([]);
+  });
+
+  test("a hole beside the line near the gap narrows the strip on its side, however wide further in", () => {
+    // A hole 2–8 m north of the line, from 15 m to 1 m before the gap: the cross-sections from
+    // 130 m in reach 10 m north, past it, and the strip reaches 10 m back into A.
+    const holed = feature("A", [box(0, 150, -20, 20), box(135, 149, 2, 8)]);
+    const gaps = fairwayGaps([line(2.1, 2.7)], [holed, area("B", 220, 400)]);
+    expect(gaps).toHaveLength(1);
+    const ring = (gaps[0]?.geometry?.coordinates as number[][][])[0] as number[][];
+    const ys = ring.map((p) => ((p[1] as number) - 60) / M);
+    expect(Math.max(...ys)).toBeLessThanOrEqual(2 + 1e-6);
+    expect(Math.min(...ys)).toBeCloseTo(-HALF_MAX, 0);
+  });
+
+  test("a hole corner between two cross-sections narrows the strip too", () => {
+    // A hole 0.6 m long, between the samples at 144 and 146 m, its nearest corner 3 m north.
+    const corner = [
+      [22 + 144.7 * K, 60 + 3 * M],
+      [22 + 145.3 * K, 60 + 5 * M],
+      [22 + 144.7 * K, 60 + 5 * M],
+      [22 + 144.7 * K, 60 + 3 * M]
+    ];
+    const holed = feature("A", [box(0, 150, -20, 20), corner]);
+    const gaps = fairwayGaps([line(2.1, 2.7)], [holed, area("B", 220, 400)]);
+    const ring = (gaps[0]?.geometry?.coordinates as number[][][])[0] as number[][];
+    expect(Math.max(...ring.map((p) => ((p[1] as number) - 60) / M))).toBeLessThanOrEqual(3 + 1e-6);
   });
 });

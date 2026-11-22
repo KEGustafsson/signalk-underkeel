@@ -349,6 +349,71 @@ describe("Traficom WFS ingest", () => {
     });
   });
 
+  test("a fairway gap is bridged only where its line and areas state one reference level", async () => {
+    const at = (x0: number, x1: number): number[][][] => [
+      [
+        [x0, 59.9998],
+        [x1, 59.9998],
+        [x1, 60.0002],
+        [x0, 60.0002],
+        [x0, 59.9998]
+      ]
+    ];
+    // Two areas of a fairway about 80 m apart, and its line through both: as the FTIA sends them.
+    const fairway = (id: number, x0: number, x1: number, vertaustaso: string) => ({
+      type: "Feature",
+      geometry: { type: "Polygon", coordinates: at(x0, x1) },
+      properties: { id, haraussyvyys: 2.7, vertaustaso }
+    });
+    const line = {
+      type: "Feature",
+      geometry: {
+        type: "LineString",
+        coordinates: [
+          [21.975, 60],
+          [22.005, 60]
+        ]
+      },
+      properties: {
+        navigointilinjaid: 1,
+        mitoitussyvays: 2.1,
+        haraussyvyys: 2.7,
+        vertaustaso: "MW2020"
+      }
+    };
+    const fetch =
+      (second: string): WfsFetch =>
+      (url) => {
+        const q = new URL(url).searchParams;
+        const first = q.get("startIndex") === "0";
+        if (url.startsWith("https://ftia.test/")) {
+          const areas = q.get("typeNames") === "vesivaylatiedot:vaylaalueet_uusi";
+          const sent = areas
+            ? [fairway(1, 21.98, 21.99, "MW2020"), fairway(2, 21.9915, 22.0, second)]
+            : [line];
+          return Promise.resolve(reply(first ? sent : []));
+        }
+        return Promise.resolve(reply(url.includes("DepthArea_A") && first ? [area] : []));
+      };
+    const dir = path.join(TMP, "FI1WFS01");
+    const d = {
+      url: "https://wfs.test/wfs",
+      linesUrl: "https://ftia.test/ows",
+      bbox: [21.95, 59.95, 22.05, 60.05] as [number, number, number, number],
+      dir,
+      now: new Date("2026-10-18T07:00:00Z")
+    };
+    const sweeps = () =>
+      readCellDirectory(dir, 0)
+        .features.filter((f) => f.role === "swept")
+        .map((f) => f.lnam)
+        .sort();
+    await downloadWfsCell({ ...d, fetch: fetch("MW2020") });
+    expect(sweeps()).toEqual(["FTIA-GAP-FTIA-VA-1-FTIA-VA-2", "FTIA-VA-1", "FTIA-VA-2"]);
+    await downloadWfsCell({ ...d, fetch: fetch("MW2005") });
+    expect(sweeps()).toEqual(["FTIA-VA-1", "FTIA-VA-2"]);
+  });
+
   describe("with a count from a hits request, pages are read side by side", () => {
     const BOX: [number, number, number, number] = [21.95, 59.95, 22.05, 60.05];
     const numbered = (n: number) =>

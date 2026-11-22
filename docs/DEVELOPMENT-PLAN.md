@@ -1573,16 +1573,23 @@ and at most 10 m (an opening may be narrower than the fairway), reaching 10 m in
 the line's safe clearance depth (`haraussyvyys`) or the least swept depth of the areas holding the
 line where it leaves and enters the gap, whichever is less. A line along an area's edge has no
 width on the edge's side, so it gets no strip, and a line that leaves an area and comes back into
-the same one (a hole in it, or one of its parts) gets none either. The FTIA's areas and these strips
-are written as `SWPARE` beside their `DRGARE`: a tile the sweeps cover, alone or side by side, is
-`SWEPT`, and where the least of the sweeps reaching it is its least depth, that depth's σ is the
-sweep's (`sweptDepth`). The safe clearance depth is the depth the fairway authority keeps the
-line clear to and answers for (Traficom's depth instructions, 2021), from the same reference
-level as the areas; a line that states none gives its design draft, the static draft of the
-vessel it is laid out for, less than that depth by the gross under-keel clearance (0.2–0.6 m on a
-boat route). The strip's 10 m into each area takes the least depth there: at the line's safe
-clearance depth it never lowers a sweep, while one at the design draft lowered route 3530 from
-2.7 m to 2.1 m at both ends of each gap.
+the same one (a hole in it, or one of its parts) gets none either. A hole of an area the strip
+reaches into bounds its width on that side anywhere along it, and a gap in such a hole gets no
+strip. The FTIA gives each line's and area's depths from the reference level it states
+(`vertaustaso`: the mean water of an epoch, MW1990 to MW2025 off Turku, or N2000), and the cell
+keeps every depth as given, the Traficom WFS's stating none (§4.5: the cell states no datum), so a
+strip is made only where the line and every area holding it at both ends state the same one. The
+FTIA's areas and these strips are written as `SWPARE` beside their `DRGARE`: a tile the sweeps
+cover, alone or side by side, is `SWEPT`, and where the least of the sweeps reaching it is its
+least depth, that depth's σ is the sweep's (`sweptDepth`). The safe clearance depth is the depth
+the fairway authority keeps the line clear to and answers for (Traficom's depth instructions,
+2021); a line that states none gives its design draft, the static draft of the vessel it is laid
+out for, less than that depth by the gross under-keel clearance (0.2–0.6 m on a boat route). The
+strip's 10 m into each area takes the least depth there, so it lowers a sweep there unless its
+depth equals that sweep's: with sweeps of 3 m and 4 m either side and a line kept to 4 m, the
+strip is 3 m and lowers the 4 m sweep's 10 m. At the line's safe clearance depth it leaves route
+3530's 2.7 m sweeps as they are, while one at the design draft lowered them to 2.1 m at both ends
+of each gap.
 
 Decided, against invariant 1 as written: within one cell, a depth area that the cell's own
 dredged areas cover over a tile is not a source feature of that tile, so `minDepthOver` may
