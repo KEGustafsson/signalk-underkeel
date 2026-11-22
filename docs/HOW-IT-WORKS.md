@@ -464,40 +464,9 @@ The notification is sent at once when its state, the kind of reason or the named
 changes. While those hold, a new countdown or term in its message goes out at most every 30 s;
 `navigation.underKeel.timeToShoal` carries the current countdown. Its `data.explanation`
 carries each term of the sentence as a number, plus the deciding chart cell and its edition,
-and the named hazard when one set the depth. The `alarm` from the approach:
-
-```json
-{
-  "state": "alarm",
-  "method": ["visual", "sound"],
-  "message": "shoal ahead in 18 s: land + 0.2 m water level (manual) − draft 2.2 m − wave 0 m → μ = −∞ m, σ = 0.51 m, P = > 99 %",
-  "data": {
-    "engineState": "alarm",
-    "clearance": null,
-    "clearanceSigma": 0.51,
-    "risk": 1,
-    "timeToShoal": 18,
-    "explanation": {
-      "charted": null,
-      "sigmaCharted": 0.5,
-      "flags": [],
-      "cell": { "name": "FI4WFS01", "edition": 1, "update": 0 },
-      "waterLevel": 0.2,
-      "sigmaWaterLevel": 0.1,
-      "waterLevelSource": "manual",
-      "draft": 2.2,
-      "wave": 0,
-      "margin": 0,
-      "mean": null,
-      "sigma": 0.51,
-      "risk": 1
-    }
-  }
-}
-```
-
-`clearanceSigma` is rounded here. The server adds `id` and `status` for acknowledging and
-silencing.
+and the named hazard when one set the depth. Its fields are in
+[`schemas/navigation-safety/notification.json`](../schemas/navigation-safety/notification.json).
+The server adds `id` and `status` for acknowledging and silencing.
 
 ### Escape heading
 

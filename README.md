@@ -563,8 +563,9 @@ the strip's depth, so the leg must keep to the line, off it by at most the strip
 less the buffer and the cross-track limit; a buffer as wide as the strip closes the gap. Anywhere
 else the box or leg is checked at the least buffer as any other. The plan never reads the fix of
 the moment, so the same request gives the same route: the planned σ is the configured one, or
-what the boat's own fix has shown over the last week (its 95th percentile, kept in
-`fix-history.json`) when that is wider. Each piloted leg of a route check carries
+wider where the boat's own fix history shows it has been worse (how, in the
+[development plan](docs/DEVELOPMENT-PLAN.md#411-route-check-repair-and-departure-window) §4.11,
+pilotage). Each piloted leg of a route check carries
 `pilotage: { buffer, room }`, its room the widest buffer it still passes at.
 
 Underway, on a leg of the active route in swept water narrower than the least buffer, the live

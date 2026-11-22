@@ -1631,9 +1631,10 @@ the strip to the strip's depth at the swept σ, `SWEPT`, and checks the corridor
 that stretch through the index, swept or dredged all through (`engine/gap-strips.ts`,
 `engine/leg-depth.ts`); a box is held to it only when its narrow footprint lies inside one strip.
 The leg must keep to the line: its corridor is off the line by at most the strip's half-width less
-its own, so the width the check works with comes from the boat's GNSS accuracy (kp · σ of the fix),
-and a buffer as wide as the strip's half-width closes the gap. A fix that fails between checks
-leaves the next at the least buffer, which reads the gap at 0 m. Such a leg is flagged `PILOTAGE`,
+its own, so the width the check works with is the planned pilotage buffer (kp · the planning σ,
+above), and a buffer as wide as the strip's half-width closes the gap. The live fix is not read by
+the check: underway, a fix wider than the leg's room, or one failing its integrity check, raises
+the pilotage notification (above). Such a leg is flagged `PILOTAGE`,
 the skipper's cue to keep between the marks. The corridor before the stretch reaches its half-width
 past the point the stretch begins, itself at least that half-width inside the strip's end, so the
 strip reaches 30 m back into each area while the line is in it: twice the widest corridor it can
