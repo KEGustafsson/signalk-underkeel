@@ -9,20 +9,24 @@ import type { WfsFeature } from "../../src/ingest/wfs-fetch";
 const M = 1 / 111_320;
 const K = 1 / (111_320 * Math.cos((60 * Math.PI) / 180));
 
+/** A ring from x0 to x1 and y0 to y1, metres east and north of 22° E, 60° N. */
+const box = (x0: number, x1: number, y0: number, y1: number): number[][] => [
+  [22 + x0 * K, 60 + y0 * M],
+  [22 + x1 * K, 60 + y0 * M],
+  [22 + x1 * K, 60 + y1 * M],
+  [22 + x0 * K, 60 + y1 * M],
+  [22 + x0 * K, 60 + y0 * M]
+];
+
+const feature = (id: string, rings: number[][][], depth = 2.7): WfsFeature => ({
+  type: "Feature",
+  geometry: { type: "Polygon", coordinates: rings },
+  properties: { DRVAL1: depth, IDENTIFIER: id }
+});
+
 /** A box `w` metres wide across the line y = 0, from x0 to x1 metres east of 22° E, 60° N. */
 function area(id: string, x0: number, x1: number, w = 40, depth = 2.7): WfsFeature {
-  const ring = [
-    [22 + x0 * K, 60 - (w / 2) * M],
-    [22 + x1 * K, 60 - (w / 2) * M],
-    [22 + x1 * K, 60 + (w / 2) * M],
-    [22 + x0 * K, 60 + (w / 2) * M],
-    [22 + x0 * K, 60 - (w / 2) * M]
-  ];
-  return {
-    type: "Feature",
-    geometry: { type: "Polygon", coordinates: [ring] },
-    properties: { DRVAL1: depth, IDENTIFIER: id }
-  };
+  return feature(id, [box(x0, x1, -w / 2, w / 2)], depth);
 }
 
 const line = (draft?: number): WfsFeature => ({
@@ -69,5 +73,35 @@ describe("gaps in a swept fairway", () => {
     const ring = (gaps[0]?.geometry?.coordinates as number[][][])[0] as number[][];
     const ys = ring.map((p) => ((p[1] as number) - 60) / M);
     expect(Math.max(...ys)).toBeCloseTo(6, 0);
+  });
+
+  test("a line along the areas' edge gets no strip reaching past it", () => {
+    // Both areas lie north of the line, from its y = 0 to 4 m.
+    const north = (id: string, x0: number, x1: number) => feature(id, [box(x0, x1, 0, 4)]);
+    expect(fairwayGaps([line(2.1)], [north("A", 0, 150), north("B", 220, 400)])).toEqual([]);
+  });
+
+  test("no strip across a hole in one area, nor where the line comes back into the same area", () => {
+    const holed = feature("A", [box(0, 400, -20, 20), box(150, 220, -30, 30)]);
+    expect(fairwayGaps([line(2.1)], [holed])).toEqual([]);
+    const sides = {
+      ...holed,
+      geometry: {
+        type: "MultiPolygon",
+        coordinates: [[box(0, 150, -20, 20)], [box(220, 400, -20, 20)]]
+      }
+    };
+    expect(fairwayGaps([line(2.1)], [sides as WfsFeature])).toEqual([]);
+  });
+
+  test("the strip takes the least depth of every sweep holding the line where it leaves and enters", () => {
+    const deep = area("A", 0, 150, 40, 2.7);
+    const shallow = area("A2", 100, 150, 40, 1.8);
+    for (const swept of [
+      [deep, shallow, area("B", 220, 400)],
+      [shallow, deep, area("B", 220, 400)]
+    ]) {
+      expect(fairwayGaps([line(2.4)], swept).map((g) => g.properties?.DRVAL1)).toEqual([1.8]);
+    }
   });
 });

@@ -1570,7 +1570,10 @@ to 2.7 m both sides and nothing is published for the 70 m between. Where one nav
 from a swept area into another within 150 m (`ingest/fairway-gaps.ts`), the gap gets a strip along
 the line, each side the narrower of the two areas' widest cross-section within 20 m of the gap
 and at most 10 m (an opening may be narrower than the fairway), reaching 10 m into each area, at
-the line's design draft or the swept depth, whichever is less. The FTIA's areas and these strips
+the line's design draft or the least swept depth of the areas holding the line where it leaves
+and enters the gap, whichever is less. A line along an area's edge has no width on the edge's
+side, so it gets no strip, and a line that leaves an area and comes back into the same one (a
+hole in it, or one of its parts) gets none either. The FTIA's areas and these strips
 are written as `SWPARE` beside their `DRGARE`: a tile the sweeps cover, alone or side by side, is
 `SWEPT`, and where the least of the sweeps reaching it is its least depth, that depth's σ is the
 sweep's (`sweptDepth`). The design draft is less than the depth the authority keeps for it.

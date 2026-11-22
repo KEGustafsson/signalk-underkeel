@@ -68,7 +68,10 @@ const inArea = (p: XY, a: Area): boolean =>
     (rings) => inRing(p, rings[0] as XY[]) && !rings.slice(1).some((h) => inRing(p, h))
   );
 
-/** Distance from `p` along unit `v` to the first edge of `a`, or Infinity within REACH. */
+/**
+ * Distance from `p` along unit `v` to the first edge of `a`, or Infinity within REACH. A `p` on
+ * an edge is 0 from it: a line along an area's edge has no width of it on that side.
+ */
 function toEdge(p: XY, v: XY, a: Area): number {
   let best = Infinity;
   for (const rings of a.polygons) {
@@ -84,7 +87,7 @@ function toEdge(p: XY, v: XY, a: Area): number {
         }
         const t = ((ax - p[0]) * ey - (ay - p[1]) * ex) / den;
         const u = ((ax - p[0]) * v[1] - (ay - p[1]) * v[0]) / den;
-        if (t > 0 && t <= REACH && u >= 0 && u <= 1) {
+        if (t >= 0 && t <= REACH && u >= 0 && u <= 1) {
           best = Math.min(best, t);
         }
       }
@@ -113,6 +116,8 @@ interface Sample {
   t: XY;
   /** The area holding the point, or -1. */
   area: number;
+  /** The least swept depth of the areas holding the point; Infinity in none. */
+  depth: number;
   along: number;
 }
 
@@ -130,7 +135,14 @@ function samplesOf(line: XY[], areas: Area[]): Sample[] {
     const t: XY = [(b[0] - a[0]) / len, (b[1] - a[1]) / len];
     for (let s = 0; s < len; s += STEP) {
       const p: XY = [a[0] + t[0] * s, a[1] + t[1] * s];
-      out.push({ p, t, area: areas.findIndex((x) => inArea(p, x)), along: along + s });
+      const holding = areas.flatMap((x, k) => (inArea(p, x) ? [k] : []));
+      out.push({
+        p,
+        t,
+        area: holding[0] ?? -1,
+        depth: Math.min(...holding.map((k) => (areas[k] as Area).depth)),
+        along: along + s
+      });
     }
     along += len;
   }
@@ -205,7 +217,10 @@ export function fairwayGaps(
   return out;
 }
 
-/** The gaps along one line's samples: runs outside every area between two areas. */
+/**
+ * The gaps along one line's samples: runs outside every area between two areas. A run that
+ * leaves an area and comes back into it crosses a hole or a part the FTIA left out of it.
+ */
 function gapsAlong(
   samples: Sample[],
   areas: Area[],
@@ -225,7 +240,8 @@ function gapsAlong(
     }
     const before = samples[i - 1] as Sample;
     const after = samples[j];
-    if (after && before.area !== -1 && after.along - before.along <= GAP_MAX) {
+    const between = after && before.area !== -1 && after.area !== before.area;
+    if (between && after.along - before.along <= GAP_MAX) {
       const a = areas[before.area] as Area;
       const b = areas[after.area] as Area;
       const [al, ar] = widest(samples, before, before.area, areas);
@@ -241,7 +257,7 @@ function gapsAlong(
             ]
           },
           properties: {
-            DRVAL1: Math.min(draft, a.depth, b.depth),
+            DRVAL1: Math.min(draft, before.depth, after.depth),
             IDENTIFIER: `FTIA-GAP-${a.id}-${b.id}`
           }
         });

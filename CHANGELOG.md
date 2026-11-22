@@ -10,9 +10,9 @@ All notable changes to signalk-underkeel are documented here.
   their swept depth as dredged areas, and a cell's depth areas give way to its dredged areas where
   they cover a tile; tiles across their edges split two zooms finer than the leaf zoom. The
   index is rebuilt once (pyramid version 12).
-- Gaps in a swept fairway, under a bridge, up to 150 m along its navigation line, are bridged by a
-  strip along the line at its design draft, at most 10 m each side; the FTIA's areas and the
-  strips are swept areas too, so a tile the sweeps cover side by side keeps the swept σ.
+- Gaps a swept fairway leaves under a bridge are bridged by a strip along its navigation line
+  (plan §4.11, swept fairways and pilotage); the FTIA's areas and the strips are swept areas too,
+  so a tile the sweeps cover side by side keeps the swept σ.
 - Pilotage (`pilotage: true` in a route check or planning session, feature `pilotage`): boxes
   and legs in swept or dredged water all through are checked at kp · σ of the measured fix, at
   least 2 m, flagged `PILOTAGE`; the rest at the least position buffer. The fix is read as each
