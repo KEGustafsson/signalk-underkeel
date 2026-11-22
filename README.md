@@ -547,9 +547,9 @@ way to them. Tiles across their edges split two zooms finer than the leaf zoom (
 5 m at 60° N). Soundings and rocks inside them still count. They are written as swept areas too,
 so where the sweeps cover a tile, alone or side by side, the swept depth's small uncertainty
 applies. Where the FTIA leaves a fairway's areas off under a bridge and its navigation line runs on
-from one swept area into the next, the gap gets a narrow swept strip along the line, never deeper
-than the line's design draft or the sweeps on either side (`docs/DEVELOPMENT-PLAN.md` §4.11,
-swept fairways and pilotage).
+from one swept area into the next, the gap gets a narrow swept strip along the line, at the line's
+safe clearance depth (its design draft where it states none) and never deeper than the sweeps on
+either side (`docs/DEVELOPMENT-PLAN.md` §4.11, swept fairways and pilotage).
 
 A session or route check with `pilotage: true` (feature `pilotage`) checks each box and leg first
 at the boat's pilotage buffer, kp · σ of its fix as the integrity monitor measures it and at least

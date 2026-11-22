@@ -1570,13 +1570,19 @@ to 2.7 m both sides and nothing is published for the 70 m between. Where one nav
 from a swept area into another within 150 m (`ingest/fairway-gaps.ts`), the gap gets a strip along
 the line, each side the narrower of the two areas' widest cross-section within 20 m of the gap
 and at most 10 m (an opening may be narrower than the fairway), reaching 10 m into each area, at
-the line's design draft or the least swept depth of the areas holding the line where it leaves
-and enters the gap, whichever is less. A line along an area's edge has no width on the edge's
-side, so it gets no strip, and a line that leaves an area and comes back into the same one (a
-hole in it, or one of its parts) gets none either. The FTIA's areas and these strips
+the line's safe clearance depth (`haraussyvyys`) or the least swept depth of the areas holding the
+line where it leaves and enters the gap, whichever is less. A line along an area's edge has no
+width on the edge's side, so it gets no strip, and a line that leaves an area and comes back into
+the same one (a hole in it, or one of its parts) gets none either. The FTIA's areas and these strips
 are written as `SWPARE` beside their `DRGARE`: a tile the sweeps cover, alone or side by side, is
 `SWEPT`, and where the least of the sweeps reaching it is its least depth, that depth's σ is the
-sweep's (`sweptDepth`). The design draft is less than the depth the authority keeps for it.
+sweep's (`sweptDepth`). The safe clearance depth is the depth the fairway authority keeps the
+line clear to and answers for (Traficom's depth instructions, 2021), from the same reference
+level as the areas; a line that states none gives its design draft, the static draft of the
+vessel it is laid out for, less than that depth by the gross under-keel clearance (0.2–0.6 m on a
+boat route). The strip's 10 m into each area takes the least depth there: at the line's safe
+clearance depth it never lowers a sweep, while one at the design draft lowered route 3530 from
+2.7 m to 2.1 m at both ends of each gap.
 
 Decided, against invariant 1 as written: within one cell, a depth area that the cell's own
 dredged areas cover over a tile is not a source feature of that tile, so `minDepthOver` may

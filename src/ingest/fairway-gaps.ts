@@ -6,14 +6,19 @@ import { num } from "./wfs-fetch";
  * off where a bridge spans it: at Lillholmen, Pargas, its boat route 3530 is swept to 2.7 m on
  * both sides of the bridge, about 36 m wide, and nothing is published for the 70 m under it,
  * where the Traficom WFS charts the 0–3 m band of the banks. The fairway's navigation line runs
- * on through the gap, laid out for its design draft (`mitoitussyvays`). Where one line leaves a
- * swept area and enters another within GAP_MAX metres, the gap is given a strip along the line,
- * as wide each side as the narrower of the two areas where the line leaves and enters them and at
- * most HALF_MAX metres (a bridge's opening may be narrower than the fairway), at the line's design
- * draft or the areas' swept depth, whichever is less: the depth the fairway is laid out for
- * through the opening, never more than was swept on either side. Like the swept areas, the cell
- * holds it as a guaranteed depth (SWPARE beside DRGARE, `wfs.ts`): the design draft is less than
- * the depth the authority keeps for it, its under-keel allowance not counted.
+ * on through the gap with its own safe clearance depth (`haraussyvyys`), the depth the fairway
+ * authority keeps the line clear to and answers for, from the same reference level as the
+ * areas. Where one line leaves a swept area and enters another within GAP_MAX metres, the gap is
+ * given a strip along the line, as wide each side as the narrower of the two areas where the line
+ * leaves and enters them and at most HALF_MAX metres (a bridge's opening may be narrower than the
+ * fairway), at the line's safe clearance depth or the areas' swept depth, whichever is less:
+ * never more than was swept on either side. A line without a safe clearance depth gives its
+ * design draft (`mitoitussyvays`) instead, the static draft of the vessel it is laid out for,
+ * which is less than the depth by the gross under-keel clearance (0.2–0.6 m on a boat route,
+ * Traficom's depth instructions). Like the swept areas, the cell holds the strip as a guaranteed
+ * depth (SWPARE beside DRGARE, `wfs.ts`). It reaches OVERLAP samples into each area it joins,
+ * where the least depth of the two holds (`spatial/give-way.ts`): at the swept depth of the area
+ * it never lowers it, so a strip at the design draft would.
  */
 
 /** The longest gap along a line that is bridged, metres. */
@@ -187,7 +192,8 @@ function strip(run: Sample[], half: [number, number]): XY[] {
 
 /**
  * The strips bridging the gaps of the swept areas `swept` (dredged areas, DRVAL1 their swept
- * depth) along the navigation lines `lines` (with `mitoitussyvays`), as dredged areas.
+ * depth) along the navigation lines `lines` (with `haraussyvyys`, else `mitoitussyvays`), as
+ * dredged areas.
  */
 export function fairwayGaps(
   lines: readonly WfsFeature[],
@@ -205,8 +211,9 @@ export function fairwayGaps(
   }));
   const out: WfsFeature[] = [];
   for (const line of lines) {
-    const draft = num(line.properties?.mitoitussyvays);
-    if (draft === undefined || draft <= 0) {
+    // The safe clearance depth the line is kept to, else the draft it is laid out for.
+    const kept = num(line.properties?.haraussyvyys) ?? num(line.properties?.mitoitussyvays);
+    if (kept === undefined || kept <= 0) {
       continue;
     }
     for (const part of linePartsOf(line.geometry)) {
@@ -214,7 +221,7 @@ export function fairwayGaps(
         part.map((p) => plane.to(p)),
         areas
       );
-      out.push(...gapsAlong(samples, areas, draft, plane.from));
+      out.push(...gapsAlong(samples, areas, kept, plane.from));
     }
   }
   return out;
@@ -228,7 +235,7 @@ export function fairwayGaps(
 function gapsAlong(
   samples: Sample[],
   areas: Area[],
-  draft: number,
+  kept: number,
   from: (p: XY) => XY
 ): WfsFeature[] {
   const out: WfsFeature[] = [];
@@ -266,7 +273,7 @@ function gapsAlong(
             ]
           },
           properties: {
-            DRVAL1: Math.min(draft, before.depth, after.depth),
+            DRVAL1: Math.min(kept, before.depth, after.depth),
             IDENTIFIER: `FTIA-GAP-${a.id}-${b.id}`
           }
         });

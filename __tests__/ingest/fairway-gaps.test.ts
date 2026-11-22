@@ -29,7 +29,7 @@ function area(id: string, x0: number, x1: number, w = 40, depth = 2.7): WfsFeatu
   return feature(id, [box(x0, x1, -w / 2, w / 2)], depth);
 }
 
-const line = (draft?: number): WfsFeature => ({
+const line = (draft?: number, kept?: number): WfsFeature => ({
   type: "Feature",
   geometry: {
     type: "LineString",
@@ -38,11 +38,14 @@ const line = (draft?: number): WfsFeature => ({
       [22 + 400 * K, 60]
     ]
   },
-  properties: { ...(draft !== undefined && { mitoitussyvays: draft }) }
+  properties: {
+    ...(draft !== undefined && { mitoitussyvays: draft }),
+    ...(kept !== undefined && { haraussyvyys: kept })
+  }
 });
 
 describe("gaps in a swept fairway", () => {
-  test("a gap under a bridge is bridged along the line, at the design draft, its width capped", () => {
+  test("a gap under a bridge is bridged along the line, at its design draft without a safe clearance depth, its width capped", () => {
     const gaps = fairwayGaps([line(2.1)], [area("A", 0, 150), area("B", 220, 400)]);
     expect(gaps).toHaveLength(1);
     const g = gaps[0] as WfsFeature;
@@ -57,12 +60,21 @@ describe("gaps in a swept fairway", () => {
     expect(Math.max(...xs)).toBeGreaterThan(220);
   });
 
+  test("at the line's safe clearance depth, not its design draft, so it never lowers a sweep", () => {
+    // Route 3530 at Pargas: laid out for 2.1 m, kept clear to 2.7 m, swept to 2.7 m both sides.
+    const gaps = fairwayGaps([line(2.1, 2.7)], [area("A", 0, 150), area("B", 220, 400)]);
+    expect(gaps[0]?.properties?.DRVAL1).toBe(2.7);
+    // Kept clear deeper than one side was swept: that side's depth.
+    const deeper = fairwayGaps([line(2.1, 3)], [area("A", 0, 150, 40, 2.4), area("B", 220, 400)]);
+    expect(deeper[0]?.properties?.DRVAL1).toBe(2.4);
+  });
+
   test("never deeper than either side was swept", () => {
     const gaps = fairwayGaps([line(3)], [area("A", 0, 150, 40, 2.4), area("B", 220, 400)]);
     expect(gaps[0]?.properties?.DRVAL1).toBe(2.4);
   });
 
-  test("no strip over a long gap, without a design draft, or where one side is not swept", () => {
+  test("no strip over a long gap, without a depth on the line, or where one side is not swept", () => {
     expect(fairwayGaps([line(2.1)], [area("A", 0, 100), area("B", 300, 400)])).toEqual([]);
     expect(fairwayGaps([line()], [area("A", 0, 150), area("B", 220, 400)])).toEqual([]);
     expect(fairwayGaps([line(2.1)], [area("A", 0, 150)])).toEqual([]);

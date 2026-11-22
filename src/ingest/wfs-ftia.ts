@@ -12,12 +12,19 @@ const FTIA_LINES = "vesivaylatiedot:navigointilinjat_uusi";
 /** The FTIA's fairway areas, each with the depth it is swept to (`haraussyvyys`). */
 const FTIA_AREAS = "vesivaylatiedot:vaylaalueet_uusi";
 
-/** A navigation line as the cell keeps it: its geometry and the draft it is laid out for. */
+/**
+ * A navigation line as the cell keeps it: its geometry, the draft it is laid out for and the
+ * depth the authority keeps it clear to (`haraussyvyys`, the safe clearance depth), both from
+ * its reference level (`vertaustaso`, a mean water epoch such as MW2020, or N2000).
+ */
 function navigationLine(f: WfsFeature): unknown {
   return {
     type: "Feature",
     geometry: f.geometry,
-    properties: { mitoitussyvays: num(f.properties?.mitoitussyvays) }
+    properties: {
+      mitoitussyvays: num(f.properties?.mitoitussyvays),
+      haraussyvyys: num(f.properties?.haraussyvyys)
+    }
   };
 }
 
