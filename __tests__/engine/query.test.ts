@@ -16,7 +16,7 @@ function q(ring: LonLat[], draft: number, extra: { buffer?: number; degraded?: s
   return queryUkc(index, {
     ring,
     bufferMetres: extra.buffer ?? 0,
-    terms: vesselTerms({ draft, length: 12, beam: 4 }, { speed: 0 }, DEFAULT_DYNAMICS),
+    terms: vesselTerms({ draft, length: 12, beam: 4 }, {}, DEFAULT_DYNAMICS),
     waterLevel: extra.degraded ? { ...CHART_DATUM, degraded: extra.degraded } : CHART_DATUM,
     thresholds: DEFAULT_LOOKAHEAD.thresholds
   });
@@ -29,7 +29,8 @@ describe("point and polygon UKC query", () => {
     expect(r.charted).toBe(3.5);
     expect(r.risk).toBeGreaterThan(0.5);
     expect(r.hazard).toMatchObject({ class: "UWTROC", lnam: "FI5-ROCK" });
-    expect(r.explanation).toMatchObject({ charted: 3.5, draft: 3.6, squat: 0 });
+    expect(r.explanation).toMatchObject({ charted: 3.5, draft: 3.6 });
+    expect(r.explanation).not.toHaveProperty("squat");
     expect(r.sentence).toMatch(/^charted 3.5 m UWTROC FI5-ROCK/);
     expect(r.cells).toEqual([{ cell: "FI5SYNTH", edition: 3, update: 1 }]);
   });
@@ -93,7 +94,8 @@ describe("query request validation", () => {
     });
     expect(p).toEqual({
       ok: true,
-      value: { ring: square.slice(0, 3), bufferMetres: 10, speed: 3 }
+      // `speed` was for squat: an old client's is ignored, not refused.
+      value: { ring: square.slice(0, 3), bufferMetres: 10 }
     });
   });
 
@@ -198,7 +200,7 @@ describe("chart position uncertainty", () => {
     const r = queryUkc(charted, {
       ring: [[22.03, 60.015]],
       bufferMetres: 0,
-      terms: vesselTerms({ draft: 1.8, length: 12, beam: 4 }, { speed: 0 }, DEFAULT_DYNAMICS),
+      terms: vesselTerms({ draft: 1.8, length: 12, beam: 4 }, {}, DEFAULT_DYNAMICS),
       waterLevel: CHART_DATUM,
       thresholds: DEFAULT_LOOKAHEAD.thresholds
     });
@@ -231,7 +233,7 @@ describe("chart position uncertainty", () => {
     const r = queryUkc(charted, {
       ring: [[22.03, 60.015]],
       bufferMetres: 10,
-      terms: vesselTerms({ draft: 1.8, length: 12, beam: 4 }, { speed: 0 }, DEFAULT_DYNAMICS),
+      terms: vesselTerms({ draft: 1.8, length: 12, beam: 4 }, {}, DEFAULT_DYNAMICS),
       waterLevel: CHART_DATUM,
       thresholds: DEFAULT_LOOKAHEAD.thresholds
     });

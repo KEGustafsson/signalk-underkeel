@@ -15,7 +15,7 @@ import { areasCover } from "../foundation/area-cover";
 import { geomContainsRect, geomRectDistance } from "../foundation/geometry";
 import type { ChartFeature, DepthFeature, QualityFeature } from "../ingest/features";
 import type { BuildOptions, Item } from "./build-items";
-import { buildArea, DEFAULT_BUILD, prepareItems } from "./build-items";
+import { buildArea, DEFAULT_BUILD, deepestZoom, prepareItems, stopZoom } from "./build-items";
 import type { ChartPosition, NodeColumns, NodeValues } from "./node-store";
 import { combine, EMPTY, FLAGS, joinPosition, NO_DATA, NodeStore } from "./node-store";
 import {
@@ -28,6 +28,7 @@ import {
 } from "./polygon-index";
 import { REACH_SLACK } from "./pyramid";
 import { chartPosition, NO_POSITION } from "./build-position";
+import { dredgedCells, giveWay, isDredgedArea, sweptDepth, tileFlags } from "./give-way";
 import { sigmaFor, SWEPT_SIGMA_D } from "./quality";
 
 /**
@@ -118,6 +119,12 @@ interface Analysis {
   needsSplit: boolean;
   /** The deepest zoom a feature here is drawn finely enough for (`splitZoom`). */
   finest: number;
+  /** A dredged area's edge crosses the tile over its cell's depth area: split past the leaf. */
+  sweptEdge: boolean;
+  /** Dredged areas cover the whole tile, alone or side by side (`dredgedCells`). */
+  dredgedCover: boolean;
+  /** The depth sweeps guarantee over the whole tile (`sweptDepth`), if they cover it. */
+  sweptCover: number | undefined;
 }
 
 /** Ground metres around the equator: a tile of zoom z is this / 2^z across, or less. */
@@ -188,15 +195,26 @@ function analyse(all: Hit[], rect: Rect, tileGround: number): Analysis {
   const floor = bandFull ?? -Infinity;
   const coverageEdge = coverage.some((h) => h.item.f.band > floor);
   // Lower-band cells are only gap fillers: once a larger scale covers the tile they drop out.
-  const hits = all.filter((h) => h.item.f.role !== "coverage" && h.item.f.band >= floor);
+  const reaching = all.filter((h) => h.item.f.role !== "coverage" && h.item.f.band >= floor);
+  const covers = (own: Hit[]): boolean => hitsCover(own, rect);
+  const hits = giveWay(reaching, covers);
+  // Dredged all over, by one area or by several meeting along a seam: DREDGED.
+  const dredgedCover = dredgedCells(hits, covers).size > 0;
+  const sweptCover = sweptDepth(hits, covers);
   const shallowest = minFullDepth(hits);
   const depthEdge = hits.some((h) => {
     const d = depthOf(h.item.f);
     return !h.full && d !== undefined && d < shallowest && h.item.radius <= BLUR_RATIO * tileGround;
   });
-  const areaEdge = hits.some(
-    (h) => (h.item.f.role === "swept" || h.item.f.role === "unsurveyed") && !h.full
-  );
+  // A dredged area's edge splits the tile while its cell's depth area is on it (`giveWay`),
+  // and on past the leaf zoom (`edgeZoomFor`).
+  const under = (h: Hit): boolean =>
+    isDredgedArea(h) &&
+    hits.some((g) => g.item.f.objectClass === "DEPARE" && g.item.f.cellRef === h.item.f.cellRef);
+  const sweptEdge = hits.some((h) => under(h) && !h.full);
+  const areaEdge =
+    sweptEdge ||
+    hits.some((h) => (h.item.f.role === "swept" || h.item.f.role === "unsurveyed") && !h.full);
   const needsSplit =
     bandFull === undefined || coverageEdge || depthEdge || areaEdge || qualityEdge(hits);
   const advisoryCell = coverage.find((h) => h.item.f.band === bandFull && h.item.f.advisory)?.item.f
@@ -210,7 +228,17 @@ function analyse(all: Hit[], rect: Rect, tileGround: number): Analysis {
       finest = Math.max(finest, splitZoom(h.item.f));
     }
   }
-  return { hits, bandFull, coverageEdge, advisoryCell, needsSplit, finest };
+  return {
+    hits,
+    bandFull,
+    coverageEdge,
+    advisoryCell,
+    needsSplit,
+    finest,
+    sweptEdge,
+    dredgedCover,
+    sweptCover
+  };
 }
 
 /** σ of a feature the chart's drawing places (`chartPosition`); undefined for the survey's. */
@@ -301,19 +329,6 @@ function sigmas(
   return { sigmaP, sigmaD };
 }
 
-function flagsOf(hits: Hit[], bandFull: number | undefined, assessed: boolean): number {
-  let flags = bandFull === undefined ? FLAGS.NO_COVERAGE : 0;
-  for (const h of hits) {
-    const f = h.item.f;
-    if (f.role === "swept" && h.full) {
-      flags |= FLAGS.SWEPT;
-    } else if (f.role === "depth" && f.dredged && h.full) {
-      flags |= FLAGS.DREDGED;
-    }
-  }
-  return assessed ? flags : flags | FLAGS.UNASSESSED;
-}
-
 function isArea(h: Hit): boolean {
   const f = h.item.f;
   return f.role === "depth" && !f.hazard && f.geom.type === "polygon";
@@ -341,7 +356,12 @@ function uniformValues(a: Analysis, rect: Rect, opts: BuildOptions): NodeValues 
   const advisory = a.advisoryCell !== undefined || a.hits.some((h) => h.item.f.advisory);
   const unsurveyed = a.hits.filter((h) => h.item.f.role === "unsurveyed");
   const flags =
-    flagsOf(a.hits, a.bandFull, assessed) |
+    tileFlags(a.hits, {
+      bandFull: a.bandFull,
+      assessed,
+      dredged: a.dredgedCover,
+      swept: a.sweptCover !== undefined
+    }) |
     (advisory ? FLAGS.NOT_FOR_NAVIGATION : 0) |
     (unsurveyed.length > 0 ? FLAGS.NO_COVERAGE : 0);
   const area = a.hits.some(isArea);
@@ -356,9 +376,7 @@ function uniformValues(a: Analysis, rect: Rect, opts: BuildOptions): NodeValues 
   const s = sigmas(a.hits, dMin, assessed, opts);
   // The sweep guarantees its own depth only; a rock or sounding charted
   // shallower inside it keeps the survey's σ.
-  const sweptDecides = a.hits.some(
-    (h) => h.full && h.item.f.role === "swept" && h.item.f.depth <= dMin
-  );
+  const sweptDecides = a.sweptCover !== undefined && a.sweptCover <= dMin;
   return {
     dMin,
     sigmaD: sweptDecides ? SWEPT_SIGMA_D : s.sigmaD,
@@ -427,7 +445,7 @@ function evaluate(
   // scale: only a leaf may hold ground on both sides. No coarser tile then puts water in
   // the box under NO_COVERAGE, or carries a value far past the area from cells not read there.
   const edge = box !== undefined && (straddles(rect, box.inner) || straddles(rect, box.area));
-  if (z >= opts.leafZoom || (!edge && (!a.needsSplit || z >= a.finest))) {
+  if (z >= stopZoom(a.sweptEdge, opts) || (!edge && (!a.needsSplit || z >= a.finest))) {
     const values = uniformValues(a, rect, opts);
     // Past the box a tile keeps its depth and σ, so it still spreads its risk into the box.
     const v =
@@ -489,7 +507,7 @@ export function buildRoots(
   range: RootRange,
   take?: TakeTile
 ): NodeStore {
-  const store = new NodeStore(opts.minZoom, opts.leafZoom);
+  const store = new NodeStore(opts.minZoom, deepestZoom(opts));
   const box = opts.within && { inner: opts.within, area: buildArea(opts.within) };
   for (let x = range.minX; x <= range.maxX; x++) {
     for (let y = range.minY; y <= range.maxY; y++) {
@@ -511,5 +529,5 @@ export function buildPyramid(
   const opts = { ...DEFAULT_BUILD, ...options };
   const items = prepareItems(features, opts);
   const range = rootRange(items, opts.minZoom);
-  return range ? buildRoots(items, opts, range) : new NodeStore(opts.minZoom, opts.leafZoom);
+  return range ? buildRoots(items, opts, range) : new NodeStore(opts.minZoom, deepestZoom(opts));
 }

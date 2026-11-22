@@ -105,12 +105,13 @@ describe("probabilistic look-ahead on the synthetic chart", () => {
     expect(s.risk).toBeGreaterThan(r.risk ?? 1);
   });
 
-  test("squat and wave allowance add to the draft", () => {
+  test("the wave allowance adds to the draft, speed does not", () => {
     const calm = evaluateLookahead(nav(22.003, FAIRWAY_LAT, EAST, 1), ctx(DEEP_KEEL), index, NOW);
     const n = nav(22.003, FAIRWAY_LAT, EAST, 6);
     n.waveHeight = { value: 1.0, at: NOW };
     const rough = evaluateLookahead(n, ctx(DEEP_KEEL), index, NOW);
-    expect(rough.clearance).toBeLessThan((calm.clearance as number) - 0.5);
+    // 0.4 × 1 m of waves; no squat, so 6 m/s adds nothing.
+    expect(rough.clearance).toBeCloseTo((calm.clearance as number) - 0.4, 2);
   });
 
   test("a degraded water level is never normal", () => {
@@ -299,7 +300,7 @@ describe("probabilistic look-ahead on the synthetic chart", () => {
   test("the explanation names every term", () => {
     const r = evaluateLookahead(nav(westOfRock(40), FAIRWAY_LAT), ctx(DEEP_KEEL), index, NOW);
     expect(explain(r)).toMatch(
-      /^shoal ahead in \d+ s: charted 3\.5 m UWTROC FI5-ROCK \(±0\.54 m, SWEPT\) \+ 0 m water level \(chart-datum\) − draft 3\.2 m − squat 0\.14 m \+ heel 0 m − wave 0 m → μ = 0\.16 m, σ = 0\.6\d m, P = \d+ %$/
+      /^shoal ahead in \d+ s: charted 3\.5 m UWTROC FI5-ROCK \(±0\.54 m, SWEPT\) \+ 0 m water level \(chart-datum\) − draft 3\.2 m − wave 0 m → μ = 0\.3 m, σ = 0\.6\d m, P = \d+ %$/
     );
     expect(explain(evaluateLookahead({}, ctx(DEEP_KEEL), index, NOW))).toBe("no position");
   });
@@ -429,16 +430,12 @@ describe("probabilistic look-ahead on the synthetic chart", () => {
     expect(r.timeToShoal as number).toBeLessThan(opts.alarmWithin);
   });
 
-  test("squat uses the faster of SOG and STW, even with COG stale", () => {
-    const squatOf = (n: NavState) =>
-      evaluateLookahead(n, ctx(DEEP_KEEL), index, NOW).worst?.explanation.squat;
+  test("speed sinks the hull no deeper: no squat", () => {
+    const worst = (n: NavState) => evaluateLookahead(n, ctx(DEEP_KEEL), index, NOW).worst;
     const base = nav(westOfRock(40), FAIRWAY_LAT, EAST, 2);
-    // Barrass with Cb 0.4: 4 m/s = 7.78 kn → 0.24 m; 2 m/s → 0.06 m.
-    expect(squatOf({ ...base, stw: { value: 4, at: NOW } })).toBeCloseTo(0.24, 2);
-    expect(squatOf(base)).toBeCloseTo(0.06, 2);
-    const noCog = { ...base, cog: { value: EAST, at: NOW - 60_000 } };
-    expect(squatOf(noCog)).toBeCloseTo(0.06, 2);
-    expect(squatOf({ ...noCog, sog: undefined, stw: { value: 4, at: NOW } })).toBeCloseTo(0.24, 2);
+    const fast = worst({ ...base, stw: { value: 4, at: NOW } });
+    expect(fast?.explanation).not.toHaveProperty("squat");
+    expect(fast?.explanation.draft).toBe(worst(base)?.explanation.draft);
   });
 
   test("a rock under the bow never yields hold course as the escape", () => {
@@ -591,48 +588,5 @@ describe("chart position uncertainty", () => {
   test("under CATZOC A1 (±5 m) the same area is out of reach", () => {
     const r = evaluateLookahead(nav(22.03, 60.015, EAST, 0), ctx(SHALLOW_KEEL), chart(1), NOW);
     expect(r.state).toBe("normal");
-  });
-});
-
-describe("heel from roll", () => {
-  // A 2.5 m bank everywhere: a 2.4 m fin keel is only clear when heeled.
-  const bank: ChartIndex = {
-    catalogue: { version: 1, cells: [] },
-    pyramid: buildPyramid(basin([22.0, 60.0, 22.04, 60.02], 2.5), { minZoom: 12, leafZoom: 18 }),
-    hazards: new HazardIndex([]),
-    rules: new RuleIndex([])
-  };
-  const fin = { heel: { kind: "fin" as const } };
-  const rolled = (roll: number, at = NOW): NavState => ({
-    ...nav(22.02, 60.01),
-    roll: { value: roll, at }
-  });
-
-  test("a roll beyond 60° never lifts the keel", () => {
-    for (const draft of [2.4, 4, 8]) {
-      const v = { ...DEEP_KEEL, draft };
-      const upright = evaluateLookahead(nav(22.02, 60.01), ctx(v, CHART_DATUM, fin), bank, NOW);
-      for (const roll of [1.2, 3, -3]) {
-        const r = evaluateLookahead(rolled(roll), ctx(v, CHART_DATUM, fin), bank, NOW);
-        expect(r.state).toBe("alarm");
-        expect(r.risk).toBe(upright.risk);
-      }
-    }
-  });
-
-  test("a boat rolling through upright is scored at its least roll", () => {
-    const n = navState();
-    const h = new Hysteresis(DEFAULT_LOOKAHEAD);
-    const v = { ...DEEP_KEEL, draft: 2.4 };
-    const published = [];
-    for (let tick = 0; tick < 6; tick++) {
-      const now = NOW + tick * 1000;
-      const at = { ...rolled(tick % 2 === 0 ? 0.7 : 0.05, now), rolls: n.rolls };
-      for (const k of ["position", "cog", "sog", "heading"] as const) {
-        (at[k] as { at: number }).at = now;
-      }
-      published.push(h.next(evaluateLookahead(at, ctx(v, CHART_DATUM, fin), bank, now)).state);
-    }
-    expect(published.slice(2)).toEqual(["alarm", "alarm", "alarm", "alarm"]);
   });
 });

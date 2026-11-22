@@ -2,7 +2,7 @@ import type { LonLat, Rect, XY } from "../foundation/geo";
 import { emptyRect, extendRect, toMercator, wrapLon } from "../foundation/geo";
 import type { CellInfo } from "../ingest/cells";
 import type { RuleFeature } from "../ingest/rule-features";
-import { OVERHEAD_CLASSES, PREFERENCE_CLASSES } from "../ingest/rule-features";
+import { FAIRWAY_GAP, OVERHEAD_CLASSES, PREFERENCE_CLASSES } from "../ingest/rule-features";
 import type { WaterLevel } from "../model/uncertainty";
 import type { ChartIndex } from "../spatial/chart-index";
 import { meetsRing } from "../spatial/rules";
@@ -58,7 +58,8 @@ export interface RuleWindow {
 
 const RANK: Record<RuleStatus, number> = { ok: 0, unverified: 1, fail: 2 };
 
-const PREFERENCES: ReadonlySet<string> = new Set(PREFERENCE_CLASSES);
+/** Rule features no verdict reads: the planner's preferences, and the pilotage check's strips. */
+const PREFERENCES: ReadonlySet<string> = new Set([...PREFERENCE_CLASSES, FAIRWAY_GAP]);
 
 /** The width of the Mercator world, metres: a ring past ±180° meets features a world over. */
 const WORLD = 2 * toMercator(180, 0)[0];

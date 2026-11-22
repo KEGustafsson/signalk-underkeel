@@ -150,9 +150,16 @@ describe("signalk-underkeel satisfies the contract", () => {
       ],
       ["query-request.json", parseQueryRequest, { bufferMetres: 0 }, [0, 2000], [-1, 2001]],
       ["query-request.json", parseQueryRequest, { draft: 0.1 }, [0.1, 30], [0.05, 31]],
-      ["query-request.json", parseQueryRequest, { speed: 0 }, [0, 30], [-1, 31]],
       ["route-check-request.json", parseRouteRequest, { xteLimit: 0 }, [0, 2000], [-1, 2001]],
       ["route-check-request.json", parseRouteRequest, { probability: 1e-6 }, [1e-6, 0.5], [0, 0.6]],
+      ["route-check-request.json", parseRouteRequest, { waveHeight: 0 }, [0, 10], [-0.1, 10.1]],
+      [
+        "route-check-request.json",
+        parseRouteRequest,
+        { pilotage: true },
+        [true, false],
+        ["yes", 1]
+      ],
       [
         "route-check-request.json",
         parseRouteRequest,

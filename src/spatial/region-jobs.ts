@@ -1,5 +1,5 @@
 import type { Rect } from "../foundation/geo";
-import { DEFAULT_BUILD, prepareItems } from "./build-items";
+import { edgeZoomFor, DEFAULT_BUILD, prepareItems } from "./build-items";
 import type { NodeColumns } from "./node-store";
 import type { CellSource } from "./parsed-cells";
 import { cellKey, ParsedCells } from "./parsed-cells";
@@ -74,7 +74,12 @@ export function runRegions(
   job: RegionJob,
   parsed = new ParsedCells(job.keepBytes)
 ): RegionResult[] {
-  const opts = { ...DEFAULT_BUILD, leafZoom: job.leafZoom, within: job.within };
+  const opts = {
+    ...DEFAULT_BUILD,
+    leafZoom: job.leafZoom,
+    edgeZoom: edgeZoomFor(job.leafZoom),
+    within: job.within
+  };
   const uses = new Map<string, number[]>();
   job.regions.forEach(({ cells }, k) =>
     cells.forEach((i) => {

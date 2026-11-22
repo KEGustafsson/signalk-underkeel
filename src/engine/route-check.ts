@@ -13,7 +13,11 @@ import { DEFAULT_BUILD } from "../spatial/pyramid-build";
 import type { Explanation } from "./explain";
 import { explainTile } from "./explain";
 import { bearing, legCorridors, rhumbCourse } from "./corridor";
+import { heldDepth, stripHolding } from "./gap-strips";
+import type { LegDepth, Scoring } from "./leg-depth";
+import { bridgedSteps, CLEARANCE_RESOLUTION, corridorSteps } from "./leg-depth";
 import { applyRules } from "./rule-check";
+import { roomSteps } from "./room";
 
 export { corridorRing, legCorridors, RING_REACH } from "./corridor";
 import { queryWork } from "./work";
@@ -38,6 +42,12 @@ export interface RouteCheckInput {
   xteLimit: number;
   /** Planning position uncertainty added to the corridor, metres. */
   planningBuffer: number;
+  /**
+   * Pilotage (`pilotage.ts`): a narrower buffer a leg is checked at first, kept where its
+   * corridor lies in swept or dredged water all through, or inside a fairway gap strip where it
+   * is not (`gap-strips.ts`); absent, every leg at `planningBuffer`.
+   */
+  pilotBuffer?: number;
   vessel: VesselModel;
   dynamics: DynamicsOptions;
   /**
@@ -83,6 +93,13 @@ export interface LegResult {
   explanation?: Explanation;
   /** Why the leg is unverified, when the flags alone do not say (`chart-box.ts`). */
   reason?: string;
+  /**
+   * A leg checked at the pilotage buffer (`pilotage.ts`): that buffer and the leg's room, the
+   * widest buffer its corridor stays in swept or dredged water at, up to the planning buffer,
+   * metres. The room is the plan's tolerance: how far off the line, past the cross-track limit,
+   * the boat may be there; the live fix is held to it underway (`pilotage-watch.ts`).
+   */
+  pilotage?: { buffer: number; room: number };
 }
 
 export interface RouteCheckResult {
@@ -92,21 +109,6 @@ export interface RouteCheckResult {
   /** Set when the water level over the route is a fallback, with the reason. */
   waterLevelDegraded?: string;
   legs: LegResult[];
-}
-
-interface LegDepth {
-  result: DepthResult;
-  ring: LonLat[];
-  /** Work its corridor queries did (work.ts). */
-  work: number;
-}
-
-/** Depths deeper than the UKC-zero depth plus this are reported as a lower bound. */
-const CLEARANCE_RESOLUTION = 5;
-
-interface Scoring {
-  threshold: number;
-  sigmaExtra: number;
 }
 
 /** A check split at its corridor queries, so a caller can let other work in between them. */
@@ -119,41 +121,6 @@ export function drain<T>(steps: Steps<T>): T {
       return r.value;
     }
   }
-}
-
-function* corridorSteps(
-  index: ChartIndex,
-  a: LonLat,
-  b: LonLat,
-  r: number,
-  s: Scoring
-): Steps<LegDepth> {
-  let best: Omit<LegDepth, "work"> | undefined;
-  let flags = 0;
-  let covered = Infinity;
-  let work = 0;
-  const cells = new Set<number>();
-  for (const ring of legCorridors(a, b, r)) {
-    const result = minDepthOver(index.pyramid, footprintGeom(ring), {
-      chartPosition: true,
-      clearAbove: s.threshold + CLEARANCE_RESOLUTION,
-      risk: { threshold: s.threshold, sigmaExtra: s.sigmaExtra }
-    });
-    work += queryWork(result);
-    flags |= result.flags;
-    covered = Math.min(covered, result.coveredDMin);
-    result.cellRefs.forEach((c) => cells.add(c));
-    if (best === undefined || result.maxRisk > best.result.maxRisk) {
-      best = { result, ring };
-    }
-    yield;
-  }
-  const leg = best as Omit<LegDepth, "work">;
-  return {
-    ...leg,
-    work,
-    result: { ...leg.result, flags, coveredDMin: covered, cellRefs: [...cells] }
-  };
 }
 
 /** P at or above this fails a leg whatever the accepted probability. */
@@ -206,13 +173,9 @@ function* legSteps(
   const end = start + (length / speed) * 1000;
   const wl = input.waterLevel(start, end, [from, to]);
   const { terms, s } = scoringFor(input, speed, wl);
-  const { result, ring, work } = yield* corridorSteps(
-    index,
-    from,
-    to,
-    input.xteLimit + input.planningBuffer,
-    s
-  );
+  const { result, ring, work: depthWork, width } = yield* pilotedSteps(index, input, from, to, s);
+  const { pilotage, work: roomWork } = yield* pilotageSteps(index, input, [from, to], width);
+  const work = depthWork + roomWork;
   const covered = result.coveredDMin;
   const land = covered === -Infinity;
   const charted = covered === Infinity || land ? null : covered;
@@ -220,9 +183,12 @@ function* legSteps(
   if (land) {
     flags.push("LAND");
   }
+  if (width < input.xteLimit + input.planningBuffer) {
+    flags.push("PILOTAGE");
+  }
   const tile = result.riskTile;
   const why = tile ? explainTile(index, tile, ring, terms, wl) : undefined;
-  const rings = legCorridors(from, to, input.xteLimit + input.planningBuffer);
+  const rings = legCorridors(from, to, width);
   const course = rhumbCourse(from, to);
   const status = applyRules(
     verdictStatus(result.maxRisk, charted, result.flags, land, wl, flags, input),
@@ -242,9 +208,88 @@ function* legSteps(
     charted: charted === null ? null : finiteOrNull(charted),
     flags,
     worst: tile && { position: tile.center, hazard: why?.hazard },
-    explanation: why?.explanation
+    explanation: why?.explanation,
+    ...(pilotage && { pilotage })
   };
   return { leg, cellRefs: result.cellRefs, work };
+}
+
+/**
+ * A leg's corridor at the pilotage buffer when it lies in swept or dredged water all through, or
+ * in fairway gap strips where it is not, else at the planning buffer (`pilotage.ts`), with the
+ * half-width it was taken at.
+ */
+function* pilotedSteps(
+  index: ChartIndex,
+  input: RouteCheckInput,
+  from: LonLat,
+  to: LonLat,
+  s: Scoring
+): Steps<LegDepth & { width: number }> {
+  const full = input.xteLimit + input.planningBuffer;
+  const pilot = input.pilotBuffer;
+  let work = 0;
+  if (pilot !== undefined && pilot < input.planningBuffer) {
+    const width = input.xteLimit + pilot;
+    const piloted = yield* corridorSteps(index, from, to, width, s, true);
+    if (piloted.result.unswept === false) {
+      return { ...piloted, width };
+    }
+    work = piloted.work;
+    const bridged = yield* bridgedSteps(index, from, to, width, s);
+    if (bridged) {
+      work += bridged.work;
+      if (bridged.result.unswept === false) {
+        return { ...bridged, work, width };
+      }
+    }
+  }
+  const d = yield* corridorSteps(index, from, to, full, s);
+  return { ...d, work: work + d.work, width: full };
+}
+
+/** Scoring for a swept-water test alone: its risk is not read. */
+const SWEPT_TEST: Scoring = { threshold: 0, sigmaExtra: 1 };
+
+/**
+ * Whether the corridor of the leg `ends` at cross-track `xte` plus a buffer passes pilotage: in
+ * swept or dredged water all through (`QueryOptions.sweptOnly`), or so through a fairway gap's
+ * strip (`leg-depth.ts`, `bridgedSteps`); its queries' work added to `work.n`.
+ */
+export function sweptAt(
+  index: ChartIndex,
+  [from, to]: [LonLat, LonLat],
+  xte: number,
+  work: { n: number } = { n: 0 }
+): (buffer: number) => Steps<boolean> {
+  return function* (buffer) {
+    const d = yield* corridorSteps(index, from, to, xte + buffer, SWEPT_TEST, true);
+    work.n += d.work;
+    if (d.result.unswept === false) {
+      return true;
+    }
+    // Through a fairway gap: the stretches inside a strip held to it, the rest swept.
+    const bridged = yield* bridgedSteps(index, from, to, xte + buffer, SWEPT_TEST);
+    work.n += bridged?.work ?? 0;
+    return bridged?.result.unswept === false;
+  };
+}
+
+/** A piloted leg's buffer and room (`room.ts`), with the work it took. */
+function* pilotageSteps(
+  index: ChartIndex,
+  input: RouteCheckInput,
+  ends: [LonLat, LonLat],
+  width: number
+): Steps<{ pilotage?: LegResult["pilotage"]; work: number }> {
+  const pilot = input.pilotBuffer;
+  if (pilot === undefined || width >= input.xteLimit + input.planningBuffer) {
+    return { work: 0 };
+  }
+  const work = { n: 0 };
+  const test = sweptAt(index, ends, input.xteLimit, work);
+  const room = yield* roomSteps(test, [pilot, input.planningBuffer]);
+  return { pilotage: { buffer: pilot, room }, work: work.n };
 }
 
 function scoringFor(
@@ -252,7 +297,7 @@ function scoringFor(
   speed: number,
   wl: WaterLevel
 ): { terms: VesselTerms; s: Scoring } {
-  const terms = vesselTerms(input.vessel, { speed, waveHeight: input.waveHeight }, input.dynamics);
+  const terms = vesselTerms(input.vessel, { waveHeight: input.waveHeight }, input.dynamics);
   return { terms, s: { threshold: thresholdDepth(terms, wl), sigmaExtra: sigmaExtra(terms, wl) } };
 }
 
@@ -283,6 +328,8 @@ export interface FootprintVerdict {
   worst?: LonLat;
   /** Work its query did (work.ts). */
   work: number;
+  /** Some of the footprint is not swept or dredged water, or it was not asked (`sweptOnly`). */
+  unswept: boolean;
 }
 
 /**
@@ -302,15 +349,48 @@ export function checkFootprint(
   input: RouteCheckInput,
   ring: LonLat[],
   speed: number,
-  window: { start: number; end: number; at: readonly LonLat[] }
+  window: { start: number; end: number; at: readonly LonLat[] },
+  sweptOnly = false
 ): FootprintVerdict {
   const wl = input.waterLevel(window.start, window.end, window.at, true);
   const { s } = scoringFor(input, speed, wl);
   const result = minDepthOver(index.pyramid, footprintGeom(ring), {
     chartPosition: true,
     clearAbove: s.threshold + CLEARANCE_RESOLUTION,
-    risk: { threshold: s.threshold, sigmaExtra: s.sigmaExtra }
+    risk: { threshold: s.threshold, sigmaExtra: s.sigmaExtra },
+    sweptOnly
   });
+  return footprintVerdict(index, input, ring, { result, work: queryWork(result), wl }, window);
+}
+
+/**
+ * The ring `ring` scored as `checkFootprint` scores it, at the depth of the fairway gap strip
+ * holding the whole of it (`gap-strips.ts`); undefined when no strip does.
+ */
+export function checkStripFootprint(
+  index: ChartIndex,
+  input: RouteCheckInput,
+  ring: LonLat[],
+  speed: number,
+  window: { start: number; end: number; at: readonly LonLat[] }
+): FootprintVerdict | undefined {
+  const hold = stripHolding(index, ring);
+  if (!hold) {
+    return undefined;
+  }
+  const wl = input.waterLevel(window.start, window.end, window.at, true);
+  const { s } = scoringFor(input, speed, wl);
+  return footprintVerdict(index, input, ring, { ...heldDepth(index, ring, hold, s), wl }, window);
+}
+
+function footprintVerdict(
+  index: ChartIndex,
+  input: RouteCheckInput,
+  ring: LonLat[],
+  depth: { result: DepthResult; work: number; wl: WaterLevel },
+  window: { start: number; end: number; at: readonly LonLat[] }
+): FootprintVerdict {
+  const { result, wl } = depth;
   const covered = result.coveredDMin;
   const land = covered === -Infinity;
   const charted = covered === Infinity || land ? null : covered;
@@ -328,7 +408,8 @@ export function checkFootprint(
     risk: Math.round(result.maxRisk * 10000) / 10000,
     flags,
     worst: result.riskTile?.center,
-    work: queryWork(result)
+    work: depth.work,
+    unswept: result.unswept !== false
   };
 }
 

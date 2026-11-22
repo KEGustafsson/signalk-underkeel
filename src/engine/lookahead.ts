@@ -2,8 +2,6 @@ import type { LonLat } from "../foundation/geo";
 import { project, tileSize } from "../foundation/geo";
 import { geomBounds } from "../foundation/geometry";
 import type { UnderKeelState } from "../foundation/state";
-import type { RollRange } from "../model/allowances";
-import { RollWindow } from "../model/allowances";
 import type { VesselTerms, WaterLevel } from "../model/uncertainty";
 import { sigmaExtra, thresholdDepth } from "../model/uncertainty";
 import { gnssSigma } from "../model/position";
@@ -55,10 +53,6 @@ export interface NavState {
   stw?: Sample<number>;
   /** `navigation.gnss.methodQuality`, for the integrity check. */
   methodQuality?: Sample<string>;
-  /** Roll, radians. */
-  roll?: Sample<number>;
-  /** Recent roll samples; each evaluation adds `roll` to it. Without it only `roll` counts. */
-  rolls?: RollWindow;
   /** Significant wave height, metres. */
   waveHeight?: Sample<number>;
 }
@@ -80,6 +74,11 @@ export interface LookaheadOptions {
   positionBuffer: number;
   /** The buffer is max(positionBuffer, kp · σ_pos(t)). */
   kp: number;
+  /**
+   * The position σ a plan's pilotage is checked at, metres, or the boat's demonstrated fix
+   * quality when it is wider (`model/fix-history.ts`): the fix of the moment never sets it.
+   */
+  planSigma: number;
   /** Fan spread: 1σ of COG (radians) and of the rate of turn (rad/s). */
   sigmaCog: number;
   sigmaRot: number;
@@ -116,6 +115,7 @@ export const DEFAULT_LOOKAHEAD: LookaheadOptions = {
   step: 3,
   positionBuffer: 10,
   kp: 2,
+  planSigma: 1.5,
   sigmaCog: (5 * Math.PI) / 180,
   sigmaRot: (0.1 * Math.PI) / 180,
   sigmaSog: 0.1,
@@ -316,7 +316,7 @@ function finiteNav(nav: NavState): boolean {
     p !== undefined &&
     Number.isFinite(p[0]) &&
     Number.isFinite(p[1]) &&
-    [nav.cog, nav.sog, nav.heading, nav.rot, nav.hdop, nav.roll, nav.waveHeight].every(
+    [nav.cog, nav.sog, nav.heading, nav.rot, nav.hdop, nav.waveHeight].every(
       (s) => s === undefined || Number.isFinite(s.value)
     )
   );
@@ -340,20 +340,9 @@ function shallowestOf(fps: FootprintResult[]): FootprintResult | undefined {
   return best;
 }
 
-/** The |roll| range heel may use; undefined when roll is stale or not published. */
-function rollOf(nav: NavState, now: number, opts: LookaheadOptions): RollRange | undefined {
-  if (stale(nav.roll, now, opts)) {
-    return undefined;
-  }
-  const r = nav.roll as Sample<number>;
-  const window = nav.rolls ?? new RollWindow();
-  window.record(r.value, r.at);
-  return window.range(now);
-}
-
-/** A navigation state that keeps the roll window across evaluations. */
+/** An empty navigation state, filled as Signal K deltas come in. */
 export function navState(): NavState {
-  return { rolls: new RollWindow() };
+  return {};
 }
 
 function scoringFor(
@@ -365,13 +354,7 @@ function scoringFor(
 ): Scoring {
   const fresh = <T>(x: Sample<T> | undefined): T | undefined =>
     stale(x, now, opts) ? undefined : x?.value;
-  // Squat follows speed through the water, and a stale COG does not stop the hull sinking.
-  const squatSpeed = Math.max(fresh(nav.sog) ?? 0, fresh(nav.stw) ?? 0);
-  const terms = vesselTerms(
-    vessel,
-    { speed: squatSpeed, roll: rollOf(nav, now, opts), waveHeight: nav.waveHeight?.value },
-    inputs.dynamics
-  );
+  const terms = vesselTerms(vessel, { waveHeight: nav.waveHeight?.value }, inputs.dynamics);
   const wl = inputs.waterLevel;
   return {
     terms,

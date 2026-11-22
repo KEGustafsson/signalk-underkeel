@@ -39,23 +39,11 @@ function whenOn(key: string, fields: Json): Json {
   };
 }
 
-const HEEL_TABLE = {
-  type: "array",
-  title: "Heel table",
-  items: {
-    type: "object",
-    properties: {
-      heel: { type: "number", title: "Heel (°)" },
-      delta: { type: "number", title: "Draft change (m, + deeper)" }
-    }
-  }
-};
-
 const VESSEL_ESSENTIAL = {
   type: "object",
   title: "Boat",
   description:
-    "Only the keel's lowest point counts. Squat (Cb·V²/100 m at V knots) and waves (0.4 × wave height, when Signal K has it) are added on top; heel gives no credit unless set under expert settings.",
+    "Only the keel's lowest point counts, at full depth: no squat, no heel. Waves (0.4 × wave height) are added on top.",
   properties: {
     draft: {
       type: "number",
@@ -78,25 +66,7 @@ const VESSEL_EXPERT = {
         "Highest point above the waterline, mast and antennas included. Leave empty to use Signal K design.airHeight; without either, bridges and overhead cables are not checked."
     },
     draftSigma: { type: "number", title: "Draft uncertainty 1σ (m)", default: 0.05 },
-    blockCoefficient: { type: "number", title: "Block coefficient Cb (squat)", default: 0.4 },
-    confined: { type: "boolean", title: "Double squat (narrow channels)", default: false },
-    keel: {
-      type: "string",
-      title: "Heel effect on draft",
-      enum: ["none", "fin", "table"],
-      default: "none",
-      description:
-        "none: the keel counts at full depth; fin: draft·(cos φ − 1) at the least roll of the last 10 s; table: heel° → draft change"
-    },
     waveFactor: { type: "number", title: "Wave allowance factor c (W = c·Hs)", default: 0.4 }
-  },
-  dependencies: {
-    keel: {
-      oneOf: [
-        { properties: { keel: { enum: ["none", "fin"] } } },
-        { properties: { keel: { const: "table" }, heelTable: HEEL_TABLE } }
-      ]
-    }
   }
 };
 
@@ -263,6 +233,15 @@ const LOOKAHEAD = {
       description: "Footprints grow by this many σ of position uncertainty",
       default: 2
     },
+    planSigma: {
+      type: "number",
+      title: "Planned position σ for pilotage (m)",
+      description:
+        "A route's legs in swept fairways are planned at this position σ times the position buffer in σ, or at the boat's own fix quality over the last week (its 95th percentile) when that is wider. The fix of the moment never changes a plan; underway it is held to each swept leg's room.",
+      default: 1.5,
+      minimum: 0.1,
+      maximum: 20
+    },
     sigmaCog: { type: "number", title: "Fan spread: COG 1σ (°)", default: 5 },
     sigmaRot: { type: "number", title: "Fan spread: rate of turn 1σ (°/s)", default: 0.1 },
     maxTurnRate: {
@@ -340,7 +319,16 @@ const EXPERT = {
     properties: {
       speed: { type: "number", title: "Planning speed (m/s)", default: 2.5 },
       xteLimit: { type: "number", title: "Cross-track limit (m)", default: 30 },
-      probability: { type: "number", title: "Accept a leg at P(UKC<0) <", default: 0.01 }
+      probability: { type: "number", title: "Accept a leg at P(UKC<0) <", default: 0.01 },
+      waveHeight: {
+        type: "number",
+        title: "Planned significant wave height (m)",
+        description:
+          "The waves a route check or route plan allows for when the request gives none. The wave sensor of the moment is never used for a plan: it is read where the boat is now, and the route is sailed later and elsewhere. Underway the look-ahead uses the measured waves.",
+        default: 0,
+        minimum: 0,
+        maximum: 10
+      }
     }
   }
 };
@@ -394,7 +382,7 @@ export function adminSchema(hints: SchemaHints = {}): Json {
         type: "boolean",
         title: "Show expert settings",
         description:
-          "Chart index, squat, heel and waves, look-ahead geometry and thresholds, mooring zones and route-check defaults.",
+          "Chart index, waves, look-ahead geometry and thresholds, mooring zones and route-check defaults.",
         default: false
       }
     },

@@ -39,7 +39,7 @@ describe("settings patch", () => {
         {
           chartsProvider: CHARTS_PROVIDER_ID,
           warningStyle: "early",
-          vessel: { draft: 2.1, keel: "fin", margin: null },
+          vessel: { draft: 2.1, waveFactor: 0.5, margin: null },
           waterLevel: { source: "fmi" },
           livechart: { enabled: true, transducerDepth: 0.4 },
           mooringZones: ["home"]
@@ -54,7 +54,7 @@ describe("settings patch", () => {
       patchErrors(
         {
           colour: "red",
-          vessel: { draft: "2", keel: "wing" },
+          vessel: { draft: "2" },
           waterLevel: "fmi",
           warningStyle: "loud",
           wfs: { enabled: 1 }
@@ -64,7 +64,6 @@ describe("settings patch", () => {
     ).toEqual([
       "colour is not a setting",
       "vessel.draft must be a number",
-      "vessel.keel must be one of none, fin, table",
       "waterLevel must be an object",
       "warningStyle must be one of early, balanced, late",
       "wfs.enabled must be a boolean"
@@ -79,8 +78,7 @@ describe("settings patch", () => {
           wfs: { radiusKm: 26 },
           leafZoom: 13,
           mooringZones: ["home", 123],
-          waterLevel: { datums: [{ verdat: 3, series: "msl" }, "x"] },
-          vessel: { heelTable: [{ heel: 20, delta: -0.1 }] }
+          waterLevel: { datums: [{ verdat: 3, series: "msl" }, "x"] }
         },
         SCHEMA
       )
@@ -95,9 +93,9 @@ describe("settings patch", () => {
 
   test("objects merge field by field, null removes a field, arrays are replaced", () => {
     const base = { vessel: { draft: 2, margin: 0.3 }, mooringZones: ["a", "b"], cellsDir: "/c" };
-    expect(applyPatch(base, { vessel: { draft: null, keel: "fin" }, mooringZones: ["c"] })).toEqual(
-      { vessel: { margin: 0.3, keel: "fin" }, mooringZones: ["c"], cellsDir: "/c" }
-    );
+    expect(
+      applyPatch(base, { vessel: { draft: null, waveFactor: 0.5 }, mooringZones: ["c"] })
+    ).toEqual({ vessel: { margin: 0.3, waveFactor: 0.5 }, mooringZones: ["c"], cellsDir: "/c" });
     expect(base.vessel).toEqual({ draft: 2, margin: 0.3 });
   });
 });
@@ -112,11 +110,11 @@ describe("saving settings", () => {
     const later: (() => void)[] = [];
     const current = { chartsProvider: CHARTS_PROVIDER_ID, configVersion: CONFIG_VERSION };
     const s = state({ ...current, vessel: { draft: 2 } }, (c) => restarts.push(c));
-    const reply = saveSettings({ vessel: { keel: "fin" } }, s, fail, (f) => later.push(f));
+    const reply = saveSettings({ vessel: { waveFactor: 0.5 } }, s, fail, (f) => later.push(f));
     expect(reply).toEqual({ status: 202, body: { restarting: true } });
     expect(restarts).toEqual([]);
     later.forEach((f) => f());
-    expect(restarts).toEqual([{ ...current, vessel: { draft: 2, keel: "fin" } }]);
+    expect(restarts).toEqual([{ ...current, vessel: { draft: 2, waveFactor: 0.5 } }]);
   });
 
   test("a bad patch is refused 400 and nothing restarts", () => {

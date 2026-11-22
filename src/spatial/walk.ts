@@ -52,6 +52,13 @@ export interface Walk {
     chart?: Omit<ChartReach, "extent">;
   };
   stopWhenCertain: boolean;
+  /**
+   * With `sweptOnly` (`pyramid.ts`): whether a tile within the buffer is water no sweep or
+   * dredging covers. A split tile carrying SWEPT or DREDGED is then descended, so every tile
+   * taken answers for itself.
+   */
+  sweptOnly?: boolean;
+  unswept?: boolean;
   /** With chart position: the survey shadow around the footprint, searched on first use. */
   shadow?: ShadowOf;
   /** The source of the last P counted beyond the buffer (`pyramid.ts` reachRisk). */
@@ -113,7 +120,13 @@ export function weigh(w: Walk, t: NodeValues, z: number, x: number, y: number): 
   }
 }
 
+/** A swept or dredged tile: water a sweep or dredging covers all over. */
+export const SWEPT_FLAGS = FLAGS.SWEPT | FLAGS.DREDGED;
+
 export function take(w: Walk, v: NodeValues, z: number, x: number, y: number): void {
+  if (w.sweptOnly && (v.flags & SWEPT_FLAGS) === 0) {
+    w.unswept = true;
+  }
   fold(w, v, v.flags, z, x, y);
   if ((v.flags & FLAGS.NO_DEPTH) === 0) {
     w.coveredDMin = Math.min(w.coveredDMin, v.dMin);
@@ -137,6 +150,10 @@ export function takeStandIn(
   x: number,
   y: number
 ): void {
+  // A block not loaded says nothing of where its water is swept.
+  if (w.sweptOnly) {
+    w.unswept = true;
+  }
   const flags = v.flags | FLAGS.NO_COVERAGE;
   fold(w, v, flags, z, x, y);
   if (s.covered === Infinity) {

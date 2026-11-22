@@ -6,7 +6,9 @@ import { EARTH_RADIUS } from "../foundation/geo";
 import type { GeoJsonFeatureCollection } from "./s57-geojson";
 import type { Bbox, WfsFeature, WfsFetch } from "./wfs-fetch";
 import type { Limit } from "./wfs-fetch";
-import { fetchLayer, limiter, num, readableLine, retried, WFS_LIMITS } from "./wfs-fetch";
+import { fetchLayer, limiter, num, retried, WFS_LIMITS } from "./wfs-fetch";
+import { fairwayGaps } from "./fairway-gaps";
+import { fetchLines, fetchSweptAreas } from "./wfs-ftia";
 
 export type { Bbox, ByteStream, WfsFetch } from "./wfs-fetch";
 export { WFS_LIMITS } from "./wfs-fetch";
@@ -30,7 +32,6 @@ export const DEFAULT_WFS_URL = "https://julkinen.traficom.fi/inspirepalvelu/rajo
  * lines are the cell's `NAVLINE` layer, the lines a planner keeps to.
  */
 export const FTIA_WFS_URL = "https://avoinapi.vaylapilvi.fi/vaylatiedot/ows";
-const FTIA_LINES = "vesivaylatiedot:navigointilinjat_uusi";
 export const WFS_NOTICE =
   "depths from the Traficom WFS: not for navigational purposes; no rocks, wrecks or survey quality";
 
@@ -178,6 +179,8 @@ function soundings(features: WfsFeature[]): unknown[] {
 export interface WfsLayers {
   depthAreas: WfsFeature[];
   dredgedAreas: WfsFeature[];
+  /** Areas swept to a depth (the FTIA's fairway areas): SWPARE as well as DRGARE. */
+  sweptAreas?: WfsFeature[];
   soundings: WfsFeature[];
 }
 
@@ -202,6 +205,7 @@ const inside = (p: unknown, [w, s, e, n]: Bbox): boolean => {
 export interface ClippedLayers {
   depthAreas: unknown[];
   dredgedAreas: unknown[];
+  sweptAreas?: unknown[];
   soundings: unknown[];
 }
 
@@ -223,6 +227,9 @@ export function clipTo(
     }
     for (const f of areas(l.dredgedAreas, p)) {
       out.dredgedAreas.push(f);
+    }
+    for (const f of areas(l.sweptAreas ?? [], p)) {
+      (out.sweptAreas ??= []).push(f);
     }
   }
   const points = soundings(l.soundings) as { geometry: { coordinates: unknown } }[];
@@ -293,6 +300,9 @@ export function cellLayers(
     ),
     DEPARE: collection(clipped.depthAreas),
     DRGARE: collection(clipped.dredgedAreas),
+    // A swept area's depth is guaranteed (SWEPT_SIGMA_D): written beside its DRGARE, which the
+    // depth area gives way to (`spatial/give-way.ts`).
+    ...(clipped.sweptAreas?.length && { SWPARE: collection(clipped.sweptAreas) }),
     SOUNDG: collection(clipped.soundings)
   };
 }
@@ -358,44 +368,6 @@ export interface WfsDownload {
    * of it), with the same fetch. Absent, the cell has no lines.
    */
   linesUrl?: string;
-}
-
-/** A navigation line as the cell keeps it: its geometry and the draft it is laid out for. */
-function navigationLine(f: WfsFeature): unknown {
-  return {
-    type: "Feature",
-    geometry: f.geometry,
-    properties: { mitoitussyvays: num(f.properties?.mitoitussyvays) }
-  };
-}
-
-/**
- * The navigation lines meeting `bbox`, or none when the FTIA's WFS fails: they are a planner's
- * preference, never a depth, so a cell is written without them rather than not at all.
- */
-async function fetchLines(d: WfsDownload, bbox: Bbox): Promise<unknown[] | undefined> {
-  if (d.linesUrl === undefined) {
-    return [];
-  }
-  try {
-    const features = await fetchLayer({
-      fetch: d.fetch,
-      base: d.linesUrl,
-      typeName: FTIA_LINES,
-      bbox,
-      limit: limiter(1),
-      sortBy: "navigointilinjaid",
-      ...(d.signal && { signal: d.signal })
-    });
-    // A malformed line would fail the cell's whole index build: lines are a preference, never a
-    // depth, so one that cannot be read is left out.
-    return features.filter(readableLine).map(navigationLine);
-  } catch (err) {
-    if (d.signal?.aborted) {
-      throw err;
-    }
-    return undefined;
-  }
 }
 
 const union = (a: Bbox, b: Bbox): Bbox => [
@@ -499,7 +471,19 @@ export async function downloadWfsCell(d: WfsDownload): Promise<{
     counts.soundings += l.soundings.length;
   }
   const lines = await fetchLines(d, d.bbox);
-  const layers = cellLayers(clipped, parts, d.now, d.catzoc);
-  writeCell(d.dir, lines && lines.length > 0 ? { ...layers, NAVLINE: collection(lines) } : layers);
+  const swept = await fetchSweptAreas(d, d.bbox);
+  const ftia = { depthAreas: [], dredgedAreas: swept, sweptAreas: swept, soundings: [] };
+  clipTo(ftia, parts, clipped, corridor);
+  counts.dredgedAreas += swept.length;
+  // The gaps the swept areas leave along the lines, under a bridge (`fairway-gaps.ts`): apart
+  // from the depths, for pilotage alone.
+  const gaps = fairwayGaps((lines ?? []) as WfsFeature[], swept);
+  const strips = parts.flatMap((p) => areas(gaps, p));
+  const layers = {
+    ...cellLayers(clipped, parts, d.now, d.catzoc),
+    ...(lines && lines.length > 0 && { NAVLINE: collection(lines) }),
+    ...(strips.length > 0 && { FAIRWAYGAP: collection(strips) })
+  };
+  writeCell(d.dir, layers);
   return { ...counts, lines: lines ? lines.length : false };
 }

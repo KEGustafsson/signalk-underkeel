@@ -94,6 +94,11 @@ export class Monitor {
   private readonly status: StatusReporter;
   /** The chart box around the vessel, named in no-coverage reasons and the plugin status. */
   chartBox?: () => ChartBoxView;
+  /**
+   * Runs after each tick, on the inputs the integrity check read then: a watcher runs before its
+   * delta is recorded, so it reads the previous fix.
+   */
+  afterTick?: () => void;
 
   constructor(
     private readonly app: App,
@@ -264,7 +269,7 @@ export class Monitor {
   }
 
   /** The navigation inputs that are still fresh, for living-chart samples. */
-  fresh(): Pick<RawSounding, "position" | "heading" | "hdop" | "methodQuality" | "roll" | "sog"> {
+  fresh(): Pick<RawSounding, "position" | "heading" | "hdop" | "methodQuality" | "sog"> {
     const now = this.clock.now();
     const limit = this.config.lookahead.staleAfter * 1000;
     const f = <T>(x: Sample<T> | undefined): T | undefined =>
@@ -275,7 +280,6 @@ export class Monitor {
       heading: f(n.heading),
       hdop: f(n.hdop),
       methodQuality: f(n.methodQuality),
-      roll: f(n.roll),
       sog: f(n.sog)
     };
   }
@@ -407,6 +411,7 @@ export class Monitor {
     this.checkGrounding(r);
     this.escape.after(raw.state, this.clock.now() - t0, escapable);
     this.report(r, this.chartBox?.().summary);
+    this.afterTick?.();
   }
 
   private report(r: LookaheadResult, boxNote?: string): void {

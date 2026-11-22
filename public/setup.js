@@ -292,24 +292,13 @@ function numberField(id, label, path, placeholder, hint) {
 
 function addedOnTop() {
   const d = s.data.defaults;
-  const cb = val("vessel.blockCoefficient") ?? d.blockCoefficient;
   const waves = val("vessel.waveFactor") ?? d.waveFactor;
-  const keel = val("vessel.keel") ?? "none";
-  // Squat in words: S = Cb·V²/100 m at V knots, here at the reference speed.
-  const squat = Math.round(cb * REFERENCE_KNOTS ** 2);
   return h(
     "div",
     { class: "facts" },
     h("b", { style: "color:var(--ink)" }, "Added on top, automatically"),
-    h("div", {}, `Squat: sits ${squat} cm deeper at ${REFERENCE_KNOTS} kn, 0 when stopped`),
-    h("div", {}, `Waves: ${waves} × wave height, when Signal K has it`),
-    h(
-      "div",
-      {},
-      keel === "none"
-        ? "No credit for heel: the keel always counts at full depth"
-        : `Heel credit on (${keel}, set under expert settings)`
-    )
+    h("div", {}, `Waves: ${waves} × wave height`),
+    h("div", {}, "No squat, no heel: the keel always counts at full depth")
   );
 }
 

@@ -41,10 +41,9 @@ describe("admin form", () => {
   test("the flat schema holds every setting once, without showExpert", () => {
     const all = fields(SCHEMA as Schema);
     expect(new Set(all).size).toBe(all.length);
-    expect(all).toHaveLength(58);
+    expect(all).toHaveLength(56);
     expect(all).not.toContain("showExpert");
     for (const f of [
-      "vessel.heelTable",
       "waterLevel.height",
       "waterLevel.datums",
       "livechart.sounderModel",
@@ -79,12 +78,13 @@ describe("admin form", () => {
     expect(preset.map((f) => f && "default" in f)).toEqual(preset.map(() => false));
   });
 
-  // Safety: heel is the one term that lowers the draft, so it is off unless chosen.
-  test("heel gives no credit unless set: the keel counts at full depth", () => {
-    expect((SCHEMA as Schema).properties?.vessel?.properties?.keel).toMatchObject({
-      default: "none"
-    });
-    expect(parseConfig({}).dynamics.heel).toEqual({ kind: "none" });
+  // Safety: heel would be the one term that lowers the draft; there is none to set.
+  test("no heel or squat setting: the keel counts at full depth", () => {
+    const vessel = (SCHEMA as Schema).properties?.vessel?.properties ?? {};
+    for (const gone of ["keel", "heelTable", "blockCoefficient", "confined"]) {
+      expect(vessel).not.toHaveProperty(gone);
+    }
+    expect(parseConfig({}).dynamics).not.toHaveProperty("heel");
   });
 
   test("the warning style is a radio choice defaulting to balanced", () => {

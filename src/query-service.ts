@@ -65,11 +65,7 @@ export async function query(
   if (!vessel) {
     return { status: 422, body: { errors: ["vessel draft not configured"] } };
   }
-  const terms = vesselTerms(
-    vessel,
-    { speed: req.speed ?? 0, waveHeight: deps.waveHeight() },
-    deps.config.dynamics
-  );
+  const terms = vesselTerms(vessel, { waveHeight: deps.waveHeight() }, deps.config.dynamics);
   const index = deps.index as ChartIndex;
   return await queue.run(client, () =>
     Promise.resolve({
@@ -193,11 +189,7 @@ function tileInput(
   deps: QueryServiceDeps
 ): { inside: UkcTileInput; beyond?: UkcTileInput; inputs: TileInputs } {
   const levels = deps.levelRegimes();
-  const terms = vesselTerms(
-    vessel,
-    { speed: 0, waveHeight: deps.waveHeight() },
-    deps.config.dynamics
-  );
+  const terms = vesselTerms(vessel, { waveHeight: deps.waveHeight() }, deps.config.dynamics);
   const { thresholds } = deps.config.lookahead;
   const inputFor = (wl: WaterLevel): UkcTileInput => {
     const exact = sigmaExtra(terms, wl);

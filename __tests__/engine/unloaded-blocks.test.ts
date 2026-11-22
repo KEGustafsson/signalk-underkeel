@@ -180,7 +180,7 @@ describe("query", () => {
     queryUkc(i, {
       ring,
       bufferMetres: buffer,
-      terms: vesselTerms({ draft, length: 12, beam: 4 }, { speed: 0 }, DEFAULT_DYNAMICS),
+      terms: vesselTerms({ draft, length: 12, beam: 4 }, {}, DEFAULT_DYNAMICS),
       waterLevel: CHART_DATUM,
       thresholds: DEFAULT_LOOKAHEAD.thresholds
     });

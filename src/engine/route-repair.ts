@@ -199,7 +199,7 @@ function* searchSteps(
   const start = Date.parse(leg.eta.start);
   const reach = start + (((grid.nx + grid.ny) * grid.cell) / speed) * 1000;
   const wl = input.waterLevel(start, Math.max(Date.parse(leg.eta.end), reach), [leg.from, leg.to]);
-  const terms = vesselTerms(input.vessel, { speed, waveHeight: input.waveHeight }, input.dynamics);
+  const terms = vesselTerms(input.vessel, { waveHeight: input.waveHeight }, input.dynamics);
   const risk = { threshold: thresholdDepth(terms, wl), sigmaExtra: sigmaExtra(terms, wl) };
   /** The cost of the water in `geom`; undefined, not queried, once the search's work is spent. */
   const query = (geom: Geom, bufferMetres?: number): number | undefined => {

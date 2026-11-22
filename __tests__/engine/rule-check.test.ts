@@ -297,9 +297,9 @@ describe("rule features", () => {
     const text = serializeRules(index);
     expect(isCurrentRules(text.slice(0, 512))).toBe(true);
     expect(readRules(text).features()).toEqual(index.features());
-    expect(() => readRules(text.replace('"version":2', '"version":3'))).toThrow();
+    expect(() => readRules(text.replace('"version":3', '"version":4'))).toThrow();
     // An earlier version still loads, for an index whose cells are away, and is not current.
-    const v1 = text.replace('"version":2', '"version":1');
+    const v1 = text.replace('"version":3', '"version":1');
     expect(readRules(v1).features()).toEqual(index.features());
     expect(isCurrentRules(v1.slice(0, 512))).toBe(false);
     expect(() => readRules(text.replace('"count":1', '"count":2'))).toThrow();
@@ -386,6 +386,32 @@ describe("what a planner keeps to", () => {
       twoWay: true,
       designDraft: 2.4
     });
+  });
+});
+
+describe("a fairway gap strip", () => {
+  test("is read with its depth, listed as no chart object, and read by no verdict", () => {
+    const ring = [
+      [22, 60],
+      [22.1, 60],
+      [22.1, 60.1],
+      [22, 60]
+    ];
+    const layer = {
+      type: "FeatureCollection" as const,
+      features: [
+        {
+          type: "Feature" as const,
+          geometry: { type: "Polygon" as const, coordinates: [ring] },
+          properties: { DRVAL1: 2.7, LNAM: "G" }
+        }
+      ]
+    };
+    const [strip] = parseRuleLayer("FAIRWAYGAP", layer, 1);
+    expect(strip).toMatchObject({ objectClass: "FAIRWAYGAP", depth: 2.7, cellRef: 1, lnam: "G" });
+    const index = withRules([{ objectClass: "FAIRWAYGAP", geom: OVER, cellRef: 0, depth: 0.5 }]);
+    expect(leg(index, input({}, 30))).toEqual(leg(withRules([]), input({}, 30)));
+    expect(chartObjects(index, [22.0, 60.0], [22.05, 60.02])).toEqual([]);
   });
 });
 

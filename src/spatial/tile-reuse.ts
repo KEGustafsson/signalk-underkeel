@@ -13,6 +13,7 @@ import { NodeStore } from "./node-store";
 import type { Evaluated, RootRange, TakeTile } from "./pyramid-build";
 import { cellsReaching } from "./pyramid-regions";
 import { bodyColumns, PYRAMID_VERSION } from "./store";
+import { edgeZoomFor } from "./build-items";
 
 /**
  * Reuse of a saved box index's tiles when the box moves (plan §4.2). The
@@ -187,7 +188,8 @@ export class RegionTiles {
     this.maxZoom = Math.min(DIGEST_MAX_ZOOM, zooms.leafZoom);
     if (saved) {
       this.saved = {
-        store: NodeStore.fromColumns(zooms.minZoom, zooms.leafZoom, saved.cols),
+        // Saved down to the edge zoom of the leaf zoom it was built at.
+        store: NodeStore.fromColumns(zooms.minZoom, edgeZoomFor(zooms.leafZoom), saved.cols),
         digests: new Map(saved.digests.map(([z, key, d]) => [digestKey(z, key), d])),
         list: saved.digests
       };

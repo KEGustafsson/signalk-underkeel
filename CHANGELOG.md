@@ -6,6 +6,43 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Added
 
+- Swept fairways: with the FTIA's lines, the Traficom WFS cell takes the FTIA's fairway areas at
+  their swept depth as dredged areas, and a cell's depth areas give way to its dredged areas where
+  they cover a tile; tiles across their edges split two zooms finer than the leaf zoom. The
+  index is rebuilt once (pyramid version 12).
+- Gaps a swept fairway leaves under a bridge get a strip along its navigation line, at most 10 m
+  each side, at the line's safe clearance depth (`haraussyvyys`; its design draft where it states
+  none), never deeper than the sweeps it reaches into, where the line and those sweeps state one
+  reference level (`vertaustaso`), and never across a hole in them (plan §4.11, swept fairways
+  and pilotage). The FTIA's areas are swept areas too, so a tile the sweeps cover side by side
+  keeps the swept σ.
+- Pilotage (`pilotage: true` in a route check or planning session, feature `pilotage`): boxes
+  and legs in swept or dredged water all through are checked at the planned pilotage buffer, kp ·
+  the planning σ, at least 2 m, flagged `PILOTAGE`; the rest at the least position buffer. The
+  planning σ is the new **Planned position σ for pilotage** (1.5 m), or the 95th percentile of the
+  boat's own measured fix over the last week when that is wider (`fix-history.json`): a plan never
+  reads the fix of the moment. Each piloted leg carries `pilotage: { buffer, room }`, its room the
+  widest buffer it still passes at. Through a fairway gap only pilotage reads the strip: the
+  stretch of a leg whose corridor at that buffer lies inside the strip is held to the strip's
+  depth, so the leg keeps to the line; a check without pilotage reads the gap at its charted
+  depth. The cell keeps the strips as `FAIRWAYGAP`, in `rules.json` (version 3: an index saved
+  before it is rebuilt once).
+- No heel: roll never lifts or deepens the keel, which counts at full depth upright and heeled.
+  The **Heel effect on draft** and **Heel table** settings are gone (saved values are ignored),
+  and the explanation and its sentence no longer name heel. Roll (`navigation.attitude`) is no
+  longer read, and the living chart's quality gate no longer drops soundings above 15° of roll:
+  it only ever marks water shallower than charted, and a heeled transducer reads deeper.
+- No squat: the keel is no deeper under way. Barrass's ship formula overstated a small boat's
+  sinkage and grew without bound toward planing speed; the margin and the draft's σ cover the few
+  centimetres there are. The **Block coefficient Cb** and **Double squat** settings are gone (saved
+  values are ignored), the explanation and its sentence no longer name squat, and `POST /query`
+  ignores `speed`.
+- A route check or planning session allows for the request's `waveHeight`, else the new
+  **Planned significant wave height** (0 m), never the wave sensor of the moment; the
+  look-ahead keeps the measured waves.
+- Underway, on a swept leg of the active route, a live fix wider than the leg's room, or a failing
+  integrity check, raises `notifications.navigation.underKeel.pilotage` at `warn`.
+
 - The navigation-safety service schema accepts `routePlan` in `provides`; a provider that only
   plans routes, as signalk-route-planner does, may leave out `statePath` and `notificationPath`.
 - What a planner keeps to: leading lines, recommended tracks and anchorage areas from the charts,

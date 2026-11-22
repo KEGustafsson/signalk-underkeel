@@ -1,6 +1,7 @@
 import { LIMITS } from "./api/route-request";
 import type { ApiReply } from "./api/routes";
-import { checkFootprint, checkLeg, RING_REACH } from "./engine/route-check";
+import { checkFootprint, checkLeg } from "./engine/route-check";
+import { areaKm2, grownBox } from "./planning-geometry";
 import type { RouteCheckInput } from "./engine/route-check";
 import type { LonLat } from "./foundation/geo";
 import { EARTH_RADIUS, haversine } from "./foundation/geo";
@@ -9,7 +10,8 @@ import type { HeldBox, PlanningBoxes } from "./planning-box";
 import { carryAdjustments, holds, regionError } from "./planning-box";
 import { type ChartObject, sessionObjects } from "./planning-objects";
 import type { RouteQueue, RouteServiceDeps } from "./route-service";
-import { routeCheck, vesselFor } from "./route-service";
+import { pilotFor, routeCheck, vesselFor } from "./route-service";
+import { pilotedBox } from "./engine/pilotage";
 import type { SurveyResult } from "./planning-survey";
 import { corridorError, surveyOver } from "./planning-survey";
 import { growBbox } from "./spatial/build-box";
@@ -52,6 +54,10 @@ export interface SessionParams {
   draft?: number;
   /** Air height, metres, in place of the vessel's: bridges and overhead cables are held to it. */
   airHeight?: number;
+  /** Feature "pilotage": swept water at the pilotage buffer (`engine/pilotage.ts`). */
+  pilotage?: boolean;
+  /** Significant wave height to allow for, metres; absent, the configured planned value. */
+  waveHeight?: number;
 }
 
 export interface Session {
@@ -101,7 +107,7 @@ export type PrepareResult =
   { ok: true; value: Prepared } | { ok: false; status: number; error: string };
 
 /** What this provider adds to version 1, for a planner to test before it calls it. */
-export const FEATURES = ["prepare", "corridor", "survey", "objects"] as const;
+export const FEATURES = ["prepare", "corridor", "survey", "objects", "pilotage"] as const;
 
 export interface PlanningApiV1 {
   readonly version: 1;
@@ -153,49 +159,7 @@ export interface PlanningApiV1 {
  */
 export const MAX_BOX_KM2 = 25;
 
-/**
- * How far the corridor of a leg with both ends in the box sw–ne may stray past it, beyond `r`:
- * the leg's great circle bows toward the pole by at most diag² · tan|φ| / 8R (φ the box's
- * poleward latitude), and its corridor is widened by that gap or drawn along it
- * (`legCorridors`). Doubled, and a metre more, for the chord gap between its points.
- */
-export function greatCircleBulge(sw: LonLat, ne: LonLat): number {
-  const diag = haversine(sw, ne);
-  const lat = (Math.max(Math.abs(sw[1]), Math.abs(ne[1])) * Math.PI) / 180;
-  return (2 * diag * diag * Math.tan(lat)) / (8 * EARTH_RADIUS) + 1;
-}
-
-/**
- * sw–ne grown on every side by the reach of a corridor ring past its leg's end (`RING_REACH`
- * half-widths: a diagonal leg's ring corner lies r√2 from its end) and by the great-circle
- * bulge of any leg inside it: it contains the r-buffer of the box and every corridor ring of
- * every leg whose ends lie in the box, so a leg inside a box is never riskier than the box.
- */
-export function grownBox(sw: LonLat, ne: LonLat, r: number): LonLat[] {
-  const k = Math.PI / 180;
-  const grow = r * RING_REACH + greatCircleBulge(sw, ne);
-  const dLat = grow / (EARTH_RADIUS * k);
-  const s = sw[1] - dLat;
-  const n = ne[1] + dLat;
-  const cos = Math.cos(Math.max(Math.abs(s), Math.abs(n)) * k);
-  const dLon = grow / (EARTH_RADIUS * k * Math.max(cos, 1e-6));
-  const w = sw[0] - dLon;
-  const e = ne[0] + dLon;
-  return [
-    [w, s],
-    [e, s],
-    [e, n],
-    [w, n]
-  ];
-}
-
-function areaKm2(ring: LonLat[]): number {
-  const k = Math.PI / 180;
-  const [w, s] = ring[0] as LonLat;
-  const [e, n] = ring[2] as LonLat;
-  const width = (e - w) * k * EARTH_RADIUS * Math.cos(((s + n) / 2) * k);
-  return (width * (n - s) * k * EARTH_RADIUS) / 1e6;
-}
+export { greatCircleBulge, grownBox } from "./planning-geometry";
 
 function pauseFor(signal: AbortSignal): () => Promise<void> {
   return () =>
@@ -234,6 +198,9 @@ export function paramsError(
   if (p.airHeight !== undefined && !within(p.airHeight, LIMITS.minAirHeight, LIMITS.maxAirHeight)) {
     return `airHeight must be ${LIMITS.minAirHeight}..${LIMITS.maxAirHeight} m`;
   }
+  if (p.waveHeight !== undefined && !within(p.waveHeight, 0, LIMITS.maxWaveHeight)) {
+    return `waveHeight must be 0..${LIMITS.maxWaveHeight} m`;
+  }
   return undefined;
 }
 
@@ -252,7 +219,8 @@ function inputFor(deps: RouteServiceDeps, p: SessionParams): RouteCheckInput | s
     dynamics: deps.config.dynamics,
     waterLevel: deps.waterLevel,
     ...(deps.highWater && { highWater: deps.highWater }),
-    waveHeight: deps.waveHeight(),
+    // A planned wave height, never the sensor's: the route is sailed later and elsewhere.
+    waveHeight: p.waveHeight ?? deps.config.routeCheck.waveHeight,
     probability: p.probability ?? deps.config.routeCheck.probability
   };
 }
@@ -266,6 +234,8 @@ function sessionFor(
   signal: AbortSignal
 ): Session {
   const halfWidth = input.xteLimit + input.planningBuffer;
+  // Read at each check, not at admission: the fix history may widen it while the session runs.
+  const piloted = (): RouteCheckInput => ({ ...input, ...pilotFor(p.pilotage, deps) });
   const whole: Window = { start: p.departure, end: p.until };
   let work = 0;
   return {
@@ -275,7 +245,10 @@ function sessionFor(
       if (areaKm2(ring) > MAX_BOX_KM2) {
         throw new RangeError(`box over ${MAX_BOX_KM2} km² with its buffer`);
       }
-      const v = checkFootprint(index, input, ring, p.speed, { ...window, at: ring });
+      const now = piloted();
+      const pilot = now.pilotBuffer;
+      const narrow = pilot === undefined ? undefined : grownBox(sw, ne, now.xteLimit + pilot);
+      const v = pilotedBox(index, now, { ring, narrow }, p.speed, window);
       work += v.work;
       return { status: v.status, risk: v.risk, flags: v.flags, worst: v.worst };
     },
@@ -287,7 +260,7 @@ function sessionFor(
       // The leg's own level is the window's lowest, whatever its arrival time.
       const high = deps.highWater;
       const leg = {
-        ...input,
+        ...piloted(),
         coordinates: [a, b],
         waterLevel: () => level(window, [a, b]),
         // The leg's clearances at the window's highest water, whatever its arrival time.

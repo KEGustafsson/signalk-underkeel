@@ -3,7 +3,6 @@ import { DEFAULT_GROUNDING } from "./engine/grounding-detect";
 import type { LookaheadOptions } from "./engine/lookahead";
 import type { LivechartConfig } from "./livechart-service";
 import { DEFAULT_LOOKAHEAD, LOOKAHEAD_LIMITS } from "./engine/lookahead";
-import type { HeelModel } from "./model/allowances";
 import type { DatumMapping } from "./ingest/datum";
 import { DEFAULT_DATUMS } from "./ingest/datum";
 import type { DynamicsOptions, VesselModel } from "./model/vessel";
@@ -72,6 +71,11 @@ export interface PluginConfig {
     xteLimit: number;
     /** A leg passes when P(UKC < 0) is below this. */
     probability: number;
+    /**
+     * Significant wave height a route check or planning session allows for when a request gives
+     * none, metres: a planned value, never the wave sensor of the moment (`model/allowances.ts`).
+     */
+    waveHeight: number;
   };
 }
 
@@ -100,7 +104,12 @@ export interface WaterLevelConfig {
   datums: DatumMapping[];
 }
 
-export const DEFAULT_ROUTE_CHECK = { speed: 2.5, xteLimit: 30, probability: 0.01 } as const;
+export const DEFAULT_ROUTE_CHECK = {
+  speed: 2.5,
+  xteLimit: 30,
+  probability: 0.01,
+  waveHeight: 0
+} as const;
 
 function num(v: unknown, fallback: number, min = -Infinity, max = Infinity): number {
   return typeof v === "number" && Number.isFinite(v) && v >= min && v <= max ? v : fallback;
@@ -126,27 +135,9 @@ function degrees(v: unknown, fallback: number, min: number, max: number): number
   return Number.isNaN(d) ? fallback : d * DEG;
 }
 
-/** Heel gives no credit unless the configuration sets a heel model: the keel counts at full depth. */
-function heelModel(v: Record<string, unknown>): HeelModel {
-  if (v.keel === "fin") {
-    return { kind: "fin" };
-  }
-  if (v.keel === "table" && Array.isArray(v.heelTable)) {
-    const points = v.heelTable
-      .map(record)
-      .filter((p) => typeof p.heel === "number" && typeof p.delta === "number")
-      .map((p) => ({ heel: (p.heel as number) * DEG, delta: p.delta as number }));
-    return points.length > 0 ? { kind: "table", points } : { kind: "none" };
-  }
-  return { kind: "none" };
-}
-
 function parseDynamics(v: Record<string, unknown>): DynamicsOptions {
   const d = DEFAULT_DYNAMICS;
   return {
-    blockCoefficient: num(v.blockCoefficient, d.blockCoefficient, 0, 1),
-    confined: v.confined === true,
-    heel: heelModel(v),
     waveFactor: num(v.waveFactor, d.waveFactor, 0, 2),
     draftSigma: num(v.draftSigma, d.draftSigma, 0, 5),
     margin: num(v.margin, d.margin, 0, 10)
@@ -197,6 +188,7 @@ function parseLookahead(l: Record<string, unknown>, style: WarningStyle): Lookah
     minHorizon: Math.min(num(l.minHorizon, d.minHorizon, 0), LOOKAHEAD_LIMITS.minHorizon),
     positionBuffer: num(l.positionBuffer, d.positionBuffer, 0),
     kp: num(l.kp, d.kp, 0, 5),
+    planSigma: num(l.planSigma, d.planSigma, 0.1, 20),
     sigmaCog: degrees(l.sigmaCog, d.sigmaCog, 0, 45),
     sigmaRot: degrees(l.sigmaRot, d.sigmaRot, 0, 10),
     maxTurnRate: degrees(l.maxTurnRate, d.maxTurnRate, 0.1, 30),
@@ -297,7 +289,8 @@ export function parseConfig(raw: unknown): PluginConfig {
         DEFAULT_ROUTE_CHECK.probability,
         LIMITS.minProbability,
         LIMITS.maxProbability
-      )
+      ),
+      waveHeight: num(rc.waveHeight, DEFAULT_ROUTE_CHECK.waveHeight, 0, LIMITS.maxWaveHeight)
     }
   };
 }

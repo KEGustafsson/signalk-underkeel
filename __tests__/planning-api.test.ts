@@ -20,6 +20,7 @@ import {
   seedFixtureIndex
 } from "./helpers/fixture-index";
 import { fakeApp, fakeClock, T0 } from "./helpers/plugin-harness";
+import { BRIDGE_GAP, bridgedChannel, CHANNEL_LAT, gappedChannel } from "./helpers/swept-channel";
 
 /** The in-process planning API signalk-route-planner searches against. */
 
@@ -33,7 +34,6 @@ function deps(over: Partial<RouteServiceDeps> = {}): RouteServiceDeps {
     config: parseConfig({}),
     vessel: () => ({ draft: 3.6, length: 12, beam: 4 }),
     waterLevel: () => ({ h: 0, sigma: 0.3, source: "chart-datum" }),
-    waveHeight: () => undefined,
     getRoute: () => Promise.reject(new Error("no routes")),
     now: () => NOW,
     queue: new RequestQueue(),
@@ -150,6 +150,9 @@ describe("planning API v1", () => {
     [{ draft: 0 }, /draft must be/],
     [{ airHeight: 0 }, /airHeight must be/],
     [{ airHeight: 101 }, /airHeight must be/],
+    [{ waveHeight: -0.1 }, /waveHeight must be/],
+    [{ waveHeight: 10.1 }, /waveHeight must be/],
+    [{ waveHeight: Number.NaN }, /waveHeight must be/],
     [{ until: NOW - 1 }, /until not before departure/],
     [{ departure: Number.NaN }, /finite epoch ms/]
   ])("a session with %p is refused before it starts", async (over, message) => {
@@ -215,6 +218,75 @@ describe("planning API v1", () => {
       expect.objectContaining({ class: "BRIDGE", clearance: 18 })
     ]);
     expect(tall.features).toContain("objects");
+  });
+
+  test("each pilotage check takes the fix as it is then, the least buffer once it fails", async () => {
+    let buffer: number | undefined = 3;
+    const swept = planningApi(
+      () =>
+        deps({
+          index: gappedChannel(),
+          vessel: () => ({ draft: 1.5, length: 8, beam: 2.5 }),
+          pilotBuffer: () => buffer
+        }),
+      "test"
+    );
+    const sw: LonLat = [22.002, CHANNEL_LAT];
+    const ne: LonLat = [22.007, CHANNEL_LAT];
+    // A grown box reaches r·√2 plus a metre past sw–ne: at xteLimit 0 it stays in the channel.
+    const params = { departure: NOW, until: NOW + HOUR, speed: 3, xteLimit: 0 };
+    const r = await swept.session({ ...params, pilotage: true }, NEVER, async (s) => {
+      const good = { box: s.box(sw, ne), leg: s.segment(sw, ne) };
+      buffer = undefined;
+      const lost = { box: s.box(sw, ne), leg: s.segment(sw, ne) };
+      buffer = 3;
+      return { good, lost, back: s.segment(sw, ne) };
+    });
+    const least = await swept.session(params, NEVER, async (s) => ({
+      box: s.box(sw, ne),
+      leg: s.segment(sw, ne)
+    }));
+    if (!r.ok || !least.ok) {
+      throw new Error("session refused");
+    }
+    expect(r.value.good.box.flags).toContain("PILOTAGE");
+    expect(r.value.good.leg.flags).toContain("PILOTAGE");
+    expect(r.value.lost).toEqual(least.value);
+    expect(least.value.leg.flags).not.toContain("PILOTAGE");
+    expect(r.value.back.flags).toContain("PILOTAGE");
+  });
+
+  test("a pilotage session holds a leg through a fairway gap to its strip while the fix is good", async () => {
+    let buffer: number | undefined = 3;
+    const bridged = planningApi(
+      () =>
+        deps({
+          index: bridgedChannel(),
+          vessel: () => ({ draft: 1.5, length: 8, beam: 2.5 }),
+          pilotBuffer: () => buffer
+        }),
+      "test"
+    );
+    const a: LonLat = [22.006, CHANNEL_LAT];
+    const b: LonLat = [22.014, CHANNEL_LAT];
+    const mid = (BRIDGE_GAP[0] + BRIDGE_GAP[1]) / 2;
+    const sw: LonLat = [mid - 0.0002, CHANNEL_LAT];
+    const ne: LonLat = [mid + 0.0002, CHANNEL_LAT];
+    const params = { departure: NOW, until: NOW + HOUR, speed: 3, xteLimit: 0 };
+    const r = await bridged.session({ ...params, pilotage: true }, NEVER, async (s) => {
+      const good = { leg: s.segment(a, b), box: s.box(sw, ne) };
+      buffer = undefined;
+      return { good, lost: s.segment(a, b) };
+    });
+    const plain = await bridged.session(params, NEVER, async (s) => s.segment(a, b));
+    if (!r.ok || !plain.ok) {
+      throw new Error("session refused");
+    }
+    expect(r.value.good.leg.status).toBe("ok");
+    expect(r.value.good.leg.flags).toContain("PILOTAGE");
+    expect(r.value.good.box.flags).toContain("PILOTAGE");
+    expect(r.value.lost.status).toBe("fail");
+    expect(r.value.lost).toEqual(plain.value);
   });
 
   test("a leg whose corridor is over 25 km² is refused", async () => {

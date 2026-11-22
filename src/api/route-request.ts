@@ -19,6 +19,8 @@ export const LIMITS = {
   maxCorridorKm2: 200,
   minSpeed: 0.1,
   maxSpeed: 30,
+  /** Significant wave height a request may plan for, metres. */
+  maxWaveHeight: 10,
   maxXte: 2000,
   minDraft: 0.01,
   maxDraft: 30,
@@ -44,6 +46,10 @@ export interface RouteRequest {
   airHeight?: number;
   /** Accept threshold for P(UKC < 0). */
   probability?: number;
+  /** Significant wave height to allow for, metres; absent, the configured planned value. */
+  waveHeight?: number;
+  /** Check legs in swept or dredged water at the pilotage buffer (`engine/pilotage.ts`). */
+  pilotage?: boolean;
 }
 
 export type Parsed<T> = { ok: true; value: T } | { ok: false; errors: string[] };
@@ -144,8 +150,28 @@ export function parseRouteRequest(body: unknown, now: number = Date.now()): Pars
       errors.push(`probability must be ${LIMITS.minProbability}..${LIMITS.maxProbability}`);
     }
   }
+  plannedWaves(b.waveHeight, req, errors);
+  if (b.pilotage !== undefined) {
+    if (typeof b.pilotage === "boolean") {
+      req.pilotage = b.pilotage;
+    } else {
+      errors.push("pilotage must be true or false");
+    }
+  }
   vesselOverrides(b.vessel as Record<string, unknown> | undefined, req, errors);
   return errors.length > 0 ? { ok: false, errors } : { ok: true, value: req };
+}
+
+/** The request's planned significant wave height, checked. */
+function plannedWaves(v: unknown, req: RouteRequest, errors: string[]): void {
+  if (v === undefined) {
+    return;
+  }
+  if (inRange(v, 0, LIMITS.maxWaveHeight)) {
+    req.waveHeight = v;
+  } else {
+    errors.push(`waveHeight must be 0..${LIMITS.maxWaveHeight} m`);
+  }
 }
 
 /** The request's `vessel.draft` and `vessel.airHeight`, each checked. */

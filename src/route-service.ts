@@ -36,8 +36,6 @@ export interface RouteServiceDeps {
    * applies. With `area`, `at` is a convex ring and the level holds inside it too.
    */
   waterLevel(start: number, end: number, at: readonly LonLat[], area?: boolean): WaterLevel;
-  /** Current significant wave height, if known, metres. */
-  waveHeight(): number | undefined;
   /**
    * `waterLevel` related to the vertical datums of `cells` rather than the index in use's: for
    * another index's queries (a planning box). Absent, `waterLevel` serves them too.
@@ -52,6 +50,8 @@ export interface RouteServiceDeps {
   getRoute(id: string): Promise<unknown>;
   now(): number;
   queue: RouteQueue;
+  /** The pilotage buffer while the fix is good (`engine/pilotage.ts`); none otherwise. */
+  pilotBuffer?(): number | undefined;
   /** The box the index in use was built in around the vessel; none for a whole index. */
   chartBox?: () => Bbox | undefined;
   /** The box saved with the index in use (`box.json`), known before the box service's. */
@@ -119,12 +119,19 @@ export function vesselFor(
   };
 }
 
+interface PreparedCheck {
+  index: ChartIndex;
+  /** Without a pilotage buffer: `atStart` adds the planned one when the job starts. */
+  input: RouteCheckInput;
+  pilotage: boolean | undefined;
+}
+
 /** Validates the request and resolves route, vessel and speeds into a route-check input. */
 async function prepare(
   body: unknown,
   deps: RouteServiceDeps,
   signal: AbortSignal
-): Promise<{ index: ChartIndex; input: RouteCheckInput } | ApiReply> {
+): Promise<PreparedCheck | ApiReply> {
   const parsed = parseRouteRequest(body, deps.now());
   if (!parsed.ok) {
     return { status: 400, body: { errors: parsed.errors } };
@@ -153,6 +160,7 @@ async function prepare(
   }
   return {
     index: deps.index,
+    pilotage: req.pilotage,
     input: {
       coordinates: coords,
       departure: req.departure ?? deps.now(),
@@ -163,10 +171,28 @@ async function prepare(
       dynamics: deps.config.dynamics,
       waterLevel: deps.waterLevel,
       ...(deps.highWater && { highWater: deps.highWater }),
-      waveHeight: deps.waveHeight(),
+      // A planned wave height, never the sensor's: the route is sailed later and elsewhere.
+      waveHeight: req.waveHeight ?? deps.config.routeCheck.waveHeight,
       probability: req.probability ?? deps.config.routeCheck.probability
     }
   };
+}
+
+/** The pilotage buffer for a request that asks for it, when there is one. */
+export function pilotFor(
+  asked: boolean | undefined,
+  deps: Pick<RouteServiceDeps, "pilotBuffer">
+): { pilotBuffer?: number } {
+  const buffer = asked === true ? deps.pilotBuffer?.() : undefined;
+  return buffer === undefined ? {} : { pilotBuffer: buffer };
+}
+
+/**
+ * The request's input with the planned pilotage buffer as its job starts
+ * (`model/fix-history.ts`): the planning σ, never the fix of the moment.
+ */
+function atStart(p: PreparedCheck, deps: Pick<RouteServiceDeps, "pilotBuffer">): RouteCheckInput {
+  return { ...p.input, ...pilotFor(p.pilotage, deps) };
 }
 
 const isReply = (v: unknown): v is ApiReply => typeof (v as ApiReply).status === "number";
@@ -291,7 +317,7 @@ export async function routeCheck(
   return deps.queue.run(scoped, async (signal) => ({
     status: 200,
     body: explainOutsideBox(
-      await checkRouteYielding(p.index, p.input, deps.now(), pauseFor(signal)),
+      await checkRouteYielding(p.index, atStart(p, deps), deps.now(), pauseFor(signal)),
       deps.chartBox?.(),
       halfWidth
     )
@@ -313,7 +339,7 @@ export async function routeRepair(
     const checkedAt = new Date(deps.now()).toISOString();
     const { repairs, route } = await repairRoute(
       p.index,
-      p.input,
+      atStart(p, deps),
       DEFAULT_REPAIR,
       pauseFor(signal)
     );
@@ -350,7 +376,7 @@ export async function departureWindowReply(
     status: 200,
     body: await departureWindow(
       p.index,
-      p.input,
+      atStart(p, deps),
       from,
       to,
       opts.value.step * 1000,

@@ -18,9 +18,38 @@ import { DEFAULT_QUALITY, sigmaFor } from "./quality";
 
 /** What the pyramid build reads of each feature: its box, burn radius and indexed polygons. */
 
+/**
+ * The zoom a tile across a swept or dredged area's edge splits to: two finer than `leafZoom`,
+ * at most 22 (about 5 m at 60° N). A fairway swept to its marks is a few tens of metres wide, and
+ * a leaf of the general zoom across its edge holds the bank's depth too.
+ */
+export const edgeZoomFor = (leafZoom: number): number =>
+  Math.max(leafZoom, Math.min(22, leafZoom + 2));
+
+/** The options of the plugin's own builds at `leafZoom`: tiles across swept edges finer. */
+export const pluginBuild = (leafZoom: number): { leafZoom: number; edgeZoom: number } => ({
+  leafZoom,
+  edgeZoom: edgeZoomFor(leafZoom)
+});
+
+/** The pyramid's deepest zoom: the edge zoom when the build asks for one, else the leaf zoom. */
+export const deepestZoom = (opts: Pick<BuildOptions, "leafZoom" | "edgeZoom">): number =>
+  Math.max(opts.leafZoom, opts.edgeZoom ?? opts.leafZoom);
+
+/** The zoom a tile stops splitting at: the edge zoom across a swept area's edge, else the leaf. */
+export const stopZoom = (
+  sweptEdge: boolean,
+  opts: Pick<BuildOptions, "leafZoom" | "edgeZoom">
+): number => (sweptEdge ? deepestZoom(opts) : opts.leafZoom);
+
 export interface BuildOptions {
   minZoom: number;
   leafZoom: number;
+  /**
+   * The deepest zoom, for tiles across a swept or dredged area's edge: the plugin's builds ask
+   * for `edgeZoomFor(leafZoom)`; absent, the leaf zoom.
+   */
+  edgeZoom?: number;
   /** Point hazards and soundings outside assessed water are burned within k·σP of their position. */
   k: number;
   quality: QualityOptions;

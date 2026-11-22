@@ -33,7 +33,7 @@ describe("plugin configuration", () => {
       cellsDir: " ",
       rebuildIndex: true,
       leafZoom: 30,
-      vessel: { draft: 1.9, length: -3, beam: "4", margin: 0.2, blockCoefficient: 2, keel: "fin" },
+      vessel: { draft: 1.9, length: -3, beam: "4", margin: 0.2 },
       waterLevel: { source: "manual", height: -0.4, sigma: 0.05 },
       lookahead: { distance: -1, warnWithin: 20, alarmWithin: 45, alertRisk: 0.1, warnRisk: 0.02 },
       routeCheck: { probability: 0.9 }
@@ -43,11 +43,7 @@ describe("plugin configuration", () => {
     expect(c.rebuildIndex).toBe(true);
     expect(c.leafZoom).toBe(20);
     expect(c.vessel).toEqual({ draft: 1.9, length: undefined, beam: undefined });
-    expect(c.dynamics).toMatchObject({
-      margin: 0.2,
-      blockCoefficient: DEFAULT_DYNAMICS.blockCoefficient,
-      heel: { kind: "fin" }
-    });
+    expect(c.dynamics).toMatchObject({ margin: 0.2 });
     expect(c.waterLevel).toMatchObject({ source: "manual", height: -0.4, sigma: 0.05 });
     expect(c.lookahead.distance).toBe(DEFAULT_LOOKAHEAD.distance);
     // windows nest: warn is never narrower than alarm, certain never wider
@@ -100,17 +96,16 @@ describe("plugin configuration", () => {
     ]);
   });
 
-  test("a heel table is read in degrees", () => {
-    const c = parseConfig({
-      vessel: { keel: "table", heelTable: [{ heel: 20, delta: 0.1 }, { heel: "x" }] }
+  test("a saved heel or squat setting is ignored: the keel counts at full depth", () => {
+    const old = parseConfig({
+      vessel: {
+        keel: "table",
+        heelTable: [{ heel: 20, delta: -0.3 }],
+        blockCoefficient: 0.4,
+        confined: true
+      }
     });
-    expect(c.dynamics.heel).toEqual({
-      kind: "table",
-      points: [{ heel: (20 * Math.PI) / 180, delta: 0.1 }]
-    });
-    expect(parseConfig({ vessel: { keel: "table", heelTable: [] } }).dynamics.heel).toEqual({
-      kind: "none"
-    });
+    expect(old.dynamics).toEqual(parseConfig({}).dynamics);
   });
 
   test("the schema carries the advisory disclaimer", () => {

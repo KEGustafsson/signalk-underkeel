@@ -56,7 +56,7 @@ the attribution and the not-for-navigation notice in its footer.
 ```mermaid
 flowchart LR
   ENC[S-57 ENC cells<br/>.000 and updates] --> IDX[(Chart index<br/>built once,<br/>saved to disk)]
-  NAV[Signal K navigation<br/>position, COG, SOG,<br/>heading, roll, wave height] --> LA
+  NAV[Signal K navigation<br/>position, COG, SOG,<br/>heading, wave height] --> LA
   VES[Vessel<br/>draft, length, beam] --> Q
   WL[Water level<br/>none, manual,<br/>Signal K tide, FMI] --> Q
   IDX --> Q
@@ -211,9 +211,10 @@ The living chart is off by default. When it is on, the plugin reads the boat's d
 and keeps a running estimate of the depth in each cell of the index, about 76 m across at
 60° N:
 
-1. **Quality gate.** A sounding counts only with a satellite fix, HDOP below 2, roll within
-   15°, a plausible depth, a position measured within 2 s of the depth and a measured, not
-   fallback, water level.
+1. **Quality gate.** A sounding counts only with a satellite fix, HDOP below 2, a plausible
+   depth, a position measured within 2 s of the depth and a measured, not fallback, water level.
+   Roll is not read: a heeled transducer measures a slant, longer than the depth, and the living
+   chart only ever marks water shallower than charted.
 2. **Reduce to chart datum.** The water level at that moment is taken off the measured depth.
 3. **Update the cell.** The chart's depth and σ are the starting point; each sounding moves
    the estimate and narrows its σ.
@@ -262,20 +263,18 @@ charted depth.
 For each spot the plugin estimates the under-keel clearance (UKC) and how uncertain it is:
 
 ```text
-UKC = charted depth + water level − draft − heel change − squat − wave allowance − margin
-σ²  = σ_chart² + σ_water² + σ_draft² + σ_heel² + σ_squat² + σ_wave²
+UKC = charted depth + water level − draft − wave allowance − margin
+σ²  = σ_chart² + σ_water² + σ_draft² + σ_wave²
 P(UKC < 0) = Φ(−UKC / σ)          Φ = standard normal distribution
 ```
 
-| Term           | Source                                                          | σ                     |
-| -------------- | --------------------------------------------------------------- | --------------------- |
-| charted depth  | the index (section 4)                                           | CATZOC table          |
-| water level    | the configured source (section 8)                               | from the source       |
-| draft          | configuration or `design.draft.maximum`                         | 0.05 m by default     |
-| heel change    | `fin`: draft · (cos φ − 1); `table`: your heel table; `none`: 0 | 0                     |
-| squat          | Barrass: Cb · V² / 100 (V in knots), doubled when confined      | 30 % of the squat     |
-| wave allowance | 0.4 · significant wave height                                   | 50 % of the allowance |
-| margin         | **Extra safety margin under keel**, 0 m by default              | 0                     |
+| Term           | Source                                             | σ                     |
+| -------------- | -------------------------------------------------- | --------------------- |
+| charted depth  | the index (section 4)                              | CATZOC table          |
+| water level    | the configured source (section 8)                  | from the source       |
+| draft          | configuration or `design.draft.maximum`            | 0.05 m by default     |
+| wave allowance | 0.4 · significant wave height                      | 50 % of the allowance |
+| margin         | **Extra safety margin under keel**, 0 m by default | 0                     |
 
 P is the probability that the keel touches. The plugin compares P with three levels:
 **alert 1 %**, **warn 5 %**, **alarm 20 %** (configurable under **Look-ahead**).
@@ -283,11 +282,11 @@ P is the probability that the keel touches. The plugin compares P with three lev
 Worked example: leg 2 of the route in section 10 passes a 3 m depth area at 2.5 m/s.
 
 ```text
-charted 3 m (±0.53 m) + 0.2 m water level (manual) − draft 2.2 m − squat 0.09 m
-  + heel 0 m − wave 0 m → μ = 0.91 m, σ = 0.54 m, P = 4.75 %
+charted 3 m (±0.53 m) + 0.2 m water level (manual) − draft 2.2 m − wave 0 m
+  → μ = 1 m, σ = 0.54 m, P = 3.19 %
 ```
 
-The mean clearance is 0.91 m. With σ 0.54 m that leaves a 4.75 % chance of touching, which is
+The mean clearance is 1 m. With σ 0.54 m that leaves a 3.19 % chance of touching, which is
 above the route check's accepted 1 %. The notification message uses the same sentence, so the
 plotter shows which term decides the result.
 
@@ -366,13 +365,9 @@ envelope. The same distance takes longer, though: 154 s at 7 kn, 270 s at 4 kn. 
 count seconds to the shoal, so at lower speed they come closer to it. Below 0.5 kn, or when COG or
 SOG is stale, only the hull at the current position is checked.
 
-The look-ahead uses the higher of speed over ground and speed through water for squat, even
-when the course is stale. Heel counts only when a heel model is set under expert settings, from
-the roll of the last 10 s; by default the keel counts at full depth. A `fin`
-keel is lifted only by the least roll in that window, since a boat rolling through upright has
-its full draft at the bottom of each roll; a `table` keel takes the largest draft change over
-the rolls seen. Roll older than 10 s or above 60° counts as no roll: no lift for a `fin` keel,
-the largest change in the table for a `table` keel.
+Speed adds no depth: there is no squat term, since a small boat at its speeds sinks only a few
+centimetres, which the margin and the σ of the draft cover. Roll is not read: there is no heel
+term, and the keel counts at full depth whatever the boat's heel.
 
 ## 7. States, alarms and what you see
 
@@ -469,42 +464,9 @@ The notification is sent at once when its state, the kind of reason or the named
 changes. While those hold, a new countdown or term in its message goes out at most every 30 s;
 `navigation.underKeel.timeToShoal` carries the current countdown. Its `data.explanation`
 carries each term of the sentence as a number, plus the deciding chart cell and its edition,
-and the named hazard when one set the depth. The `alarm` from the approach:
-
-```json
-{
-  "state": "alarm",
-  "method": ["visual", "sound"],
-  "message": "shoal ahead in 18 s: land + 0.2 m water level (manual) − draft 2.2 m − squat 0.1 m + heel 0 m − wave 0 m → μ = −∞ m, σ = 0.51 m, P = > 99 %",
-  "data": {
-    "engineState": "alarm",
-    "clearance": null,
-    "clearanceSigma": 0.51,
-    "risk": 1,
-    "timeToShoal": 18,
-    "explanation": {
-      "charted": null,
-      "sigmaCharted": 0.5,
-      "flags": [],
-      "cell": { "name": "FI4WFS01", "edition": 1, "update": 0 },
-      "waterLevel": 0.2,
-      "sigmaWaterLevel": 0.1,
-      "waterLevelSource": "manual",
-      "draft": 2.2,
-      "heel": 0,
-      "squat": 0.1,
-      "wave": 0,
-      "margin": 0,
-      "mean": null,
-      "sigma": 0.51,
-      "risk": 1
-    }
-  }
-}
-```
-
-`clearanceSigma` is rounded here. The server adds `id` and `status` for acknowledging and
-silencing.
+and the named hazard when one set the depth. Its fields are in
+[`schemas/navigation-safety/notification.json`](../schemas/navigation-safety/notification.json).
+The server adds `id` and `status` for acknowledging and silencing.
 
 ### Escape heading
 
@@ -639,7 +601,7 @@ health and the datum mapping per cell.
 
 `GET /plugins/signalk-underkeel/v1/tiles/ukc/{z}/{x}/{y}.pbf` serves vector tiles from zoom 11,
 one layer `ukc`, every index cell classed for the current draft and the water level valid at
-that tile (section 8) at zero speed (no squat):
+that tile (section 8):
 
 | Class        | Colour | Rule                                                             |
 | ------------ | ------ | ---------------------------------------------------------------- |
@@ -711,7 +673,7 @@ flowchart TD
   R[route] --> L[for each leg]
   L --> C["corridor = leg ± cross-track limit 30 m<br/>+ position buffer 10 m;<br/>tiles beyond count by P × Φ(−g/σP)"]
   C --> W[lowest water level between<br/>arrival at the leg's start and end]
-  W --> Q["highest P(UKC &lt; 0) in the corridor<br/>with squat at the leg's speed"]
+  W --> Q["highest P(UKC &lt; 0) in the corridor"]
   Q --> F{"corridor touches land, or<br/>P ≥ 5 × accepted P<br/>(at most 50 %, at least accepted P)?"}
   F -- yes --> FAIL[fail]
   F -- no --> U{"no coverage, unassessed<br/>survey or no depth data?"}
@@ -729,10 +691,10 @@ from east to west at 2.5 m/s:
 | Leg | Status       | P(UKC < 0) | Shallowest charted | Why                                              |
 | --- | ------------ | ---------- | ------------------ | ------------------------------------------------ |
 | 1   | `unverified` | 0          | 10 m               | starts east of 22.15° E, outside the indexed box |
-| 2   | `marginal`   | 0.0475     | 3 m                | passes a 3 m depth area (section 5)              |
+| 2   | `marginal`   | 0.0319     | 3 m                | passes a 3 m depth area (section 5)              |
 | 3   | `ok`         | 0          | 10 m               | open water                                       |
 | 4   | `ok`         | 0          | 15 m               | open water                                       |
-| 5   | `ok`         | 0          | 6 m                | past a 6 m depth area, mean UKC 3.91 m           |
+| 5   | `ok`         | 0          | 6 m                | past a 6 m depth area, mean UKC 4 m              |
 | 6   | `fail`       | 1          | land               | the corridor crosses an island                   |
 
 Each leg also returns its length, ETA at both ends, minimum UKC, σ, flags, the deciding position

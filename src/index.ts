@@ -17,6 +17,10 @@ import type { Clock } from "./monitor";
 import { Monitor, SYSTEM_CLOCK } from "./monitor";
 import type { FetchLike } from "./model/fmi";
 import { AckStore } from "./ack-store";
+import type { PluginConfig } from "./config";
+import type { ChartIndex } from "./spatial/chart-index";
+import { FixHistoryStore } from "./fix-history-store";
+import { PilotageService } from "./pilotage-watch";
 import type { PluginState } from "./api-wiring";
 import { apiFor, routeDepsFor } from "./api-wiring";
 import { planningApi, registerPlanningApi } from "./planning-api";
@@ -53,6 +57,30 @@ function planningApiOf(app: ServerAPI, clock: Clock, state: PluginState) {
   return planningApi(deps, `signalk-underkeel ${VERSION}`, () => state.planning);
 }
 
+/**
+ * The fix history kept in the data directory and the pilotage watch (`pilotage-watch.ts`), run at
+ * each position `monitor` takes in, on the chart index `index` gives.
+ */
+function pilotageFor(
+  c: { app: ServerAPI; clock: Clock; config: PluginConfig; monitor: Monitor },
+  index: () => ChartIndex | undefined
+): PilotageService {
+  const { app, clock, config } = c;
+  const fixes = new FixHistoryStore(path.join(app.getDataDirPath(), "fix-history.json"));
+  if (fixes.error) {
+    app.error(fixes.error);
+  }
+  const p = new PilotageService(
+    fixes,
+    app,
+    PLUGIN_ID,
+    () => config.lookahead,
+    (m) => app.error(m)
+  );
+  p.attach(c.monitor, index, () => clock.now());
+  return p;
+}
+
 function stopPlugin(app: ServerAPI, clock: Clock, state: PluginState): void {
   state.requests.abortAll("plugin stopped");
   state.planning?.stop();
@@ -67,6 +95,8 @@ function stopPlugin(app: ServerAPI, clock: Clock, state: PluginState): void {
   }
   state.livechart = undefined;
   state.monitor?.stop();
+  state.pilotage?.stop(clock.now());
+  state.pilotage = undefined;
   // Without these the REST handlers would keep answering on the old index at chart datum.
   Object.assign(state, { monitor: undefined, load: undefined, config: undefined, acks: undefined });
   state.stopped = createStatus("off", "plugin stopped", new Date(clock.now()));
@@ -242,12 +272,13 @@ export = function underkeel(
         app.error(acks.error);
       }
       monitor.useAcks(acks);
+      const pilotage = pilotageFor({ app, clock, config, monitor }, () => state.load?.index);
       monitor.chartBox = wfs && (() => wfs.view());
       keepBlocksNearVessel(monitor, () => state.load?.index, clock, config.lookahead);
       const livechart = startLivechart(app, clock, config, load.index, monitor);
       monitor.start();
       Object.assign(state, { config, load, monitor, acks, livechart, wfs, zoneErrors: [] });
-      Object.assign(state, { planning, options: migration.config, restart });
+      Object.assign(state, { planning, pilotage, options: migration.config, restart });
       if ("load" in plan) {
         wfs?.start();
       } else {
