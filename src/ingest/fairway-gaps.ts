@@ -114,8 +114,8 @@ interface Sample {
   p: XY;
   /** Unit direction along the line here. */
   t: XY;
-  /** The area holding the point, or -1. */
-  area: number;
+  /** Every area holding the point. */
+  areas: number[];
   /** The least swept depth of the areas holding the point; Infinity in none. */
   depth: number;
   along: number;
@@ -139,7 +139,7 @@ function samplesOf(line: XY[], areas: Area[]): Sample[] {
       out.push({
         p,
         t,
-        area: holding[0] ?? -1,
+        areas: holding,
         depth: Math.min(...holding.map((k) => (areas[k] as Area).depth)),
         along: along + s
       });
@@ -162,16 +162,19 @@ function halves(s: Sample, a: Area): [number, number] {
 /**
  * The widest half-widths of area `area` over the samples within BACK metres of `at`: an area's
  * end across the fairway may be cut on the slant, so the last sample's cross-section meets it.
+ * A side where `at` lies on the area's edge stays 0: the samples further in reach past that edge
+ * once the strip runs on from `at`.
  */
 function widest(samples: Sample[], at: Sample, area: number, areas: Area[]): [number, number] {
-  let best: [number, number] = [0, 0];
+  const own = halves(at, areas[area] as Area);
+  let best = own;
   for (const s of samples) {
-    if (s.area === area && Math.abs(s.along - at.along) <= BACK) {
+    if (s.areas.includes(area) && Math.abs(s.along - at.along) <= BACK) {
       const h = halves(s, areas[area] as Area);
       best = [Math.max(best[0], h[0]), Math.max(best[1], h[1])];
     }
   }
-  return best;
+  return [own[0] === 0 ? 0 : best[0], own[1] === 0 ? 0 : best[1]];
 }
 
 /** The strip from sample `from` to sample `to` along `run`, left and right `half` metres. */
@@ -219,7 +222,8 @@ export function fairwayGaps(
 
 /**
  * The gaps along one line's samples: runs outside every area between two areas. A run that
- * leaves an area and comes back into it crosses a hole or a part the FTIA left out of it.
+ * leaves an area and comes back into it crosses a hole or a part the FTIA left out of it, also
+ * where another area overlaps it at either end.
  */
 function gapsAlong(
   samples: Sample[],
@@ -230,22 +234,27 @@ function gapsAlong(
   const out: WfsFeature[] = [];
   let i = 0;
   while (i < samples.length) {
-    if ((samples[i] as Sample).area !== -1 || i === 0) {
+    if ((samples[i] as Sample).areas.length > 0 || i === 0) {
       i++;
       continue;
     }
     let j = i;
-    while (j < samples.length && (samples[j] as Sample).area === -1) {
+    while (j < samples.length && (samples[j] as Sample).areas.length === 0) {
       j++;
     }
     const before = samples[i - 1] as Sample;
     const after = samples[j];
-    const between = after && before.area !== -1 && after.area !== before.area;
+    const [ka, kb] = [before.areas[0], after?.areas[0]];
+    const between =
+      after &&
+      ka !== undefined &&
+      kb !== undefined &&
+      !after.areas.some((k) => before.areas.includes(k));
     if (between && after.along - before.along <= GAP_MAX) {
-      const a = areas[before.area] as Area;
-      const b = areas[after.area] as Area;
-      const [al, ar] = widest(samples, before, before.area, areas);
-      const [bl, br] = widest(samples, after, after.area, areas);
+      const a = areas[ka] as Area;
+      const b = areas[kb] as Area;
+      const [al, ar] = widest(samples, before, ka, areas);
+      const [bl, br] = widest(samples, after, kb, areas);
       const half: [number, number] = [Math.min(al, bl), Math.min(ar, br)];
       if (half[0] > 0 && half[1] > 0 && Number.isFinite(half[0] + half[1])) {
         out.push({

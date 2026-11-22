@@ -81,6 +81,28 @@ describe("gaps in a swept fairway", () => {
     expect(fairwayGaps([line(2.1)], [north("A", 0, 150), north("B", 220, 400)])).toEqual([]);
   });
 
+  test("a gap ending on the areas' edge gets no strip outward of it, however wide further in", () => {
+    // Both areas lie north of y = 0; the line runs 2 m inside them and meets their edge at the gap.
+    const north = (id: string, x0: number, x1: number) => feature(id, [box(x0, x1, 0, 4)]);
+    const bent: WfsFeature = {
+      ...line(2.1),
+      geometry: {
+        type: "LineString",
+        coordinates: [0, 140, 142, 228, 230, 400].map((x, i) => [
+          22 + x * K,
+          60 + (i === 2 || i === 3 ? 0 : 2) * M
+        ])
+      }
+    };
+    const gaps = fairwayGaps([bent], [north("A", 0, 150), north("B", 220, 400)]);
+    const ys = gaps.flatMap((g) =>
+      ((g.geometry?.coordinates as number[][][])[0] as number[][]).map(
+        (p) => ((p[1] as number) - 60) / M
+      )
+    );
+    expect(ys.filter((y) => y < -1e-6)).toEqual([]);
+  });
+
   test("no strip across a hole in one area, nor where the line comes back into the same area", () => {
     const holed = feature("A", [box(0, 400, -20, 20), box(150, 220, -30, 30)]);
     expect(fairwayGaps([line(2.1)], [holed])).toEqual([]);
@@ -92,6 +114,17 @@ describe("gaps in a swept fairway", () => {
       }
     };
     expect(fairwayGaps([line(2.1)], [sides as WfsFeature])).toEqual([]);
+  });
+
+  test("no strip across a hole in an area another area overlaps, in either order", () => {
+    const holed = feature("A", [box(0, 400, -20, 20), box(150, 220, -30, 30)]);
+    const over = area("B", 100, 150);
+    for (const swept of [
+      [over, holed],
+      [holed, over]
+    ]) {
+      expect(fairwayGaps([line(2.1)], swept)).toEqual([]);
+    }
   });
 
   test("the strip takes the least depth of every sweep holding the line where it leaves and enters", () => {
