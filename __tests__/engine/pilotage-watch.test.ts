@@ -63,6 +63,9 @@ describe("the pilotage verdict", () => {
 describe("the active route", () => {
   test("its id from the course API's href, its legs from the route resource", () => {
     expect(routeIdOf("/resources/routes/ab%20c")).toBe("ab c");
+    expect(routeIdOf("/resources/routes/%C3%A5")).toBe("å");
+    expect(routeIdOf("/resources/routes/%")).toBeUndefined();
+    expect(routeIdOf("/resources/routes/a%E0%A4%A")).toBeUndefined();
     expect(routeIdOf("/resources/waypoints/x")).toBeUndefined();
     expect(routeIdOf(undefined)).toBeUndefined();
     const line = { feature: { geometry: { type: "LineString", coordinates: [...west, [1]] } } };
@@ -139,6 +142,22 @@ describe("the pilotage watch", () => {
     w.check(index, far, 3, 15);
     await flush();
     expect(w.check(index, far, 3, 15)).toBeUndefined();
+  });
+
+  test("an href whose id does not decode is no active route, and loads nothing", () => {
+    let loads = 0;
+    const app = {
+      getSelfPath: () => ({ value: { href: "/resources/routes/%" } }),
+      resourcesApi: {
+        getResource: () => {
+          loads++;
+          return Promise.reject(new Error("no such route"));
+        }
+      }
+    };
+    const w = new PilotageWatch(app as never);
+    expect(w.check(index, ON_LINE, 3, 15)).toBeUndefined();
+    expect(loads).toBe(0);
   });
 
   test("a failed load is asked for again ROUTE_RETRY_MS later, not before", async () => {

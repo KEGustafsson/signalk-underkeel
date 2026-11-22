@@ -46,6 +46,8 @@ const OVERLAP = 30;
 const REACH = 100;
 /** How near two rings' edges come before they meet, metres: rounding, not water. */
 const EPS = 1e-6;
+/** How far beside an edge `besideEdges` looks, metres: well inside any sweep or hole. */
+const NUDGE = 1e-3;
 
 type XY = [number, number];
 
@@ -365,14 +367,48 @@ function ringsMeet(a: XY[], b: XY[]): boolean {
   );
 }
 
+/**
+ * Points a little to each side of the middle of every piece the vertices of `other` cut the edges
+ * of `ring` into. Each piece lies wholly inside `other`, outside it or along one of its edges, so
+ * where the two insides overlap along an edge they share, a point beside that piece lies in both.
+ */
+function besideEdges(ring: XY[], other: XY[]): XY[] {
+  const out: XY[] = [];
+  for (const [a, b] of edgesOf(ring)) {
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (len <= EPS) {
+      continue;
+    }
+    const u: XY = [(b[0] - a[0]) / len, (b[1] - a[1]) / len];
+    const cuts = other
+      .filter((p) => pointSegmentDistance(p, a, b) <= EPS)
+      .map((p) => (p[0] - a[0]) * u[0] + (p[1] - a[1]) * u[1]);
+    const at = [0, len, ...cuts].sort((x, y) => x - y);
+    for (let i = 1; i < at.length; i++) {
+      const [t0, t1] = [at[i - 1] as number, at[i] as number];
+      const d = Math.min((t1 - t0) / 4, NUDGE);
+      if (d > 2 * EPS) {
+        const m: XY = [a[0] + (u[0] * (t0 + t1)) / 2, a[1] + (u[1] * (t0 + t1)) / 2];
+        out.push([m[0] - u[1] * d, m[1] + u[0] * d], [m[0] + u[1] * d, m[1] - u[0] * d]);
+      }
+    }
+  }
+  return out;
+}
+
 /** Whether the inside of ring `hole` reaches the inside of `ring`, past their shared edges. */
-function holeWithin(ring: XY[], hole: XY[]): boolean {
+export function holeWithin(ring: XY[], hole: XY[]): boolean {
   const deep = (p: XY, r: XY[]): boolean => inRing(p, r) && toRing(p, r) > EPS;
   if (hole.some((p) => deep(p, ring)) || ring.some((p) => deep(p, hole))) {
     return true;
   }
   const eh = edgesOf(hole);
-  return edgesOf(ring).some(([p, q]) => eh.some(([r, t]) => crosses(p, q, r, t, EPS)));
+  if (edgesOf(ring).some(([p, q]) => eh.some(([r, t]) => crosses(p, q, r, t, EPS)))) {
+    return true;
+  }
+  return [...besideEdges(ring, hole), ...besideEdges(hole, ring)].some(
+    (p) => deep(p, ring) && deep(p, hole)
+  );
 }
 
 /**

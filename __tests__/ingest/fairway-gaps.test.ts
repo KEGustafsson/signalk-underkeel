@@ -1,4 +1,4 @@
-import { fairwayGaps, HALF_MAX } from "../../src/ingest/fairway-gaps";
+import { fairwayGaps, HALF_MAX, holeWithin } from "../../src/ingest/fairway-gaps";
 import type { WfsFeature } from "../../src/ingest/wfs-fetch";
 
 /**
@@ -300,5 +300,26 @@ describe("gaps in a swept fairway", () => {
     expect(fairwayGaps([line(2.1, 2.7)], swept(past)).map((g) => g.properties?.DRVAL1)).toEqual([
       2.7
     ]);
+  });
+
+  test("a hole over the strip is found when their edges run together, one only touching is not", () => {
+    // Closed rings in the local plane, metres: every strip vertex on the hole's edge, every hole
+    // vertex outside the strip.
+    const rect = (x0: number, x1: number, y0: number, y1: number): [number, number][] => [
+      [x0, y0],
+      [x1, y0],
+      [x1, y1],
+      [x0, y1],
+      [x0, y0]
+    ];
+    const strip = rect(118, 250, -10, 10);
+    expect(holeWithin(strip, rect(110, 260, -10, 10))).toBe(true);
+    expect(holeWithin(strip, rect(118, 250, -10, 10))).toBe(true);
+    expect(holeWithin(strip, rect(150, 200, -10, 10))).toBe(true);
+    expect(holeWithin(strip, rect(150, 200, 0, 10))).toBe(true);
+    expect(holeWithin(strip, rect(110, 260, 10, 20))).toBe(false);
+    expect(holeWithin(strip, rect(150, 200, 10, 20))).toBe(false);
+    expect(holeWithin(strip, rect(250, 260, -10, 10))).toBe(false);
+    expect(holeWithin(strip, rect(250, 260, 10, 20))).toBe(false);
   });
 });

@@ -28,7 +28,14 @@ export function routeIdOf(href: unknown): string | undefined {
     return undefined;
   }
   const m = /\/resources\/routes\/([^/?#]+)$/.exec(href);
-  return m ? decodeURIComponent(m[1] as string) : undefined;
+  if (!m) {
+    return undefined;
+  }
+  try {
+    return decodeURIComponent(m[1] as string);
+  } catch {
+    return undefined;
+  }
 }
 
 /** The coordinates of a route resource, or none when it holds no line. */
