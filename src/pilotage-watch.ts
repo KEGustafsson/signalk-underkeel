@@ -53,8 +53,15 @@ function activeHref(app: App): string | undefined {
   return typeof href === "string" ? href : undefined;
 }
 
+/** How long after a failed load the active route is asked for again, ms. */
+export const ROUTE_RETRY_MS = 30_000;
+
 export class PilotageWatch {
   private href?: string;
+  /** Counts the loads started: only the latest one's answer is taken. */
+  private generation = 0;
+  /** When the active route is asked for again after its load failed. */
+  private retryAt?: number;
   private legs: (WatchedLeg & { measured: boolean })[] = [];
   private index?: ChartIndex;
 
@@ -73,9 +80,10 @@ export class PilotageWatch {
     index: ChartIndex | undefined,
     position: LonLat | undefined,
     need: number | undefined,
-    least: number
+    least: number,
+    now = Date.now()
   ): PilotageVerdict | undefined {
-    this.follow();
+    this.follow(now);
     if (!index || !position || this.legs.length === 0) {
       return undefined;
     }
@@ -101,14 +109,19 @@ export class PilotageWatch {
       : pilotageVerdict(i, leg.room, need);
   }
 
-  /** Loads the active route's legs when the course API names another one. */
-  private follow(): void {
+  /**
+   * Loads the active route's legs when the course API names another one, or ROUTE_RETRY_MS after
+   * its load failed.
+   */
+  private follow(now: number): void {
     const href = activeHref(this.app);
-    if (href === this.href) {
+    if (href === this.href && (this.retryAt === undefined || now < this.retryAt)) {
       return;
     }
     this.href = href;
+    this.retryAt = undefined;
     this.legs = [];
+    const generation = ++this.generation;
     const id = routeIdOf(href);
     if (id === undefined) {
       return;
@@ -116,16 +129,21 @@ export class PilotageWatch {
     this.app.resourcesApi
       .getResource("routes", id)
       .then((r) => {
-        const c = this.href === href ? routeCoordinates(r) : undefined;
+        const c = generation === this.generation ? routeCoordinates(r) : undefined;
         if (c) {
           this.legs = c.slice(1).map((to, k) => ({ from: c[k] as LonLat, to, measured: false }));
         }
       })
-      .catch((err: Error) => this.onError(`active route ${id}: ${err.message}`));
+      .catch((err: unknown) => {
+        if (generation === this.generation) {
+          this.retryAt = now + ROUTE_RETRY_MS;
+          this.onError(`active route ${id}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      });
   }
 }
 
-/** What the pilotage service reads at each position. */
+/** What the pilotage service reads after each of the monitor's ticks. */
 export interface PilotageTick {
   integrity?: IntegrityResult;
   index?: ChartIndex;
@@ -134,9 +152,10 @@ export interface PilotageTick {
 }
 
 /**
- * The fix quality a plan is checked at and the live fix held to it, at each position the monitor
- * takes in: the fix's measured σ goes into the history (`model/fix-history.ts`) while the
- * position is fresh, and the pilotage notification follows the active route's swept legs.
+ * The fix quality a plan is checked at and the live fix held to it, after each of the monitor's
+ * ticks, on the position and integrity check of that tick: the fix's measured σ goes into the
+ * history (`model/fix-history.ts`) while the position is fresh, and the pilotage notification
+ * follows the active route's swept legs.
  */
 export class PilotageService {
   readonly watch: PilotageWatch;
@@ -158,16 +177,16 @@ export class PilotageService {
     return this.fixes.history;
   }
 
-  /** Runs at each position `monitor` takes in, on the index `index` gives. */
+  /** Runs after each of `monitor`'s ticks, on the index `index` gives. */
   attach(monitor: Monitor, index: () => ChartIndex | undefined, now: () => number): void {
-    monitor.watch(["navigation.position"], () =>
+    monitor.afterTick = () => {
       this.tick({
         integrity: monitor.integrityResult,
         index: index(),
         position: monitor.nav.position,
         now: now()
-      })
-    );
+      });
+    };
   }
 
   tick(t: PilotageTick): void {
@@ -180,7 +199,7 @@ export class PilotageService {
     }
     // A failing integrity check leaves no buffer the fix can be trusted to.
     const need = t.integrity?.ok ? l.kp * t.integrity.sigmaPos : undefined;
-    const v = this.watch.check(t.index, fresh, need, l.positionBuffer);
+    const v = this.watch.check(t.index, fresh, need, l.positionBuffer, t.now);
     if (!v) {
       this.notifier.clear(PATHS.pilotage, "Pilotage: no swept leg of the active route here");
       return;

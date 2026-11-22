@@ -94,6 +94,11 @@ export class Monitor {
   private readonly status: StatusReporter;
   /** The chart box around the vessel, named in no-coverage reasons and the plugin status. */
   chartBox?: () => ChartBoxView;
+  /**
+   * Runs after each tick, on the inputs the integrity check read then: a watcher runs before its
+   * delta is recorded, so it reads the previous fix.
+   */
+  afterTick?: () => void;
 
   constructor(
     private readonly app: App,
@@ -406,6 +411,7 @@ export class Monitor {
     this.checkGrounding(r);
     this.escape.after(raw.state, this.clock.now() - t0, escapable);
     this.report(r, this.chartBox?.().summary);
+    this.afterTick?.();
   }
 
   private report(r: LookaheadResult, boxNote?: string): void {

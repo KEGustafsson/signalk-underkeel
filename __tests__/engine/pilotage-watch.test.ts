@@ -1,18 +1,24 @@
+import type { Delta } from "@signalk/server-api";
 import fs from "fs";
 import os from "os";
 import path from "path";
+import { parseConfig } from "../../src/config";
 import { DEFAULT_LOOKAHEAD } from "../../src/engine/lookahead";
 import { legAt, offset, ON_ROUTE, pilotageVerdict } from "../../src/engine/pilotage-watch";
 import { FixHistoryStore } from "../../src/fix-history-store";
 import type { LonLat } from "../../src/foundation/geo";
 import { PATHS } from "../../src/foundation/state";
 import type { IntegrityResult } from "../../src/model/integrity";
+import type { Clock } from "../../src/monitor";
+import { Monitor } from "../../src/monitor";
 import {
   PilotageService,
   PilotageWatch,
+  ROUTE_RETRY_MS,
   routeCoordinates,
   routeIdOf
 } from "../../src/pilotage-watch";
+import { navDelta } from "../helpers/plugin-harness";
 import { CHANNEL_LAT, gappedChannel } from "../helpers/swept-channel";
 
 /**
@@ -135,12 +141,142 @@ describe("the pilotage watch", () => {
     expect(w.check(index, far, 3, 15)).toBeUndefined();
   });
 
+  test("a failed load is asked for again ROUTE_RETRY_MS later, not before", async () => {
+    let fail = true;
+    let loads = 0;
+    const errors: string[] = [];
+    const app = {
+      getSelfPath: () => ({ value: { href: "/resources/routes/r1" } }),
+      resourcesApi: {
+        getResource: () => {
+          loads++;
+          return fail
+            ? Promise.reject(new Error("busy"))
+            : Promise.resolve({ feature: { geometry: { type: "LineString", coordinates: west } } });
+        }
+      }
+    };
+    const w = new PilotageWatch(app as never, (m) => errors.push(m));
+    const T = 1_000_000;
+    w.check(index, ON_LINE, 3, 15, T);
+    await flush();
+    fail = false;
+    expect(w.check(index, ON_LINE, 3, 15, T + ROUTE_RETRY_MS - 1)).toBeUndefined();
+    await flush();
+    expect(loads).toBe(1);
+    w.check(index, ON_LINE, 3, 15, T + ROUTE_RETRY_MS);
+    await flush();
+    expect(w.check(index, ON_LINE, 3, 15, T + ROUTE_RETRY_MS)?.state).toBe("normal");
+    expect([loads, errors]).toEqual([2, ["active route r1: busy"]]);
+  });
+
+  test("only the latest load is taken: route A, then B, then A again", async () => {
+    let href = "/resources/routes/a";
+    const pending: { resolve: (r: unknown) => void; reject: (e: Error) => void }[] = [];
+    const errors: string[] = [];
+    const app = {
+      getSelfPath: () => ({ value: { href } }),
+      resourcesApi: {
+        getResource: () =>
+          new Promise((resolve, reject) => {
+            pending.push({ resolve, reject });
+          })
+      }
+    };
+    const line = (c: LonLat[]) => ({
+      feature: { geometry: { type: "LineString", coordinates: c } }
+    });
+    const w = new PilotageWatch(app as never, (m) => errors.push(m));
+    const T = 1_000_000;
+    w.check(index, ON_LINE, 3, 15, T);
+    href = "/resources/routes/b";
+    w.check(index, ON_LINE, 3, 15, T);
+    href = "/resources/routes/a";
+    w.check(index, ON_LINE, 3, 15, T);
+    const [first, second, third] = pending;
+    // The latest A, then the first A's answer and B's failure, both late: neither is taken.
+    third?.resolve(line(west));
+    first?.resolve(
+      line([
+        [22.004, CHANNEL_LAT + 0.01],
+        [22.007, CHANNEL_LAT + 0.01]
+      ])
+    );
+    second?.reject(new Error("gone"));
+    await flush();
+    expect(w.check(index, ON_LINE, 3, 15, T + ROUTE_RETRY_MS)?.state).toBe("normal");
+    expect([pending.length, errors]).toEqual([3, []]);
+  });
+
   describe("as a service", () => {
     let dir: string;
     beforeEach(() => {
       dir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-pilotage-"));
     });
     afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+    test("the verdict reads the fix and integrity check of the moment, also with no new position", async () => {
+      const { app, sent } = server(west);
+      let now = Date.parse("2026-11-22T12:00:00Z");
+      const clock: Clock = {
+        now: () => now,
+        setInterval: () => 1,
+        clearInterval: () => undefined,
+        defer: (fn) => fn,
+        cancel: () => undefined
+      };
+      const harness = {
+        ...app,
+        getSelfPath: (p: string) =>
+          p === "design.draft" ? { value: { maximum: 1.5 } } : app.getSelfPath(p),
+        setPluginStatus: () => undefined,
+        setPluginError: () => undefined,
+        error: () => undefined,
+        subscriptionmanager: { subscribe: () => undefined }
+      };
+      const config = parseConfig({
+        waterLevel: { source: "manual", height: 0 },
+        lookahead: { positionBuffer: 15 }
+      });
+      const monitor = new Monitor(harness as never, "underkeel", config, index, undefined, clock);
+      const store = new FixHistoryStore(path.join(dir, "fix-history.json"));
+      const s = new PilotageService(
+        store,
+        harness as never,
+        "underkeel",
+        () => config.lookahead,
+        () => undefined
+      );
+      s.attach(monitor, () => index, clock.now);
+      monitor.start();
+      const hdop = (v: number) => ({
+        updates: [
+          {
+            timestamp: new Date(now).toISOString() as never,
+            values: [{ path: "navigation.gnss.horizontalDilution" as never, value: v }]
+          }
+        ]
+      });
+      const tick = (...deltas: Delta[]) => {
+        now += 1000;
+        deltas.forEach((d) => {
+          monitor.onDelta(d);
+        });
+        monitor.tick();
+      };
+      const pilotage = () => sent.filter((d) => d.path === PATHS.pilotage).at(-1)?.value;
+      tick(hdop(1), navDelta(ON_LINE[0], ON_LINE[1], 0, now + 1000));
+      await flush();
+      tick(navDelta(ON_LINE[0], ON_LINE[1], 0, now + 1000));
+      expect(pilotage()?.state).toBe("normal");
+      // A fix arriving with a failing HDOP warns on its own tick.
+      tick(hdop(9), navDelta(ON_LINE[0], ON_LINE[1], 0, now + 1000));
+      expect(pilotage()?.message).toMatch(/cannot be trusted/);
+      // The HDOP recovering, the position unchanged, lifts it on the next tick.
+      tick(hdop(1));
+      expect(pilotage()?.state).toBe("normal");
+      monitor.stop();
+    });
 
     test("notifies by the live fix, keeps its σ, clears off the route and on stop", async () => {
       const { app, sent } = server(west);
