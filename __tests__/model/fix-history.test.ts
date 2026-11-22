@@ -46,6 +46,22 @@ describe("the fix history", () => {
     expect(h.quantile(0.5, t)).toBe(1.1);
   });
 
+  test("a σ wider than the bins counts at its own width, saved and read back", () => {
+    const h = new FixHistory();
+    let t = fill(h, MIN_SAMPLES, 1, T0);
+    t = fill(h, 10, 25, t);
+    t = fill(h, 20, 31.24, t);
+    expect(h.quantile(QUANTILE, t)).toBe(31.3);
+    expect(FixHistory.from(JSON.parse(JSON.stringify(h.toJSON()))).quantile(QUANTILE, t)).toBe(
+      31.3
+    );
+    // Only the bins' own edge without one.
+    const edge = new FixHistory();
+    t = fill(edge, MIN_SAMPLES, 19.95, T0);
+    expect(edge.quantile(QUANTILE, t)).toBe(20);
+    expect(edge.toJSON().overflow).toBeUndefined();
+  });
+
   test("samples older than the window drop out", () => {
     const h = new FixHistory();
     const t = fill(h, MIN_SAMPLES, 4, T0);

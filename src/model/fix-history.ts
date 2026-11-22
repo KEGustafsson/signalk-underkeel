@@ -9,8 +9,10 @@
 
 /** Width of a histogram bin, metres. */
 export const FIX_BIN = 0.1;
-/** Bins per hour: up to 20 m, the last one holding everything wider. */
+/** Bins per hour: up to 20 m, the last one holding everything wider, its widest kept apart. */
 export const FIX_BINS = 200;
+/** The upper edge of the bins, metres. */
+const TOP = FIX_BINS * FIX_BIN;
 /** How far back the history reaches, hours. */
 export const WINDOW_HOURS = 7 * 24;
 /** Samples are taken at most this often, ms. */
@@ -27,10 +29,14 @@ export interface FixHistoryJson {
   version: 1;
   /** Bin counts by hour since the epoch, each bin index → count. */
   hours: Record<string, Record<string, number>>;
+  /** The widest σ above the bins' upper edge by hour since the epoch, metres. */
+  overflow?: Record<string, number>;
 }
 
 export class FixHistory {
   private readonly hours = new Map<number, Map<number, number>>();
+  /** The widest σ above TOP by hour: the last bin's upper edge is under it. */
+  private readonly overflow = new Map<number, number>();
   private last = -Infinity;
   /** Whether a sample came in since the history was last saved. */
   dirty = false;
@@ -46,6 +52,9 @@ export class FixHistory {
     const bins = this.hours.get(hour) ?? new Map<number, number>();
     bins.set(bin, (bins.get(bin) ?? 0) + 1);
     this.hours.set(hour, bins);
+    if (sigma > TOP) {
+      this.overflow.set(hour, Math.max(this.overflow.get(hour) ?? 0, sigma));
+    }
     this.prune(now);
     this.dirty = true;
   }
@@ -64,7 +73,8 @@ export class FixHistory {
 
   /**
    * The σ that share `q` of the samples within the window lie at or under, metres: the upper
-   * edge of its bin, so never under any of them. Undefined below MIN_SAMPLES.
+   * edge of its bin, or in the last bin the widest σ it holds, so never under any of them.
+   * Undefined below MIN_SAMPLES.
    */
   quantile(q: number, now: number): number | undefined {
     const total = this.samples(now);
@@ -79,13 +89,13 @@ export class FixHistory {
     }
     const target = Math.ceil(q * total);
     let seen = 0;
-    for (let b = 0; b < FIX_BINS; b++) {
+    for (let b = 0; b < FIX_BINS - 1; b++) {
       seen += counts[b] ?? 0;
       if (seen >= target) {
         return Math.round((b + 1) * FIX_BIN * 10) / 10;
       }
     }
-    return FIX_BINS * FIX_BIN;
+    return Math.ceil(Math.max(TOP, ...this.overflow.values()) * 10) / 10;
   }
 
   toJSON(): FixHistoryJson {
@@ -93,7 +103,8 @@ export class FixHistory {
     for (const [h, bins] of this.hours) {
       hours[String(h)] = Object.fromEntries([...bins].map(([b, c]) => [String(b), c]));
     }
-    return { version: 1, hours };
+    const overflow = Object.fromEntries([...this.overflow].map(([h, v]) => [String(h), v]));
+    return { version: 1, hours, ...(this.overflow.size > 0 && { overflow }) };
   }
 
   /** The history `raw` holds; anything malformed in it is left out. */
@@ -109,6 +120,11 @@ export class FixHistory {
         out.hours.set(Number(h), kept);
       }
     }
+    for (const [h, v] of Object.entries(r.overflow ?? {})) {
+      if (out.hours.has(Number(h)) && typeof v === "number" && Number.isFinite(v) && v > TOP) {
+        out.overflow.set(Number(h), v);
+      }
+    }
     return out;
   }
 
@@ -117,6 +133,7 @@ export class FixHistory {
     for (const h of this.hours.keys()) {
       if (h <= oldest) {
         this.hours.delete(h);
+        this.overflow.delete(h);
       }
     }
   }
