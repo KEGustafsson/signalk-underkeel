@@ -345,17 +345,23 @@ describe("Traficom WFS ingest", () => {
       { type: "MultiPolygon", coordinates: [square, []] },
       { type: "MultiPolygon", coordinates: square }
     ].map((geometry, i) => ({ ...fairway(10 + i, 2.7), geometry }));
-    let broken = 0;
+    const LINES = "vesivaylatiedot:navigointilinjat_uusi";
+    const AREAS = "vesivaylatiedot:vaylaalueet_uusi";
+    /** Requests to each of the FTIA's layers, by `typeNames`. */
+    let asked = new Map<string, number>();
     const fetch =
       (ftia: "ok" | "down" | "breaks once"): WfsFetch =>
       (url) => {
         if (url.startsWith("https://ftia.test/")) {
+          const q = new URL(url).searchParams;
+          const layer = q.get("typeNames") ?? "";
+          const n = (asked.get(layer) ?? 0) + 1;
+          asked.set(layer, n);
           // Each of its two layers' first request breaks off, as a dropped connection does.
-          if (ftia === "down" || (ftia === "breaks once" && broken++ < 2)) {
+          if (ftia === "down" || (ftia === "breaks once" && n === 1)) {
             return Promise.reject(new Error("ECONNREFUSED"));
           }
-          const q = new URL(url).searchParams;
-          const areas = q.get("typeNames") === "vesivaylatiedot:vaylaalueet_uusi";
+          const areas = layer === AREAS;
           const first = q.get("startIndex") === "0";
           // One swept to 2.7 m; one with no swept depth, which says nothing of the depth; and
           // malformed ones, which are left out.
@@ -396,14 +402,20 @@ describe("Traficom WFS ingest", () => {
     const pause = limits.retryPauseMs;
     limits.retryPauseMs = 0;
     try {
+      asked = new Map();
       await expect(
         downloadWfsCell({ ...d, fetch: fetch("breaks once"), retry: true })
       ).resolves.toMatchObject({ dredgedAreas: 1 });
-      expect(broken).toBeGreaterThanOrEqual(2);
-      broken = 0;
+      expect(asked.get(AREAS)).toBeGreaterThanOrEqual(2);
+      expect(asked.get(LINES)).toBeGreaterThanOrEqual(2);
+      // The swept depth of the area tried again is kept.
+      const kept = readCellDirectory(dir, 0).features.filter((f) => f.role === "swept");
+      expect(kept).toEqual([expect.objectContaining({ depth: 2.7, lnam: "FTIA-VA-1" })]);
+      asked = new Map();
       await expect(downloadWfsCell({ ...d, fetch: fetch("breaks once") })).resolves.toMatchObject({
         dredgedAreas: 0
       });
+      expect(asked.get(AREAS)).toBe(1);
     } finally {
       limits.retryPauseMs = pause;
     }

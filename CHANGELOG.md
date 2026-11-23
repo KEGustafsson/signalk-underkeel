@@ -91,7 +91,8 @@ All notable changes to signalk-underkeel are documented here.
   62 s; one thread, 40 s where it took 89 s.
 - A corridor or box query visits fewer tiles for the same answer: a split tile that can add
   nothing to what the walk has found (no shallower depth, no higher P, no wider σ, no flag or
-  cell not yet seen) is not descended. On Traficom WFS depths, where every tile carries
+  cell not yet seen) is not descended, unless a block of the index under it is not loaded, where
+  the walk reads `NO_COVERAGE` as before. On Traficom WFS depths, where every tile carries
   `NOT_FOR_NAVIGATION` and no split tile could answer for its children, a 13 nm plan's work fell
   from 5.23 M units to 3.67 M before any change to the planner. A query's result is unchanged
   but for its work.

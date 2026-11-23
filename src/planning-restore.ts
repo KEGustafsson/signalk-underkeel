@@ -65,6 +65,18 @@ export function holdStamp(d: HoldInputs): string | undefined {
   }
 }
 
+/**
+ * The stamp of the chart cells a build of `d` reads, taken before it reads them: undefined when
+ * a source cannot be read. The planning box's WFS cell is left out: the build writes it itself.
+ */
+export function cellsStamp(d: HoldInputs): string | undefined {
+  try {
+    return JSON.stringify(sourceKeys(cellSources(d.cellsDir)));
+  } catch {
+    return undefined;
+  }
+}
+
 const isBbox = (v: unknown): v is Bbox =>
   Array.isArray(v) && v.length === 4 && v.every((x) => typeof x === "number" && Number.isFinite(x));
 
@@ -116,15 +128,19 @@ export function holdInputsOf(deps: {
 
 /**
  * Saves what the index just committed in `d.indexDir` was built for at `now`, so it can be read
- * back; nothing when a source's stamp cannot be read.
+ * back. `read` is `cellsStamp` as the build began reading the cells. Nothing is saved when a
+ * source's stamp cannot be read, or a cell changed since `read`: the index may hold the cell as
+ * it was, and a record stamped with the new one would have it read back as current.
  */
 export function recordHold(
   d: HoldInputs,
   held: { region: Bbox; bbox: Bbox; parts: readonly Bbox[] | undefined },
-  now: number
+  now: number,
+  read: string | undefined
 ): void {
   const stamp = holdStamp(d);
-  if (stamp === undefined) {
+  // Taken after `stamp`, so a change up to the moment it was taken is seen.
+  if (stamp === undefined || read === undefined || cellsStamp(d) !== read) {
     return;
   }
   const parts = held.parts?.map((p): Bbox => [p[0], p[1], p[2], p[3]]);

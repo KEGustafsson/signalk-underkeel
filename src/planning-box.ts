@@ -11,11 +11,11 @@ import { Held, realWait, untilAborted } from "./planning-held";
 import type { Survey } from "./survey";
 import type { SurveyJob } from "./survey-worker";
 import { wfsUrl } from "./charts-provider-wfs";
-import { dropHold, holdInputsOf, recordHold, restorable } from "./planning-restore";
+import { cellsStamp, dropHold, holdInputsOf, recordHold, restorable } from "./planning-restore";
 import {
   bboxKm2,
-  boxMeasure,
   covers,
+  failedKm2,
   holds,
   planningBbox,
   tooLarge as boxTooLarge
@@ -185,9 +185,16 @@ export class PlanningBoxes {
         }
         return tooLarge === undefined ? undefined : { ok: false, status: 413, error: tooLarge };
       },
-      async () =>
-        (await this.restore(region, signal, parts)) ??
-        this.build(region, bbox, signal, progress, parts)
+      async () => {
+        const restored = await this.restore(region, signal, parts);
+        if (restored !== undefined) {
+          return restored;
+        }
+        // Another request or the chart box may have taken the build process meanwhile.
+        return this.running || this.deps.boxBusy()
+          ? "again"
+          : this.build(region, bbox, signal, progress, parts);
+      }
     );
   }
 
@@ -447,18 +454,6 @@ export class PlanningBoxes {
     return done;
   }
 
-  /**
-   * Saves what the index just committed was built for, so it can be read back
-   * (`planning-restore.ts`). A record that cannot be written only costs the next build.
-   */
-  private record(region: Bbox, bbox: Bbox, parts: readonly Bbox[] | undefined): void {
-    try {
-      recordHold(holdInputsOf(this.deps), { region, bbox, parts }, this.deps.clock.now());
-    } catch (err) {
-      this.deps.debug?.(`planning box record not saved: ${(err as Error).message}`);
-    }
-  }
-
   private build(
     region: Bbox,
     bbox: Bbox,
@@ -470,10 +465,15 @@ export class PlanningBoxes {
     if (problem !== undefined) {
       return Promise.resolve({ ok: false, status: 503, error: `planning box: ${problem}` });
     }
-    // The index it replaces takes no new job: its files are about to be replaced, and the
-    // record of what they held with them.
+    try {
+      // Left in place, the record would describe the files the build replaces.
+      dropHold(this.deps.indexDir);
+    } catch (err) {
+      const why = (err as Error).message;
+      return Promise.resolve({ ok: false, status: 503, error: `planning box: ${why}` });
+    }
+    // The index it replaces takes no new job: its files are about to be replaced.
     this.release();
-    dropHold(this.deps.indexDir);
     const started = this.deps.clock.now();
     return this.launch<PrepareOutcome>(
       bbox,
@@ -484,8 +484,12 @@ export class PlanningBoxes {
         await untilAborted(this.drained(), stop);
         fs.mkdirSync(this.deps.dir, { recursive: true });
         run.resume = await this.deps.pauseWarming?.();
-        const deps = { ...this.deps.job(), indexDir: this.deps.indexDir, inBox: true };
-        const made = refreshJob(deps, this.deps.dir, bbox, started, parts);
+        const settings = this.deps.job();
+        const { dir, indexDir } = this.deps;
+        const inputs = holdInputsOf({ dir, indexDir, job: () => settings });
+        const read = cellsStamp(inputs);
+        const deps = { ...settings, indexDir, inBox: true };
+        const made = refreshJob(deps, dir, bbox, started, parts);
         // A plan waits for this download: a layer the WFS breaks off is tried again.
         const job = made.download ? { ...made, download: { ...made.download, retry: true } } : made;
         const { index } = await this.deps.refresh({ ...job, lowPriority: true }, stop, progress);
@@ -496,7 +500,12 @@ export class PlanningBoxes {
         const own = job.download === undefined ? undefined : parts;
         const held = new Held(region, bbox, own, index, this.deps.clock.now());
         this.held = held;
-        this.record(region, bbox, own);
+        try {
+          recordHold(inputs, { region, bbox, parts: own }, this.deps.clock.now(), read);
+        } catch (err) {
+          // Unsaved, it costs only the next build: the index is not read back.
+          this.deps.debug?.(`planning box record not saved: ${(err as Error).message}`);
+        }
         this.deps.debug?.(
           `planning box built in ${Math.round((this.deps.clock.now() - started) / 1000)} s`
         );
@@ -505,14 +514,7 @@ export class PlanningBoxes {
       (err) => {
         if (OUT_OF_MEMORY.test(err.message)) {
           // Not tried at that size again in this run.
-          let km2: number;
-          try {
-            km2 = boxMeasure(this.deps.job(), bbox, parts).km2;
-          } catch {
-            // cellsDir unreadable now: the smaller measure, the corridor's alone, is halved.
-            km2 = parts ? parts.reduce((sum, p) => sum + bboxKm2(p), 0) : bboxKm2(bbox);
-          }
-          this.maxKm2 = Math.min(this.maxKm2, km2 * 0.5);
+          this.maxKm2 = Math.min(this.maxKm2, failedKm2(() => this.deps.job(), bbox, parts) * 0.5);
         }
         return { ok: false, status: 503, error: `planning box build failed: ${err.message}` };
       }

@@ -217,6 +217,20 @@ describe("sessionRaster", () => {
     expect(deeper.cells).not.toBe(first.cells);
   });
 
+  test("the largest blocks are kept to 32 MiB an index, the least lately read dropped first", () => {
+    const fresh = { ...index };
+    // Off the charts, each a single fill: 1024 cells a side, 2 MiB with its flags.
+    const block = (k: number) => ({ x0: k * 1024, y0: 0, cols: 1024, rows: 1024 });
+    const paint = (k: number) => sessionRaster(fresh, input(), WINDOW, block(k)).work;
+    for (let k = 0; k < 16; k++) {
+      expect(paint(k)).toBeGreaterThan(QUERY_WORK);
+    }
+    expect(paint(0)).toBe(QUERY_WORK);
+    paint(16);
+    expect(paint(0)).toBe(QUERY_WORK);
+    expect(paint(1)).toBeGreaterThan(QUERY_WORK);
+  });
+
   test("a block that is empty, too large or off the tile grid is refused", () => {
     const ask = (x0: number, y0: number, cols: number, rows: number) => () =>
       sessionRaster(index, input(), WINDOW, { x0, y0, cols, rows });

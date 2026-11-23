@@ -176,10 +176,12 @@ interface Painter {
   sets: Map<number, number>;
   /**
    * Scores by node values, which repeat: a depth area is thousands of tiles of one value, so
-   * the last one scored is tried first, then the others by their flags.
+   * the last one scored is tried first, then the others by flags and split, dMin and σD.
    */
   last: Painted | undefined;
-  memo: Map<number, Painted[]>;
+  memo: Map<number, Map<number, Map<number, Painted>>>;
+  /** Values in `memo`; it is emptied at MEMO_MAX, so a block of distinct values holds no more. */
+  memoSize: number;
   visits: number;
 }
 
@@ -256,21 +258,39 @@ function painted(p: Painter, dMin: number, sigmaD: number, flags: number, split:
   if (p.last && same(p.last)) {
     return p.last;
   }
-  let list = p.memo.get(flags);
-  if (!list) {
-    list = [];
-    p.memo.set(flags, list);
-  }
-  let m = list.find(same);
+  const kind = flags * 2 + (split ? 1 : 0);
+  let m = p.memo.get(kind)?.get(dMin)?.get(sigmaD);
   if (!m) {
     const scored = score(dMin, sigmaD, flags, p.s, split);
     const set = setOf(p, scored.flags);
     const byte = set < 0 ? scored.byte | RASTER.ASK : scored.byte;
     m = { dMin, sigmaD, flags, split, byte, set: Math.max(0, set) };
-    list.push(m);
+    remember(p, kind, m);
   }
   p.last = m;
   return m;
+}
+
+/** Distinct node values a block's walk keeps scored. */
+const MEMO_MAX = 65_536;
+
+function remember(p: Painter, kind: number, m: Painted): void {
+  if (p.memoSize >= MEMO_MAX) {
+    p.memo.clear();
+    p.memoSize = 0;
+  }
+  let byDepth = p.memo.get(kind);
+  if (!byDepth) {
+    byDepth = new Map();
+    p.memo.set(kind, byDepth);
+  }
+  let bySigma = byDepth.get(m.dMin);
+  if (!bySigma) {
+    bySigma = new Map();
+    byDepth.set(m.dMin, bySigma);
+  }
+  bySigma.set(m.sigmaD, m);
+  p.memoSize++;
 }
 
 /** Marks the cells the Mercator rectangle `r` meets as ASK. */
@@ -342,31 +362,52 @@ export function sessionRaster(
     store.loadRevision
   ].join("|");
   const held = keptFor(index);
-  const hit = held.get(key);
+  const hit = held.blocks.get(key);
   if (hit) {
     // Read again last, so the blocks least lately read go first.
-    held.delete(key);
-    held.set(key, hit);
+    held.blocks.delete(key);
+    held.blocks.set(key, hit);
     return { ...hit, work: QUERY_WORK };
   }
   const out = paintRaster(index, s, { ...block, z, bounds }, wl.degraded !== undefined);
-  held.set(key, out);
-  if (held.size > KEPT_BLOCKS) {
-    held.delete(held.keys().next().value as string);
-  }
+  keep(held, key, out);
   return out;
 }
 
 /** Rasters kept per index, least lately read first; a planner must not write to their arrays. */
-const kept = new WeakMap<ChartIndex, Map<string, Raster>>();
+const kept = new WeakMap<ChartIndex, Kept>();
+
+interface Kept {
+  blocks: Map<string, Raster>;
+  /** The bytes of the blocks' `cells` and `flags`. */
+  bytes: number;
+}
 
 /** Blocks kept per index: about 130 kB each at 256 cells a side. */
 const KEPT_BLOCKS = 160;
 
-function keptFor(index: ChartIndex): Map<string, Raster> {
+/**
+ * Bytes kept per index: 160 blocks at 256 cells a side, or 16 of the largest (2 MiB each). With
+ * the chart box and a planning box held, 64 MiB at most, of the 1 GB a Cerbo GX has.
+ */
+const KEPT_BYTES = 32 * 2 ** 20;
+
+const bytesOf = (r: Raster): number => r.cells.byteLength + r.flags.byteLength;
+
+function keep(held: Kept, key: string, out: Raster): void {
+  held.blocks.set(key, out);
+  held.bytes += bytesOf(out);
+  while (held.blocks.size > 1 && (held.blocks.size > KEPT_BLOCKS || held.bytes > KEPT_BYTES)) {
+    const [first, r] = held.blocks.entries().next().value as [string, Raster];
+    held.blocks.delete(first);
+    held.bytes -= bytesOf(r);
+  }
+}
+
+function keptFor(index: ChartIndex): Kept {
   let held = kept.get(index);
   if (!held) {
-    held = new Map();
+    held = { blocks: new Map(), bytes: 0 };
     kept.set(index, held);
   }
   return held;
@@ -400,6 +441,7 @@ function paintRaster(
     sets: new Map(),
     last: undefined,
     memo: new Map(),
+    memoSize: 0,
     visits: 0
   };
   const shift = 2 ** (z - store.minZoom);

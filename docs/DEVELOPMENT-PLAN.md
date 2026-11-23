@@ -1532,9 +1532,11 @@ at most 7 days old (`RESTORE_MAX_AGE_MS`) and the index in the directory written
 in the box recorded, loads the index (0.3 s for 1.8 M nodes on a Jetson Orin) where the build it
 stands in for downloads and indexes the region again; so a planning box released after its 10
 minutes, or lost to a restart, costs a second, not minutes. A build drops the record before it
-replaces the files, so a failed one leaves none. The WFS depths read back are those downloaded
-then: 7 days bounds their age, where the box around the vessel is downloaded again as the boat
-moves. With `how.held` (feature `held`), `prepare` answers only with what serves without a
+replaces the files, so a failed one leaves none, and refuses to build (503) when it cannot. The
+cells' stamps are taken as the build begins to read them; a build that finds them changed once it
+has committed records nothing, so an index read back never holds a cell older than its stamp.
+The WFS depths read back are those downloaded then: 7 days bounds their age, where the box around
+the vessel is downloaded again as the boat moves. With `how.held` (feature `held`), `prepare` answers only with what serves without a
 build, the index in use, the box held or the one read back, and 404 otherwise: a planner plans
 on what is there before it asks for more. A planning box's download tries a layer the WFS broke off again
 (`WfsDownload.retry`), as a corridor's groups are, the FTIA's lines and swept areas among them:
@@ -1576,9 +1578,9 @@ With each cell's flags and the raster's `reach`, the chart position reach of the
 corridor and that reach passes, since a verdict is the worst of the tiles it counts and a cell's
 window holds any part of it; it does not where a `STUCK` cell lies in the corridor; else it asks.
 The verdict of every leg offered is still the route check's. Painted blocks are kept per index
-(160 of them, least lately read dropped) under the scoring's own values, the living chart's
-revision and the block cache's, so a plan's sessions, which differ in their corridor alone,
-paint a block once. A block costs its walk's visits in work units, a kept one a query's fixed
+(160 of them and 32 MiB of cells and flags, least lately read dropped) under the scoring's own
+values, the living chart's revision and the block cache's, so a plan's sessions, which differ in
+their corridor alone, paint a block once. A block costs its walk's visits in work units, a kept one a query's fixed
 work. Invariants: a raster changes no verdict (2, 4); a fallback level and a block not loaded
 never read as passing (3).
 

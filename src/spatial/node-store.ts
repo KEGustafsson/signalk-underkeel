@@ -131,6 +131,8 @@ export interface BlockSource {
   topoDMin(i: number): number;
   /** For split node i at (cutZoom, x, y): undefined once its block is loaded, else its stand-in. */
   standIn(i: number, x: number, y: number): StandIn | undefined;
+  /** Whether a block in the file holding part of tile (z, x, y)'s subtree is not loaded. */
+  unloadedUnder(z: number, x: number, y: number): boolean;
   entries(z: number): Generator<[number, number, number]>;
 }
 
@@ -445,6 +447,15 @@ export class NodeStore {
     return s && z === s.cutZoom && i >= 0 && i < this.own && this.split[i] === 1
       ? s.standIn(i, x, y)
       : undefined;
+  }
+
+  /**
+   * Whether a walk descending tile (z, x, y) would reach a block not loaded and read a stand-in
+   * there. A tile finer than the cut zoom lies in a loaded block; false for a store held whole.
+   */
+  reachesUnloaded(z: number, x: number, y: number): boolean {
+    const s = this.source;
+    return s !== undefined && z < s.cutZoom && s.unloadedUnder(z, x, y);
   }
 
   /** The stored tiles at zoom z with keys in [lo, hi) as [key, nodeIndex], in key order. */

@@ -40,9 +40,11 @@ export function canStop(w: Walk, v: NodeValues): boolean {
  * a leaf beyond the buffer counts for no more than one within it. The walk's answer is then the
  * same with the subtree left out, for any part of it the footprint reaches; only `visits` is
  * lower. A walk reading where the water is swept (`sweptOnly`) descends until it has found
- * water that is not: a split tile does not say whether all of it is swept.
+ * water that is not: a split tile does not say whether all of it is swept. A subtree reaching
+ * a block not loaded is descended too: the stand-in read there adds NO_COVERAGE, which no stored
+ * flag bounds (invariant 3).
  */
-export function addsNothing(w: Walk, v: NodeValues): boolean {
+export function addsNothing(w: Walk, v: NodeValues, z: number, x: number, y: number): boolean {
   const r = w.result;
   if (w.worst === undefined || (w.sweptOnly === true && !w.unswept)) {
     return false;
@@ -57,7 +59,7 @@ export function addsNothing(w: Walk, v: NodeValues): boolean {
   }
   // The shallowest charted depth under the tile: unknown where part of it has no depth.
   const charted = (v.flags & FLAGS.NO_DEPTH) !== 0 ? -Infinity : v.dMin;
-  if (charted < w.coveredDMin) {
+  if (charted < w.coveredDMin || w.store.reachesUnloaded(z, x, y)) {
     return false;
   }
   if (!w.risk) {

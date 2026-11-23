@@ -162,6 +162,24 @@ export class BlockCache implements BlockSource {
     return this.table.has(key) && !this.loaded.has(key);
   }
 
+  unloadedUnder(z: number, x: number, y: number): boolean {
+    if (this.loaded.size === this.table.size) {
+      return false;
+    }
+    if (z >= this.blockZoom) {
+      return this.unloaded(this.keyOf(z, x, y));
+    }
+    const n = 2 ** (this.blockZoom - z);
+    for (const key of this.table.keys()) {
+      const bx = Math.floor(key / this.side) - x * n;
+      const by = (key % this.side) - y * n;
+      if (bx >= 0 && bx < n && by >= 0 && by < n && !this.loaded.has(key)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /** The block tile holding tile (z, x, y), z ≥ the block zoom; x and y are below 2^26. */
   private keyOf(z: number, x: number, y: number): number {
     const d = z - this.blockZoom;

@@ -68,6 +68,18 @@ export function boxMeasure(
 }
 
 /**
+ * The area a planning build of `bbox` (or `parts`) that ran out of memory is measured at, which
+ * halved is the cap from then on; the corridor's alone when the cells cannot be read now.
+ */
+export function failedKm2(deps: () => Measured, bbox: Bbox, parts?: readonly Bbox[]): number {
+  try {
+    return boxMeasure(deps(), bbox, parts).km2;
+  } catch {
+    return parts ? parts.reduce((sum, p) => sum + bboxKm2(p), 0) : bboxKm2(bbox);
+  }
+}
+
+/**
  * Why a planning box of `bbox`, or of its corridor's `parts`, is not built on a machine that
  * builds at most `maxKm2`, or undefined.
  */

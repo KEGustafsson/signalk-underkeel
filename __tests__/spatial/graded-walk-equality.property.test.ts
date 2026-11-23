@@ -1,11 +1,19 @@
 import fc from "fast-check";
 import { isDeepStrictEqual } from "util";
 import type { LonLat } from "../../src/foundation/geo";
-import { project, tileAt, tileKey, toMercator } from "../../src/foundation/geo";
+import {
+  fromMercator,
+  project,
+  tileAt,
+  tileKey,
+  tileRect,
+  toMercator
+} from "../../src/foundation/geo";
 import type { Catzoc } from "../../src/ingest/features";
 import type { NavState } from "../../src/engine/lookahead";
 import { evaluateLookahead } from "../../src/engine/lookahead";
 import type { ChartIndex } from "../../src/spatial/chart-index";
+import { countedCells } from "../../src/spatial/chart-index";
 import { cacheOf } from "../../src/spatial/block-cache";
 import type { NodeStore } from "../../src/spatial/node-store";
 import { FLAGS } from "../../src/spatial/node-store";
@@ -189,6 +197,49 @@ describe("graded walk equality (property)", () => {
     expect(fewer).toBeGreaterThan(walks / 20);
   });
 
+  test("a walk that knows its index's cells descends a subtree reaching a block not loaded", () => {
+    // A zoom 12 tile whose two northern quarters hold the same shoal and rock; blocks at zoom
+    // 13 under the resident zooms 12-14, only the north-west one loaded. The walk takes the
+    // north-west quarter first, after which the north-east one adds nothing it holds.
+    const t = tileAt(12, ...toMercator(W + 0.01, S + 0.01));
+    const r = tileRect(12, t.x, t.y);
+    const [w, s] = fromMercator(r.minX, r.minY);
+    const [e, n] = fromMercator(r.maxX, r.maxY);
+    const half = (e - w) / 2;
+    const mid = (s + n) / 2;
+    const at = (f: number): number => mid + (n - mid) * f;
+    const all: Box = [w - 0.05, s - 0.05, e + 0.05, n + 0.05];
+    const store = buildPyramid(
+      [
+        ...basin(all, 20),
+        quality(all, 2),
+        ...[w, w + half].flatMap((x0) => [
+          area([x0 + half * 0.3, at(0.3), x0 + half * 0.4, at(0.4)], 8),
+          point(x0 + half * 0.6, at(0.6), 5)
+        ])
+      ],
+      { minZoom: 12, leafZoom: 18 }
+    );
+    const file = serializePyramid(store, { residentZoom: 14, blockZoom: 13 });
+    const cold = pyramidFromBuffer(file, { budgetBytes: Infinity, syncBytes: -1 });
+    cacheOf(cold)?.loadNow(tileKey(13, 2 * t.x, 2 * t.y));
+    const geom = footprintGeom([
+      [w + 1e-7, at(0.05)],
+      [e - 1e-7, at(0.05)],
+      [e - 1e-7, n - 1e-7],
+      [w + 1e-7, n - 1e-7]
+    ]);
+    for (const opts of [{}, { chartPosition: true }]) {
+      cold.cellCount = undefined;
+      const want = minDepthOver(cold, geom, opts);
+      cold.cellCount = 1;
+      const got = minDepthOver(cold, geom, opts);
+      expect(want.flags & FLAGS.NO_COVERAGE).toBe(FLAGS.NO_COVERAGE);
+      expect(sameWithFewerVisits(got, want)).toBe(true);
+      expect(got.visits).toBeLessThan(want.visits);
+    }
+  });
+
   /**
    * CATZOC B water to `edge` metres north of the footprint and D beyond, a
    * bank `bank` metres north: the bank counts by its own σ or, behind enough
@@ -241,7 +292,11 @@ describe("look-ahead over the fixture chart", () => {
   const index = fixtureIndex();
   const file = serializePyramid(index.pyramid, { residentZoom: 15, blockZoom: 13 });
 
-  /** The index with only the blocks whose bit is set in `mask` loaded: the rest read as stand-ins. */
+  /**
+   * The index with only the blocks whose bit is set in `mask` loaded: the rest read as stand-ins.
+   * It knows its cells, as `loadChartIndex` makes it, so a walk may leave a subtree out, but not
+   * one that reaches a block not loaded.
+   */
   function partly(mask: number): ChartIndex {
     const p = pyramidFromBuffer(file, { budgetBytes: Infinity, syncBytes: -1 });
     const cache = cacheOf(p);
@@ -250,7 +305,7 @@ describe("look-ahead over the fixture chart", () => {
         cache.loadNow(key);
       }
     });
-    return { ...index, pyramid: p };
+    return countedCells({ ...index, pyramid: p });
   }
 
   test("every chart walk of a tick returns what the 118913f walk returns", () => {

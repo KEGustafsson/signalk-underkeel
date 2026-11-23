@@ -393,7 +393,7 @@ function visit(w: Walk, z: number, x: number, y: number, inside: boolean): void 
     takeStandIn(w, v, s, z, x, y);
     return;
   }
-  if (addsNothing(w, v)) {
+  if (addsNothing(w, v, z, x, y)) {
     return;
   }
   // Only a tile inside the footprint's bounds grown by the buffer can lie within the buffer.

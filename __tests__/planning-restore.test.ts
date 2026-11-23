@@ -236,6 +236,59 @@ describe("a planning index read back", () => {
   });
 });
 
+describe("a planning build and its record", () => {
+  test("requests that find nothing to read back start one build between them", async () => {
+    const c = counting();
+    const b = boxes(c.refresh);
+    const inside = b.prepare(INSIDE, NEVER);
+    const both = await Promise.all([b.prepare(REGION, NEVER), b.prepare(REGION, NEVER)]);
+    expect((await inside).ok).toBe(true);
+    expect(both.map((r) => r.ok)).toEqual([true, true]);
+    expect(c.builds()).toBe(2);
+    b.stop();
+  });
+
+  test("a record that cannot be removed refuses the build, which would replace its index", async () => {
+    const indexDir = path.join(dir, "planning-index");
+    fs.mkdirSync(holdFile(indexDir), { recursive: true });
+    const c = counting();
+    const b = boxes(c.refresh);
+    expect(await b.prepare(REGION, NEVER)).toMatchObject({ ok: false, status: 503 });
+    expect(c.builds()).toBe(0);
+    b.stop();
+  });
+
+  test("a cell that changes while the build reads the cells leaves no record", async () => {
+    const cells = path.join(dir, "cells");
+    fs.cpSync(CELLS, cells, { recursive: true });
+    const c = counting();
+    const changing: WfsRefresher = async (job, signal, progress) => {
+      const r = await c.refresh(job, signal, progress);
+      // An update lands after the build read the cell it replaces.
+      const later = new Date(NOW + 60_000);
+      fs.utimesSync(path.join(cells, "FI5SYNTH.000"), later, later);
+      return r;
+    };
+    const job = () => ({
+      config: { radiusKm: 10 },
+      cellsDir: cells,
+      index: () => undefined,
+      leafZoom: 16
+    });
+    const b = boxes(changing, { job });
+    expect((await b.prepare(REGION, NEVER)).ok).toBe(true);
+    expect(readHold(path.join(dir, "planning-index"))).toBeUndefined();
+    b.stop();
+    // Built again, from the cell as it is now; recorded, since nothing changed meanwhile.
+    const again = counting();
+    const b2 = boxes(again.refresh, { job });
+    expect((await b2.prepare(REGION, NEVER)).ok).toBe(true);
+    expect(again.builds()).toBe(1);
+    expect(readHold(path.join(dir, "planning-index"))?.region).toEqual(REGION);
+    b2.stop();
+  });
+});
+
 describe("prepare with held", () => {
   test("gives what is held or saved, and starts no build: 404 with neither", async () => {
     const c = counting();
