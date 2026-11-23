@@ -138,7 +138,8 @@ describe("workerBuilder (compiled lib/)", () => {
     expect(index.hazards.features()).toEqual(inline.hazards.features());
     expect(index.catalogue).toEqual(inline.catalogue);
     expect(index.catalogue.cells.map((c) => c.name)).toEqual(["FI5RAW01", "FI5SYNTH"]);
-  });
+    // A build process, a reader process and a build in this one: past jest's 5 s on a busy runner.
+  }, 30_000);
 
   test("rejects with the build process's error when the build fails", async () => {
     const build = await builder();
