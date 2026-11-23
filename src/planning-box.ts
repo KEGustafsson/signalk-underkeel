@@ -190,8 +190,9 @@ export class PlanningBoxes {
         if (restored !== undefined) {
           return restored;
         }
-        // Another request or the chart box may have taken the build process meanwhile.
-        return this.running || this.deps.boxBusy()
+        // Meanwhile the plugin may have stopped, the request been aborted, or another request
+        // or the chart box taken the build process: the loop answers each.
+        return this.stopped || signal.aborted || this.running || this.deps.boxBusy()
           ? "again"
           : this.build(region, bbox, signal, progress, parts);
       }

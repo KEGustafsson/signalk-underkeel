@@ -248,6 +248,21 @@ describe("a planning build and its record", () => {
     b.stop();
   });
 
+  test("a stop or an abort while a request looks for a saved index starts no build", async () => {
+    const c = counting();
+    const stopped = boxes(c.refresh);
+    const r = stopped.prepare(REGION, NEVER);
+    stopped.stop();
+    expect(await r).toMatchObject({ ok: false, status: 503 });
+    const controller = new AbortController();
+    const b = boxes(c.refresh);
+    const a = b.prepare(REGION, controller.signal);
+    controller.abort();
+    expect((await a).ok).toBe(false);
+    expect(c.builds()).toBe(0);
+    b.stop();
+  });
+
   test("a record that cannot be removed refuses the build, which would replace its index", async () => {
     const indexDir = path.join(dir, "planning-index");
     fs.mkdirSync(holdFile(indexDir), { recursive: true });
