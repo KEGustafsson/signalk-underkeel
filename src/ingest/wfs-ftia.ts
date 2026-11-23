@@ -1,5 +1,5 @@
 import type { Bbox, WfsFeature } from "./wfs-fetch";
-import { fetchLayer, limiter, num, readableLine } from "./wfs-fetch";
+import { fetchLayer, limiter, num, readableLine, retried } from "./wfs-fetch";
 import type { WfsDownload } from "./wfs";
 import { referenceOf } from "./fairway-gaps";
 
@@ -31,6 +31,14 @@ function navigationLine(f: WfsFeature): unknown {
 }
 
 /**
+ * `get`, tried again when it fails for a download that asks for it (`WfsDownload.retry`, a
+ * planning box): without its swept areas a fairway reads at its charted depth and a plan that
+ * needs it finds no way, with nothing to say a layer was dropped.
+ */
+const again = <T>(d: WfsDownload, get: () => Promise<T>): Promise<T> =>
+  d.retry ? retried(get, d.signal) : get();
+
+/**
  * The navigation lines meeting `bbox`, or none when the FTIA's WFS fails: they are a planner's
  * preference, never a depth, so a cell is written without them rather than not at all.
  */
@@ -38,16 +46,19 @@ export async function fetchLines(d: WfsDownload, bbox: Bbox): Promise<unknown[] 
   if (d.linesUrl === undefined) {
     return [];
   }
-  try {
-    const features = await fetchLayer({
+  const { linesUrl } = d;
+  const get = (): Promise<WfsFeature[]> =>
+    fetchLayer({
       fetch: d.fetch,
-      base: d.linesUrl,
+      base: linesUrl,
       typeName: FTIA_LINES,
       bbox,
       limit: limiter(1),
       sortBy: "navigointilinjaid",
       ...(d.signal && { signal: d.signal })
     });
+  try {
+    const features = await again(d, get);
     // A malformed line would fail the cell's whole index build: lines are a preference, never a
     // depth, so one that cannot be read is left out.
     return features.filter(readableLine).map(navigationLine);
@@ -110,16 +121,19 @@ export async function fetchSweptAreas(d: WfsDownload, bbox: Bbox): Promise<WfsFe
   if (d.linesUrl === undefined) {
     return [];
   }
-  try {
-    const features = await fetchLayer({
+  const { linesUrl } = d;
+  const get = (): Promise<WfsFeature[]> =>
+    fetchLayer({
       fetch: d.fetch,
-      base: d.linesUrl,
+      base: linesUrl,
       typeName: FTIA_AREAS,
       bbox,
       limit: limiter(1),
       sortBy: "id",
       ...(d.signal && { signal: d.signal })
     });
+  try {
+    const features = await again(d, get);
     return features.map(sweptArea).filter((f): f is WfsFeature => f !== undefined);
   } catch (err) {
     if (d.signal?.aborted) {

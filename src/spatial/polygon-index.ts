@@ -28,9 +28,16 @@ interface EdgeGrid {
   minY: number;
   cellW: number;
   cellH: number;
-  /** Edges whose y-extent reaches each row, as CSR: rowEdges[rowStart[r] .. rowStart[r + 1]). */
-  rowStart: Int32Array;
-  rowEdges: Int32Array;
+  /**
+   * Edges whose y-extent reaches each band of the box, as CSR: bandEdges[bandStart[b] ..
+   * bandStart[b + 1]). The bands are finer than the grid's rows (`bandsFor`): a point in a ring
+   * is found from the edges of its band alone, and a coast of 20 000 vertices crosses a row of
+   * the grid 400 times and more.
+   */
+  bands: number;
+  bandH: number;
+  bandStart: Int32Array;
+  bandEdges: Int32Array;
   /** Edges whose box reaches each cell, row-major, as CSR. */
   cellStart: Int32Array;
   cellEdges: Int32Array;
@@ -73,6 +80,9 @@ const column = (g: EdgeGrid, x: number): number =>
 const row = (g: EdgeGrid, y: number): number =>
   Math.min(g.size - 1, Math.max(0, Math.floor((y - g.minY) / g.cellH)));
 
+const band = (g: EdgeGrid, y: number): number =>
+  Math.min(g.bands - 1, Math.max(0, Math.floor((y - g.minY) / g.bandH)));
+
 const xOf = (ri: RingIndex, i: number): number => ri.xy[2 * i] as number;
 const yOf = (ri: RingIndex, i: number): number => ri.xy[2 * i + 1] as number;
 
@@ -112,25 +122,47 @@ function fillTable(
   return { start, items };
 }
 
+/** An edge is filed under this many bands on average, at most: what bounds the band table. */
+const BAND_FILL = 8;
+
+/**
+ * How many bands a ring's box is cut into for `inRing`: about a band per eight edges, but no
+ * more than leave the table at BAND_FILL entries an edge (an edge is filed under every band its
+ * height reaches, so a ring of tall edges gets few), and no fewer than the grid's rows.
+ */
+function bandsFor(ri: RingIndex, size: number): number {
+  const height = ri.box.maxY - ri.box.minY;
+  let rise = 0;
+  for (let i = 0; i < ri.n; i++) {
+    rise += Math.abs(yOf(ri, i) - yOf(ri, prev(ri.n, i)));
+  }
+  const byFill = rise > 0 ? Math.floor(((BAND_FILL - 1) * ri.n * height) / rise) : ri.n;
+  return Math.max(size, Math.min(Math.ceil(ri.n / 8), byFill));
+}
+
 function edgeGrid(ri: RingIndex): EdgeGrid {
   const box = ri.box;
   const size = Math.max(2, Math.ceil(Math.sqrt(ri.n / 2)));
+  const bands = bandsFor(ri, size);
   const g: EdgeGrid = {
     size,
     minX: box.minX,
     minY: box.minY,
     cellW: (box.maxX - box.minX) / size || 1,
     cellH: (box.maxY - box.minY) / size || 1,
-    rowStart: new Int32Array(0),
-    rowEdges: new Int32Array(0),
+    bands,
+    bandH: (box.maxY - box.minY) / bands || 1,
+    bandStart: new Int32Array(0),
+    bandEdges: new Int32Array(0),
     cellStart: new Int32Array(0),
     cellEdges: new Int32Array(0),
     seen: new Uint32Array(ri.n),
     visit: 0
   };
-  const rows = fillTable(size, ri.n, (i, add) => {
-    const [, , y0, y1] = edgeSpan(g, ri, i);
-    for (let y = y0; y <= y1; y++) {
+  const rows = fillTable(bands, ri.n, (i, add) => {
+    const j = prev(ri.n, i);
+    const y1 = band(g, Math.max(yOf(ri, j), yOf(ri, i)));
+    for (let y = band(g, Math.min(yOf(ri, j), yOf(ri, i))); y <= y1; y++) {
       add(y);
     }
   });
@@ -142,8 +174,8 @@ function edgeGrid(ri: RingIndex): EdgeGrid {
       }
     }
   });
-  g.rowStart = rows.start;
-  g.rowEdges = rows.items;
+  g.bandStart = rows.start;
+  g.bandEdges = rows.items;
   g.cellStart = cells.start;
   g.cellEdges = cells.items;
   return g;
@@ -178,22 +210,29 @@ function crosses(x: number, y: number, ri: RingIndex, i: number): boolean {
   return false;
 }
 
-/** Even-odd parity is independent of edge order, so only edges spanning y need be tested. */
+/**
+ * Even-odd parity is independent of edge order, so only edges spanning y need be tested. A
+ * point outside the ring's box is outside the ring, as the full walk finds it: no edge spans a
+ * y past the box; east of the box no crossing lies east of the point; west of it every edge
+ * spanning y is crossed, and a closed ring has an even number of those. East and west the box
+ * is taken with the margin a crossing can round past it by.
+ */
 function inRing(x: number, y: number, ri: RingIndex): boolean {
   let inside = false;
   const g = ri.grid;
+  const b = ri.box;
+  if (y < b.minY || y > b.maxY || x < b.minX - BOX_MARGIN || x > b.maxX + BOX_MARGIN) {
+    return false;
+  }
   if (!g) {
     for (let i = 0; i < ri.n; i++) {
       inside = crosses(x, y, ri, i) ? !inside : inside;
     }
     return inside;
   }
-  if (y < ri.box.minY || y > ri.box.maxY) {
-    return false;
-  }
-  const r = row(g, y);
-  for (let k = g.rowStart[r] as number; k < (g.rowStart[r + 1] as number); k++) {
-    inside = crosses(x, y, ri, g.rowEdges[k] as number) ? !inside : inside;
+  const at = band(g, y);
+  for (let k = g.bandStart[at] as number; k < (g.bandStart[at + 1] as number); k++) {
+    inside = crosses(x, y, ri, g.bandEdges[k] as number) ? !inside : inside;
   }
   return inside;
 }
@@ -263,19 +302,23 @@ function ringRectDistance(ri: RingIndex, r: Rect, limit: number): number {
   const g = ri.grid;
   const b = ri.box;
   let d = Infinity;
+  // A ring whose box the grown rectangle misses has no edge it reaches: each one's own box
+  // misses it too, and the full walk returns Infinity for every one. A small ring, walked
+  // whole below, is passed over here as an indexed one is: a depth area's islets are many.
+  if (
+    Number.isFinite(limit) &&
+    (r.minX - limit > b.maxX ||
+      r.maxX + limit < b.minX ||
+      r.minY - limit > b.maxY ||
+      r.maxY + limit < b.minY)
+  ) {
+    return Infinity;
+  }
   if (!g || !Number.isFinite(limit)) {
     for (let i = 0; i < ri.n && d > 0; i++) {
       d = Math.min(d, edgeDistance(ri, i, r, Math.min(limit, d)));
     }
     return d;
-  }
-  if (
-    r.minX - limit > b.maxX ||
-    r.maxX + limit < b.minX ||
-    r.minY - limit > b.maxY ||
-    r.maxY + limit < b.minY
-  ) {
-    return Infinity;
   }
   if (limit === 0) {
     forNearEdges(g, r, 0, (i) => {

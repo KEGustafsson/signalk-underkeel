@@ -27,7 +27,10 @@ import {
 import type { NodeStore, NodeValues } from "./node-store";
 import { EMPTY, FLAGS, NO_DATA } from "./node-store";
 import type { Walk } from "./walk";
-import { SWEPT_FLAGS, certain, foldFlags, REACH_FLAGS, riskAt, take, takeStandIn } from "./walk";
+import { addsNothing, canStop, PRECISE_FLAGS, RISK_STOP_BELOW } from "./stop";
+import { SWEPT_FLAGS, certain, foldFlags, riskAt, take, takeStandIn } from "./walk";
+
+export { RISK_STOP_BELOW } from "./stop";
 import { chartReach, chartSigma, flagReach, MAX_CHART_SIGMA } from "./chart-position";
 import { flagsShadowed, shadedRisk, shadedWeight, shadowFor } from "./survey-shadow";
 
@@ -135,33 +138,6 @@ export function footprintGeom(ring: readonly LonLat[]): Geom {
     return { type: "point", p: outer[0] as readonly [number, number] };
   }
   return { type: "polygon", polygons: [{ outer, holes: [] }] };
-}
-
-/**
- * A split tile's flags are the union of its children's, so stopping early
- * at one carrying these would report a gap or an unassessed survey that
- * the footprint itself may not touch. Such tiles are always descended.
- */
-const PRECISE_FLAGS = REACH_FLAGS;
-
-/** Below this, a split tile's risk bound is negligible and its children need not be visited. */
-export const RISK_STOP_BELOW = 1e-4;
-
-/**
- * Whether a split tile may answer for its children. Its bound must clear
- * `clearAbove` and carry no coverage or assessment flags; with risk on,
- * the tile's own P bound (shallowest depth, widest σ) must also be below
- * RISK_STOP_BELOW, so stopping can overstate a footprint's P by at most
- * that much and never understate it.
- */
-function canStop(w: Walk, v: NodeValues): boolean {
-  if (v.dMin < w.clearAbove || (v.flags & PRECISE_FLAGS) !== 0) {
-    return false;
-  }
-  if (!w.risk) {
-    return true;
-  }
-  return riskAt(w, v.dMin, v.sigmaD) < RISK_STOP_BELOW;
 }
 
 /**
@@ -415,6 +391,9 @@ function visit(w: Walk, z: number, x: number, y: number, inside: boolean): void 
   const s = w.store.standIn(i, z, x, y);
   if (s) {
     takeStandIn(w, v, s, z, x, y);
+    return;
+  }
+  if (addsNothing(w, v, z, x, y)) {
     return;
   }
   // Only a tile inside the footprint's bounds grown by the buffer can lie within the buffer.

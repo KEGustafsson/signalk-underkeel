@@ -1521,7 +1521,26 @@ over it (`features` lists `prepare`):
 The box around the vessel comes first (invariant 3 needs it current): a planning build waits while
 a chart box builds, is stopped when one starts (the chart box warmer's `beforeBuild`), and starts
 again after it; two builds never run at once. One planning box is held at a time and released
-after 10 minutes unused; its files stay, so the next build reuses their tiles. Its area, with its
+after 10 minutes unused; its files stay, so the next build reuses their tiles.
+
+A planning index saved on disk is read back instead of built while it still serves
+(`src/planning-restore.ts`). A build that commits records beside the index directory
+(`planning-index.held.json`) the region and box it was built for, when, and a stamp of what it
+read: every source's name, edition and update, the leaf zoom, the ENC source and the WFS depth
+settings. `prepare` for a region that record covers, with today's stamp the same, the record
+at most 7 days old (`RESTORE_MAX_AGE_MS`) and the index in the directory written by this version
+in the box recorded, loads the index (0.3 s for 1.8 M nodes on a Jetson Orin) where the build it
+stands in for downloads and indexes the region again; so a planning box released after its 10
+minutes, or lost to a restart, costs a second, not minutes. A build drops the record before it
+replaces the files, so a failed one leaves none, and refuses to build (503) when it cannot. The
+cells' stamps are taken as the build begins to read them; a build that finds them changed once it
+has committed records nothing, so an index read back never holds a cell older than its stamp.
+The WFS depths read back are those downloaded then: 7 days bounds their age, where the box around
+the vessel is downloaded again as the boat moves. With `how.held` (feature `held`), `prepare` answers only with what serves without a
+build, the index in use, the box held or the one read back, and 404 otherwise: a planner plans
+on what is there before it asks for more. A planning box's download tries a layer the WFS broke off again
+(`WfsDownload.retry`), as a corridor's groups are, the FTIA's lines and swept areas among them:
+without it a plan was refused for one dropped response, or made on a cell with no swept fairways. Its area, with its
 reach, is at most the chart box's at its cap, (2 · cap)², halved for the run after a build that
 reached the heap limit (413 above it), and within the Traficom WFS's span when that source is on.
 Each job on a planning box (session or route check), at its turn in the request queue and before
@@ -1534,6 +1553,36 @@ own cells' vertical datums (`WaterLevelService.over` with `cells`), by the same 
 in use: the lowest level and widest σ over the datums of its cells. Planning boxes are off when
 their directories overlap the configured `indexDir`, and their directory is made at the first
 build, so it cannot keep the plugin from starting.
+
+**The session's raster** (feature `raster`, `src/planning-raster.ts`). A planner's shortening
+passes test thousands of legs, and each `segment` is a corridor walk: 15 246 of them in a 13 nm
+plan, most of its work. `session.raster(x0, y0, cols, rows)` gives instead the status of every
+cell of a block of tiles at the pyramid's deepest zoom (`rasterZoom`, the zoom a swept area's
+edge is split to, so no tile is finer than a cell), painted in one walk of the pyramid. A cell
+is scored as `checkFootprint` scores a footprint that is the cell alone, at the lowest water of
+the session's window over the block, with these bits beside its status:
+
+- `RISKY`: its stated P(UKC < 0), to four decimals as a verdict states it, is at or above the
+  accepted probability;
+- `STUCK`: no water level in the window brings its P under that probability: land, no charted
+  depth, or a depth whose P at the window's highest water, with no σ for the level, is still at
+  or above it (with the mean UKC at or under zero P is at least 0.5 whatever σ). Without a
+  highest water, only land and uncharted ground;
+- `ASK`: nothing here answers for a leg, which is asked of `segment`: a cell in the bounds of a
+  rule object a verdict reads (a bridge, cable or pipe, a restricted area, a traffic lane, a
+  fairway gap strip), under a living-chart sounding, in a block of the index not loaded, or
+  every cell when the water level is a fallback.
+
+With each cell's flags and the raster's `reach`, the chart position reach of the index's widest
+σ, a planner concludes of a leg what `segment` would say: it passes where every cell within its
+corridor and that reach passes, since a verdict is the worst of the tiles it counts and a cell's
+window holds any part of it; it does not where a `STUCK` cell lies in the corridor; else it asks.
+The verdict of every leg offered is still the route check's. Painted blocks are kept per index
+(160 of them and 32 MiB of cells and flags, least lately read dropped) under the scoring's own
+values, the living chart's revision and the block cache's, so a plan's sessions, which differ in
+their corridor alone, paint a block once. A block costs its walk's visits in work units, a kept one a query's fixed
+work. Invariants: a raster changes no verdict (2, 4); a fallback level and a block not loaded
+never read as passing (3).
 
 **Corridors and the depth survey** (features `corridor` and `survey`). A trip longer than a
 planning box holds, 50 nm across the archipelago for one, is planned in a corridor. The planner

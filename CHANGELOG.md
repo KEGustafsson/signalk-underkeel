@@ -63,6 +63,39 @@ All notable changes to signalk-underkeel are documented here.
   one (2.22 or later): it keeps each area downloaded and serves it again, so the chart box, a
   survey or a planning box over water downloaded before reads from its store. **Via Charts
   Provider's WFS proxy** is on by default; turned off, the WFS is read directly.
+- A planning session's `raster` (planning API feature `raster`): the status of every cell of a
+  block of the index's finest tiles for the session's vessel and window, painted in one walk,
+  with bits for a risk at or over the accepted probability, a cell no water level in the window
+  opens and a cell only `segment` answers for. A planner settles a leg on the cells near it and
+  asks `segment` where they do not say: signalk-route-planner asked 1 072 legs where it asked
+  15 246, for the same route.
+- A planning index is read back from disk instead of built again, for up to 7 days while its
+  cells, leaf zoom and WFS settings are unchanged: a planning box released after 10 minutes
+  unused, or lost to a restart, serves its region again in about a second where the build took
+  minutes. `prepare` with `{ held: true }` (feature `held`) gives an index that already serves
+  a region, or 404, and starts no build.
+- A planning box's download tries a layer again when the WFS breaks a response off, as a
+  corridor's does: a depth layer, for which a plan was refused, and the FTIA's lines and swept
+  areas, without which the cell was written with no swept fairways and a plan that needs one
+  found no way.
+
+### Changed
+
+- Index builds are faster, for the same index byte for byte. A depth area's small rings, its
+  islets and holes under 64 vertices, were walked edge by edge for every tile near the area;
+  a ring whose box the tile misses is now passed over, as an indexed ring was. A point is
+  found in a ring from the edges of a band about eight edges high, where it read every edge
+  across a grid row, 400 and more for a coast of 20 000 vertices. A build with fewer columns of
+  root tiles than threads gives each root its own thread. The 830 km² box of a 13 nm trip
+  (8 109 depth areas, 1.34 M vertices, leaf zoom 20, Jetson Orin, 4 threads): 21 s where it took
+  62 s; one thread, 40 s where it took 89 s.
+- A corridor or box query visits fewer tiles for the same answer: a split tile that can add
+  nothing to what the walk has found (no shallower depth, no higher P, no wider σ, no flag or
+  cell not yet seen) is not descended, unless a block of the index under it is not loaded, where
+  the walk reads `NO_COVERAGE` as before. On Traficom WFS depths, where every tile carries
+  `NOT_FOR_NAVIGATION` and no split tile could answer for its children, a 13 nm plan's work fell
+  from 5.23 M units to 3.67 M before any change to the planner. A query's result is unchanged
+  but for its work.
 
 ### Fixed
 

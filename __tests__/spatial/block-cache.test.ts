@@ -350,6 +350,33 @@ describe("the block cache", () => {
     expect(cold.dMin).toBeLessThanOrEqual(minDepthOver(built, geom).dMin);
   });
 
+  test("a tile coarser than the cut zoom reaches a block not loaded under it", () => {
+    const store = pyramidFromBuffer(file(), { budgetBytes: Infinity, syncBytes: -1 });
+    const cache = cacheOf(store);
+    const [a, b] = cache?.keys() ?? [];
+    const [x, y] = xyOf(a as number, FINE.blockZoom);
+    const coarse = FINE.blockZoom - 2;
+    const under = (k: number) => {
+      const [kx, ky] = xyOf(k, FINE.blockZoom);
+      return kx >> 2 === x >> 2 && ky >> 2 === y >> 2;
+    };
+    const others = (cache?.keys() ?? []).filter((k) => k !== a && under(k));
+    expect(store.reachesUnloaded(FINE.blockZoom, x, y)).toBe(true);
+    expect(store.reachesUnloaded(FINE.residentZoom - 1, 2 * x, 2 * y)).toBe(true);
+    expect(store.reachesUnloaded(coarse, x >> 2, y >> 2)).toBe(true);
+    cache?.loadNow(a as number);
+    expect(store.reachesUnloaded(FINE.blockZoom, x, y)).toBe(false);
+    expect(store.reachesUnloaded(FINE.residentZoom - 1, 2 * x, 2 * y)).toBe(false);
+    expect(store.reachesUnloaded(coarse, x >> 2, y >> 2)).toBe(others.length > 0);
+    others.forEach((k) => cache?.loadNow(k));
+    expect(store.reachesUnloaded(coarse, x >> 2, y >> 2)).toBe(false);
+    // A tile at the cut zoom or finer lies in its own block, which a walk loads or stands in for.
+    const [bx, by] = xyOf(b as number, FINE.blockZoom);
+    const s = 2 ** (FINE.residentZoom - FINE.blockZoom);
+    expect(store.reachesUnloaded(FINE.residentZoom, bx * s, by * s)).toBe(false);
+    expect(built.reachesUnloaded(built.minZoom, 0, 0)).toBe(false);
+  });
+
   test("loading and dropping a block bumps the load revision and names that block", async () => {
     const store = pyramidFromBuffer(file(), { budgetBytes: 1, syncBytes: Infinity });
     const cache = cacheOf(store);
