@@ -68,6 +68,16 @@ export interface VesselInputs {
  */
 export const FALLBACK_HULL = { length: 15, beam: 5 } as const;
 
+/**
+ * What a route's corridor reaches past the cross-track limit on each side, metres: half the hull's
+ * beam, so the corridor holds the hull on its line. A plan holds no position buffer: the GPS is
+ * the look-ahead's, underway (plan §4.11, decided). Where the charted water itself lies is the
+ * chart's own uncertainty, which every corridor query already takes (`chartPosition`).
+ */
+export function hullBuffer(vessel: Pick<VesselModel, "beam">): number {
+  return vessel.beam / 2;
+}
+
 export interface ResolvedVessel {
   /** Undefined when the draft is unknown: the engine must not guess it. */
   vessel?: VesselModel;

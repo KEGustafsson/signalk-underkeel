@@ -1,17 +1,16 @@
 import type { ServerAPI } from "@signalk/server-api";
 import type { LookaheadOptions, Sample } from "./engine/lookahead";
 import { NOTIFY_REFRESH_MS } from "./engine/notify";
-import { PILOT_MIN_BUFFER, roomOf } from "./engine/pilotage";
+import { roomOf } from "./engine/room";
 import type { PilotageVerdict, WatchedLeg } from "./engine/pilotage-watch";
 import { legAt, pilotageVerdict } from "./engine/pilotage-watch";
 import type { LonLat } from "./foundation/geo";
 import { PATHS } from "./foundation/state";
-import type { FixHistoryStore } from "./fix-history-store";
-import type { FixHistory } from "./model/fix-history";
 import type { IntegrityResult } from "./model/integrity";
 import type { Monitor } from "./monitor";
 import { ChangeNotifier } from "./notifications";
 import type { ChartIndex } from "./spatial/chart-index";
+import { FALLBACK_HULL, hullBuffer } from "./model/vessel";
 
 /**
  * The active route's legs, read through the Signal K course API (`navigation.course.activeRoute`)
@@ -71,6 +70,7 @@ export class PilotageWatch {
   private retryAt?: number;
   private legs: (WatchedLeg & { measured: boolean })[] = [];
   private index?: ChartIndex;
+  private hull?: number;
 
   constructor(
     private readonly app: App,
@@ -79,33 +79,35 @@ export class PilotageWatch {
 
   /**
    * The verdict at `position` on the active route, for the live buffer `need` (undefined when
-   * the fix cannot be trusted), with `least` the planning buffer the room is measured up to; none
-   * when no route is active, the boat is off it, or the leg it is on is not swept water narrower
-   * than `least`.
+   * the fix cannot be trusted), the room measured past `hull`, the hull's half-beam, up to
+   * `least`, the look-ahead's least position buffer; none when no route is active, the boat is
+   * off it, or the leg it is on is not swept water narrower than `least` past the hull.
    */
   check(
     index: ChartIndex | undefined,
     position: LonLat | undefined,
     need: number | undefined,
-    least: number,
+    c: { least: number; hull: number },
     now = Date.now()
   ): PilotageVerdict | undefined {
     this.follow(now);
     if (!index || !position || this.legs.length === 0) {
       return undefined;
     }
-    if (index !== this.index) {
-      // Another chart index: every room is measured again on it.
+    if (index !== this.index || c.hull !== this.hull) {
+      // Another chart index or hull: every room is measured again.
       this.index = index;
+      this.hull = c.hull;
       this.legs = this.legs.map((l) => ({ from: l.from, to: l.to, measured: false }));
     }
+    const least = c.least;
     const i = legAt(position, this.legs);
     const leg = i === undefined ? undefined : this.legs[i];
     if (i === undefined || !leg) {
       return undefined;
     }
-    if (!leg.measured && PILOT_MIN_BUFFER < least) {
-      const room = roomOf(index, [leg.from, leg.to], 0, [PILOT_MIN_BUFFER, least]);
+    if (!leg.measured && least > 0) {
+      const room = roomOf(index, [leg.from, leg.to], c.hull, [0, least]);
       leg.measured = true;
       if (room !== undefined) {
         leg.room = room;
@@ -155,33 +157,28 @@ export interface PilotageTick {
   integrity?: IntegrityResult;
   index?: ChartIndex;
   position?: Sample<LonLat>;
+  /** The hull's half-beam, metres (`model/vessel.ts`, `hullBuffer`). */
+  hull: number;
   now: number;
 }
 
 /**
- * The fix quality a plan is checked at and the live fix held to it, after each of the monitor's
- * ticks, on the position and integrity check of that tick: the fix's measured σ goes into the
- * history (`model/fix-history.ts`) while the position is fresh, and the pilotage notification
- * follows the active route's swept legs.
+ * The live fix held to the active route's swept legs, after each of the monitor's ticks, on the
+ * position and integrity check of that tick: the pilotage notification follows the leg the boat
+ * is on (`engine/pilotage-watch.ts`). A plan never reads the fix; this is the one place it counts.
  */
 export class PilotageService {
   readonly watch: PilotageWatch;
   private readonly notifier: ChangeNotifier;
-  private saveFailed = false;
 
   constructor(
-    readonly fixes: FixHistoryStore,
     app: App & Pick<ServerAPI, "handleMessage">,
     pluginId: string,
     private readonly lookahead: () => LookaheadOptions,
-    private readonly onError: (message: string) => void
+    onError: (message: string) => void
   ) {
     this.watch = new PilotageWatch(app, onError);
     this.notifier = new ChangeNotifier(app, pluginId);
-  }
-
-  get history(): FixHistory {
-    return this.fixes.history;
   }
 
   /** Runs after each of `monitor`'s ticks, on the index `index` gives. */
@@ -191,6 +188,7 @@ export class PilotageService {
         integrity: monitor.integrityResult,
         index: index(),
         position: monitor.nav.position,
+        hull: hullBuffer(monitor.vessel() ?? FALLBACK_HULL),
         now: now()
       });
     };
@@ -200,13 +198,15 @@ export class PilotageService {
     const l = this.lookahead();
     const p = t.position;
     const fresh = p && t.now - p.at <= l.staleAfter * 1000 ? p.value : undefined;
-    if (t.integrity && fresh) {
-      this.fixes.history.add(t.integrity.sigmaPos, t.now);
-      this.save(t.now, false);
-    }
     // A failing integrity check leaves no buffer the fix can be trusted to.
     const need = t.integrity?.ok ? l.kp * t.integrity.sigmaPos : undefined;
-    const v = this.watch.check(t.index, fresh, need, l.positionBuffer, t.now);
+    const v = this.watch.check(
+      t.index,
+      fresh,
+      need,
+      { least: l.positionBuffer, hull: t.hull },
+      t.now
+    );
     if (!v) {
       this.notifier.clear(PATHS.pilotage, "Pilotage: no swept leg of the active route here");
       return;
@@ -222,21 +222,8 @@ export class PilotageService {
     );
   }
 
-  /** Clears the notification and saves the history: the plugin stops. */
-  stop(now: number): void {
+  /** Clears the notification: the plugin stops. */
+  stop(): void {
     this.notifier.clear(PATHS.pilotage, "UKC monitoring stopped");
-    this.save(now, true);
-  }
-
-  /** Saves the history when due; a disk that refuses it is reported once. */
-  private save(now: number, force: boolean): void {
-    try {
-      this.fixes.save(now, force);
-    } catch (err) {
-      if (!this.saveFailed) {
-        this.saveFailed = true;
-        this.onError(`fix history not saved: ${(err as Error).message}`);
-      }
-    }
   }
 }

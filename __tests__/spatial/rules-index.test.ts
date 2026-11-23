@@ -93,7 +93,7 @@ describe("rule features in the index", () => {
         departure: NOW,
         speeds: [2.5],
         xteLimit: 20,
-        planningBuffer: 10,
+        hullBuffer: 10,
         vessel: { draft: 1.5, length: 12, beam: 4, airHeight: 19 },
         dynamics: DEFAULT_DYNAMICS,
         waterLevel: () => CHART_DATUM,

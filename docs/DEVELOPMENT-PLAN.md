@@ -1271,8 +1271,10 @@ keep the full reasons.
 
 **Algorithm per leg:**
 
-1. Build the corridor `buffer(leg, xteLimit + k_p·σ_pos_plan)`, where `σ_pos_plan` uses a
-   typical GNSS σ rather than the live value.
+1. Build the corridor `buffer(leg, xteLimit + B/2)`, B the boat's beam: the hull on any track
+   within the cross-track limit. No position buffer: a plan reads no GNSS, live or typical (§4.11,
+   decided); where the chart places a depth is the chart's own σ, which every corridor query
+   counts past the corridor (`chartPosition`).
 2. Compute the arrival time at the start and end of the leg; take the water level at the
    worst instant in that interval, since the forecast is evaluated on a 15-minute grid.
 3. Query the pyramid to get the worst cells, then refine them against the R-tree hazards.
@@ -1345,7 +1347,7 @@ a fast-check property holds every point exactly r from either line inside the co
 (invariant 4).
 
 **As built (M5).** The repair grid has at most 120 cells on its longer side. Each cell is at
-least 10 m and at least half the corridor half-width r (xteLimit + planning buffer), and the grid
+least 10 m and at least half the corridor half-width r (xteLimit + half the beam), and the grid
 reaches half the leg's length beyond the leg, and at least 300 m and 2r. A cell is blocked when
 the corridor around it has P at or above the accept threshold, or touches `NO_COVERAGE`,
 `UNASSESSED` or `NO_DEPTH`: a repair must not route through water it cannot check. Costs are
@@ -1415,7 +1417,7 @@ the same answer on any machine.
 
 A corridor query costs about
 its area, so a route check, repair or window is refused when the route's length times its
-corridor width (2 × (xteLimit + planning buffer)) exceeds 200 km², and a window when its
+corridor width (2 × (xteLimit + half the beam)) exceeds 200 km², and a window when its
 departures times that area exceed 1600 km² or its departures times legs exceed 20 000, since a
 leg check costs a corridor query however short the leg is. All three yield to the event loop
 after each corridor query (the route check and the repaired route's re-check), each leg check
@@ -1442,7 +1444,10 @@ then never riskier than the box. A box over 25 km² with its buffer, or a leg wh
 throws RangeError: their queries run without a pause and cost about their area. A session's
 speed, cross-track limit, probability and draft are held to the `/route-check` bounds before it
 starts (400), so a non-finite probability can never pass every leg. The session counts the work
-its queries do. `routeCheck(body, signal)`
+its queries do. `defaults()` gives the route check's speed, cross-track limit and probability,
+the hull's half-beam (`planningBuffer`) and, while the vessel has one, the `draft` a session
+without its own takes (the configured draft, else Signal K `design.draft.maximum`), so a planner
+can show the boat's crew what a plan assumes. `routeCheck(body, signal)`
 is the `/route-check` service itself, which the planner runs on its final route, so every status
 it offers comes from this check (its plan §3, invariant 1).
 
@@ -1555,7 +1560,7 @@ so a corridor 3 km wide along a 50 nm trip fits a 2 GB machine. With S-57 cells 
 spans the whole box, which is then the area held to the cap. An index already held that covers
 every box is given instead, and judges on the charts across all it holds.
 
-**Swept fairways and pilotage.** The Traficom WFS charts a fairway as part of the depth area
+**Swept fairways.** The Traficom WFS charts a fairway as part of the depth area
 around it: Sattmarkssundet at Pargas is one 0–3 m area, read at 0 m, though the FTIA has swept its
 boat route to 2.7 m. With the FTIA's lines the WFS cell takes the FTIA's fairway areas at their
 swept depth as `DRGARE` (`ingest/wfs-ftia.ts`). An ENC's depth and dredged areas never overlap,
@@ -1563,29 +1568,27 @@ so where a cell's dredged areas cover a tile, alone or side by side, its `DEPARE
 them (`spatial/give-way.ts`), and the tile is `DREDGED`; soundings, rocks, land and other cells
 stay. A tile across a dredged area's edge over its cell's depth area splits to `edgeZoomFor`
 (leaf zoom + 2, at most 22): at the leaf zoom alone a 19 m tile across the edge keeps the bank's
-0 m, and the fairway is 25–50 m wide. Pilotage (`engine/pilotage.ts`, feature `pilotage`): a box
-or leg asked with it is checked first at the planned pilotage buffer, kp · the planning σ, at
-least 2 m, and that verdict, flagged `PILOTAGE`, is kept only where every tile within that buffer
-is swept or dredged (a query's `sweptOnly` descends split tiles carrying those flags, which are
-their children's union), or the footprint lies inside a fairway gap strip where it is not
-(below); otherwise at the least position buffer.
+0 m, and the fairway is 25–50 m wide. A route check's leg and a planning session's box are read
+three ways where they apply, the lowest risk standing (`engine/route-check.ts` `heldSteps`,
+`engine/held-box.ts`): through the index; in swept or dredged water all through, when the corridor
+touches any (a query's `sweptOnly` descends split tiles carrying those flags, which are their
+children's union, so a corridor inside the sweep reads it, not the bank a tile across its edge
+holds); and held to a fairway gap strip where it lies inside one (below). Which readings apply
+follows from the corridor alone, never the draft, so the risk stays monotonic in it (invariant 2).
 
-The planning σ (`model/fix-history.ts`) is the configured **Planned position σ for pilotage**
-(1.5 m), or the 95th percentile of the σ the integrity monitor measured over the last seven days
-when that is wider: a histogram per hour, sampled every 10 s while the position is fresh, kept in
-`fix-history.json`. The boat's own history only widens it (invariant 6). Each leg a route check
-pilots carries its room (`engine/room.ts`): the widest buffer, up to the least one, it still
-passes at, swept all through or held to a gap strip, found by halving to 0.25 m. Underway
-(`pilotage-watch.ts`), on a leg of the active route (the course API's `activeRoute`, any route,
-planned or drawn) whose room is narrower than the least buffer, kp · σ of the live fix wider than
-the room, or a failing integrity check, raises `notifications.navigation.underKeel.pilotage` at
-`warn`: steer by the marks and slow down.
-
-Decided, replacing the earlier decision that the fix of the moment sets the pilotage buffer: a
-plan is sailed later and elsewhere than it is made, so it is checked at what the boat's fix has
-shown over days, and the same request gives the same route whatever the HDOP at the berth (one
-reading of HDOP 0.6 for 0.5 turned Pargas–Nagu from 13.96 to 19.96 nm). The live fix is held to
-the plan where it matters, on the swept leg the boat is on.
+Decided, replacing pilotage and every position buffer in a plan: a route check's corridor, and a
+planning session's, is the cross-track limit and half the hull's beam (`model/vessel.ts`,
+`hullBuffer`), the hull on any track within the limit, and nothing else. The chart's positions
+carry their own σ, which every corridor query counts past the corridor (`chartPosition`); a GNSS
+reading, live or past, is no property of the water. A plan is sailed later and elsewhere than it is
+made: one HDOP reading of 0.6 for 0.5 had turned Pargas–Nagu from 13.96 into 19.96 nm, and the
+fix's history did the same a day later. The GNSS is the look-ahead's, underway, where the least
+position buffer and kp · σ of the fix hold (§4.7). On a leg of the active route in swept water
+(`pilotage-watch.ts`; the course API's `activeRoute`, any route, planned or drawn), the leg's room,
+how far the swept water reaches past the hull (`engine/room.ts`, found by halving to 0.25 m up to
+the least position buffer), is held to the live fix: kp · σ of the fix wider than the room, or a
+failing integrity check, raises `notifications.navigation.underKeel.pilotage` at `warn`: steer by
+the marks and slow down.
 
 Decided, on the same ground: nothing a plan reads is a measurement of the moment. Its wave
 allowance is the request's `waveHeight` or the configured **Planned significant wave height**,
@@ -1621,21 +1624,18 @@ or N2000), and the cell keeps every depth as given, the Traficom WFS's stating n
 cell states no datum), so a strip is made only where the line and every area it reaches into state
 the same one.
 
-The strip is the line's guarantee, used only under pilotage. The cell keeps it apart from its
-depths, as `FAIRWAYGAP`, which the index keeps with its rules (`rules.json`) and never builds into
-a tile: every check without pilotage reads the gap at its charted depth, 0 m at Lillholmen, as it
-would without the FTIA, and refuses the passage. A pilotage check (a route check with `pilotage`,
-or a planning session's box or leg with it, at the planned pilotage buffer) holds
-the stretch of a leg whose narrow corridor (xteLimit + the pilotage buffer each side) lies inside
-the strip to the strip's depth at the swept σ, `SWEPT`, and checks the corridor before and after
-that stretch through the index, swept or dredged all through (`engine/gap-strips.ts`,
-`engine/leg-depth.ts`); a box is held to it only when its narrow footprint lies inside one strip.
-The leg must keep to the line: its corridor is off the line by at most the strip's half-width less
-its own, so the width the check works with is the planned pilotage buffer (kp · the planning σ,
-above), and a buffer as wide as the strip's half-width closes the gap. The live fix is not read by
-the check: underway, a fix wider than the leg's room, or one failing its integrity check, raises
-the pilotage notification (above). Such a leg is flagged `PILOTAGE`,
-the skipper's cue to keep between the marks. The corridor before the stretch reaches its half-width
+The strip is the line's guarantee, used only where a corridor lies inside it. The cell keeps it
+apart from its depths, as `FAIRWAYGAP`, which the index keeps with its rules (`rules.json`) and
+never builds into a tile: a corridor reaching past the strip reads the gap at its charted depth,
+0 m at Lillholmen, as it would without the FTIA, and refuses the passage. A check holds the stretch
+of a leg whose corridor (the cross-track limit and half the beam each side) lies inside the strip
+to the strip's depth at the swept σ, `SWEPT`, and checks the corridor before and after that stretch
+through the index, swept or dredged all through (`engine/gap-strips.ts`, `engine/leg-depth.ts`);
+a box is held to it only when its footprint lies inside one strip. The leg must keep to the line:
+its corridor is off the line by at most the strip's half-width less its own, so a hull and
+cross-track limit as wide as the strip's half-width close the gap; the planner's narrows, at no
+cross-track limit, keep to it with the hull alone. Such a leg is flagged `FAIRWAY_GAP`, the
+skipper's cue to keep to the line between the marks. The corridor before the stretch reaches its half-width
 past the point the stretch begins, itself at least that half-width inside the strip's end, so the
 strip reaches 30 m back into each area while the line is in it: twice the widest corridor it can
 hold (10 m), a tile of the edge zoom across the area's end (about 5 m at 60° N) and the sampling.
@@ -1643,11 +1643,11 @@ Past the 20 m its width is taken from, the strip is no wider than the areas hold
 strip is not used where a charted sounding, rock, wreck or obstruction in it is shallower than its
 depth, where the index has land, no coverage or drying water under the stretch, or where the
 living chart adjusted a tile under it; past the narrow corridor the chart's position spread is not
-counted inside the strip, whose width the planned buffer decides. Rules (bridges' clearances) hold over the
+counted inside the strip, whose width the hull and cross-track limit decide. Rules (bridges' clearances) hold over the
 whole corridor as on any leg. Decided, beside invariant 1: `minDepthOver` is unchanged, since the
-strip is none of its source features, but a pilotage verdict reads a strip's stretch at the
-line's safe clearance depth where the chart reads shallower, on the FTIA's guarantee for the line
-and the boat's planned position accuracy, the live fix held to the leg's room underway (tested in `__tests__/spatial/swept-fairway.test.ts`).
+strip is none of its source features, but a verdict reads a strip's stretch at the line's safe
+clearance depth where the chart reads shallower, on the FTIA's guarantee for the line, the live
+fix held to the leg's room underway (tested in `__tests__/spatial/swept-fairway.test.ts`).
 
 Later: a strip could be narrowed or confirmed by evidence of passages, vessels of known draft that
 AIS shows have passed through the gap (draft and track from their static and position reports);

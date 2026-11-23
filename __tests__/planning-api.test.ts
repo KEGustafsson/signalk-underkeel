@@ -137,6 +137,9 @@ describe("planning API v1", () => {
     const r = await none.session({ departure: NOW, until: NOW, speed: 3 }, NEVER, async () => 1);
     expect(r).toEqual({ ok: false, status: 503, error: "building" });
     const nodraft = planningApi(() => deps({ vessel: () => undefined }), "t");
+    // The draft a session takes is stated while the vessel has one, never guessed.
+    expect(api.defaults().draft).toBe(3.6);
+    expect(nodraft.defaults()).not.toHaveProperty("draft");
     const v = await nodraft.session({ departure: NOW, until: NOW, speed: 3 }, NEVER, async () => 1);
     expect(v).toEqual({ ok: false, status: 422, error: "vessel draft not configured" });
   });
@@ -220,73 +223,72 @@ describe("planning API v1", () => {
     expect(tall.features).toContain("objects");
   });
 
-  test("each pilotage check takes the fix as it is then, the least buffer once it fails", async () => {
-    let buffer: number | undefined = 3;
-    const swept = planningApi(
-      () =>
-        deps({
-          index: gappedChannel(),
-          vessel: () => ({ draft: 1.5, length: 8, beam: 2.5 }),
-          pilotBuffer: () => buffer
-        }),
-      "test"
-    );
+  test("a session's corridor is the cross-track limit and half the beam: no GPS buffer", async () => {
+    const hull = (beam: number) =>
+      planningApi(
+        () =>
+          deps({
+            index: gappedChannel(),
+            vessel: () => ({ draft: 1.5, length: 8, beam })
+          }),
+        "test"
+      );
     const sw: LonLat = [22.002, CHANNEL_LAT];
     const ne: LonLat = [22.007, CHANNEL_LAT];
-    // A grown box reaches r·√2 plus a metre past sw–ne: at xteLimit 0 it stays in the channel.
     const params = { departure: NOW, until: NOW + HOUR, speed: 3, xteLimit: 0 };
-    const r = await swept.session({ ...params, pilotage: true }, NEVER, async (s) => {
-      const good = { box: s.box(sw, ne), leg: s.segment(sw, ne) };
-      buffer = undefined;
-      const lost = { box: s.box(sw, ne), leg: s.segment(sw, ne) };
-      buffer = 3;
-      return { good, lost, back: s.segment(sw, ne) };
-    });
-    const least = await swept.session(params, NEVER, async (s) => ({
-      box: s.box(sw, ne),
-      leg: s.segment(sw, ne)
-    }));
-    if (!r.ok || !least.ok) {
-      throw new Error("session refused");
-    }
-    expect(r.value.good.box.flags).toContain("PILOTAGE");
-    expect(r.value.good.leg.flags).toContain("PILOTAGE");
-    expect(r.value.lost).toEqual(least.value);
-    expect(least.value.leg.flags).not.toContain("PILOTAGE");
-    expect(r.value.back.flags).toContain("PILOTAGE");
+    const at = async (beam: number) => {
+      const r = await hull(beam).session(params, NEVER, async (s) => ({
+        halfWidth: s.halfWidth,
+        box: s.box(sw, ne),
+        leg: s.segment(sw, ne)
+      }));
+      if (!r.ok) {
+        throw new Error("session refused");
+      }
+      return r.value;
+    };
+    // The channel is dredged 11 m each side: a 2.5 m beam keeps inside it.
+    const small = await at(2.5);
+    expect(small.halfWidth).toBe(1.25);
+    expect(small.leg.status).toBe("ok");
+    expect(small.box.status).toBe("ok");
+    // A 30 m hull reaches its banks' 0 m.
+    const wide = await at(30);
+    expect(wide.halfWidth).toBe(15);
+    expect(wide.leg.status).toBe("fail");
+    expect(wide.box.status).toBe("fail");
   });
 
-  test("a pilotage session holds a leg through a fairway gap to its strip while the fix is good", async () => {
-    let buffer: number | undefined = 3;
-    const bridged = planningApi(
-      () =>
-        deps({
-          index: bridgedChannel(),
-          vessel: () => ({ draft: 1.5, length: 8, beam: 2.5 }),
-          pilotBuffer: () => buffer
-        }),
-      "test"
-    );
+  test("a session holds a leg and a box through a fairway gap to its strip", async () => {
+    const at = (beam: number) =>
+      planningApi(
+        () => deps({ index: bridgedChannel(), vessel: () => ({ draft: 1.5, length: 8, beam }) }),
+        "test"
+      );
     const a: LonLat = [22.006, CHANNEL_LAT];
     const b: LonLat = [22.014, CHANNEL_LAT];
     const mid = (BRIDGE_GAP[0] + BRIDGE_GAP[1]) / 2;
     const sw: LonLat = [mid - 0.0002, CHANNEL_LAT];
     const ne: LonLat = [mid + 0.0002, CHANNEL_LAT];
     const params = { departure: NOW, until: NOW + HOUR, speed: 3, xteLimit: 0 };
-    const r = await bridged.session({ ...params, pilotage: true }, NEVER, async (s) => {
-      const good = { leg: s.segment(a, b), box: s.box(sw, ne) };
-      buffer = undefined;
-      return { good, lost: s.segment(a, b) };
-    });
-    const plain = await bridged.session(params, NEVER, async (s) => s.segment(a, b));
-    if (!r.ok || !plain.ok) {
+    const r = await at(2.5).session(params, NEVER, async (s) => ({
+      leg: s.segment(a, b),
+      box: s.box(sw, ne)
+    }));
+    // A hull as wide as the strip (10 m each side) reaches past it, into the gap's charted 0 m.
+    const wide = await at(24).session(params, NEVER, async (s) => s.segment(a, b));
+    if (!r.ok || !wide.ok) {
       throw new Error("session refused");
     }
-    expect(r.value.good.leg.status).toBe("ok");
-    expect(r.value.good.leg.flags).toContain("PILOTAGE");
-    expect(r.value.good.box.flags).toContain("PILOTAGE");
-    expect(r.value.lost.status).toBe("fail");
-    expect(r.value.lost).toEqual(plain.value);
+    expect(r.value.leg.status).toBe("ok");
+    expect(r.value.leg.flags).toContain("FAIRWAY_GAP");
+    expect(r.value.box.flags).toContain("FAIRWAY_GAP");
+    expect(wide.value.status).toBe("fail");
+    expect(wide.value.flags).not.toContain("FAIRWAY_GAP");
+  });
+
+  test("no pilotage feature: a plan reads no GPS", () => {
+    expect(api.features).not.toContain("pilotage");
   });
 
   test("a leg whose corridor is over 25 km² is refused", async () => {

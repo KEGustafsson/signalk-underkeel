@@ -1,7 +1,6 @@
 import { routeDepsFor, type PluginState } from "../src/api-wiring";
 import type { Clock } from "../src/monitor";
 import { parseConfig } from "../src/config";
-import { FixHistory, MIN_SAMPLES, SAMPLE_MS } from "../src/model/fix-history";
 
 /** The route services' water levels before the plugin's monitor runs. */
 
@@ -25,41 +24,5 @@ describe("route dependencies with no monitor", () => {
       expect(level?.h).toBe(0);
       expect(level?.degraded).toBe("plugin not started");
     }
-  });
-});
-
-describe("the pilotage buffer a plan is checked at", () => {
-  const T = Date.parse("2026-11-22T12:00:00Z");
-  const at = { now: () => T } as unknown as Clock;
-
-  test("kp times the planning σ, whatever the fix of the moment", () => {
-    const fixes = new FixHistory();
-    for (const live of [
-      { sigmaPos: 0.3, ok: true },
-      { sigmaPos: 4, ok: true },
-      { sigmaPos: 1.5, ok: false }
-    ]) {
-      const s = {
-        zoneErrors: [],
-        config: parseConfig({}),
-        monitor: { integrityResult: { ...live, reasons: [], divergence: null } },
-        pilotage: { history: fixes }
-      } as unknown as PluginState;
-      // The configured σ 1.5 m at kp 2, while the history is too short to count.
-      expect(routeDepsFor(app, at, s).pilotBuffer?.()).toBe(3);
-    }
-  });
-
-  test("the boat's own history widens it when its fix has been worse", () => {
-    const fixes = new FixHistory();
-    for (let i = 0; i < MIN_SAMPLES; i++) {
-      fixes.add(2.4, T - (MIN_SAMPLES - i) * SAMPLE_MS);
-    }
-    const s = {
-      zoneErrors: [],
-      config: parseConfig({}),
-      pilotage: { history: fixes }
-    } as unknown as PluginState;
-    expect(routeDepsFor(app, at, s).pilotBuffer?.()).toBe(5);
   });
 });

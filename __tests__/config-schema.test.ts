@@ -41,7 +41,7 @@ describe("admin form", () => {
   test("the flat schema holds every setting once, without showExpert", () => {
     const all = fields(SCHEMA as Schema);
     expect(new Set(all).size).toBe(all.length);
-    expect(all).toHaveLength(56);
+    expect(all).toHaveLength(55);
     expect(all).not.toContain("showExpert");
     for (const f of [
       "waterLevel.height",

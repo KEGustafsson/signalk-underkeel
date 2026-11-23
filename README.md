@@ -492,7 +492,10 @@ A route-check body carries `route` (a GeoJSON LineString) or `routeRef`
 (`/resources/routes/<id>`), and optionally `departure` (ISO 8601), `speed` (m/s: one value,
 one per leg, `{ "default": … }` or `{ "legs": […] }`), `xteLimit` (m), `probability` and
 `vessel.draft` and `vessel.airHeight` (m). Each leg is checked over a corridor of the
-cross-track limit plus a planning buffer at the lowest water level expected while on it.
+cross-track limit plus half the boat's beam, the hull on any track within the limit, at the lowest
+water level expected while on it. No position buffer: a plan reads no GNSS, which is the
+look-ahead's, underway. A charted depth or rock just outside the corridor still counts, weighted by
+how well the chart places it.
 
 A leg is also held to what the charts say besides depth. With an air height (`vessel.airHeight`,
 **Air height** under the expert boat settings, or Signal K `design.airHeight`), a bridge or an
@@ -550,27 +553,18 @@ from one swept area into the next, the gap gets a strip along the line, at most 
 the line's safe clearance depth (its design draft where it states none) and never deeper than the
 sweeps on either side. The FTIA's guarantee is the line's, and no FTIA or Traficom layer publishes
 the fairway inside the gap, so the strip is none of the index's depths: the cell keeps it apart
-(`FAIRWAYGAP`), a check without pilotage reads the gap at its charted depth, and only pilotage
-holds a leg to it (`docs/DEVELOPMENT-PLAN.md` §4.11, swept fairways and pilotage).
+(`FAIRWAYGAP`): a corridor reaching past the strip reads the gap at its charted depth, and a leg
+or box whose corridor lies inside it is held to it, flagged `FAIRWAY_GAP`
+(`docs/DEVELOPMENT-PLAN.md` §4.11, swept fairways).
 
-A session or route check with `pilotage: true` (feature `pilotage`) checks each box and leg first
-at the planned pilotage buffer, **Position buffer in σ** times the **Planned position σ for
-pilotage** (1.5 m) and at least 2 m, while that is narrower than the **Least position buffer**,
-and keeps that verdict, flagged `PILOTAGE`, only where the footprint at it lies in swept or
-dredged water all through: a fairway swept to its marks, which a boat keeps between. Through a
-fairway gap the stretch of a leg whose footprint at that buffer lies inside the strip is read at
-the strip's depth, so the leg must keep to the line, off it by at most the strip's half-width
-less the buffer and the cross-track limit; a buffer as wide as the strip closes the gap. Anywhere
-else the box or leg is checked at the least buffer as any other. The plan never reads the fix of
-the moment, so the same request gives the same route: the planned σ is the configured one, or
-wider where the boat's own fix history shows it has been worse (how, in the
-[development plan](docs/DEVELOPMENT-PLAN.md#411-route-check-repair-and-departure-window) §4.11,
-pilotage). Each piloted leg of a route check carries
-`pilotage: { buffer, room }`, its room the widest buffer it still passes at.
+A route check's leg and a planning session's box are read through the index and, where they apply,
+in swept water all through and held to a gap strip, the lowest risk standing: a corridor inside a
+sweep reads the sweep, not the bank a tile across its edge holds.
 
-Underway, on a leg of the active route in swept water narrower than the least buffer, the live
-fix is held to that room: twice its σ wider than the room, or a failing integrity check, raises
-`notifications.navigation.underKeel.pilotage` at `warn`, to steer by the marks and slow down.
+Underway, on a leg of the active route in swept water, the live fix is held to the leg's room, how
+far the swept water reaches past the hull: twice its σ wider than the room, or a failing integrity
+check, raises `notifications.navigation.underKeel.pilotage` at `warn`, to steer by the marks and
+slow down.
 
 A trip longer than a planning box holds is planned in a corridor. With the Traficom WFS depth
 source on, a planner first asks for a coarse depth survey of the trip's region, downloaded tile by

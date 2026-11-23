@@ -188,7 +188,6 @@ function parseLookahead(l: Record<string, unknown>, style: WarningStyle): Lookah
     minHorizon: Math.min(num(l.minHorizon, d.minHorizon, 0), LOOKAHEAD_LIMITS.minHorizon),
     positionBuffer: num(l.positionBuffer, d.positionBuffer, 0),
     kp: num(l.kp, d.kp, 0, 5),
-    planSigma: num(l.planSigma, d.planSigma, 0.1, 20),
     sigmaCog: degrees(l.sigmaCog, d.sigmaCog, 0, 45),
     sigmaRot: degrees(l.sigmaRot, d.sigmaRot, 0, 10),
     maxTurnRate: degrees(l.maxTurnRate, d.maxTurnRate, 0.1, 30),

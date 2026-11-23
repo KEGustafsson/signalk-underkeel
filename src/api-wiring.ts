@@ -1,5 +1,3 @@
-import { plannedPilotBuffer } from "./engine/pilotage";
-import { planningSigma } from "./model/fix-history";
 import type { PilotageService } from "./pilotage-watch";
 import type { ServerAPI } from "@signalk/server-api";
 import type { AckStore } from "./ack-store";
@@ -41,7 +39,7 @@ export interface PluginState {
   wfs?: WfsService;
   /** Indexes built on request for regions past the chart box (`planning-box.ts`). */
   planning?: PlanningBoxes;
-  /** The fix quality a plan is checked at, and the live fix held to it (`pilotage-watch.ts`). */
+  /** The live fix held to the active route's swept legs (`pilotage-watch.ts`). */
   pilotage?: PilotageService;
   stopped: EngineStatus;
   /** The heavy REST work, aborted when the plugin stops. */
@@ -95,12 +93,6 @@ export function routeDepsFor(
     getRoute: (id) => app.resourcesApi.getResource("routes", id),
     now: () => clock.now(),
     queue: s.requests,
-    pilotBuffer: () => {
-      const l = (s.config ?? parseConfig({})).lookahead;
-      // The planning σ, never the fix of the moment: a plan is sailed later and elsewhere.
-      const sigma = planningSigma(s.pilotage?.history, l.planSigma, clock.now());
-      return plannedPilotBuffer(sigma, l.kp, l.positionBuffer);
-    },
     chartBox: () => s.wfs?.view().bbox,
     indexBox: () => (s.load?.indexDir === undefined ? undefined : readBox(s.load.indexDir)?.bbox)
   };
