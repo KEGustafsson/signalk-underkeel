@@ -156,13 +156,6 @@ describe("signalk-underkeel satisfies the contract", () => {
       [
         "route-check-request.json",
         parseRouteRequest,
-        { pilotage: true },
-        [true, false],
-        ["yes", 1]
-      ],
-      [
-        "route-check-request.json",
-        parseRouteRequest,
         { vessel: { draft: 0.01 } },
         [0.01, 30],
         [0, 31]

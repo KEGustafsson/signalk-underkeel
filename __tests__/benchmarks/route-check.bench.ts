@@ -58,7 +58,7 @@ describe("route check benchmark", () => {
       departure: 0,
       speeds: Array.from({ length: 30 }, () => 2.5),
       xteLimit: 30,
-      planningBuffer: 10,
+      hullBuffer: 10,
       vessel: { draft: 1.9, length: 12, beam: 4 },
       dynamics: DEFAULT_DYNAMICS,
       waterLevel: () => CHART_DATUM,
@@ -159,7 +159,7 @@ const cases = [["47 km", long, 40], ["47 km", long, 500], ["47 km", long, 2000],
 let worst = 0;
 for (const [name, coordinates, xteLimit] of cases) {
   const input = {
-    coordinates, departure: 0, speeds: [3], xteLimit, planningBuffer: 0,
+    coordinates, departure: 0, speeds: [3], xteLimit, hullBuffer: 0,
     vessel: { draft: 1.9, length: 12, beam: 4 }, dynamics: DEFAULT_DYNAMICS,
     waterLevel: () => CHART_DATUM, probability: 0.01
   };

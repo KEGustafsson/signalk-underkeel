@@ -190,7 +190,7 @@ function* searchSteps(
 ): Steps<LonLat[] | undefined> {
   const limit = opts.searchShare * opts.maxWork;
   const speed = input.speeds[leg.index] as number;
-  const corridor = input.xteLimit + input.planningBuffer;
+  const corridor = input.xteLimit + input.hullBuffer;
   const grid = gridFor(leg.from, leg.to, corridor, opts);
   // A detour is longer than the leg, so the final check reads its later pieces after the leg's
   // own end. The grid takes the lowest level until the boat could have sailed the grid's width

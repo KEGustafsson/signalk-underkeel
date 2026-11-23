@@ -15,16 +15,16 @@ import { greatCircleOffset } from "./corridor";
 import { queryWork } from "./work";
 
 /**
- * Fairway gap strips under pilotage (plan §4.11, swept fairways). The FTIA keeps a fairway's
- * navigation line clear to its safe clearance depth through the gaps its swept areas leave under
- * a bridge, and publishes no fairway area there, so the strip along the line
- * (`ingest/fairway-gaps.ts`) is never built into the index's tiles: an ordinary check reads the
- * gap at its charted depth. A pilotage check, at the planned pilotage buffer, holds the
- * stretches of a leg whose narrow corridor lies inside a strip to the strip's depth, the
- * guarantee's σ (SWEPT_SIGMA_D), and checks the rest of the corridor through the index, swept or
- * dredged all through (`route-check.ts`). The boat keeps to the line, its corridor off it by at
- * most the strip's half-width less the corridor's: a buffer too wide for that closes the
- * passage, and underway a live fix wider than the leg's room is warned of (`pilotage-watch.ts`).
+ * Fairway gap strips (plan §4.11, swept fairways). The FTIA keeps a fairway's navigation line
+ * clear to its safe clearance depth through the gaps its swept areas leave under a bridge, and
+ * publishes no fairway area there, so the strip along the line (`ingest/fairway-gaps.ts`) is
+ * never built into the index's tiles: a corridor reaching past it reads the gap at its charted
+ * depth. A check holds the stretches of a leg whose corridor (the cross-track limit and half the
+ * beam each side) lies inside a strip to the strip's depth, the guarantee's σ (SWEPT_SIGMA_D),
+ * and checks the rest of the corridor through the index, swept or dredged all through
+ * (`route-check.ts`). The boat keeps to the line, its corridor off it by at most the strip's
+ * half-width less the corridor's: a corridor too wide for that closes the passage, and underway
+ * a live fix wider than the leg's room is warned of (`pilotage-watch.ts`).
  */
 
 /** Sampling step along a leg, ground metres. */

@@ -10,8 +10,9 @@ import type { HeldBox, PlanningBoxes } from "./planning-box";
 import { carryAdjustments, holds, regionError } from "./planning-box";
 import { type ChartObject, sessionObjects } from "./planning-objects";
 import type { RouteQueue, RouteServiceDeps } from "./route-service";
-import { pilotFor, routeCheck, vesselFor } from "./route-service";
-import { pilotedBox } from "./engine/pilotage";
+import { routeCheck, vesselFor } from "./route-service";
+import { heldBox } from "./engine/held-box";
+import { FALLBACK_HULL, hullBuffer } from "./model/vessel";
 import type { SurveyResult } from "./planning-survey";
 import { corridorError, surveyOver } from "./planning-survey";
 import { growBbox } from "./spatial/build-box";
@@ -54,14 +55,12 @@ export interface SessionParams {
   draft?: number;
   /** Air height, metres, in place of the vessel's: bridges and overhead cables are held to it. */
   airHeight?: number;
-  /** Feature "pilotage": swept water at the pilotage buffer (`engine/pilotage.ts`). */
-  pilotage?: boolean;
   /** Significant wave height to allow for, metres; absent, the configured planned value. */
   waveHeight?: number;
 }
 
 export interface Session {
-  /** Corridor half-width: xteLimit + planning buffer, metres. */
+  /** Corridor half-width: xteLimit + the hull's half-beam, metres. */
   readonly halfWidth: number;
   /** Every point of the box with halfWidth around it, at the lowest level in the window. */
   box(sw: LonLat, ne: LonLat, window?: Window): Verdict;
@@ -107,7 +106,7 @@ export type PrepareResult =
   { ok: true; value: Prepared } | { ok: false; status: number; error: string };
 
 /** What this provider adds to version 1, for a planner to test before it calls it. */
-export const FEATURES = ["prepare", "corridor", "survey", "objects", "pilotage"] as const;
+export const FEATURES = ["prepare", "corridor", "survey", "objects"] as const;
 
 export interface PlanningApiV1 {
   readonly version: 1;
@@ -119,7 +118,17 @@ export interface PlanningApiV1 {
   unavailable(): string | undefined;
   /** The box the index covers [west, south, east, north]; undefined for a whole index. */
   coverage(): [number, number, number, number] | undefined;
-  defaults(): { speed: number; xteLimit: number; probability: number; planningBuffer: number };
+  /**
+   * The route check's settings, and `draft`: the vessel's draft as a session without one takes
+   * it (the configured draft, else Signal K `design.draft.maximum`); absent while none is known.
+   */
+  defaults(): {
+    speed: number;
+    xteLimit: number;
+    probability: number;
+    planningBuffer: number;
+    draft?: number;
+  };
   /** Runs `job` with the index, in the request queue route checks run in. */
   session<T>(
     params: SessionParams,
@@ -214,7 +223,7 @@ function inputFor(deps: RouteServiceDeps, p: SessionParams): RouteCheckInput | s
     departure: p.departure,
     speeds: [p.speed],
     xteLimit: p.xteLimit ?? deps.config.routeCheck.xteLimit,
-    planningBuffer: deps.config.lookahead.positionBuffer,
+    hullBuffer: hullBuffer(vessel),
     vessel,
     dynamics: deps.config.dynamics,
     waterLevel: deps.waterLevel,
@@ -233,9 +242,7 @@ function sessionFor(
   p: SessionParams,
   signal: AbortSignal
 ): Session {
-  const halfWidth = input.xteLimit + input.planningBuffer;
-  // Read at each check, not at admission: the fix history may widen it while the session runs.
-  const piloted = (): RouteCheckInput => ({ ...input, ...pilotFor(p.pilotage, deps) });
+  const halfWidth = input.xteLimit + input.hullBuffer;
   const whole: Window = { start: p.departure, end: p.until };
   let work = 0;
   return {
@@ -245,10 +252,7 @@ function sessionFor(
       if (areaKm2(ring) > MAX_BOX_KM2) {
         throw new RangeError(`box over ${MAX_BOX_KM2} km² with its buffer`);
       }
-      const now = piloted();
-      const pilot = now.pilotBuffer;
-      const narrow = pilot === undefined ? undefined : grownBox(sw, ne, now.xteLimit + pilot);
-      const v = pilotedBox(index, now, { ring, narrow }, p.speed, window);
+      const v = heldBox(index, input, ring, p.speed, window);
       work += v.work;
       return { status: v.status, risk: v.risk, flags: v.flags, worst: v.worst };
     },
@@ -260,7 +264,7 @@ function sessionFor(
       // The leg's own level is the window's lowest, whatever its arrival time.
       const high = deps.highWater;
       const leg = {
-        ...piloted(),
+        ...input,
         coordinates: [a, b],
         waterLevel: () => level(window, [a, b]),
         // The leg's clearances at the window's highest water, whatever its arrival time.
@@ -428,12 +432,16 @@ export function planningApi(
     },
     coverage: () => deps().chartBox?.(),
     defaults: () => {
-      const c = deps().config;
+      const d = deps();
+      const c = d.config;
+      const vessel = d.vessel();
       return {
         speed: c.routeCheck.speed,
         xteLimit: c.routeCheck.xteLimit,
         probability: c.routeCheck.probability,
-        planningBuffer: c.lookahead.positionBuffer
+        // Named for the contract: the hull's half-beam, the corridor past the cross-track limit.
+        planningBuffer: hullBuffer(vessel ?? FALLBACK_HULL),
+        ...(vessel && { draft: vessel.draft })
       };
     },
     session: sessionOver(deps),

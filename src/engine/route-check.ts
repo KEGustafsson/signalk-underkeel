@@ -17,7 +17,6 @@ import { heldDepth, stripHolding } from "./gap-strips";
 import type { LegDepth, Scoring } from "./leg-depth";
 import { bridgedSteps, CLEARANCE_RESOLUTION, corridorSteps } from "./leg-depth";
 import { applyRules } from "./rule-check";
-import { roomSteps } from "./room";
 
 export { corridorRing, legCorridors, RING_REACH } from "./corridor";
 import { queryWork } from "./work";
@@ -40,14 +39,11 @@ export interface RouteCheckInput {
   speeds: number[];
   /** Allowed cross-track error, metres. */
   xteLimit: number;
-  /** Planning position uncertainty added to the corridor, metres. */
-  planningBuffer: number;
   /**
-   * Pilotage (`pilotage.ts`): a narrower buffer a leg is checked at first, kept where its
-   * corridor lies in swept or dredged water all through, or inside a fairway gap strip where it
-   * is not (`gap-strips.ts`); absent, every leg at `planningBuffer`.
+   * What the corridor reaches past the cross-track limit, metres: half the hull's beam
+   * (`model/vessel.ts`, `hullBuffer`). No position buffer: the GPS is the look-ahead's.
    */
-  pilotBuffer?: number;
+  hullBuffer: number;
   vessel: VesselModel;
   dynamics: DynamicsOptions;
   /**
@@ -93,13 +89,6 @@ export interface LegResult {
   explanation?: Explanation;
   /** Why the leg is unverified, when the flags alone do not say (`chart-box.ts`). */
   reason?: string;
-  /**
-   * A leg checked at the pilotage buffer (`pilotage.ts`): that buffer and the leg's room, the
-   * widest buffer its corridor stays in swept or dredged water at, up to the planning buffer,
-   * metres. The room is the plan's tolerance: how far off the line, past the cross-track limit,
-   * the boat may be there; the live fix is held to it underway (`pilotage-watch.ts`).
-   */
-  pilotage?: { buffer: number; room: number };
 }
 
 export interface RouteCheckResult {
@@ -173,9 +162,8 @@ function* legSteps(
   const end = start + (length / speed) * 1000;
   const wl = input.waterLevel(start, end, [from, to]);
   const { terms, s } = scoringFor(input, speed, wl);
-  const { result, ring, work: depthWork, width } = yield* pilotedSteps(index, input, from, to, s);
-  const { pilotage, work: roomWork } = yield* pilotageSteps(index, input, [from, to], width);
-  const work = depthWork + roomWork;
+  const width = input.xteLimit + input.hullBuffer;
+  const { result, ring, work, strip } = yield* heldSteps(index, [from, to], width, s);
   const covered = result.coveredDMin;
   const land = covered === -Infinity;
   const charted = covered === Infinity || land ? null : covered;
@@ -183,8 +171,8 @@ function* legSteps(
   if (land) {
     flags.push("LAND");
   }
-  if (width < input.xteLimit + input.planningBuffer) {
-    flags.push("PILOTAGE");
+  if (strip) {
+    flags.push(FAIRWAY_GAP_FLAG);
   }
   const tile = result.riskTile;
   const why = tile ? explainTile(index, tile, ring, terms, wl) : undefined;
@@ -208,53 +196,58 @@ function* legSteps(
     charted: charted === null ? null : finiteOrNull(charted),
     flags,
     worst: tile && { position: tile.center, hazard: why?.hazard },
-    explanation: why?.explanation,
-    ...(pilotage && { pilotage })
+    explanation: why?.explanation
   };
   return { leg, cellRefs: result.cellRefs, work };
 }
 
+/** The flag of a leg or box held to a fairway gap strip (`gap-strips.ts`). */
+export const FAIRWAY_GAP_FLAG = "FAIRWAY_GAP";
+
+/** Flags of tiles a sweep or dredging covers: only then can a swept-only reading pass. */
+const SWEPT_BITS = FLAGS.SWEPT | FLAGS.DREDGED;
+
 /**
- * A leg's corridor at the pilotage buffer when it lies in swept or dredged water all through, or
- * in fairway gap strips where it is not, else at the planning buffer (`pilotage.ts`), with the
- * half-width it was taken at.
+ * A leg's corridor `width` metres each side, read three ways where they apply, the lowest risk
+ * standing: through the index; in swept or dredged water all through (`QueryOptions.sweptOnly`,
+ * which reads the split tiles at a sweep's edge), when the corridor touches any; and held to a
+ * fairway gap strip where it lies inside one (`leg-depth.ts`, `bridgedSteps`). Which readings
+ * apply follows from the corridor alone, never the draft, so the risk stays monotonic in it
+ * (invariant 2). `strip` when the strip's reading stands.
  */
-function* pilotedSteps(
+function* heldSteps(
   index: ChartIndex,
-  input: RouteCheckInput,
-  from: LonLat,
-  to: LonLat,
+  [from, to]: [LonLat, LonLat],
+  width: number,
   s: Scoring
-): Steps<LegDepth & { width: number }> {
-  const full = input.xteLimit + input.planningBuffer;
-  const pilot = input.pilotBuffer;
-  let work = 0;
-  if (pilot !== undefined && pilot < input.planningBuffer) {
-    const width = input.xteLimit + pilot;
-    const piloted = yield* corridorSteps(index, from, to, width, s, true);
-    if (piloted.result.unswept === false) {
-      return { ...piloted, width };
-    }
-    work = piloted.work;
-    const bridged = yield* bridgedSteps(index, from, to, width, s);
-    if (bridged) {
-      work += bridged.work;
-      if (bridged.result.unswept === false) {
-        return { ...bridged, work, width };
-      }
+): Steps<LegDepth & { strip: boolean }> {
+  const d = yield* corridorSteps(index, from, to, width, s);
+  let best: LegDepth & { strip: boolean } = { ...d, strip: false };
+  let work = d.work;
+  if (d.result.flags & SWEPT_BITS) {
+    const swept = yield* corridorSteps(index, from, to, width, s, true);
+    work += swept.work;
+    if (swept.result.unswept === false && swept.result.maxRisk < best.result.maxRisk) {
+      best = { ...swept, strip: false };
     }
   }
-  const d = yield* corridorSteps(index, from, to, full, s);
-  return { ...d, work: work + d.work, width: full };
+  const bridged = yield* bridgedSteps(index, from, to, width, s);
+  if (bridged) {
+    work += bridged.work;
+    if (bridged.result.unswept === false && bridged.result.maxRisk < best.result.maxRisk) {
+      best = { ...bridged, strip: true };
+    }
+  }
+  return { ...best, work };
 }
 
 /** Scoring for a swept-water test alone: its risk is not read. */
 const SWEPT_TEST: Scoring = { threshold: 0, sigmaExtra: 1 };
 
 /**
- * Whether the corridor of the leg `ends` at cross-track `xte` plus a buffer passes pilotage: in
- * swept or dredged water all through (`QueryOptions.sweptOnly`), or so through a fairway gap's
- * strip (`leg-depth.ts`, `bridgedSteps`); its queries' work added to `work.n`.
+ * Whether the corridor of the leg `ends` at `xte` plus a buffer lies in swept or dredged water
+ * all through (`QueryOptions.sweptOnly`), or so through a fairway gap's strip (`leg-depth.ts`,
+ * `bridgedSteps`): the test a leg's room is found by (`room.ts`); its work added to `work.n`.
  */
 export function sweptAt(
   index: ChartIndex,
@@ -273,23 +266,6 @@ export function sweptAt(
     work.n += bridged?.work ?? 0;
     return bridged?.result.unswept === false;
   };
-}
-
-/** A piloted leg's buffer and room (`room.ts`), with the work it took. */
-function* pilotageSteps(
-  index: ChartIndex,
-  input: RouteCheckInput,
-  ends: [LonLat, LonLat],
-  width: number
-): Steps<{ pilotage?: LegResult["pilotage"]; work: number }> {
-  const pilot = input.pilotBuffer;
-  if (pilot === undefined || width >= input.xteLimit + input.planningBuffer) {
-    return { work: 0 };
-  }
-  const work = { n: 0 };
-  const test = sweptAt(index, ends, input.xteLimit, work);
-  const room = yield* roomSteps(test, [pilot, input.planningBuffer]);
-  return { pilotage: { buffer: pilot, room }, work: work.n };
 }
 
 function scoringFor(

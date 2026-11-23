@@ -1,5 +1,9 @@
+import type { LonLat } from "../foundation/geo";
+import type { ChartIndex } from "../spatial/chart-index";
+import { drain, sweptAt } from "./route-check";
+
 /**
- * A leg's room (plan §4.11, pilotage): the widest buffer from `lo` up to `hi` its corridor lies
+ * A leg's room (plan §4.11): the widest buffer from `lo` up to `hi` its corridor lies
  * in swept or dredged water all through at. A corridor at a buffer holds the corridor at every
  * narrower one, so the buffers that pass end at one edge, found by halving to ROOM_STEP. Tiles
  * that reach past the sweep's edge do not pass, so it is never wider than the swept water.
@@ -30,4 +34,19 @@ export function* roomSteps(
     }
   }
   return Math.floor(ok * 10) / 10;
+}
+
+/**
+ * The room of the leg `ends` past `inner` metres each side, from `range[0]` up to `range[1]`:
+ * how far the swept water reaches past the hull on its line (`inner` its half-beam).
+ * Undefined when not even the narrowest corridor lies in swept water.
+ */
+export function roomOf(
+  index: ChartIndex,
+  ends: [LonLat, LonLat],
+  inner: number,
+  range: [number, number]
+): number | undefined {
+  const test = sweptAt(index, ends, inner);
+  return drain(test(range[0])) ? drain(roomSteps(test, range)) : undefined;
 }

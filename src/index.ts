@@ -19,7 +19,6 @@ import type { FetchLike } from "./model/fmi";
 import { AckStore } from "./ack-store";
 import type { PluginConfig } from "./config";
 import type { ChartIndex } from "./spatial/chart-index";
-import { FixHistoryStore } from "./fix-history-store";
 import { PilotageService } from "./pilotage-watch";
 import type { PluginState } from "./api-wiring";
 import { apiFor, routeDepsFor } from "./api-wiring";
@@ -57,21 +56,13 @@ function planningApiOf(app: ServerAPI, clock: Clock, state: PluginState) {
   return planningApi(deps, `signalk-underkeel ${VERSION}`, () => state.planning);
 }
 
-/**
- * The fix history kept in the data directory and the pilotage watch (`pilotage-watch.ts`), run at
- * each position `monitor` takes in, on the chart index `index` gives.
- */
+/** The pilotage watch (`pilotage-watch.ts`), run at each position `monitor` takes in. */
 function pilotageFor(
   c: { app: ServerAPI; clock: Clock; config: PluginConfig; monitor: Monitor },
   index: () => ChartIndex | undefined
 ): PilotageService {
   const { app, clock, config } = c;
-  const fixes = new FixHistoryStore(path.join(app.getDataDirPath(), "fix-history.json"));
-  if (fixes.error) {
-    app.error(fixes.error);
-  }
   const p = new PilotageService(
-    fixes,
     app,
     PLUGIN_ID,
     () => config.lookahead,
@@ -95,7 +86,7 @@ function stopPlugin(app: ServerAPI, clock: Clock, state: PluginState): void {
   }
   state.livechart = undefined;
   state.monitor?.stop();
-  state.pilotage?.stop(clock.now());
+  state.pilotage?.stop();
   state.pilotage = undefined;
   // Without these the REST handlers would keep answering on the old index at chart datum.
   Object.assign(state, { monitor: undefined, load: undefined, config: undefined, acks: undefined });

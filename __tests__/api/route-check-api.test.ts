@@ -262,45 +262,34 @@ describe("route-check service", () => {
     expect((await routeCheck({ routeRef: "/resources/routes/missing" }, deps())).status).toBe(404);
   });
 
-  test("a queued pilotage check takes the fix as its turn comes, the least buffer once it fails", async () => {
-    let buffer: number | undefined = 3;
-    const queue = new RequestQueue();
-    const d = deps({
-      index: gappedChannel(),
-      vessel: () => ({ draft: 1.5, length: 8, beam: 2.5 }),
-      pilotBuffer: () => buffer,
-      queue
-    });
-    const body = (pilotage?: boolean) => ({
-      route: {
-        type: "LineString",
-        coordinates: [
-          [22.002, CHANNEL_LAT],
-          [22.007, CHANNEL_LAT]
-        ]
-      },
-      xteLimit: 3,
-      ...(pilotage !== undefined && { pilotage })
-    });
-    const flagsOf = async (reply: Promise<{ body: unknown }>) =>
-      ((await reply).body as { legs: { flags: string[] }[] }).legs[0]?.flags;
-    const queued = async (pilotage: boolean, during: () => void) => {
-      let release = (): void => undefined;
-      const busy = queue.run(
-        NEVER_ABORTED,
-        () => new Promise((resolve) => (release = () => resolve({ status: 200, body: null })))
+  test("a leg's corridor is the cross-track limit and half the beam: no GPS buffer", async () => {
+    const at = async (beam: number, extra: object = {}) => {
+      const d = deps({
+        index: gappedChannel(),
+        vessel: () => ({ draft: 1.5, length: 8, beam })
+      });
+      const r = await routeCheck(
+        {
+          route: {
+            type: "LineString",
+            coordinates: [
+              [22.002, CHANNEL_LAT],
+              [22.007, CHANNEL_LAT]
+            ]
+          },
+          xteLimit: 3,
+          ...extra
+        },
+        d
       );
-      const reply = routeCheck(body(pilotage), d);
-      await new Promise((resolve) => setImmediate(resolve));
-      during();
-      release();
-      await busy;
-      return flagsOf(reply);
+      return (r.body as { legs: { charted: number | null; flags: string[] }[] }).legs[0];
     };
-    expect(await queued(true, () => undefined)).toContain("PILOTAGE");
-    const lost = await queued(true, () => (buffer = undefined));
-    expect(lost).not.toContain("PILOTAGE");
-    expect(lost).toEqual(await flagsOf(routeCheck(body(), d)));
+    // 3 m + 1.25 m each side keeps inside the 11 m dredged each side of the line.
+    expect((await at(2.5))?.charted).toBe(2.7);
+    // 3 m + 9 m reaches the banks' 0 m.
+    expect((await at(18))?.charted).toBe(0);
+    // A request's `pilotage` is no longer read: the same corridor.
+    expect(await at(2.5, { pilotage: true })).toEqual(await at(2.5));
   });
 
   test("errors carry a status and never a partial result", async () => {

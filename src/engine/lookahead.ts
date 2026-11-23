@@ -74,11 +74,6 @@ export interface LookaheadOptions {
   positionBuffer: number;
   /** The buffer is max(positionBuffer, kp · σ_pos(t)). */
   kp: number;
-  /**
-   * The position σ a plan's pilotage is checked at, metres, or the boat's demonstrated fix
-   * quality when it is wider (`model/fix-history.ts`): the fix of the moment never sets it.
-   */
-  planSigma: number;
   /** Fan spread: 1σ of COG (radians) and of the rate of turn (rad/s). */
   sigmaCog: number;
   sigmaRot: number;
@@ -115,7 +110,6 @@ export const DEFAULT_LOOKAHEAD: LookaheadOptions = {
   step: 3,
   positionBuffer: 10,
   kp: 2,
-  planSigma: 1.5,
   sigmaCog: (5 * Math.PI) / 180,
   sigmaRot: (0.1 * Math.PI) / 180,
   sigmaSog: 0.1,

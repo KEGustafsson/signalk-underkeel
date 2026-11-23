@@ -129,7 +129,7 @@ describe("route check", () => {
     departure: NOW,
     speeds: coordinates.slice(1).map(() => 2.5),
     xteLimit: 20,
-    planningBuffer: 10,
+    hullBuffer: 10,
     vessel: { draft, length: 12, beam: 4 },
     dynamics: DEFAULT_DYNAMICS,
     waterLevel: () => CHART_DATUM,

@@ -14,7 +14,7 @@ export const LIMITS = {
   /**
    * Route length times corridor width, km². A corridor query costs about
    * its area, so this bounds what one check costs: 500 km at the default
-   * ±40 m is 40 km², and a ±2 km corridor fits a route of 50 km.
+   * ±32 m (30 m and a 4 m beam's half) is 32 km², and a ±2 km corridor fits a route of 50 km.
    */
   maxCorridorKm2: 200,
   minSpeed: 0.1,
@@ -48,8 +48,6 @@ export interface RouteRequest {
   probability?: number;
   /** Significant wave height to allow for, metres; absent, the configured planned value. */
   waveHeight?: number;
-  /** Check legs in swept or dredged water at the pilotage buffer (`engine/pilotage.ts`). */
-  pilotage?: boolean;
 }
 
 export type Parsed<T> = { ok: true; value: T } | { ok: false; errors: string[] };
@@ -151,13 +149,6 @@ export function parseRouteRequest(body: unknown, now: number = Date.now()): Pars
     }
   }
   plannedWaves(b.waveHeight, req, errors);
-  if (b.pilotage !== undefined) {
-    if (typeof b.pilotage === "boolean") {
-      req.pilotage = b.pilotage;
-    } else {
-      errors.push("pilotage must be true or false");
-    }
-  }
   vesselOverrides(b.vessel as Record<string, unknown> | undefined, req, errors);
   return errors.length > 0 ? { ok: false, errors } : { ok: true, value: req };
 }
@@ -246,7 +237,7 @@ export const WINDOW_LIMITS = {
   /**
    * Departures times the route's corridor area, km². Each departure can
    * re-check the whole route, so this bounds what one request costs: the
-   * default 48 h every 15 min fits a route of about 100 km at ±40 m.
+   * default 48 h every 15 min fits a route of about 130 km at ±32 m.
    */
   maxDepartureKm2: 1600,
   /**

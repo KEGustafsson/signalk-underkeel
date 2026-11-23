@@ -173,7 +173,7 @@ describe("Traficom WFS depths are advisory", () => {
         departure: NOW,
         speeds: [2.5],
         xteLimit: 30,
-        planningBuffer: 10,
+        hullBuffer: 10,
         vessel: KEEL,
         dynamics: DEFAULT_DYNAMICS,
         waterLevel: () => CHART_DATUM,

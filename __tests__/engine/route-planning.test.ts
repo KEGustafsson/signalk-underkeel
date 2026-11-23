@@ -57,7 +57,7 @@ function input(coordinates: LonLat[], extra: Partial<RouteCheckInput> = {}): Rou
     departure: NOW,
     speeds: coordinates.slice(1).map(() => 3),
     xteLimit: 20,
-    planningBuffer: 10,
+    hullBuffer: 10,
     vessel: { draft: 1.8, length: 12, beam: 4 },
     dynamics: DEFAULT_DYNAMICS,
     waterLevel: () => LEVEL,
@@ -501,7 +501,7 @@ describe("repair work limits", () => {
 
   test("a wide corridor's cells are at least half its width", () => {
     // Corridor half-width 400 m: cells of 200 m or more, each scored 400 m plus half a cell out.
-    const wide = input(LEG, { xteLimit: 390, planningBuffer: 10 });
+    const wide = input(LEG, { xteLimit: 390, hullBuffer: 10 });
     const leg = checkRoute(shoal, wide, NOW).legs[0] as LegResult;
     expect(leg.status).toBe("fail");
     const spy = spyQueries();

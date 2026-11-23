@@ -233,15 +233,6 @@ const LOOKAHEAD = {
       description: "Footprints grow by this many σ of position uncertainty",
       default: 2
     },
-    planSigma: {
-      type: "number",
-      title: "Planned position σ for pilotage (m)",
-      description:
-        "A route's legs in swept fairways are planned at this position σ times the position buffer in σ, or at the boat's own fix quality over the last week (its 95th percentile) when that is wider. The fix of the moment never changes a plan; underway it is held to each swept leg's room.",
-      default: 1.5,
-      minimum: 0.1,
-      maximum: 20
-    },
     sigmaCog: { type: "number", title: "Fan spread: COG 1σ (°)", default: 5 },
     sigmaRot: { type: "number", title: "Fan spread: rate of turn 1σ (°/s)", default: 0.1 },
     maxTurnRate: {

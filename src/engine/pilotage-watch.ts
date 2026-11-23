@@ -2,7 +2,7 @@ import type { LonLat } from "../foundation/geo";
 
 /**
  * Pilotage underway (plan §4.11): the plan's tolerance held to the live fix. A plan is checked at
- * the planning σ (`model/fix-history.ts`), never at the fix of the moment; each leg in swept water
+ * the configured swept-fairway tolerance, never at a GPS reading; each leg in swept water
  * has its room, the widest buffer its corridor stays in swept water at (`route-check.ts`). On
  * such a leg of the active route, kp · σ of the live fix wider than its room means the fix cannot
  * tell whether the boat is still in the swept water: a warning to steer by the marks and slow

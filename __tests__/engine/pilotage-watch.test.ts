@@ -5,7 +5,6 @@ import path from "path";
 import { parseConfig } from "../../src/config";
 import { DEFAULT_LOOKAHEAD } from "../../src/engine/lookahead";
 import { legAt, offset, ON_ROUTE, pilotageVerdict } from "../../src/engine/pilotage-watch";
-import { FixHistoryStore } from "../../src/fix-history-store";
 import type { LonLat } from "../../src/foundation/geo";
 import { PATHS } from "../../src/foundation/state";
 import type { IntegrityResult } from "../../src/model/integrity";
@@ -110,38 +109,41 @@ const fix = (sigmaPos: number, ok = true): IntegrityResult => ({
 
 describe("the pilotage watch", () => {
   const index = gappedChannel();
+  /** Up to a 15 m least buffer, past a 2.5 m beam's half. */
+  const C = { least: 15, hull: 1.25 };
 
   test("a swept leg's room, measured once on the chart index in use", async () => {
     const { app } = server(west);
     const watch = new PilotageWatch(app as never);
-    expect(watch.check(index, ON_LINE, 3, 15)).toBeUndefined();
+    expect(watch.check(index, ON_LINE, 3, C)).toBeUndefined();
     await flush();
-    const v = watch.check(index, ON_LINE, 3, 15);
+    const v = watch.check(index, ON_LINE, 3, C);
     expect(v?.state).toBe("normal");
-    expect(v?.data.room).toBeGreaterThanOrEqual(2);
-    expect(v?.data.room).toBeLessThanOrEqual(11);
-    expect(watch.check(index, ON_LINE, 12, 15)?.state).toBe("warn");
+    // Dredged 11 m each side: past the hull's 1.25 m, less a tile at the edge.
+    expect(v?.data.room).toBeGreaterThanOrEqual(3);
+    expect(v?.data.room).toBeLessThanOrEqual(9.75);
+    expect(watch.check(index, ON_LINE, 12, C)?.state).toBe("warn");
     // Room as wide as the least buffer: the plan needs no pilotage there.
-    expect(watch.check(index, ON_LINE, 3, 2.5)).toBeUndefined();
+    expect(watch.check(index, ON_LINE, 3, { least: 2.5, hull: 1.25 })).toBeUndefined();
   });
 
   test("nothing without an active route, off it, or on a leg not in swept water", async () => {
     const none = new PilotageWatch(server(undefined).app as never);
-    expect(none.check(index, ON_LINE, 3, 15)).toBeUndefined();
+    expect(none.check(index, ON_LINE, 3, C)).toBeUndefined();
     const across = new PilotageWatch(
       server([
         [22.006, CHANNEL_LAT],
         [22.014, CHANNEL_LAT]
       ]).app as never
     );
-    across.check(index, [22.01, CHANNEL_LAT], 3, 15);
+    across.check(index, [22.01, CHANNEL_LAT], 3, C);
     await flush();
-    expect(across.check(index, [22.01, CHANNEL_LAT], 3, 15)).toBeUndefined();
+    expect(across.check(index, [22.01, CHANNEL_LAT], 3, C)).toBeUndefined();
     const far: LonLat = [22.004, CHANNEL_LAT + 0.002];
     const w = new PilotageWatch(server(west).app as never);
-    w.check(index, far, 3, 15);
+    w.check(index, far, 3, C);
     await flush();
-    expect(w.check(index, far, 3, 15)).toBeUndefined();
+    expect(w.check(index, far, 3, C)).toBeUndefined();
   });
 
   test("an href whose id does not decode is no active route, and loads nothing", () => {
@@ -156,7 +158,7 @@ describe("the pilotage watch", () => {
       }
     };
     const w = new PilotageWatch(app as never);
-    expect(w.check(index, ON_LINE, 3, 15)).toBeUndefined();
+    expect(w.check(index, ON_LINE, 3, C)).toBeUndefined();
     expect(loads).toBe(0);
   });
 
@@ -177,15 +179,15 @@ describe("the pilotage watch", () => {
     };
     const w = new PilotageWatch(app as never, (m) => errors.push(m));
     const T = 1_000_000;
-    w.check(index, ON_LINE, 3, 15, T);
+    w.check(index, ON_LINE, 3, C, T);
     await flush();
     fail = false;
-    expect(w.check(index, ON_LINE, 3, 15, T + ROUTE_RETRY_MS - 1)).toBeUndefined();
+    expect(w.check(index, ON_LINE, 3, C, T + ROUTE_RETRY_MS - 1)).toBeUndefined();
     await flush();
     expect(loads).toBe(1);
-    w.check(index, ON_LINE, 3, 15, T + ROUTE_RETRY_MS);
+    w.check(index, ON_LINE, 3, C, T + ROUTE_RETRY_MS);
     await flush();
-    expect(w.check(index, ON_LINE, 3, 15, T + ROUTE_RETRY_MS)?.state).toBe("normal");
+    expect(w.check(index, ON_LINE, 3, C, T + ROUTE_RETRY_MS)?.state).toBe("normal");
     expect([loads, errors]).toEqual([2, ["active route r1: busy"]]);
   });
 
@@ -207,11 +209,11 @@ describe("the pilotage watch", () => {
     });
     const w = new PilotageWatch(app as never, (m) => errors.push(m));
     const T = 1_000_000;
-    w.check(index, ON_LINE, 3, 15, T);
+    w.check(index, ON_LINE, 3, C, T);
     href = "/resources/routes/b";
-    w.check(index, ON_LINE, 3, 15, T);
+    w.check(index, ON_LINE, 3, C, T);
     href = "/resources/routes/a";
-    w.check(index, ON_LINE, 3, 15, T);
+    w.check(index, ON_LINE, 3, C, T);
     const [first, second, third] = pending;
     // The latest A, then the first A's answer and B's failure, both late: neither is taken.
     third?.resolve(line(west));
@@ -223,17 +225,11 @@ describe("the pilotage watch", () => {
     );
     second?.reject(new Error("gone"));
     await flush();
-    expect(w.check(index, ON_LINE, 3, 15, T + ROUTE_RETRY_MS)?.state).toBe("normal");
+    expect(w.check(index, ON_LINE, 3, C, T + ROUTE_RETRY_MS)?.state).toBe("normal");
     expect([pending.length, errors]).toEqual([3, []]);
   });
 
   describe("as a service", () => {
-    let dir: string;
-    beforeEach(() => {
-      dir = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-pilotage-"));
-    });
-    afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
-
     test("the verdict reads the fix and integrity check of the moment, also with no new position", async () => {
       const { app, sent } = server(west);
       let now = Date.parse("2026-11-22T12:00:00Z");
@@ -258,9 +254,7 @@ describe("the pilotage watch", () => {
         lookahead: { positionBuffer: 15 }
       });
       const monitor = new Monitor(harness as never, "underkeel", config, index, undefined, clock);
-      const store = new FixHistoryStore(path.join(dir, "fix-history.json"));
       const s = new PilotageService(
-        store,
         harness as never,
         "underkeel",
         () => config.lookahead,
@@ -297,12 +291,10 @@ describe("the pilotage watch", () => {
       monitor.stop();
     });
 
-    test("notifies by the live fix, keeps its σ, clears off the route and on stop", async () => {
+    test("notifies by the live fix, clears off the route, on a stale position and on stop", async () => {
       const { app, sent } = server(west);
-      const store = new FixHistoryStore(path.join(dir, "fix-history.json"));
       const opts = { ...DEFAULT_LOOKAHEAD, positionBuffer: 15 };
       const s = new PilotageService(
-        store,
         app as never,
         "underkeel",
         () => opts,
@@ -310,7 +302,13 @@ describe("the pilotage watch", () => {
       );
       const NOW = Date.parse("2026-11-22T12:00:00Z");
       const at = (p: LonLat, sigma: number, t: number, ok = true) =>
-        s.tick({ integrity: fix(sigma, ok), index, position: { value: p, at: t }, now: t });
+        s.tick({
+          integrity: fix(sigma, ok),
+          index,
+          position: { value: p, at: t },
+          hull: 1.25,
+          now: t
+        });
       at(ON_LINE, 1, NOW);
       await flush();
       at(ON_LINE, 1, NOW + 1000);
@@ -323,17 +321,21 @@ describe("the pilotage watch", () => {
       expect(sent.at(-1)?.value.message).toMatch(/cannot be trusted/);
       at([22.004, CHANNEL_LAT + 0.002], 1, NOW + 4000);
       expect(sent.at(-1)?.value.state).toBe("normal");
-      expect(s.history.samples(NOW + 5000)).toBe(1);
-      // A stale position takes no sample and no verdict.
+      // A stale position gives no verdict, even with a wide fix.
+      at(ON_LINE, 1, NOW + 5000);
+      const before = sent.length;
       s.tick({
-        integrity: fix(1),
+        integrity: fix(7),
         index,
         position: { value: ON_LINE, at: NOW },
+        hull: 1.25,
         now: NOW + 60_000
       });
-      expect(s.history.samples(NOW + 60_000)).toBe(1);
-      s.stop(NOW + 61_000);
-      expect(fs.existsSync(path.join(dir, "fix-history.json"))).toBe(true);
+      expect(sent.slice(before).every((d) => d.value.state === "normal")).toBe(true);
+      at(ON_LINE, 7, NOW + 61_000);
+      expect(sent.at(-1)?.value.state).toBe("warn");
+      s.stop();
+      expect(sent.at(-1)?.value.message).toBe("UKC monitoring stopped");
     });
   });
 });

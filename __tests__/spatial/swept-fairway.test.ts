@@ -1,7 +1,8 @@
 import { heldDepth } from "../../src/engine/gap-strips";
-import { pilotedBox, plannedPilotBuffer, roomOf } from "../../src/engine/pilotage";
+import { heldBox } from "../../src/engine/held-box";
+import { roomOf } from "../../src/engine/room";
 import type { RouteCheckInput } from "../../src/engine/route-check";
-import { checkRoute } from "../../src/engine/route-check";
+import { checkFootprint, checkRoute } from "../../src/engine/route-check";
 import type { LonLat } from "../../src/foundation/geo";
 import { toMercator } from "../../src/foundation/geo";
 import { DEFAULT_DYNAMICS } from "../../src/model/vessel";
@@ -105,30 +106,16 @@ describe("sweeps side by side", () => {
   });
 });
 
-describe("the pilotage buffer", () => {
-  test("kp times the planning σ, at least 2 m, while narrower than the least buffer", () => {
-    expect(plannedPilotBuffer(1.5, 2, 10)).toBe(3);
-    expect(plannedPilotBuffer(0.3, 2, 10)).toBe(2);
-    expect(plannedPilotBuffer(6, 2, 10)).toBeUndefined();
-  });
-
-  test("none without a σ to plan at", () => {
-    expect(plannedPilotBuffer(0, 2, 10)).toBeUndefined();
-    expect(plannedPilotBuffer(Number.NaN, 2, 10)).toBeUndefined();
-  });
-});
-
-describe("pilotage on a swept fairway", () => {
+describe("a corridor in a swept fairway: the cross-track limit and half the beam", () => {
   const index = gappedChannel();
   const NOW = Date.parse("2026-10-18T07:00:00Z");
-  const input = (coordinates: LonLat[], pilot?: number): RouteCheckInput => ({
+  const input = (coordinates: LonLat[], hullBuffer = 1.25): RouteCheckInput => ({
     coordinates,
     departure: NOW,
     speeds: [2.5],
     xteLimit: 3,
-    planningBuffer: 10,
-    ...(pilot !== undefined && { pilotBuffer: pilot }),
-    vessel: { draft: 1.5, length: 8, beam: 2.5 },
+    hullBuffer,
+    vessel: { draft: 1.5, length: 8, beam: 2 * hullBuffer },
     dynamics: DEFAULT_DYNAMICS,
     waterLevel: () => CHART_DATUM,
     probability: 0.01
@@ -141,85 +128,64 @@ describe("pilotage on a swept fairway", () => {
     [22.006, CHANNEL_LAT],
     [22.014, CHANNEL_LAT]
   ];
+  const window = { start: NOW, end: NOW + 3_600_000 };
+  /** The box from `a` to `b` along the line grown `half` metres each side, as `grownBox` grows it. */
+  const box = (a: number, b: number, half: number) =>
+    boxRing([a, CHANNEL_LAT - half / 111_320, b, CHANNEL_LAT + half / 111_320]);
 
-  test("a leg swept all through at the pilotage buffer keeps that verdict, flagged PILOTAGE", () => {
-    const least = checkRoute(index, input(west), NOW).legs[0];
-    // At the least buffer, 13 m each side, the corridor reaches the 0 m banks.
-    expect(least?.charted).toBe(0);
-    expect(least?.flags).not.toContain("PILOTAGE");
-    const piloted = checkRoute(index, input(west, 3), NOW).legs[0];
-    expect(piloted?.charted).toBe(2.7);
-    expect(piloted?.flags).toEqual(expect.arrayContaining(["PILOTAGE", "DREDGED"]));
+  test("keeps in the dredged water, 11 m each side, at 3 m and a 2.5 m beam", () => {
+    const leg = checkRoute(index, input(west), NOW).legs[0];
+    // The dredged 2.7 m, not the banks' 0 m; at this survey's σ a 1.5 m keel is marginal there.
+    expect(leg?.charted).toBe(2.7);
+    expect(leg?.status).not.toBe("fail");
+    expect(leg?.flags).toContain("DREDGED");
+    expect(leg?.flags).not.toContain("FAIRWAY_GAP");
   });
 
-  test("a piloted leg gives its room: the widest buffer still in the dredged water", () => {
-    const leg = checkRoute(index, input(west, 3), NOW).legs[0];
-    const room = leg?.pilotage?.room as number;
-    expect(leg?.pilotage?.buffer).toBe(3);
-    // The pieces reach 11 m each side; less the 3 m cross-track limit, and a tile at the edge.
+  test("a hull wide enough to reach the banks reads their 0 m", () => {
+    const leg = checkRoute(index, input(west, 10), NOW).legs[0];
+    expect(leg?.status).toBe("fail");
+    expect(leg?.charted).toBe(0);
+  });
+
+  test("a leg across the gap, with no strip, reads the gap's charted depth", () => {
+    const leg = checkRoute(index, input(across), NOW).legs[0];
+    expect(leg?.status).toBe("fail");
+    expect(leg?.charted).toBe(0);
+  });
+
+  test("a box reads as a leg does, never riskier than through the index alone", () => {
+    const ring = box(22.002, 22.007, 4.25);
+    const held = heldBox(index, input([]), ring, 2.5, window);
+    const plain = checkFootprint(index, input([]), ring, 2.5, { ...window, at: ring });
+    expect(held.status).not.toBe("fail");
+    expect(held.flags).toContain("DREDGED");
+    expect(held.risk).toBeLessThanOrEqual(plain.risk);
+    expect(heldBox(index, input([]), box(22.006, 22.014, 4.25), 2.5, window).status).toBe("fail");
+  });
+
+  test("a leg's room: how far the swept water reaches past the hull", () => {
+    const ends = west as [LonLat, LonLat];
+    const room = roomOf(index, ends, 1.25, [0, 10]) as number;
+    // 11 m dredged each side, less the hull's 1.25 m and a tile at the edge.
     expect(room).toBeGreaterThanOrEqual(3);
-    expect(room).toBeLessThanOrEqual(8);
-    expect(roomOf(index, [west[0] as LonLat, west[1] as LonLat], 3, [3, 10])).toBe(room);
-    // Wider than the room the corridor reaches past the dredged water; at the room it does not.
-    const wider = checkRoute(index, input(west, room + 0.5), NOW).legs[0];
-    expect(wider?.flags).not.toContain("PILOTAGE");
-    expect(checkRoute(index, input(west, room), NOW).legs[0]?.flags).toContain("PILOTAGE");
-  });
-
-  test("no room off the dredged water, nor on a leg checked at the least buffer", () => {
-    expect(checkRoute(index, input(west), NOW).legs[0]?.pilotage).toBeUndefined();
-    expect(checkRoute(index, input(across, 3), NOW).legs[0]?.pilotage).toBeUndefined();
-    expect(roomOf(index, [across[0] as LonLat, across[1] as LonLat], 3, [2, 10])).toBeUndefined();
-  });
-
-  test("a leg across the gap is checked at the least buffer, as without pilotage", () => {
-    const least = checkRoute(index, input(across), NOW);
-    const piloted = checkRoute(index, input(across, 3), NOW);
-    expect(piloted.legs).toEqual(least.legs);
-    expect(piloted.legs[0]?.flags).not.toContain("PILOTAGE");
-  });
-
-  test("a box swept all through at the pilotage buffer keeps that verdict; one across the gap not", () => {
-    const window = { start: NOW, end: NOW + 3_600_000 };
-    // ±6 m and ±13 m about the channel's line: xteLimit plus each buffer, as `grownBox` grows it.
-    const narrow = (a: number, b: number) =>
-      boxRing([a, CHANNEL_LAT - 0.000054, b, CHANNEL_LAT + 0.000054]);
-    const ring = (a: number, b: number) =>
-      boxRing([a, CHANNEL_LAT - 0.000117, b, CHANNEL_LAT + 0.000117]);
-    const inWest = { ring: ring(22.002, 22.007), narrow: narrow(22.002, 22.007) };
-    const kept = pilotedBox(index, input([]), inWest, 2.5, window);
-    expect(kept.flags).toEqual(expect.arrayContaining(["PILOTAGE", "DREDGED"]));
-    expect(kept.unswept).toBe(false);
-    const leastOnly = pilotedBox(index, input([]), { ...inWest, narrow: undefined }, 2.5, window);
-    expect(leastOnly.flags).not.toContain("PILOTAGE");
-    expect(kept.risk).toBeLessThan(leastOnly.risk);
-
-    const gap = { ring: ring(22.006, 22.014), narrow: narrow(22.006, 22.014) };
-    const fallback = pilotedBox(index, input([]), gap, 2.5, window);
-    const least = pilotedBox(index, input([]), { ...gap, narrow: undefined }, 2.5, window);
-    expect(fallback.flags).not.toContain("PILOTAGE");
-    expect({ ...fallback, work: 0 }).toEqual({ ...least, work: 0 });
-    expect(fallback.work).toBeGreaterThan(least.work);
+    expect(room).toBeLessThanOrEqual(9.75);
+    expect(roomOf(index, across as [LonLat, LonLat], 1.25, [0, 10])).toBeUndefined();
   });
 });
 
-describe("pilotage through a fairway gap", () => {
+describe("through a fairway gap", () => {
   const index = bridgedChannel();
   const NOW = Date.parse("2026-10-18T07:00:00Z");
   /** Metres north of the line, in degrees of latitude. */
   const north = (m: number) => m / 111_320;
-  const input = (
-    coordinates: LonLat[],
-    pilot?: number,
-    extra: Partial<RouteCheckInput> = {}
-  ): RouteCheckInput => ({
+  const input = (coordinates: LonLat[], extra: Partial<RouteCheckInput> = {}): RouteCheckInput => ({
     coordinates,
     departure: NOW,
     speeds: [2.5],
-    // The planner's narrows: the boat on its leg, its own fix the only width.
+    // The planner's narrows: the boat on its leg, its hull the only width.
     xteLimit: 0,
-    planningBuffer: 10,
-    ...(pilot !== undefined && { pilotBuffer: pilot }),
+    hullBuffer: 1.25,
     vessel: { draft: 1.5, length: 8, beam: 2.5 },
     dynamics: DEFAULT_DYNAMICS,
     waterLevel: () => CHART_DATUM,
@@ -240,87 +206,67 @@ describe("pilotage through a fairway gap", () => {
     expect(q.unswept).toBe(true);
   });
 
-  test("a check without pilotage reads the gap at its charted depth and refuses it", () => {
-    const plain = leg(input(through()));
-    expect(plain?.status).toBe("fail");
-    expect(plain?.charted).toBe(0);
-    expect(plain?.flags).not.toContain("PILOTAGE");
-  });
-
-  test("with a good fix a leg on the line is held to the strip's depth, flagged PILOTAGE", () => {
-    const piloted = leg(input(through(), 3));
-    expect(piloted?.status).toBe("ok");
-    expect(piloted?.charted).toBe(2.7);
-    expect(piloted?.flags).toEqual(expect.arrayContaining(["PILOTAGE", "SWEPT"]));
+  test("a leg on the line is held to the strip's depth, flagged FAIRWAY_GAP", () => {
+    const held = leg(input(through()));
+    expect(held?.status).toBe("ok");
+    expect(held?.charted).toBe(2.7);
+    expect(held?.flags).toEqual(expect.arrayContaining(["FAIRWAY_GAP", "SWEPT"]));
     // A leg ending under the bridge, and the next leaving from there, are held to it as well.
     const mid = (BRIDGE_GAP[0] + BRIDGE_GAP[1]) / 2;
     const legs = checkRoute(
       index,
       {
-        ...input(
-          [
-            [22.006, CHANNEL_LAT],
-            [mid, CHANNEL_LAT],
-            [22.014, CHANNEL_LAT]
-          ],
-          3
-        ),
+        ...input([
+          [22.006, CHANNEL_LAT],
+          [mid, CHANNEL_LAT],
+          [22.014, CHANNEL_LAT]
+        ]),
         speeds: [2.5, 2.5]
       },
       NOW
     ).legs;
-    expect(legs.map((l) => [l.status, l.flags.includes("PILOTAGE")])).toEqual([
+    expect(legs.map((l) => [l.status, l.flags.includes("FAIRWAY_GAP")])).toEqual([
       ["ok", true],
       ["ok", true]
     ]);
   });
 
-  test("off the line by more than the strip's half-width less the pilotage buffer, refused", () => {
-    // 6 m off with a 3 m buffer reaches 9 m, inside the strip's 10 m.
-    expect(leg(input(through(6), 3))?.flags).toContain("PILOTAGE");
-    expect(leg(input(through(6), 3))?.charted).toBe(2.7);
+  test("off the line by more than the strip's half-width less the hull's, refused", () => {
+    // 6 m off with a 3 m half-beam reaches 9 m, inside the strip's 10 m.
+    const inside = leg(input(through(6), { hullBuffer: 3 }));
+    expect(inside?.flags).toContain("FAIRWAY_GAP");
+    expect(inside?.charted).toBe(2.7);
     // 8 m off reaches 11 m: past the strip, into the gap's charted 0 m.
-    const off = leg(input(through(8), 3));
+    const off = leg(input(through(8), { hullBuffer: 3 }));
     expect(off?.status).toBe("fail");
     expect(off?.charted).toBe(0);
-    expect(off?.flags).not.toContain("PILOTAGE");
-    // The cross-track limit widens the corridor as it does in swept water: 3 m and 3 m, 8 m off.
-    expect(leg(input(through(5), 3, { xteLimit: 3 }))?.charted).toBe(0);
+    expect(off?.flags).not.toContain("FAIRWAY_GAP");
+    // The cross-track limit widens the corridor: 3 m and 3 m, 5 m off, reaches 11 m.
+    expect(leg(input(through(5), { hullBuffer: 3, xteLimit: 3 }))?.charted).toBe(0);
   });
 
-  test("a pilotage buffer as wide as the strip's half-width closes it", () => {
-    const wide = leg(input(through(), HALF_MAX, { planningBuffer: 15 }));
+  test("a hull as wide as the strip closes it", () => {
+    const wide = leg(input(through(), { hullBuffer: HALF_MAX }));
     expect(wide?.status).toBe("fail");
     expect(wide?.charted).toBe(0);
-    expect(wide?.flags).not.toContain("PILOTAGE");
-  });
-
-  test("without a pilotage buffer the gap stays closed", () => {
-    // A planning σ as wide as the least buffer gives no pilotage buffer at all.
-    const buffer = plannedPilotBuffer(6, 2, 10);
-    expect(buffer).toBeUndefined();
-    const refused = leg(input(through(), buffer));
-    expect(refused?.status).toBe("fail");
-    expect(refused?.flags).not.toContain("PILOTAGE");
+    expect(wide?.flags).not.toContain("FAIRWAY_GAP");
   });
 
   test("a leg through the gap gets its room from the strip", () => {
-    const piloted = leg(input(through(), 3));
-    const room = piloted?.pilotage?.room as number;
-    // Held to the strip's 10 m each side, less a tile at its edge where the sweeps meet it.
+    const room = roomOf(index, through() as [LonLat, LonLat], 1.25, [0, 10]) as number;
     expect(room).toBeGreaterThanOrEqual(3);
-    expect(room).toBeLessThanOrEqual(HALF_MAX);
-    expect(leg(input(through(), room))?.flags).toContain("PILOTAGE");
-    expect(leg(input(through(), room + 0.5, { planningBuffer: 15 }))?.flags).not.toContain(
-      "PILOTAGE"
+    expect(room).toBeLessThanOrEqual(HALF_MAX - 1.25);
+    expect(leg(input(through(), { hullBuffer: 1.25 + room }))?.flags).toContain("FAIRWAY_GAP");
+    expect(leg(input(through(), { hullBuffer: 1.25 + room + 0.5 }))?.flags).not.toContain(
+      "FAIRWAY_GAP"
     );
   });
 
   test("a charted sounding in the strip shallower than it closes it", () => {
     const mid = (BRIDGE_GAP[0] + BRIDGE_GAP[1]) / 2;
     const shoal = { ...index, hazards: new HazardIndex([point(mid, CHANNEL_LAT + north(7), 1.2)]) };
-    const r = checkRoute(shoal, input(through(), 3), NOW).legs[0];
-    expect(r?.flags).not.toContain("PILOTAGE");
+    const r = checkRoute(shoal, input(through(), { hullBuffer: 3 }), NOW).legs[0];
+    expect(r?.flags).not.toContain("FAIRWAY_GAP");
     expect(r?.charted).toBe(0);
   });
 
@@ -348,12 +294,11 @@ describe("pilotage through a fairway gap", () => {
     const mid = (BRIDGE_GAP[0] + BRIDGE_GAP[1]) / 2;
     const box = (half: number) =>
       boxRing([mid - 0.0002, CHANNEL_LAT - north(half), mid + 0.0002, CHANNEL_LAT + north(half)]);
-    const inside = { ring: box(13), narrow: box(6) };
-    const held = pilotedBox(index, input([]), inside, 2.5, window);
+    const held = heldBox(index, input([]), box(6), 2.5, window);
     expect(held.status).toBe("ok");
-    expect(held.flags).toEqual(expect.arrayContaining(["PILOTAGE", "SWEPT"]));
-    const past = pilotedBox(index, input([]), { ring: box(13), narrow: box(11) }, 2.5, window);
-    expect(past.flags).not.toContain("PILOTAGE");
+    expect(held.flags).toEqual(expect.arrayContaining(["FAIRWAY_GAP", "SWEPT"]));
+    const past = heldBox(index, input([]), box(11), 2.5, window);
+    expect(past.flags).not.toContain("FAIRWAY_GAP");
     expect(past.status).toBe("fail");
   });
 });
