@@ -1,22 +1,28 @@
 import fs from "fs";
 import path from "path";
 import type { Bbox } from "./ingest/wfs";
-import { bboxProblem } from "./ingest/wfs";
 import type { OnProgress, WfsRefresher } from "./wfs-service";
 import type { BoxJobDeps } from "./wfs-worker";
 import { refreshJob } from "./wfs-worker";
 import type { Clock } from "./monitor";
 import type { ChartIndex } from "./spatial/chart-index";
-import { growBbox } from "./spatial/build-box";
-import { MAX_CHART_BUFFER } from "./spatial/chart-position";
-import { indexDirProblem } from "./spatial/chart-index";
-import { EARTH_RADIUS } from "./foundation/geo";
-import { WFS_SOURCE } from "./ingest/wfs";
-import { cellSources } from "./index-loader";
+import { indexDirProblem, loadChartIndexAsync } from "./spatial/chart-index";
 import { Held, realWait, untilAborted } from "./planning-held";
 import type { Survey } from "./survey";
 import type { SurveyJob } from "./survey-worker";
 import { wfsUrl } from "./charts-provider-wfs";
+import { dropHold, holdInputsOf, recordHold, restorable } from "./planning-restore";
+import {
+  bboxKm2,
+  boxMeasure,
+  covers,
+  holds,
+  planningBbox,
+  tooLarge as boxTooLarge
+} from "./planning-region";
+
+export { carryAdjustments } from "./planning-adjustments";
+export { bboxKm2, holds, planningBbox, regionError } from "./planning-region";
 
 /**
  * The planning box (signalk-route-planner's plan §4.2): an index built on request for a region
@@ -24,7 +30,8 @@ import { wfsUrl } from "./charts-provider-wfs";
  * build process of its own at the lowest CPU priority, one at a time, never beside a chart box
  * build. The box around the vessel comes first: a planning build is stopped when one starts,
  * and started again once it is done. One planning index is held at a time and released once
- * unused for IDLE_MS; its files stay on disk, so the next build reuses their tiles.
+ * unused for IDLE_MS; its files stay on disk, so the next build reuses their tiles, and while
+ * they still serve a region asked for they are read back instead of built (`planning-restore.ts`).
  */
 
 /** A planning index unused for this long is released, ms. */
@@ -94,43 +101,9 @@ export interface PlanningBoxDeps {
   clock: Pick<Clock, "now" | "setInterval" | "clearInterval">;
   /** Waits `ms`, rejecting once `signal` aborts. */
   wait?: (ms: number, signal: AbortSignal) => Promise<void>;
+  /** Reads a saved planning index back; `loadChartIndexAsync` when absent. */
+  load?: (indexDir: string) => Promise<ChartIndex>;
   debug?: (message: string) => void;
-}
-
-/** `[w, s, e, n]` with each side finite, west of east, south of north, within ±85°. */
-export function regionError(r: unknown): string | undefined {
-  const ok =
-    Array.isArray(r) &&
-    r.length === 4 &&
-    r.every((v) => typeof v === "number" && Number.isFinite(v)) &&
-    (r[0] as number) >= -180 &&
-    (r[2] as number) <= 180 &&
-    (r[1] as number) >= -85 &&
-    (r[3] as number) <= 85 &&
-    (r[0] as number) < (r[2] as number) &&
-    (r[1] as number) < (r[3] as number);
-  return ok
-    ? undefined
-    : "region must be [west, south, east, north] in degrees, west < east, south < north, within ±85°";
-}
-
-/** The area of `b`, km², on a sphere. */
-export function bboxKm2([w, s, e, n]: Bbox): number {
-  const k = Math.PI / 180;
-  const r = EARTH_RADIUS / 1000;
-  return r * r * (e - w) * k * (Math.sin(n * k) - Math.sin(s * k));
-}
-
-/** Whether `outer` holds all of `inner`. */
-export function holds(outer: Bbox, inner: Bbox): boolean {
-  return (
-    outer[0] <= inner[0] && outer[1] <= inner[1] && outer[2] >= inner[2] && outer[3] >= inner[3]
-  );
-}
-
-/** The box a planning index of `region` is built in: grown by the widest chart position reach. */
-export function planningBbox(region: Bbox): Bbox {
-  return growBbox(region, MAX_CHART_BUFFER / 1000);
 }
 
 interface Running {
@@ -201,7 +174,7 @@ export class PlanningBoxes {
         // Checked again after each wait: a build that ran out of memory meanwhile lowers the cap.
         let tooLarge: string | undefined;
         try {
-          tooLarge = this.tooLarge(bbox, parts);
+          tooLarge = boxTooLarge(this.deps.job(), this.maxKm2, bbox, parts);
         } catch (err) {
           // cellsDir unreadable: its cells, and so the area held to the cap, are unknown.
           return {
@@ -212,8 +185,74 @@ export class PlanningBoxes {
         }
         return tooLarge === undefined ? undefined : { ok: false, status: 413, error: tooLarge };
       },
-      () => this.build(region, bbox, signal, progress, parts)
+      async () =>
+        (await this.restore(region, signal, parts)) ??
+        this.build(region, bbox, signal, progress, parts)
     );
+  }
+
+  /**
+   * The planning index saved on disk, read back and held, when it serves `region` (or each of
+   * `parts`) as a build now would (`restorable`): about a second, where the build it stands in
+   * for downloads and indexes the region again. Undefined when it does not serve, or cannot be
+   * read: the caller builds. "again" when the chart box took the build process meanwhile.
+   */
+  private async restore(
+    region: Bbox,
+    signal: AbortSignal,
+    parts: readonly Bbox[] | undefined
+  ): Promise<PrepareOutcome | "again" | undefined> {
+    const saved = restorable(holdInputsOf(this.deps), this.deps.clock.now());
+    if (!saved || !covers(saved, region, parts)) {
+      return undefined;
+    }
+    const { indexDir } = this.deps;
+    const hold = saved;
+    const r = await this.launch<PrepareOutcome>(
+      hold.bbox,
+      signal,
+      async (stop) => {
+        await untilAborted(this.drained(), stop);
+        const index = await (this.deps.load ?? loadChartIndexAsync)(indexDir);
+        if (stop.aborted) {
+          return "again";
+        }
+        const held = new Held(hold.region, hold.bbox, hold.parts, index, this.deps.clock.now());
+        this.held = held;
+        this.deps.debug?.("planning box read back from disk");
+        return { ok: true, held };
+      },
+      (err) => ({ ok: false, status: 503, error: err.message })
+    );
+    // Unreadable: built again, as if there were none.
+    return r === "again" || r.ok || signal.aborted || this.stopped ? r : undefined;
+  }
+
+  /**
+   * The planning index that serves `region` (or each of `parts`) without a build: the one held,
+   * or the one saved on disk read back (`restore`). 404 when a build would be needed, or one is
+   * running: a planner then asks `prepare`. It lets a planner plan on what is there before it
+   * asks for the region it would rather have.
+   */
+  async heldFor(
+    region: Bbox,
+    signal: AbortSignal,
+    parts?: readonly Bbox[]
+  ): Promise<PrepareOutcome> {
+    const none: PrepareOutcome = { ok: false, status: 404, error: NOT_HELD };
+    if (this.stopped || signal.aborted) {
+      return this.stopped ? { ok: false, status: 503, error: "plugin stopped" } : aborted();
+    }
+    const held = this.held;
+    if (held && covers(held, region, parts)) {
+      held.usedAt = this.deps.clock.now();
+      return { ok: true, held };
+    }
+    if (this.running || this.deps.boxBusy()) {
+      return none;
+    }
+    const r = await this.restore(region, signal, parts);
+    return r === undefined || r === "again" ? none : r;
   }
 
   /**
@@ -308,40 +347,6 @@ export class PlanningBoxes {
         // Aborted: the loop says so.
       }
     }
-  }
-
-  /**
-   * How a planning box of `bbox`, or of its corridor's `parts`, is measured against the cap:
-   * its WFS depths are downloaded for the parts alone, and with WFS depths alone in use its area
-   * is theirs; S-57 cells are built across the whole box, which is then the area.
-   */
-  private measure(
-    bbox: Bbox,
-    parts?: readonly Bbox[]
-  ): { km2: number; wfs: boolean; corridor: boolean } {
-    const deps = this.deps.job();
-    const wfs = "url" in deps.config;
-    // The cells the build reads: those of the index in use, and any S-57 cell in cellsDir now.
-    const cells =
-      deps.index()?.catalogue.cells.some((c) => c.source !== WFS_SOURCE) === true ||
-      (parts !== undefined && cellSources(deps.cellsDir).length > 0);
-    const corridor = parts !== undefined && wfs && !cells;
-    const km2 = corridor ? parts.reduce((sum, p) => sum + bboxKm2(p), 0) : bboxKm2(bbox);
-    return { km2, wfs, corridor };
-  }
-
-  /** Why a planning box of `bbox`, or of its corridor's `parts`, is not built here, or undefined. */
-  private tooLarge(bbox: Bbox, parts?: readonly Bbox[]): string | undefined {
-    const { km2, wfs, corridor } = this.measure(bbox, parts);
-    if (km2 > this.maxKm2) {
-      return `the planning box would be ${Math.round(km2)} km²${corridor ? " in its corridor" : " with its reach"}; at most ${Math.round(this.maxKm2)} km² on this machine`;
-    }
-    // A Traficom WFS download has its own span limits, which no retry passes; a corridor's is
-    // of its boxes, S-57 cells in use or not.
-    const problem = wfs ? (parts ?? [bbox]).map(bboxProblem).find((p) => p) : undefined;
-    return problem === undefined
-      ? undefined
-      : `the planning box is too large for the Traficom WFS: ${problem}`;
   }
 
   /**
@@ -442,6 +447,18 @@ export class PlanningBoxes {
     return done;
   }
 
+  /**
+   * Saves what the index just committed was built for, so it can be read back
+   * (`planning-restore.ts`). A record that cannot be written only costs the next build.
+   */
+  private record(region: Bbox, bbox: Bbox, parts: readonly Bbox[] | undefined): void {
+    try {
+      recordHold(holdInputsOf(this.deps), { region, bbox, parts }, this.deps.clock.now());
+    } catch (err) {
+      this.deps.debug?.(`planning box record not saved: ${(err as Error).message}`);
+    }
+  }
+
   private build(
     region: Bbox,
     bbox: Bbox,
@@ -453,8 +470,10 @@ export class PlanningBoxes {
     if (problem !== undefined) {
       return Promise.resolve({ ok: false, status: 503, error: `planning box: ${problem}` });
     }
-    // The index it replaces takes no new job: its files are about to be replaced.
+    // The index it replaces takes no new job: its files are about to be replaced, and the
+    // record of what they held with them.
     this.release();
+    dropHold(this.deps.indexDir);
     const started = this.deps.clock.now();
     return this.launch<PrepareOutcome>(
       bbox,
@@ -466,7 +485,9 @@ export class PlanningBoxes {
         fs.mkdirSync(this.deps.dir, { recursive: true });
         run.resume = await this.deps.pauseWarming?.();
         const deps = { ...this.deps.job(), indexDir: this.deps.indexDir, inBox: true };
-        const job = refreshJob(deps, this.deps.dir, bbox, started, parts);
+        const made = refreshJob(deps, this.deps.dir, bbox, started, parts);
+        // A plan waits for this download: a layer the WFS breaks off is tried again.
+        const job = made.download ? { ...made, download: { ...made.download, retry: true } } : made;
         const { index } = await this.deps.refresh({ ...job, lowPriority: true }, stop, progress);
         if (stop.aborted) {
           return "again";
@@ -475,6 +496,7 @@ export class PlanningBoxes {
         const own = job.download === undefined ? undefined : parts;
         const held = new Held(region, bbox, own, index, this.deps.clock.now());
         this.held = held;
+        this.record(region, bbox, own);
         this.deps.debug?.(
           `planning box built in ${Math.round((this.deps.clock.now() - started) / 1000)} s`
         );
@@ -485,7 +507,7 @@ export class PlanningBoxes {
           // Not tried at that size again in this run.
           let km2: number;
           try {
-            km2 = this.measure(bbox, parts).km2;
+            km2 = boxMeasure(this.deps.job(), bbox, parts).km2;
           } catch {
             // cellsDir unreadable now: the smaller measure, the corridor's alone, is halved.
             km2 = parts ? parts.reduce((sum, p) => sum + bboxKm2(p), 0) : bboxKm2(bbox);
@@ -498,47 +520,11 @@ export class PlanningBoxes {
   }
 }
 
-/** Whether `held` judges on the charts every query in `region`, or in each of its `parts`. */
-function covers(held: HeldBox, region: Bbox, parts?: readonly Bbox[]): boolean {
-  const have = held.parts ?? [held.region];
-  return (parts ?? [region]).every((p) => have.some((q) => holds(q, p)));
-}
+/** `heldFor`'s refusal: no planning box that serves the region is held or saved. */
+export const NOT_HELD = "no planning box held serves the region";
 
 type Refusal = { ok: false; status: number; error: string };
 
 function aborted(): Refusal {
   return { ok: false, status: 503, error: "planning box request aborted" };
-}
-
-const cellKey = (c: { name: string; edition: number; update: number }): string =>
-  `${c.name}/${c.edition}/${c.update}`;
-
-/** The revision of the living chart's adjustments each planning store last took, and from what. */
-const carried = new WeakMap<object, { from: object; revision: number }>();
-
-/**
- * Puts the living chart's adjustments of `from` (the index in use) on `to` (a planning box),
- * each with the catalogue reference of the same cell in `to`. Taking them only lowers a depth
- * (invariant 5), so a planning box reads no deeper than the index in use where the boat has
- * sounded. False when the two index the adjustments at different zooms and cannot share them.
- */
-export function carryAdjustments(from: ChartIndex, to: ChartIndex): boolean {
-  const src = from.pyramid.adjustments;
-  const dst = to.pyramid.adjustments;
-  const last = carried.get(to.pyramid);
-  if (last && last.from === from.pyramid && last.revision === src.revision) {
-    return true;
-  }
-  if (src.size > 0 && from.pyramid.adjustZoom !== to.pyramid.adjustZoom) {
-    return false;
-  }
-  const refs = new Map(to.catalogue.cells.map((c, i) => [cellKey(c), i]));
-  const cells = from.catalogue.cells;
-  dst.clear();
-  for (const [key, v] of src) {
-    const cell = cells[v.cellRef];
-    dst.set(key, { ...v, cellRef: cell ? (refs.get(cellKey(cell)) ?? -1) : -1 });
-  }
-  carried.set(to.pyramid, { from: from.pyramid, revision: src.revision });
-  return true;
 }

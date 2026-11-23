@@ -167,6 +167,12 @@ export class NodeStore {
   private readonly levels: Level[];
   /** Nodes in the index, in this store's columns and in its blocks. */
   count = 0;
+  /**
+   * How many cells the index's catalogue lists, when the store is part of a chart index
+   * (`chart-index.ts`): every node's `cellRef` is below it. A walk that has seen them all
+   * knows a subtree holds no other (`pyramid.ts`, `settled`). Undefined for a bare store.
+   */
+  cellCount: number | undefined;
   /** Nodes in this store's own columns. */
   private own = 0;
   private source: BlockSource | undefined;

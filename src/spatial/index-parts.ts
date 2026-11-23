@@ -41,9 +41,11 @@ export function indexParts(b: BuiltIndex): IndexParts {
  * saved files: the columns arrive moved, the hazards and rules as their files' contents.
  */
 export function adoptIndex(p: IndexParts): ChartIndex {
+  const pyramid = NodeStore.fromColumns(p.minZoom, p.leafZoom, p.cols);
+  pyramid.cellCount = p.catalogue.cells.length;
   return {
     catalogue: p.catalogue,
-    pyramid: NodeStore.fromColumns(p.minZoom, p.leafZoom, p.cols),
+    pyramid,
     hazards: readHazards(p.hazards),
     rules: readRules(p.rules)
   };

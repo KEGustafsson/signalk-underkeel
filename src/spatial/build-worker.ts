@@ -162,7 +162,7 @@ async function buildRegions(
   let nodesCopied = [...copies.values()].reduce((n, c) => n + c.z.length, 0);
   reportProgress({ phase: "roots", done: 0, total: build.length });
   await Promise.all(
-    regionGroups(build, roots, sharing.perColumn).map(async (ks) => {
+    regionGroups(build, roots, sharing.perColumn, sharing.threads).map(async (ks) => {
       const refs = [...new Set(ks.flatMap((k) => reaching[k] ?? []))];
       const at = new Map(refs.map((ref, i) => [ref, i]));
       const results = await run({
@@ -198,9 +198,11 @@ async function buildRegions(
   // Down to the edge zoom: a tile across a swept area's edge splits past the leaf zoom.
   const deepest = edgeZoomFor(job.leafZoom);
   const { body, cols } = joinParts(minZoom, deepest, parts);
+  const pyramid = storeOnBody(minZoom, deepest, body, cols);
+  pyramid.cellCount = s.infos.length;
   return {
     catalogue: { version: 1, cells: s.infos },
-    pyramid: storeOnBody(minZoom, deepest, body, cols),
+    pyramid,
     hazards: new HazardIndex(s.hazards),
     rules: new RuleIndex(s.rules),
     reaches: s.reaches,
@@ -345,7 +347,7 @@ export async function runBuild(
   let built: BuiltIndex;
   try {
     // A column's roots share most of their cells: one thread parses them once.
-    const sharing = { perColumn: true, keepBytes: keptParsedBytes(job.heapMb, threads) };
+    const sharing = { perColumn: true, threads, keepBytes: keptParsedBytes(job.heapMb, threads) };
     built = await buildByRegion(job, pool.run, reader, sharing);
   } finally {
     // Threads still exiting when the index was posted held the main thread's handover back

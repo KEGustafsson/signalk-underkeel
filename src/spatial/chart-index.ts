@@ -53,12 +53,18 @@ export function buildChartIndex(cells: ReadCell[], opts: Partial<BuildOptions> =
     }
   });
   const features = cells.flatMap((c) => c.features);
-  return {
+  return countedCells({
     catalogue: { version: 1, cells: cells.map((c) => c.info) },
     pyramid: buildPyramid(features, opts),
     hazards: new HazardIndex(features.filter(isNamedHazard)),
     rules: new RuleIndex(cells.flatMap((c) => c.rules))
-  };
+  });
+}
+
+/** `index` with its pyramid told how many cells the catalogue lists (`NodeStore.cellCount`). */
+export function countedCells<T extends ChartIndex>(index: T): T {
+  index.pyramid.cellCount = index.catalogue.cells.length;
+  return index;
 }
 
 const FILES = {
@@ -378,7 +384,7 @@ export function loadChartIndex(dir: string, opts: LoadOptions = {}): ChartIndex 
   const pyramid = checked(openPyramid(path.join(dir, FILES.pyramid), opts.cache), opts);
   const hazards = readHazards(fs.readFileSync(path.join(dir, FILES.hazards)));
   const rules = readRules(fs.readFileSync(path.join(dir, FILES.rules), "utf8"));
-  return { catalogue, pyramid, hazards, rules };
+  return countedCells({ catalogue, pyramid, hazards, rules });
 }
 
 /**
@@ -399,10 +405,10 @@ export async function loadChartIndexAsync(
   ]);
   await cacheOf(pyramid)?.verify();
   const catalogue = parseCatalogue(JSON.parse(cells.toString("utf8")));
-  return {
+  return countedCells({
     catalogue,
     pyramid,
     hazards: readHazards(hazards),
     rules: readRules(rules.toString("utf8"))
-  };
+  });
 }

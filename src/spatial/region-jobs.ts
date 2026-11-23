@@ -47,12 +47,25 @@ export interface RegionSharing {
   parsed?: ParsedCells;
   /** One job per column of roots, for a pool of threads; else one job of every region. */
   perColumn?: boolean;
+  /** The pool's threads: with fewer columns than threads, each root is a job of its own. */
+  threads?: number;
   /** Each job's `keepBytes`. */
   keepBytes: number;
 }
 
-/** The roots `build` holds, in order, as the jobs `perColumn` asks for. */
-export function regionGroups(build: number[], roots: RootRange[], perColumn = false): number[][] {
+/**
+ * The roots `build` holds, in order, as the jobs `perColumn` asks for: one per column of roots,
+ * whose cells one thread then parses once. With fewer columns than `threads`, as in a box of a
+ * few roots, one job per root instead: a thread left idle costs more than a cell parsed twice,
+ * and a column's one dense root no longer holds the others' thread. The index built is the
+ * same either way: the roots are joined in their own order.
+ */
+export function regionGroups(
+  build: number[],
+  roots: RootRange[],
+  perColumn = false,
+  threads = 1
+): number[][] {
   if (!perColumn) {
     return build.length > 0 ? [build] : [];
   }
@@ -61,7 +74,7 @@ export function regionGroups(build: number[], roots: RootRange[], perColumn = fa
     const x = (roots[k] as RootRange).minX;
     columns.set(x, [...(columns.get(x) ?? []), k]);
   }
-  return [...columns.values()];
+  return columns.size < threads ? build.map((k) => [k]) : [...columns.values()];
 }
 
 /**

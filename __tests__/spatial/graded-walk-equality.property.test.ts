@@ -25,7 +25,20 @@ import { area, basin, coverage, land, point, quality } from "../helpers/syntheti
  * the shadow's answer kept, a P explained only for the tile that sets it)
  * without changing any answer: with chart position and the survey shadow,
  * every field of every query, visits included, equals the 118913f walk's.
+ *
+ * A walk over a chart index's pyramid, which knows how many cells its catalogue lists, also
+ * leaves out a subtree that can add nothing to what it has found (`stop.ts`, `addsNothing`):
+ * every field is the same but `visits`, which is then no more than the reference's.
  */
+
+type Walked = ReturnType<typeof minDepthOver>;
+
+/** `got` with every field `want` has but `visits`, and no more visits than it. */
+function sameWithFewerVisits(got: Walked, want: Walked): boolean {
+  const { visits: mine, ...rest } = got;
+  const { visits: theirs, ...wanted } = want;
+  return mine <= theirs && isDeepStrictEqual(rest, wanted);
+}
 
 const W = 22.0;
 const S = 60.0;
@@ -143,6 +156,39 @@ describe("graded walk equality (property)", () => {
     );
   });
 
+  test("a walk that knows its index's cells leaves subtrees out and returns the same", () => {
+    const bad: unknown[] = [];
+    let fewer = 0;
+    let walks = 0;
+    fc.assert(
+      fc.property(
+        chartArb,
+        fc.array(fc.tuple(footprintArb, optionsArb, fc.boolean()), { minLength: 1, maxLength: 8 }),
+        (c, queries) => {
+          const store = storeOf(c);
+          for (const [f, o, sweptOnly] of queries) {
+            const geom = footprintGeom(ring(f));
+            const opts = { ...o, chartPosition: true, sweptOnly };
+            store.cellCount = undefined;
+            const want = minDepthOver(store, geom, opts);
+            // Every feature of the synthetic chart is cell 0's.
+            store.cellCount = 1;
+            const got = minDepthOver(store, geom, opts);
+            walks++;
+            fewer += got.visits < want.visits ? 1 : 0;
+            if (!sameWithFewerVisits(got, want)) {
+              bad.push({ c, f, opts, got, want });
+            }
+          }
+        }
+      ),
+      { numRuns: 150 }
+    );
+    expect(bad.slice(0, 2)).toEqual([]);
+    // The rule is exercised: a good share of the walks are shorter for it.
+    expect(fewer).toBeGreaterThan(walks / 20);
+  });
+
   /**
    * CATZOC B water to `edge` metres north of the footprint and D beyond, a
    * bank `bank` metres north: the bank counts by its own σ or, behind enough
@@ -215,8 +261,9 @@ describe("look-ahead over the fixture chart", () => {
       const got = real(store, geom, opts);
       const want = referenceGradedWalk(store, geom, opts);
       calls++;
-      // Object.is on every value, as toEqual, but one assertion for the whole run.
-      if (!isDeepStrictEqual(got, want)) {
+      // Object.is on every value, as toEqual, but one assertion for the whole run. The
+      // fixture's index knows its cells, so a walk may visit fewer tiles for the same answer.
+      if (!sameWithFewerVisits(got, want)) {
         bad.push({ geom, opts, got, want });
       }
       return got;

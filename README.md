@@ -531,8 +531,16 @@ it, in `planning-index/` under its data directory, from the same cells and cell 
 planner waits for that build or its error. The build runs at the lowest CPU priority and always
 gives way to the chart box around the vessel; a planning box is at most the chart box's area at its
 cap (`boxMaxRadiusKm`, or the automatic cap for the machine's memory), within the Traficom WFS's
-span when that source is on, and is released after 10 minutes unused. Planning boxes are off when
+span when that source is on, and is released after 10 minutes unused. Its files stay: for up to
+7 days, while the charts and settings it was built from are unchanged, a region it covers is
+served by reading it back, in about a second, also after a restart. Planning boxes are off when
 their directories overlap the configured `indexDir`.
+
+A session also serves a raster of the chart (`raster`, feature `raster`): the status each of
+the index's finest tiles has for the session's vessel and window, a block at a time, so a
+planner settles most legs on the tiles near them and asks for a leg's own check only where
+they do not say. With `prepare(region, signal, undefined, { held: true })` (feature `held`) a
+planner gets an index that already serves the region, or 404, and no build is started.
 
 A session also lists the chart objects in a box (`objects(sw, ne)`, feature `objects`): bridges
 and overhead cables and pipes with their clearance, restricted areas with their restrictions and

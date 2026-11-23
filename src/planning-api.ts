@@ -1,4 +1,3 @@
-import { LIMITS } from "./api/route-request";
 import type { ApiReply } from "./api/routes";
 import { checkFootprint, checkLeg } from "./engine/route-check";
 import { areaKm2, grownBox } from "./planning-geometry";
@@ -9,6 +8,8 @@ import type { Bbox } from "./ingest/wfs";
 import type { HeldBox, PlanningBoxes } from "./planning-box";
 import { carryAdjustments, holds, regionError } from "./planning-box";
 import { type ChartObject, sessionObjects } from "./planning-objects";
+import type { Raster } from "./planning-raster";
+import { sessionRaster } from "./planning-raster";
 import type { RouteQueue, RouteServiceDeps } from "./route-service";
 import { routeCheck, vesselFor } from "./route-service";
 import { heldBox } from "./engine/held-box";
@@ -27,7 +28,11 @@ import { MAX_CHART_BUFFER } from "./spatial/chart-position";
 
 export const PLANNING_API = Symbol.for("signalk-underkeel.planning");
 
+import { paramsError } from "./planning-params";
+
+export { paramsError } from "./planning-params";
 export type { ChartObject } from "./planning-objects";
+export type { Raster } from "./planning-raster";
 
 export type Status = "ok" | "marginal" | "fail" | "unverified";
 
@@ -71,6 +76,15 @@ export interface Session {
   segment(a: LonLat, b: LonLat, window?: Window): Verdict;
   /** The chart objects whose bounds meet the box sw–ne, in this session's index. */
   objects(sw: LonLat, ne: LonLat): ChartObject[];
+  /** The zoom of the raster's cells: the pyramid's deepest (feature "raster"). */
+  readonly rasterZoom: number;
+  /**
+   * The raster of a block of cells at `rasterZoom`, its north-west cell tile (x0, y0)
+   * (`planning-raster.ts`): each cell's status over the session's window, for a planner to
+   * test legs against without asking for each one's corridor. Throws RangeError for a block
+   * that is empty, over MAX_RASTER_CELLS or off the tile grid.
+   */
+  raster(x0: number, y0: number, cols: number, rows: number): Raster;
   /** Work done so far, in work units (src/engine/work.ts). */
   work(): number;
   /** Yields to the event loop; rejects once the request is aborted. */
@@ -106,7 +120,7 @@ export type PrepareResult =
   { ok: true; value: Prepared } | { ok: false; status: number; error: string };
 
 /** What this provider adds to version 1, for a planner to test before it calls it. */
-export const FEATURES = ["prepare", "corridor", "survey", "objects"] as const;
+export const FEATURES = ["prepare", "corridor", "survey", "objects", "raster", "held"] as const;
 
 export interface PlanningApiV1 {
   readonly version: 1;
@@ -150,8 +164,17 @@ export interface PlanningApiV1 {
    * going with their area, and past them reads no coverage; S-57 cells in use are built across
    * its whole box. An index already held that covers every box (the index in use, or a planning
    * box built for a region) is given instead, and judges on the charts across all it holds.
+   *
+   * With `how.held` (feature "held"), no build is started: the index in use, the planning box
+   * held or the one saved on disk when it serves the region, else 404. A planner plans on what
+   * is there first, and asks for a build only when that does not serve.
    */
-  prepare(region: Bbox, signal: AbortSignal, corridor?: readonly Bbox[]): Promise<PrepareResult>;
+  prepare(
+    region: Bbox,
+    signal: AbortSignal,
+    corridor?: readonly Bbox[],
+    how?: { held?: boolean }
+  ): Promise<PrepareResult>;
   /**
    * The depth survey of `region` (feature "survey", `survey.ts`): cells about `cellMetres` on a
    * side, or coarser, each the deepest and the shallowest charted depth touching it. Made tile by tile in the
@@ -175,42 +198,6 @@ function pauseFor(signal: AbortSignal): () => Promise<void> {
     new Promise((resolve, reject) =>
       setImmediate(() => (signal.aborted ? reject(signal.reason) : resolve()))
     );
-}
-
-const within = (v: unknown, lo: number, hi: number): boolean =>
-  typeof v === "number" && Number.isFinite(v) && v >= lo && v <= hi;
-
-/**
- * Why `p` cannot start a session, or undefined: the same bounds `/route-check`
- * holds a request to, applied to the values the session would score with.
- */
-export function paramsError(
-  p: SessionParams,
-  probability: number,
-  xteLimit: number
-): string | undefined {
-  if (!Number.isFinite(p.departure) || !Number.isFinite(p.until) || p.until < p.departure) {
-    return "departure and until must be finite epoch ms, until not before departure";
-  }
-  if (!within(p.speed, LIMITS.minSpeed, LIMITS.maxSpeed)) {
-    return `speed must be ${LIMITS.minSpeed}..${LIMITS.maxSpeed} m/s`;
-  }
-  if (!within(xteLimit, 0, LIMITS.maxXte)) {
-    return `xteLimit must be 0..${LIMITS.maxXte} m`;
-  }
-  if (!within(probability, LIMITS.minProbability, LIMITS.maxProbability)) {
-    return `probability must be ${LIMITS.minProbability}..${LIMITS.maxProbability}`;
-  }
-  if (p.draft !== undefined && !within(p.draft, LIMITS.minDraft, LIMITS.maxDraft)) {
-    return `draft must be ${LIMITS.minDraft}..${LIMITS.maxDraft} m`;
-  }
-  if (p.airHeight !== undefined && !within(p.airHeight, LIMITS.minAirHeight, LIMITS.maxAirHeight)) {
-    return `airHeight must be ${LIMITS.minAirHeight}..${LIMITS.maxAirHeight} m`;
-  }
-  if (p.waveHeight !== undefined && !within(p.waveHeight, 0, LIMITS.maxWaveHeight)) {
-    return `waveHeight must be 0..${LIMITS.maxWaveHeight} m`;
-  }
-  return undefined;
 }
 
 function inputFor(deps: RouteServiceDeps, p: SessionParams): RouteCheckInput | string {
@@ -281,6 +268,12 @@ function sessionFor(
     },
     objects: (sw, ne) =>
       sessionObjects(index, deps.ownTracks?.() ?? [], sw, ne, (at) => level(whole, at)),
+    rasterZoom: index.pyramid.leafZoom,
+    raster(x0, y0, cols, rows) {
+      const r = sessionRaster(index, input, whole, { x0, y0, cols, rows });
+      work += r.work;
+      return r;
+    },
     work: () => work,
     pause: pauseFor(signal)
   };
@@ -447,7 +440,7 @@ export function planningApi(
     session: sessionOver(deps),
     routeCheck: (body, signal) => routeCheck(body, deps(), signal),
     survey: surveyOver(boxes),
-    async prepare(region, signal, corridor) {
+    async prepare(region, signal, corridor, how) {
       const bad =
         regionError(region) ??
         (corridor === undefined ? undefined : corridorError(region, corridor));
@@ -476,7 +469,10 @@ export function planningApi(
         };
       }
       const parts = corridor?.map((p): Bbox => [p[0], p[1], p[2], p[3]]);
-      const got = await b.prepare(r, signal, undefined, parts);
+      const got =
+        how?.held === true
+          ? await b.heldFor(r, signal, parts)
+          : await b.prepare(r, signal, undefined, parts);
       if (!got.ok) {
         return got;
       }

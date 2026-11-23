@@ -277,6 +277,20 @@ function scoringFor(
   return { terms, s: { threshold: thresholdDepth(terms, wl), sigmaExtra: sigmaExtra(terms, wl) } };
 }
 
+/**
+ * A footprint's status from its depth alone, before a fallback water level and the rules are
+ * held to it: land fails, else as `statusOf`. The planning raster scores a cell with it.
+ */
+export function footprintStatus(
+  risk: number,
+  charted: number | null,
+  bits: number,
+  land: boolean,
+  probability: number
+): LegStatus {
+  return land ? "fail" : statusOf(risk, charted, bits, probability);
+}
+
 /** A corridor's status; pushes WATER_LEVEL_FALLBACK to `flags` on a fallback level. */
 function verdictStatus(
   risk: number,
@@ -287,7 +301,7 @@ function verdictStatus(
   flags: string[],
   input: RouteCheckInput
 ): LegStatus {
-  const status = land ? "fail" : statusOf(risk, charted, bits, input.probability);
+  const status = footprintStatus(risk, charted, bits, land, input.probability);
   // A fallback water level is a guess, so a leg it clears is not verified (invariant 3).
   if (wl.degraded) {
     flags.push("WATER_LEVEL_FALLBACK");

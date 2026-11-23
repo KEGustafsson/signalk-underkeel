@@ -368,6 +368,14 @@ export interface WfsDownload {
    * of it), with the same fetch. Absent, the cell has no lines.
    */
   linesUrl?: string;
+  /**
+   * A layer that fails, of the depths or of the FTIA's lines and swept areas, is tried again
+   * as a corridor's groups are (`retried`): for a planning box, which a plan waits for. The WFS
+   * breaks a response off at times; without this the plan is refused for a depth layer, or is
+   * made on a cell with no swept fairways. The box around the vessel is tried again by its own
+   * service.
+   */
+  retry?: boolean;
 }
 
 const union = (a: Bbox, b: Bbox): Bbox => [
@@ -464,7 +472,7 @@ export async function downloadWfsCell(d: WfsDownload): Promise<{
   for (const g of groups) {
     // A corridor's group is tried again: a corridor is a few minutes of downloads.
     const get = () => fetchLayers(d, boxOf(g), limit);
-    const l = corridor ? await retried(get, d.signal) : await get();
+    const l = corridor || d.retry ? await retried(get, d.signal) : await get();
     clipTo(l, g, clipped, corridor);
     counts.depthAreas += l.depthAreas.length;
     counts.dredgedAreas += l.dredgedAreas.length;
