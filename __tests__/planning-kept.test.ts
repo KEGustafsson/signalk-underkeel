@@ -191,6 +191,28 @@ describe("planning indexes kept beside the one on disk", () => {
     b.stop();
   });
 
+  test("reading a kept index back releases the one held and waits for its jobs", async () => {
+    const c = counting();
+    const b = boxes(c.refresh);
+    await ask(b, WEST);
+    const east = await ask(b, EAST);
+    expect(east.begin()).toBe(true);
+    let settled = false;
+    const back = ask(b, WEST).then((h) => {
+      settled = true;
+      return h;
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(east.live).toBe(false);
+    expect(b.stillRead()).toBe(1);
+    expect(settled).toBe(false);
+    east.end();
+    expect((await back).region).toEqual(WEST);
+    expect(b.stillRead()).toBe(0);
+    expect(c.builds()).toBe(2);
+    b.stop();
+  });
+
   test("a copy cut short, or a directory without its record, is no index and is removed", async () => {
     const root = path.join(dir, "planning-index.kept");
     const c = counting();

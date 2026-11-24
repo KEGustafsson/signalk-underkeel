@@ -223,15 +223,16 @@ export class PlanningBoxes {
       hold.bbox,
       signal,
       async (stop) => {
+        // The index held takes no new job, and its jobs end before another is held.
+        this.release();
         await untilAborted(this.drained(), stop);
         const index = await (this.deps.load ?? loadChartIndexAsync)(dir);
         if (stop.aborted) {
           return "again";
         }
-        const held = new Held(hold.region, hold.bbox, hold.parts, index, this.deps.clock.now());
-        this.held = held;
+        this.held = new Held(hold.region, hold.bbox, hold.parts, index, this.deps.clock.now());
         this.deps.debug?.("planning box read back from disk");
-        return { ok: true, held };
+        return { ok: true, held: this.held };
       },
       (err) => ({ ok: false, status: 503, error: err.message })
     );
