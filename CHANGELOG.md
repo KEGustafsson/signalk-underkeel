@@ -59,10 +59,13 @@ All notable changes to signalk-underkeel are documented here.
   downloaded from the Traficom WFS tile by tile in the build process, so its memory stays that of
   one tile. `prepare` takes a corridor's boxes, and the planning box is built of them alone, its
   memory going with their area: a 50 nm trip fits a 2 GB Raspberry Pi 4.
-- The Traficom WFS is read through signalk-charts-provider-simple's local WFS proxy when it runs
-  one (2.22 or later): it keeps each area downloaded and serves it again, so the chart box, a
-  survey or a planning box over water downloaded before reads from its store. **Via Charts
-  Provider's WFS proxy** is on by default; turned off, the WFS is read directly.
+- The Traficom WFS, and the FTIA's fairway lines and swept areas, are read through
+  signalk-charts-provider-simple's local WFS proxy when it runs one and keeps them (its
+  `chartsProviderWfs` PropertyValue, from its release after 2.24.0): it keeps each area downloaded
+  and serves it again, so the chart box, a survey or a planning box over water downloaded before
+  reads from its store. The servers it keeps are added in its WFS Data tab; the setup panel's
+  Charts line names those this plugin reads that it does not keep. **Via Charts Provider's WFS
+  proxy** is on by default; turned off, the WFS is read directly.
 - A planning session's `raster` (planning API feature `raster`): the status of every cell of a
   block of the index's finest tiles for the session's vessel and window, painted in one walk,
   with bits for a risk at or over the accepted probability, a cell no water level in the window

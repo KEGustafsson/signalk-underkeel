@@ -40,6 +40,7 @@ import {
   watchSharedCells,
   withSharedCells
 } from "./shared-enc";
+import { watchChartsProviderWfs } from "./charts-provider-wfs";
 import fs from "fs";
 import path from "path";
 
@@ -148,6 +149,14 @@ function cellsStamp(dir: string): string | undefined {
  * Watches the charts provider's cells in use (`watchShared`). A provider publishing later the
  * cells read at start restarts nothing: the reason shown loses its note that it had not started.
  */
+/** One call that makes both `a` and `b`. */
+const both =
+  (a: () => void, b: () => void): (() => void) =>
+  () => {
+    a();
+    b();
+  };
+
 function watchAtStart(
   app: ServerAPI,
   clock: Clock,
@@ -290,7 +299,10 @@ export = function underkeel(
       mountAssets(app);
       app.registerResourceProvider(manifestProvider(VERSION));
       unregister?.();
-      unregister = registerPlanningApi(planningApiOf(app, clock, state));
+      unregister = both(
+        registerPlanningApi(planningApiOf(app, clock, state)),
+        watchChartsProviderWfs(app)
+      );
     },
 
     stop(): void {

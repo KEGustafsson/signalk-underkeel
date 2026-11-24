@@ -3,13 +3,71 @@
  * it serves one: each area is downloaded once and read from its store again
  * (that plugin's docs/wfs-proxy.md). The proxy speaks the same WFS, so only
  * the URL changes; the build processes read it like the upstream.
+ *
+ * Charts Provider offers the proxy as the `chartsProviderWfs` PropertyValue, once
+ * per server process, whichever plugin starts first; its members answer for the
+ * proxy running at the time of each call (`watchChartsProviderWfs`).
  */
 
-/** The part of `globalThis.__signalk_chartsProviderWfs` used here. */
+/** The PropertyValue Charts Provider offers its WFS proxy as. */
+export const WFS_PROPERTY = "chartsProviderWfs";
+/** The version of that offer read here. */
+export const WFS_PROXY_API_VERSION = 1;
+
+/** The part of Charts Provider's `ChartsProviderWfsApi` used here. */
 export interface ChartsProviderWfsApi {
   apiVersion: number;
-  proxyUrl?: (upstream: string) => string | undefined;
+  /** The proxy's URL for the WFS at `upstream`; undefined when not proxied or no proxy runs. */
+  proxyUrl: (upstream: string) => string | undefined;
+  /** The upstream WFS base URLs proxied; none while no proxy runs. */
+  upstreams?: () => string[];
+  /** What the proxy's store holds; undefined while no proxy runs. */
+  stats?: () => unknown;
 }
+
+/** The part of the server's PropertyValues API used here. */
+interface PropertyValues {
+  onPropertyValues?: (
+    name: string,
+    cb: (history: ({ value: unknown } | undefined)[]) => void
+  ) => () => void;
+}
+
+/** The proxy offer taken last; undefined while none is. */
+let offered: ChartsProviderWfsApi | undefined;
+
+/** Whether `v` is an offer of the version read here, with the call this plugin makes. */
+function isOffer(v: unknown): v is ChartsProviderWfsApi {
+  const o = v as Partial<ChartsProviderWfsApi> | null;
+  return (
+    typeof o === "object" &&
+    o !== null &&
+    o.apiVersion === WFS_PROXY_API_VERSION &&
+    typeof o.proxyUrl === "function"
+  );
+}
+
+/**
+ * Follows Charts Provider's `chartsProviderWfs` offer: its last value, when it has the shape and
+ * version read here, is the proxy `wfsUrl` asks. Returns the call that stops following it and
+ * forgets the offer. A server with no PropertyValues (a test harness) offers none.
+ */
+export function watchChartsProviderWfs(app: PropertyValues): () => void {
+  if (typeof app.onPropertyValues !== "function") {
+    return () => undefined;
+  }
+  const unsubscribe = app.onPropertyValues(WFS_PROPERTY, (history) => {
+    const last = history[history.length - 1]?.value;
+    offered = isOffer(last) ? last : undefined;
+  });
+  return () => {
+    unsubscribe();
+    offered = undefined;
+  };
+}
+
+/** The proxy offer followed now (`watchChartsProviderWfs`), if any. */
+export const chartsProviderWfs = (): ChartsProviderWfsApi | undefined => offered;
 
 /** The proxy listens on the loopback interface alone; any other URL is not its. */
 const LOOPBACK = /^http:\/\/127\.0\.0\.1:\d+\//;
@@ -22,13 +80,9 @@ const LOOPBACK = /^http:\/\/127\.0\.0\.1:\d+\//;
 export function wfsUrl(
   upstream: string,
   via = true,
-  g: Record<string, unknown> = globalThis as unknown as Record<string, unknown>
+  api: ChartsProviderWfsApi | undefined = offered
 ): string {
-  if (!via) {
-    return upstream;
-  }
-  const api = g.__signalk_chartsProviderWfs as ChartsProviderWfsApi | undefined;
-  if (typeof api?.proxyUrl !== "function") {
+  if (!via || !isOffer(api)) {
     return upstream;
   }
   try {
@@ -36,5 +90,37 @@ export function wfsUrl(
     return typeof url === "string" && LOOPBACK.test(url) ? url : upstream;
   } catch {
     return upstream;
+  }
+}
+
+/**
+ * Whether the offer's proxy runs: its `stats` answer while it does. An offer without `stats`
+ * runs while it proxies any source, so a running proxy with none reads as stopped there.
+ */
+function running(api: ChartsProviderWfsApi): boolean {
+  if (typeof api.stats === "function") {
+    return api.stats() !== undefined;
+  }
+  const kept = typeof api.upstreams === "function" ? api.upstreams() : [];
+  return Array.isArray(kept) && kept.length > 0;
+}
+
+/**
+ * The WFS URLs among `upstreams` Charts Provider's proxy runs but does not keep, for the setup
+ * hint that names them: every one while it runs with no WFS sources. None while no proxy runs
+ * or the offer cannot be read.
+ */
+export function unproxied(
+  upstreams: readonly string[],
+  api: ChartsProviderWfsApi | undefined = offered
+): string[] {
+  if (!isOffer(api)) {
+    return [];
+  }
+  try {
+    // No proxy running: nothing to add sources to.
+    return running(api) ? upstreams.filter((u) => api.proxyUrl(u) === undefined) : [];
+  } catch {
+    return [];
   }
 }
