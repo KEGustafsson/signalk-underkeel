@@ -399,7 +399,7 @@ coverage past the box get a `reason`. The build process posts its phase and coun
    new box are re-judged: the chart prior of any other cell reads the same tiles in both; a
    property test checks that this equals re-judging every cell. The box is one cell
    of usage band 1, so every ENC cell wins where both cover. Water no depth area reaches is
-   land. Survey quality is an assumed CATZOC (configurable, default B). Every tile from the cell
+   land, however narrow (§4.3, the shore of a cell that charts no land). Survey quality is an assumed CATZOC (configurable, default B). Every tile from the cell
    carries `NOT_FOR_NAVIGATION`: the look-ahead is never `normal` there (at most `alert`, with
    the licence notice), route legs are never `ok`, and the overlay never draws `clear`.
 3. **Unsurveyed-waterway depth data.** For example, SYKE lake and coastal data, explicitly
@@ -625,18 +625,43 @@ bounded it ("behind 30 m of water placed ±50 m"). The UKC tiles (§4.10) do not
 shadow: they stay at least as severe as a query there, which `no point is riskier than the
 class drawn over it` still tests.
 
+**The shore of a cell that charts no land (2026-11-24, invariants 1 and 2).** The Traficom WFS
+cell has depth areas and no land objects: its land is what the areas leave open. A tile is one
+value, the shallowest depth of all that reaches it, so a leaf the areas reached and left part
+open read as water at their depth, and land narrower than the 19 m leaf was lost: a harbour breakwater at Pargas (60.2785° N 22.2868° E), 8–10 m wide, read 0 m, a skerry 1.6 km south-east of it (60.2715° N 22.3125° E) likewise, and signalk-route-planner's lowest-risk route left the harbour
+through the breakwater, every leg checked. So a leaf of zoom `leafZoom` or finer whose depth
+areas reach it and, together, leave part of it open is a shore tile (`spatial/shore.ts`): it
+splits to the edge zoom (`edgeZoomFor`, 22, about 5 m at 60° N), and a tile there that the areas
+do not cover is land. Every point no depth area holds then lies in a land tile, and water is
+lost only within one edge-zoom tile of the shore; a build with no edge zoom draws the shore a
+leaf wide. The tiles under a shore leaf that the areas do cover keep the leaf's own reading, so
+depths stay at the leaf zoom as everywhere. Covered is `areasCover` (seams of `SEAM_TOLERANCE`
+aside), answered from the areas' edges gathered once two zooms above the leaf: an edge's own
+area lies on the side its ring's direction gives, an edge two areas share bounds neither, and a
+tile no other edge crosses is decided by its centre. `areasCover` itself is asked only where an
+edge bounds its area alone with other areas beside it; a property test holds the two equal, and
+the build equal to a reference that walks every edge for every leaf. The index is rebuilt once
+(pyramid version 13). The Pargas–Nauvo region (830 km², Jetson Orin, 4 threads) builds in
+18.3 s where it took 11.6 s, with 3.22 M nodes where it had 1.77 M, and its file is 14 MB where
+it was 7.3 MB; the whole search region of that trip (2 201 km²) in 77.5 s where it took 45.1 s.
+A cell with land objects is unchanged: its land holds every leaf it reaches.
+
 **Storage.**
 
 - `pyramid.bin`: a JSON header line, then gzip members (level 1) of typed columns, one column
   per node field (depth, σ, flags, cell reference, tile key, zoom, split bit). The first member
   holds the block table and the resident nodes, zoom 15 and coarser; each further member holds
-  one block, the finer nodes under one z12 tile. Within a member nodes are written by zoom and
+  one block, the finer nodes under one z13 tile (z12 before pyramid version 13: with the shore
+  drawn at the edge zoom, 25 of the 63 z12 blocks of the Pargas–Nauvo region compressed past the
+  256 kB a query reads on the spot, the largest to 436 kB, and a plan's first queries there read
+  stand-ins; none of its 203 z13 blocks does, the largest 146 kB). Within a member nodes are written by zoom and
   then tile key, so the inflated columns are the store as they are, and a lookup bisects its
   zoom's key column: 38 bytes per node, against 110–160 with a Map per zoom (which V8 also
   caps at 16.7 M entries). `dMin` stays a 64-bit float, so a stored depth is never rounded
   deeper. On 64 copies of the Nauvo pair (13.5 M nodes, 448 blocks) the resident nodes are
   34 k (1.6 MB) and a block at most 50 k nodes (1.9 MB inflated, 140 kB compressed); a whole z10
-  root reaches 505 k nodes (19 MB), too much to hold the four a look-ahead can straddle.
+  root reaches 505 k nodes (19 MB), too much to hold the four a look-ahead can straddle. Those
+  counts are of z12 blocks.
 - Blocks are read when a query first reaches them (`spatial/block-cache.ts`): one compressed to
   256 kB or less is read and inflated on the spot, about 1 ms on x86, so the query answers from
   it; a larger one is read off the event loop. Loaded blocks are dropped, least recently used
@@ -1285,6 +1310,15 @@ keep the full reasons.
    - `unverified` — the corridor touches `NO_COVERAGE` or `UNASSESSED`.
 
    `unverified` is shown in its own colour and is never folded into `ok`.
+
+5. A corridor that reaches land fails the leg, flagged `LAND`. A leg whose own line lies over
+   land is flagged `LAND_CROSSED` too (`spatial/land-line.ts`), unless that land is at the leg's
+   own end: the land tiles the line runs over from an end without a gap, each within twice its
+   own width of that end (a tile counts at most 20 m wide). A boat alongside a quay lies in the
+   land tile the shore is drawn in, and a planner lets a short leg from a berth carry `LAND`
+   (signalk-route-planner's berth leg); the same leg through a breakwater to the water behind
+   it carries `LAND_CROSSED`, which no planner takes. A leg across ±180° with land in its
+   corridor is flagged without the walk.
 
 **Response:**
 

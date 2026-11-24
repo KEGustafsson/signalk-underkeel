@@ -87,6 +87,14 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Changed
 
+- A route check flags a leg whose own line crosses land `LAND_CROSSED`, beside the `LAND` of a
+  corridor that reaches land. Land at the leg's own end is not crossed: the land tiles the line
+  runs over from that end without a gap, each within twice its width of the end. A planner that
+  lets a short leg from a berth carry `LAND` can so refuse the same leg through a breakwater.
+- The index's blocks are the tiles under one z13 tile, not one z12 tile. With the shore drawn at
+  the edge zoom, 25 of the 63 z12 blocks of the Pargas–Nauvo region compressed past the 256 kB a
+  query reads on the spot (the largest to 436 kB), and a plan's first queries there read
+  stand-ins, land with no coverage; none of its 203 z13 blocks does (the largest 146 kB).
 - Index builds are faster, for the same index byte for byte. A depth area's small rings, its
   islets and holes under 64 vertices, were walked edge by edge for every tile near the area;
   a ring whose box the tile misses is now passed over, as an indexed ring was. A point is
@@ -113,6 +121,15 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Fixed
 
+- Land narrower than a tile was water in the Traficom WFS cell. The cell has no land objects, so
+  its land is what the depth areas leave open, and a tile is one value: a leaf the areas reached
+  and left part open read at their depth. A harbour breakwater at Pargas (60.2785° N 22.2868° E), 8–10 m wide, read 0 m, and a route planned at the lowest risk left the harbour through it. A leaf its
+  depth areas reach and leave part open now splits to the edge zoom (22, about 5 m at 60° N),
+  and a tile there that they do not cover is land: every point no depth area holds lies in a
+  land tile, and water is lost only within one such tile of the shore (plan §4.3). The index is
+  rebuilt once (pyramid version 13). It holds more tiles: the Pargas–Nauvo region builds in
+  18.3 s where it took 11.6 s (3.22 M nodes where it had 1.77 M, 14 MB where it was 7.3 MB;
+  Jetson Orin, 4 threads).
 - A Traficom WFS download whose layer failed while another layer's request still waited its turn
   could end the build process, or the server for an in-process build, with an unhandled
   rejection; the request's own failure is now handled.
