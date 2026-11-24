@@ -87,6 +87,12 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Changed
 
+- A planning session with the FMI water level is faster, for the same answers. The lowest and
+  the highest level over an interval are found once and kept while the forecast stands: each box
+  and leg a planner asked about sampled the forecast across the trip's window again, at each of
+  its corners. In the running server that was 12.4 s of a 30.5 s plan from Turku to Nauvo (CPU
+  profile of the server), and 18.1 s of 48.2 s with fairway lines kept to. A new forecast is
+  read at once, and data gone stale is never answered from what was kept.
 - Index builds are faster, for the same index byte for byte. A depth area's small rings, its
   islets and holes under 64 vertices, were walked edge by edge for every tile near the area;
   a ring whose box the tile misses is now passed over, as an indexed ring was. A point is
