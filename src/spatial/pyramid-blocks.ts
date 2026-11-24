@@ -10,13 +10,19 @@ import { FLAGS } from "./node-store";
  * (1.2 MB); a z10 root holds up to 505 k nodes (19 MB inflated), a z12 tile
  * a sixteenth of that, so the blocks within a look-ahead's reach fit a Pi's
  * memory where whole roots would not.
+ *
+ * A block is a z13 tile's: with the shore of a cell that charts no land drawn
+ * at the edge zoom (`shore.ts`), 25 of the 63 z12 blocks of the Pargas–Nauvo
+ * region compressed past the 256 kB a query reads on the spot
+ * (`block-cache.ts`), the largest to 436 kB; none of its 203 z13 blocks does,
+ * the largest 146 kB.
  */
 export interface BlockLayout {
   residentZoom: number;
   blockZoom: number;
 }
 
-export const DEFAULT_LAYOUT: BlockLayout = { residentZoom: 15, blockZoom: 12 };
+export const DEFAULT_LAYOUT: BlockLayout = { residentZoom: 15, blockZoom: 13 };
 
 /** The layout as it applies to a pyramid of zooms minZoom..leafZoom. */
 export function layoutFor(minZoom: number, leafZoom: number, l: BlockLayout): BlockLayout {

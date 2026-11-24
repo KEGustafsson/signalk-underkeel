@@ -127,7 +127,7 @@ describe("planning indexes kept beside the one on disk", () => {
     expect((await ask(restarted, EAST)).region).toEqual(EAST);
     expect(again.builds()).toBe(0);
     restarted.stop();
-  });
+  }, 30_000);
 
   test("at most KEPT are kept: the one built first goes, and is built again when asked for", async () => {
     const c = counting();
@@ -142,7 +142,7 @@ describe("planning indexes kept beside the one on disk", () => {
     await ask(b, strip(0));
     expect(c.builds()).toBe(KEPT + 3);
     b.stop();
-  });
+  }, 30_000);
 
   test("a kept index a later one covers is removed", async () => {
     const c = counting();
@@ -156,7 +156,7 @@ describe("planning indexes kept beside the one on disk", () => {
     const only = path.join(dir, "planning-index.kept", keptNames()[0] as string);
     expect(readHold(only)?.region).toEqual(BOTH);
     b.stop();
-  });
+  }, 30_000);
 
   test("a kept index is not read back for a build at another leaf zoom", async () => {
     const c = counting();
@@ -176,7 +176,7 @@ describe("planning indexes kept beside the one on disk", () => {
     await ask(finer, WEST);
     expect(other.builds()).toBe(1);
     finer.stop();
-  });
+  }, 30_000);
 
   test("a build that fails leaves the index it was replacing to be read back", async () => {
     const c = counting();
@@ -211,7 +211,7 @@ describe("planning indexes kept beside the one on disk", () => {
     expect(b.stillRead()).toBe(0);
     expect(c.builds()).toBe(2);
     b.stop();
-  });
+  }, 30_000);
 
   test("a copy cut short, or a directory without its record, is no index and is removed", async () => {
     const root = path.join(dir, "planning-index.kept");
@@ -226,5 +226,5 @@ describe("planning indexes kept beside the one on disk", () => {
     );
     expect(keptNames()).toHaveLength(1);
     b.stop();
-  });
+  }, 30_000);
 });

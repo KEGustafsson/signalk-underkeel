@@ -9,6 +9,7 @@ import type { ChartIndex } from "../spatial/chart-index";
 import { FLAGS, flagNames } from "../spatial/node-store";
 import type { DepthResult, RiskTile } from "../spatial/pyramid";
 import { footprintGeom, mercatorBuffer, minDepthOver } from "../spatial/pyramid";
+import { crossesLand } from "../spatial/land-line";
 import { DEFAULT_BUILD } from "../spatial/pyramid-build";
 import type { Explanation } from "./explain";
 import { explainTile } from "./explain";
@@ -168,8 +169,12 @@ function* legSteps(
   const land = covered === -Infinity;
   const charted = covered === Infinity || land ? null : covered;
   const flags = flagNames(result.flags);
+  const walked = { visits: 0 };
   if (land) {
     flags.push("LAND");
+    if (crossesLand(index.pyramid, from, to, walked)) {
+      flags.push(LAND_CROSSED_FLAG);
+    }
   }
   if (strip) {
     flags.push(FAIRWAY_GAP_FLAG);
@@ -198,8 +203,14 @@ function* legSteps(
     worst: tile && { position: tile.center, hazard: why?.hazard },
     explanation: why?.explanation
   };
-  return { leg, cellRefs: result.cellRefs, work };
+  return { leg, cellRefs: result.cellRefs, work: work + walked.visits };
 }
+
+/**
+ * The flag of a leg whose own line crosses land (`land-line.ts`), beside the LAND of a corridor
+ * that reaches land: land at the leg's own ends, a quay it lies alongside, is not crossed.
+ */
+export const LAND_CROSSED_FLAG = "LAND_CROSSED";
 
 /** The flag of a leg or box held to a fairway gap strip (`gap-strips.ts`). */
 export const FAIRWAY_GAP_FLAG = "FAIRWAY_GAP";

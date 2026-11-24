@@ -60,6 +60,12 @@ function surveySigma(hits: Reaching[], opts: BuildOptions): number {
  * stated POSACC. Soundings and point dangers are placed by the survey.
  */
 export function chartPosition(hits: Reaching[], v: NodeValues, opts: BuildOptions): ChartPosition {
+  const p = placed(hits, v, opts);
+  // Land the depth areas leave open (`shore.ts`) is land beyond the buffer too, not their depth.
+  return v.dMin === -Infinity && p.topoSigmaP > 0 ? { ...p, topoDMin: -Infinity } : p;
+}
+
+function placed(hits: Reaching[], v: NodeValues, opts: BuildOptions): ChartPosition {
   const surveySigmaP = surveySigma(hits, opts);
   if (v.flags & FLAGS.NO_DEPTH) {
     return { ...NO_POSITION, surveySigmaP };

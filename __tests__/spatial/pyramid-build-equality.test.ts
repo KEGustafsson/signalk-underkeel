@@ -233,6 +233,33 @@ describe("pyramid build equals the reference builder", () => {
   });
 });
 
+describe("the shore of a cell that charts no land", () => {
+  // Depth areas alone, as the Traficom WFS gives them: what they leave open is land, and a leaf
+  // they reach and leave part open is land too (`shore.ts`). The build reads each leaf's shore
+  // from the edges gathered two zooms above it; the reference walks every edge for every leaf.
+  test("random many-vertex depth areas that overlap, touch and leave gaps", () => {
+    const box = [21.99, 59.995, 22.02, 60.015] as const;
+    const advisory = <F extends ChartFeature>(f: F): F => ({ ...f, advisory: true });
+    fc.assert(
+      fc.property(
+        fc.array(fc.tuple(geomArb, fc.integer({ min: 0, max: 20 })), {
+          minLength: 1,
+          maxLength: 5
+        }),
+        (areas) => {
+          const features: ChartFeature[] = [
+            advisory(coverage(box)),
+            advisory(quality(box, 1)),
+            ...areas.map(([g, d]) => advisory(depthArea(g, d)))
+          ];
+          same(features, { minZoom: 12, leafZoom: 19 });
+        }
+      ),
+      { numRuns: 25 }
+    );
+  });
+});
+
 describe("pruning drops only what no child needs", () => {
   // Depth areas placed by their drawing, two σ apart, and soundings and rocks placed by the
   // survey: a sounding inside a shallower drawn area still sets its survey's depth.

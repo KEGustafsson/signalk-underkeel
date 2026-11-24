@@ -27,7 +27,8 @@ export interface CacheOptions {
 /**
  * 32 MB holds about 27 of the densest z12 blocks of the Nauvo replicas (1.2 MB
  * each inflated), a 25 km square. One such block reads in about 1 ms on x86
- * (4 ms on a Raspberry Pi 4); 256 kB compressed is about 3 MB inflated.
+ * (4 ms on a Raspberry Pi 4); 256 kB compressed is about 3 MB inflated. A block
+ * is now a z13 tile's (`pyramid-blocks.ts`), a quarter of the ground.
  */
 export const DEFAULT_CACHE: CacheOptions = { budgetBytes: 32 * 2 ** 20, syncBytes: 256 * 2 ** 10 };
 
