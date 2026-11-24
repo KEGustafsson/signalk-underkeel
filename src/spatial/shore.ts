@@ -3,6 +3,7 @@ import { SEAM_TOLERANCE } from "../foundation/area-cover";
 import { segmentIntersectsRect, segmentRectSpan } from "../foundation/geometry";
 import type { PolygonIndex, RingIndex } from "./polygon-index";
 import { inPolygon, ringEdgesNear } from "./polygon-index";
+import { inWorld } from "./tile-hits";
 
 /**
  * The shore of a cell that charts no land (the Traficom WFS): there the land is what the depth
@@ -189,9 +190,12 @@ const gathered = <H extends Reaching>(areas: H[], rect: Rect): ShoreIn<H> => ({
   )
 });
 
-/** `shoreAt` for the areas of `s` over `rect`. */
+/**
+ * `shoreAt` for the areas of `s` over `rect`, as containment sees it (`inWorld`): an area's
+ * edge along ±180° is no shore, with no world past it to leave open.
+ */
 export const shoreHere = <H>(s: ShoreIn<H>, rect: Rect, covers: Covers<H>): number =>
-  shoreAt(s.edges, rect, (r) => covers(s.areas, r));
+  shoreAt(s.edges, inWorld(rect), (r) => covers(s.areas, r));
 
 /**
  * Zooms above the leaf at which a tile's shore is gathered for the leaves under it: about 76 m

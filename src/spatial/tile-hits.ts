@@ -35,7 +35,7 @@ const WORLD_EDGE_INSET = 1e-3;
  * left every leaf there uncovered. A real gap past 180° is still found by
  * queries, which walk the tiles at the other end of the world.
  */
-function inWorld(rect: Rect): Rect {
+export function inWorld(rect: Rect): Rect {
   const edge = MERCATOR_HALF_WORLD - WORLD_EDGE_INSET;
   return {
     minX: Math.max(rect.minX, -edge),

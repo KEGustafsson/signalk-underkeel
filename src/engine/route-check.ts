@@ -169,9 +169,10 @@ function* legSteps(
   const land = covered === -Infinity;
   const charted = covered === Infinity || land ? null : covered;
   const flags = flagNames(result.flags);
+  const walked = { visits: 0 };
   if (land) {
     flags.push("LAND");
-    if (crossesLand(index.pyramid, from, to)) {
+    if (crossesLand(index.pyramid, from, to, walked)) {
       flags.push(LAND_CROSSED_FLAG);
     }
   }
@@ -202,7 +203,7 @@ function* legSteps(
     worst: tile && { position: tile.center, hazard: why?.hazard },
     explanation: why?.explanation
   };
-  return { leg, cellRefs: result.cellRefs, work };
+  return { leg, cellRefs: result.cellRefs, work: work + walked.visits };
 }
 
 /**

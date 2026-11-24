@@ -376,8 +376,13 @@ function shoreLeaf(a: Analysis, rect: Rect, above: Hit[] | undefined): boolean {
   if (a.advisoryCell === undefined || areas.length === 0 || areas.some((h) => h.full)) {
     return false;
   }
+  // Those above are of every band: used only when no band the leaf leaves out is among them.
+  const floor = a.bandFull ?? -Infinity;
+  const dropped = above?.some((h) => h.item.f.band < floor) ?? false;
   const from =
-    above !== undefined && areas.every((h) => h.item.f.advisory === true) ? above : areas;
+    above !== undefined && !dropped && areas.every((h) => h.item.f.advisory === true)
+      ? above
+      : areas;
   return (
     !from.some((h) => h.full) &&
     !areasCoverRect(
@@ -495,7 +500,13 @@ function chartPosition(hits: Hit[], v: NodeValues, opts: BuildOptions): ChartPos
       }
     }
   }
-  return { surveySigmaP: survey, topoSigmaP: topo, bathyDMin: bathy, topoDMin: drawn };
+  // A leaf read as land is land beyond the buffer too, whatever depth the areas drew there.
+  return {
+    surveySigmaP: survey,
+    topoSigmaP: topo,
+    bathyDMin: bathy,
+    topoDMin: v.dMin === -Infinity ? -Infinity : drawn
+  };
 }
 
 interface Evaluated {

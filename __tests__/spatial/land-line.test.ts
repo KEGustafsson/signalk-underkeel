@@ -60,6 +60,15 @@ describe("a leg's own line over land", () => {
     expect(crossesLand(store, at(-148), at(-110, 30))).toBe(false);
   });
 
+  test("counts the tiles it visits, for its leg's work, more for a longer line", () => {
+    const short = { visits: 0 };
+    const long = { visits: 0 };
+    crossesLand(store, at(-40), at(50), short);
+    crossesLand(store, at(-140), at(150), long);
+    expect(short.visits).toBeGreaterThan(0);
+    expect(long.visits).toBeGreaterThan(short.visits);
+  });
+
   test("from a point put on the quay's face, within a tile of the water, crosses none", () => {
     expect(crossesLand(store, at(-152), at(-110))).toBe(false);
   });

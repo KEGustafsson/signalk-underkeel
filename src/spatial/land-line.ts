@@ -26,6 +26,11 @@ interface Stretch {
   width: number;
 }
 
+/** The tiles a land walk visited, counted into its leg's work (`work.ts`). */
+export interface Walked {
+  visits: number;
+}
+
 /** Stretches closer than this, as a fraction of the leg, run on from one another. */
 const JOIN = 1e-9;
 /** Land at a leg's end is its own berth as far as this many widths of the tile it lies in. */
@@ -39,9 +44,10 @@ const MAX_END_TILE = 20;
  * tile whose block is not loaded and holds land counts as land all over, of no width: the line
  * crosses it wherever it lies, so a leg is never cleared on a block still to come.
  */
-function landUnder(store: NodeStore, a: XY, b: XY, cos: number): Stretch[] {
+function landUnder(store: NodeStore, a: XY, b: XY, cos: number, walked: Walked): Stretch[] {
   const out: Stretch[] = [];
   const visit = (z: number, x: number, y: number): void => {
+    walked.visits++;
     const span = segmentRectSpan(a, b, tileRect(z, x, y));
     const i = span ? store.find(z, x, y) : -1;
     if (!span || i < 0) {
@@ -104,14 +110,19 @@ const CHILDREN = [
  *
  * A leg across ±180° is not walked: with land in its corridor it is taken to cross it.
  */
-export function crossesLand(store: NodeStore, from: LonLat, to: LonLat): boolean {
+export function crossesLand(
+  store: NodeStore,
+  from: LonLat,
+  to: LonLat,
+  walked: Walked = { visits: 0 }
+): boolean {
   if (Math.abs(to[0] - from[0]) > 180) {
     return true;
   }
   const a = toMercator(from[0], from[1]);
   const b = toMercator(to[0], to[1]);
   const cos = Math.cos((((from[1] + to[1]) / 2) * Math.PI) / 180);
-  const land = landUnder(store, a, b, cos);
+  const land = landUnder(store, a, b, cos, walked);
   const at = (t: number): LonLat =>
     fromMercator(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t);
   const near = (end: LonLat, t: number, s: Stretch): boolean =>

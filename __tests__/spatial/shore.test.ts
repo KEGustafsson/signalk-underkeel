@@ -1,7 +1,7 @@
 import fc from "fast-check";
 import { areasCover } from "../../src/foundation/area-cover";
 import type { Rect, XY } from "../../src/foundation/geo";
-import { toMercator } from "../../src/foundation/geo";
+import { fromMercator, tileAt, tileRect, toMercator } from "../../src/foundation/geo";
 import type { ChartFeature } from "../../src/ingest/features";
 import { edgeZoomFor } from "../../src/spatial/build-items";
 import type { NodeStore } from "../../src/spatial/node-store";
@@ -118,6 +118,70 @@ describe("land narrower than a tile, in a cell that charts no land", () => {
     expect(depthAlong(store, [east(-30), north(3)], [east(30), north(3)])).toBe(-Infinity);
     expect(depthAt(store, east(-PAST_EDGE_TILE), north(3)).depth).toBe(5);
     expect(depthAt(store, east(6 + PAST_EDGE_TILE), north(3)).depth).toBe(5);
+  });
+});
+
+describe("the shore of a cell that charts no land, wherever it lies", () => {
+  test("a cell with a compilation scale draws it at the edge zoom, not a leaf wide", () => {
+    const scaled = cell(sides(8, 5, 5)).map((f) => ({ ...f, scale: 50_000 }));
+    const store = buildPyramid(scaled, ZOOMS);
+    expect(depthAt(store, east(4), AT[1]).depth).toBe(-Infinity);
+    expect(depthAt(store, east(-PAST_EDGE_TILE), AT[1]).depth).toBe(5);
+    expect(depthAt(store, east(8 + PAST_EDGE_TILE), AT[1]).depth).toBe(5);
+  });
+
+  test("a lower band's area the leaf leaves out does not close the gap above", () => {
+    // Band 5 covers the breakwater's leaf but not the whole tile two zooms up, where a band 3
+    // cell all water over the same ground holds the gap.
+    const p = toMercator(east(4), AT[1]);
+    const up = tileAt(LEAF - 2, p[0], p[1]);
+    const leaf = tileAt(LEAF, p[0], p[1]);
+    const [r18, r20] = [tileRect(LEAF - 2, up.x, up.y), tileRect(LEAF, leaf.x, leaf.y)];
+    const westRoom = r20.minX > r18.minX;
+    const cut = westRoom ? (r18.minX + r20.minX) / 2 : (r20.maxX + r18.maxX) / 2;
+    const cutLon = fromMercator(cut, p[1])[0];
+    const banded: Box = westRoom
+      ? [cutLon, BOX[1], BOX[2], BOX[3]]
+      : [BOX[0], BOX[1], cutLon, BOX[3]];
+    const low = { cellRef: 1, band: 3 };
+    const store = buildPyramid(
+      [
+        advisory(coverage(banded)),
+        advisory(quality(banded, 1)),
+        ...sides(8, 5, 5).map(advisory),
+        advisory(coverage(BOX, low)),
+        advisory(area(BOX, 5, low))
+      ],
+      ZOOMS
+    );
+    expect(depthAt(store, east(4), AT[1]).depth).toBe(-Infinity);
+  });
+
+  test("its land is land beyond the buffer too, not the depth the areas drew", () => {
+    const drawn = cell(sides(8, 5, 5)).map((f) =>
+      f.role === "depth" ? { ...f, topoSigma: 5 } : f
+    );
+    const store = buildPyramid(drawn, ZOOMS);
+    const p = toMercator(east(4), AT[1]);
+    const { x, y } = tileAt(ZOOMS.edgeZoom, p[0], p[1]);
+    const i = store.find(ZOOMS.edgeZoom, x, y);
+    expect(store.values(i).dMin).toBe(-Infinity);
+    expect(store.topoDMinOf(i)).toBe(-Infinity);
+  });
+
+  test("areas that run to ±180° are no shore along it", () => {
+    // Two areas meeting at a seam 3 m west of 180°, inside the edge-zoom tile on it.
+    const seam = 180 - 3 / M_PER_DEG_LON;
+    const store = buildPyramid(
+      [
+        advisory(coverage([179.988, 60.0, 180, 60.006])),
+        advisory(quality([179.988, 60.0, 180, 60.006], 1)),
+        advisory(area([179.988, 60.0, seam, 60.006], 5)),
+        advisory(area([seam, 60.0, 180, 60.006], 5))
+      ],
+      ZOOMS
+    );
+    expect(depthAt(store, 180 - 1 / M_PER_DEG_LON, 60.003).depth).toBe(5);
   });
 });
 

@@ -150,9 +150,11 @@ function analyse(
   const advisoryCell = coverage.find((h) => h.item.f.band === bandFull && h.item.f.advisory)?.item.f
     .cellRef;
   // Above the leaf zoom a tile its depth areas leave part open splits for its depth's edge.
+  // The shore gathered above holds the areas of every band: read here only when none dropped out.
+  const dropped = all.some((h) => isArea(h) && h.item.f.advisory === true && h.item.f.band < floor);
   const shore =
     leaf && advisoryCell !== undefined
-      ? shoreIn(reaching.filter(isArea), rect, leaf.above, hitsCover)
+      ? shoreIn(reaching.filter(isArea), rect, dropped ? undefined : leaf.above, hitsCover)
       : undefined;
   const needsSplit =
     bandFull === undefined ||
@@ -440,7 +442,7 @@ const acrossEdge = (box: Box, rect: Rect): boolean =>
 /** Whether the tile at zoom `z` is stored as one value: at its stop zoom, or nothing to split for. */
 const stops = (a: Analysis, z: number, opts: BuildOptions, edge: boolean): boolean =>
   z >= stopZoom(a.sweptEdge || a.shore !== undefined, opts) ||
-  (!edge && (!a.needsSplit || z >= a.finest));
+  (!edge && a.shore === undefined && (!a.needsSplit || z >= a.finest));
 
 function evaluate(
   store: NodeStore,
