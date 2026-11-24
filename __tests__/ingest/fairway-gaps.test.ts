@@ -67,6 +67,33 @@ describe("gaps in a swept fairway", () => {
     expect(Math.max(...xs)).toBeGreaterThan(220);
   });
 
+  test("areas away from the line change no strip, also one whose box holds the line", () => {
+    const fairway = [area("A", 0, 150), area("B", 220, 400)];
+    const alone = fairwayGaps([line(2.1, 2.7)], fairway);
+    // Swept areas on a grid north and south of the line, none within 100 m of it.
+    const away = Array.from({ length: 200 }, (_, k) => {
+      const [x, y] = [
+        (k % 20) * 300 - 2000,
+        (k % 2 === 0 ? 1 : -1) * (200 + Math.floor(k / 20) * 150)
+      ];
+      return feature(`AWAY-${k}`, [box(x, x + 120, y, y + 60)]);
+    });
+    // An L round the fairway: its box holds the whole line, its water none of it.
+    const round = feature("ROUND", [
+      [
+        ...box(-500, 900, -400, -300).slice(0, 3),
+        [22 + 900 * K, 60 + 400 * M],
+        [22 + 800 * K, 60 + 400 * M],
+        [22 + 800 * K, 60 - 300 * M],
+        [22 - 500 * K, 60 - 300 * M],
+        [22 - 500 * K, 60 - 400 * M]
+      ]
+    ]);
+    expect(alone).toHaveLength(1);
+    // The fairway's areas first, as alone: the first area's corner is the local plane's origin.
+    expect(fairwayGaps([line(2.1, 2.7)], [...fairway, ...away, round])).toEqual(alone);
+  });
+
   test("at the line's safe clearance depth, not its design draft", () => {
     // Route 3530 at Pargas: laid out for 2.1 m, kept clear to 2.7 m, swept to 2.7 m both sides.
     const gaps = fairwayGaps([line(2.1, 2.7)], [area("A", 0, 150), area("B", 220, 400)]);

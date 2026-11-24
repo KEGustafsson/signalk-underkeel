@@ -8,7 +8,7 @@ import type { Bbox, WfsFeature, WfsFetch } from "./wfs-fetch";
 import type { Limit } from "./wfs-fetch";
 import { fetchLayer, limiter, num, retried, WFS_LIMITS } from "./wfs-fetch";
 import { fairwayGaps } from "./fairway-gaps";
-import { fetchLines, fetchSweptAreas } from "./wfs-ftia";
+import { fairwayLayers } from "./wfs-ftia";
 
 export type { Bbox, ByteStream, WfsFetch } from "./wfs-fetch";
 export { WFS_LIMITS } from "./wfs-fetch";
@@ -447,6 +447,28 @@ async function fetchLayers(d: WfsDownload, bbox: Bbox, limit: Limit): Promise<Wf
   return { depthAreas, dredgedAreas, soundings };
 }
 
+/** The depth layers of each of `groups`, clipped into `clipped`; resolves with the counts read. */
+async function depthLayers(
+  d: WfsDownload,
+  groups: readonly (readonly Bbox[])[],
+  corridor: boolean,
+  clipped: ClippedLayers
+): Promise<{ depthAreas: number; dredgedAreas: number; soundings: number }> {
+  // A corridor one request at a time: the WFS stalls concurrent ones at times.
+  const limit = limiter(corridor ? 1 : WFS_LIMITS.concurrency);
+  const counts = { depthAreas: 0, dredgedAreas: 0, soundings: 0 };
+  for (const g of groups) {
+    // A corridor's group is tried again: a corridor is a few minutes of downloads.
+    const get = () => fetchLayers(d, boxOf(g), limit);
+    const l = corridor || d.retry ? await retried(get, d.signal) : await get();
+    clipTo(l, g, clipped, corridor);
+    counts.depthAreas += l.depthAreas.length;
+    counts.dredgedAreas += l.dredgedAreas.length;
+    counts.soundings += l.soundings.length;
+  }
+  return counts;
+}
+
 /** Downloads the box, or its corridor's parts, and writes the cell; resolves with the counts. */
 export async function downloadWfsCell(d: WfsDownload): Promise<{
   depthAreas: number;
@@ -465,21 +487,15 @@ export async function downloadWfsCell(d: WfsDownload): Promise<{
       throw new Error(problem);
     }
   }
-  // A corridor one request at a time: the WFS stalls concurrent ones at times.
-  const limit = limiter(corridor ? 1 : WFS_LIMITS.concurrency);
   const clipped: ClippedLayers = { depthAreas: [], dredgedAreas: [], soundings: [] };
-  const counts = { depthAreas: 0, dredgedAreas: 0, soundings: 0 };
-  for (const g of groups) {
-    // A corridor's group is tried again: a corridor is a few minutes of downloads.
-    const get = () => fetchLayers(d, boxOf(g), limit);
-    const l = corridor || d.retry ? await retried(get, d.signal) : await get();
-    clipTo(l, g, clipped, corridor);
-    counts.depthAreas += l.depthAreas.length;
-    counts.dredgedAreas += l.dredgedAreas.length;
-    counts.soundings += l.soundings.length;
-  }
-  const lines = await fetchLines(d, d.bbox);
-  const swept = await fetchSweptAreas(d, d.bbox);
+  // The FTIA's layers are another server's: read beside the depths, one after the other, they
+  // took 1.6 s of a 30 km box's 8.8 s.
+  const fairways = fairwayLayers(d);
+  const counts = await depthLayers(d, groups, corridor, clipped).catch((err: unknown) => {
+    fairways.stop(err);
+    throw err;
+  });
+  const [lines, swept] = await fairways.read;
   const ftia = { depthAreas: [], dredgedAreas: swept, sweptAreas: swept, soundings: [] };
   clipTo(ftia, parts, clipped, corridor);
   counts.dredgedAreas += swept.length;

@@ -11,6 +11,8 @@ import { Held, realWait, untilAborted } from "./planning-held";
 import type { Survey } from "./survey";
 import type { SurveyJob } from "./survey-worker";
 import { wfsUrl } from "./charts-provider-wfs";
+import { keep, readable } from "./planning-kept";
+import type { SavedHold } from "./planning-restore";
 import { cellsStamp, dropHold, holdInputsOf, recordHold, restorable } from "./planning-restore";
 import {
   bboxKm2,
@@ -31,7 +33,8 @@ export { bboxKm2, holds, planningBbox, regionError } from "./planning-region";
  * build. The box around the vessel comes first: a planning build is stopped when one starts,
  * and started again once it is done. One planning index is held at a time and released once
  * unused for IDLE_MS; its files stay on disk, so the next build reuses their tiles, and while
- * they still serve a region asked for they are read back instead of built (`planning-restore.ts`).
+ * they still serve a region asked for they are read back instead of built (`planning-restore.ts`),
+ * as are the indexes of the regions built before it (`planning-kept.ts`).
  */
 
 /** A planning index unused for this long is released, ms. */
@@ -210,25 +213,26 @@ export class PlanningBoxes {
     signal: AbortSignal,
     parts: readonly Bbox[] | undefined
   ): Promise<PrepareOutcome | "again" | undefined> {
-    const saved = restorable(holdInputsOf(this.deps), this.deps.clock.now());
-    if (!saved || !covers(saved, region, parts)) {
+    const now = this.deps.clock.now();
+    const saved = readable(holdInputsOf(this.deps), now, (h) => covers(h, region, parts));
+    if (!saved) {
       return undefined;
     }
-    const { indexDir } = this.deps;
-    const hold = saved;
+    const { hold, dir } = saved;
     const r = await this.launch<PrepareOutcome>(
       hold.bbox,
       signal,
       async (stop) => {
+        // The index held takes no new job, and its jobs end before another is held.
+        this.release();
         await untilAborted(this.drained(), stop);
-        const index = await (this.deps.load ?? loadChartIndexAsync)(indexDir);
+        const index = await (this.deps.load ?? loadChartIndexAsync)(dir);
         if (stop.aborted) {
           return "again";
         }
-        const held = new Held(hold.region, hold.bbox, hold.parts, index, this.deps.clock.now());
-        this.held = held;
+        this.held = new Held(hold.region, hold.bbox, hold.parts, index, this.deps.clock.now());
         this.deps.debug?.("planning box read back from disk");
-        return { ok: true, held };
+        return { ok: true, held: this.held };
       },
       (err) => ({ ok: false, status: 503, error: err.message })
     );
@@ -466,7 +470,9 @@ export class PlanningBoxes {
     if (problem !== undefined) {
       return Promise.resolve({ ok: false, status: 503, error: `planning box: ${problem}` });
     }
+    let prior: SavedHold | undefined;
     try {
+      prior = restorable(holdInputsOf(this.deps), this.deps.clock.now());
       // Left in place, the record would describe the files the build replaces.
       dropHold(this.deps.indexDir);
     } catch (err) {
@@ -483,6 +489,8 @@ export class PlanningBoxes {
         // A job still reading a released index ends before its files are replaced. The wait
         // gives way to the chart box, an abort or a stop; the next build waits for it again.
         await untilAborted(this.drained(), stop);
+        // The index this build replaces stays readable, for a plan back in its region.
+        await keep(this.deps.indexDir, prior, started);
         fs.mkdirSync(this.deps.dir, { recursive: true });
         run.resume = await this.deps.pauseWarming?.();
         const settings = this.deps.job();

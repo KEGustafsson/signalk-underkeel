@@ -533,7 +533,9 @@ gives way to the chart box around the vessel; a planning box is at most the char
 cap (`boxMaxRadiusKm`, or the automatic cap for the machine's memory), within the Traficom WFS's
 span when that source is on, and is released after 10 minutes unused. Its files stay: for up to
 7 days, while the charts and settings it was built from are unchanged, a region it covers is
-served by reading it back, in about a second, also after a restart. Planning boxes are off when
+served by reading it back, in about a second, also after a restart. The indexes of up to four
+regions built before it are kept beside it and read back the same way, so a plan back in an
+earlier region builds nothing. Planning boxes are off when
 their directories overlap the configured `indexDir`.
 
 A session also serves a raster of the chart (`raster`, feature `raster`): the status each of
