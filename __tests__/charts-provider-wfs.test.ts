@@ -171,4 +171,29 @@ describe("the WFS servers the proxy does not keep", () => {
     );
     expect(unproxied([DEFAULT_WFS_URL], broken)).toEqual([]);
   });
+
+  test("its stats tell a running proxy with no sources from a stopped one", () => {
+    const stats = { features: 0, areas: 0, bytes: 0 };
+    const empty = {
+      ...offer(
+        () => undefined,
+        () => []
+      ),
+      stats: () => stats
+    };
+    // Running, no WFS sources: both servers are named.
+    expect(unproxied([DEFAULT_WFS_URL, FTIA_WFS_URL], empty)).toEqual([
+      DEFAULT_WFS_URL,
+      FTIA_WFS_URL
+    ]);
+    // Stopped: nothing to add sources to.
+    expect(unproxied([DEFAULT_WFS_URL], { ...empty, stats: () => undefined })).toEqual([]);
+    const broken = {
+      ...empty,
+      stats: () => {
+        throw new Error("stopping");
+      }
+    };
+    expect(unproxied([DEFAULT_WFS_URL], broken)).toEqual([]);
+  });
 });

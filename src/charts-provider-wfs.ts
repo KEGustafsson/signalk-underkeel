@@ -21,6 +21,8 @@ export interface ChartsProviderWfsApi {
   proxyUrl: (upstream: string) => string | undefined;
   /** The upstream WFS base URLs proxied; none while no proxy runs. */
   upstreams?: () => string[];
+  /** What the proxy's store holds; undefined while no proxy runs. */
+  stats?: () => unknown;
 }
 
 /** The part of the server's PropertyValues API used here. */
@@ -92,22 +94,32 @@ export function wfsUrl(
 }
 
 /**
+ * Whether the offer's proxy runs: its `stats` answer while it does. An offer without `stats`
+ * runs while it proxies any source, so a running proxy with none reads as stopped there.
+ */
+function running(api: ChartsProviderWfsApi): boolean {
+  if (typeof api.stats === "function") {
+    return api.stats() !== undefined;
+  }
+  const kept = typeof api.upstreams === "function" ? api.upstreams() : [];
+  return Array.isArray(kept) && kept.length > 0;
+}
+
+/**
  * The WFS URLs among `upstreams` Charts Provider's proxy runs but does not keep, for the setup
- * hint that names them; none while no proxy runs or its list cannot be read.
+ * hint that names them: every one while it runs with no WFS sources. None while no proxy runs
+ * or the offer cannot be read.
  */
 export function unproxied(
   upstreams: readonly string[],
   api: ChartsProviderWfsApi | undefined = offered
 ): string[] {
-  if (!isOffer(api) || typeof api.upstreams !== "function") {
+  if (!isOffer(api)) {
     return [];
   }
   try {
-    const kept = api.upstreams();
     // No proxy running: nothing to add sources to.
-    return Array.isArray(kept) && kept.length > 0
-      ? upstreams.filter((u) => api.proxyUrl(u) === undefined)
-      : [];
+    return running(api) ? upstreams.filter((u) => api.proxyUrl(u) === undefined) : [];
   } catch {
     return [];
   }

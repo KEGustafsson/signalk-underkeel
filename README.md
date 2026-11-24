@@ -332,8 +332,8 @@ example, `Monitoring: unknown — position stale`. Each value is sent when it ch
   (its release after 2.24.0) the WFS, and the FTIA's fairway lines, are read through the proxy
   (**Via Charts Provider's WFS proxy**, on by default), which keeps each area downloaded and serves
   it again. Charts Provider offers the proxy as its `chartsProviderWfs` PropertyValue, and keeps
-  only the WFS servers added in its WFS Data tab (answering by box, margin 0.12 for these): the
-  setup panel's Charts line names those this plugin reads that it does not keep. The WFS is read
+  only the WFS servers added in its WFS Data tab: the setup panel's Charts line names those this
+  plugin reads that it does not keep, and how to add them. The WFS is read
   directly, bypassing that store, when the setting is off, Charts Provider runs no proxy or does
   not keep that WFS, or asking it for the proxy fails.
 
