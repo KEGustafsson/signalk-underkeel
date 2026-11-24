@@ -1,7 +1,7 @@
 import type { LonLat } from "../../src/foundation/geo";
 import type { ChartFeature } from "../../src/ingest/features";
 import { edgeZoomFor } from "../../src/spatial/build-items";
-import { crossesLand } from "../../src/spatial/land-line";
+import { crossesLand, ownLandReach } from "../../src/spatial/land-line";
 import { buildPyramid } from "../../src/spatial/pyramid-build";
 import { pyramidFromBuffer, serializePyramid } from "../../src/spatial/store";
 import type { Box } from "../helpers/synthetic";
@@ -156,5 +156,20 @@ describe("in a cell that charts its land", () => {
     expect(crossesLand(store, at(-80), at(110))).toBe(true);
     expect(crossesLand(store, at(-3), at(-80))).toBe(false);
     expect(crossesLand(store, at(-120), at(-40))).toBe(false);
+  });
+});
+
+describe("the reach of the land at a leg's end", () => {
+  test("is two tiles, or 1.5 times the way to the nearest water and a tile more", () => {
+    expect(ownLandReach(5, 0)).toBe(10);
+    expect(ownLandReach(5, 30)).toBe(50);
+    // A tile counts at most 20 m wide.
+    expect(ownLandReach(76, 0)).toBe(40);
+  });
+
+  test("is none for a tile of no width, a block not loaded, however near the water", () => {
+    for (const water of [0, 2, 30, 500]) {
+      expect(ownLandReach(0, water)).toBe(0);
+    }
   });
 });

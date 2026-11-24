@@ -164,13 +164,25 @@ function nearestWater(store: NodeStore, p: XY, limit: number, walked: Walked): n
   return best;
 }
 
-/** How far along a leg from `end` the land it lies on is its own, metres (`crossesLand`). */
-function ownReach(store: NodeStore, end: LonLat, width: number, walked: Walked): number {
-  const p = toMercator(end[0], end[1]);
-  const cos = Math.cos((end[1] * Math.PI) / 180);
-  const water = nearestWater(store, p, WATER_SEARCH / cos, walked) * cos;
+/**
+ * How far along a leg from its end land in a tile `width` metres across is the end's own, with
+ * the nearest water `water` metres from the end (`crossesLand`). A tile of no width, one whose
+ * block is not loaded, is never the end's own however near the water lies: its land may lie
+ * anywhere under it, and the leg is never cleared on a block still to come.
+ */
+export function ownLandReach(width: number, water: number): number {
+  if (width <= 0) {
+    return 0;
+  }
   const tile = Math.min(width, MAX_END_TILE);
   return Math.max(END_TILES * tile, NEAREST_WATER_SLACK * water + tile);
+}
+
+/** The way from `end` to the nearest water, metres (`nearestWater`), within WATER_SEARCH. */
+function waterFrom(store: NodeStore, end: LonLat, walked: Walked): number {
+  const p = toMercator(end[0], end[1]);
+  const cos = Math.cos((end[1] * Math.PI) / 180);
+  return nearestWater(store, p, WATER_SEARCH / cos, walked) * cos;
 }
 
 /**
@@ -201,12 +213,17 @@ export function crossesLand(
   const land = landUnder(store, a, b, cos, walked);
   const at = (t: number): LonLat =>
     fromMercator(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t);
-  // Each end's reach is found once, from the first stretch at it: the tile it lies in.
+  // Each end's reach is found once, from the first loaded stretch at it: the tile it lies in. A
+  // stretch of no width, a block not loaded, is never the end's own (`ownLandReach`): it does
+  // not take the reach another stretch gave the end.
   const reaches = new Map<LonLat, number>();
   const near = (end: LonLat, t: number, s: Stretch): boolean => {
+    if (s.width <= 0) {
+      return haversine(end, at(t)) <= ownLandReach(s.width, 0);
+    }
     let r = reaches.get(end);
     if (r === undefined) {
-      r = ownReach(store, end, s.width, walked);
+      r = ownLandReach(s.width, waterFrom(store, end, walked));
       reaches.set(end, r);
     }
     return haversine(end, at(t)) <= r;
