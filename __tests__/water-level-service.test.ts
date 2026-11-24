@@ -100,6 +100,43 @@ async function degradedSeconds(
   return degraded;
 }
 
+describe("the level over an interval, kept by the service", () => {
+  test("a second forecast is read at once: the lowest level over the next hours follows it", async () => {
+    let cm = 62;
+    let forecasts = 0;
+    const fetch: FetchLike = (url) => {
+      forecasts += url.includes("forecast") ? 1 : 0;
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve(url.includes("forecast") ? forecastXml(cm) : "<x/>")
+      });
+    };
+    const s = new WaterLevelService(
+      parseConfig({ waterLevel: { source: "fmi", updateInterval: 600 } }),
+      index,
+      fetch
+    );
+    const settle = async (): Promise<void> => {
+      for (let i = 0; i < 5; i++) {
+        await new Promise((r) => setImmediate(r));
+      }
+    };
+    s.refresh(KEMI, NOW);
+    await settle();
+    const first = s.over(NOW, NOW + 6 * HOUR, [KEMI], NOW);
+    expect(first.degraded).toBeUndefined();
+    expect(s.over(NOW, NOW + 6 * HOUR, [KEMI], NOW + 1000)).toEqual(first);
+    expect(s.highest(NOW, NOW + 6 * HOUR, [KEMI], NOW + 1000).h).toBeCloseTo(first.h, 9);
+    cm = 12;
+    s.refresh(KEMI, NOW + 601_000);
+    await settle();
+    expect(forecasts).toBe(2);
+    const second = s.over(NOW, NOW + 6 * HOUR, [KEMI], NOW + 602_000);
+    expect(second.h).toBeCloseTo(first.h - 0.5, 9);
+  });
+});
+
 describe("water-level service", () => {
   test("the Signal K tide source reads heightNow, heightLow and timeLow", () => {
     const s = new WaterLevelService(

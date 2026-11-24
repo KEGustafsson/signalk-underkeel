@@ -844,6 +844,16 @@ and `h = 0` would then assume more water than was last observed.
   ends, makes the leg's level degraded, at the lowest level found over the interval and both
   ends, never the fallback's alone: the fallback is min(0, last level), which can sit well above
   a level the source forecast earlier in the interval or at the other end.
+- The level over an interval is found once (`model/interval-levels.ts`). A planning session
+  asks it for every box and leg, at each corner, over the trip's window: with the FMI forecast
+  each call sampled the forecast across the window again, 12.4 s of a 30.5 s plan from Turku to
+  Nauvo in the running server (63 179 boxes, CPU profile of the server), and 18.1 s of 48.2 s
+  with the fairway lines. A provider's level depends on position only by its reach, so while its
+  `revision` stands (the FMI provider counts its forecasts) and its data is usable, the level
+  over [start, end] for one set of datums is one of three values, with no position, within the
+  reach or beyond it, each kept when first found. Data gone stale, or a provider with no
+  `revision` (manual, Signal K tide), is asked every time. A property test holds the kept
+  level equal to the level sampled again for any order of questions, forecasts and clock.
 - Decision (invariant 3): UKC tiles and `POST /query` take the level where they are, not the
   vessel's.
   - A provider whose answer depends on position states its reach (`reach()`): `levelAt` gives
