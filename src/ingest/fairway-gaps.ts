@@ -1,6 +1,8 @@
 import { pointSegmentDistance } from "../foundation/geometry";
 import type { WfsFeature } from "./wfs-fetch";
 import { num } from "./wfs-fetch";
+import type { Area, Bounds, XY } from "./fairway-areas";
+import { areasNear, boxOf, inArea, inRing, unionOf } from "./fairway-areas";
 
 /**
  * Gaps in a swept fairway (plan §4.11, swept fairways). The FTIA leaves a fairway's swept areas
@@ -49,16 +51,6 @@ const EPS = 1e-6;
 /** How far beside an edge `besideEdges` looks, metres: well inside any sweep or hole. */
 const NUDGE = 1e-3;
 
-type XY = [number, number];
-
-interface Area {
-  id: string;
-  depth: number;
-  reference: string | undefined;
-  /** Outer rings and holes, in the local plane. */
-  polygons: XY[][][];
-}
-
 const R = 6_371_008.8;
 const RAD = Math.PI / 180;
 
@@ -76,23 +68,6 @@ export function referenceOf(f: WfsFeature): string | undefined {
   const v = f.properties?.vertaustaso;
   return typeof v === "string" && v.trim() !== "" ? v.trim().toUpperCase() : undefined;
 }
-
-function inRing(p: XY, ring: XY[]): boolean {
-  let c = false;
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    const [xi, yi] = ring[i] as XY;
-    const [xj, yj] = ring[j] as XY;
-    if (yi > p[1] !== yj > p[1] && p[0] < ((xj - xi) * (p[1] - yi)) / (yj - yi) + xi) {
-      c = !c;
-    }
-  }
-  return c;
-}
-
-const inArea = (p: XY, a: Area): boolean =>
-  a.polygons.some(
-    (rings) => inRing(p, rings[0] as XY[]) && !rings.slice(1).some((h) => inRing(p, h))
-  );
 
 /**
  * Distance from `p` along unit `v` to the first edge of `rings`, or Infinity within REACH. A `p`
@@ -157,9 +132,10 @@ function samplesOf(line: XY[], areas: Area[]): Sample[] {
       continue;
     }
     const t: XY = [(b[0] - a[0]) / len, (b[1] - a[1]) / len];
+    const near = areasNear(a, b, areas);
     for (let s = 0; s < len; s += STEP) {
       const p: XY = [a[0] + t[0] * s, a[1] + t[1] * s];
-      const holding = areas.flatMap((x, k) => (inArea(p, x) ? [k] : []));
+      const holding = near.filter((k) => inArea(p, areas[k] as Area));
       out.push({
         p,
         t,
@@ -259,12 +235,20 @@ export function fairwayGaps(
     return [];
   }
   const plane = planeAt(first);
-  const areas: Area[] = swept.map((f) => ({
-    id: String(f.properties?.IDENTIFIER ?? ""),
-    depth: num(f.properties?.DRVAL1) ?? 0,
-    reference: referenceOf(f),
-    polygons: polygonsOf(f.geometry).map((rings) => rings.map((r) => r.map((p) => plane.to(p))))
-  }));
+  const areas: Area[] = swept.map((f) => {
+    const polygons = polygonsOf(f.geometry).map((rings) =>
+      rings.map((r) => r.map((p) => plane.to(p)))
+    );
+    const boxes = polygons.map((rings) => boxOf(rings[0]));
+    return {
+      id: String(f.properties?.IDENTIFIER ?? ""),
+      depth: num(f.properties?.DRVAL1) ?? 0,
+      reference: referenceOf(f),
+      polygons,
+      boxes,
+      box: unionOf(boxes)
+    };
+  });
   const out: WfsFeature[] = [];
   for (const line of lines) {
     // The safe clearance depth the line is kept to, else the draft it is laid out for.
@@ -314,8 +298,6 @@ function runAround(samples: Sample[], i: number, j: number): Sample[] {
   }
   return samples.slice(lo, hi + 1);
 }
-
-type Bounds = [number, number, number, number];
 
 function boundsOf(ring: XY[]): Bounds {
   const xs = ring.map((p) => p[0]);

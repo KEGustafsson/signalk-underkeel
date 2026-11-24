@@ -1536,7 +1536,15 @@ replaces the files, so a failed one leaves none, and refuses to build (503) when
 cells' stamps are taken as the build begins to read them; a build that finds them changed once it
 has committed records nothing, so an index read back never holds a cell older than its stamp.
 The WFS depths read back are those downloaded then: 7 days bounds their age, where the box around
-the vessel is downloaded again as the boat moves. With `how.held` (feature `held`), `prepare` answers only with what serves without a
+the vessel is downloaded again as the boat moves. The index a build is about to replace is copied
+first, with its record, to `planning-index.kept/<when it was built>` (`src/planning-kept.ts`): up
+to four are kept, the ones built last, none older than 7 days and none a later one covers. A
+region the index in the planning index directory does not serve is read back from the kept one
+built last that serves it, under the same conditions, from its own directory; a plan in one
+region, one in another and the first again then costs one build of each, where it built the first
+twice (53 s in the running server, 2.8 s read back). The copy is flushed before its record is
+written, so a record never describes a copy cut short, and a build that fails leaves the index
+it was replacing among the kept ones. With `how.held` (feature `held`), `prepare` answers only with what serves without a
 build, the index in use, the box held or the one read back, and 404 otherwise: a planner plans
 on what is there before it asks for more. A planning box's download tries a layer the WFS broke off again
 (`WfsDownload.retry`), as a corridor's groups are, the FTIA's lines and swept areas among them:

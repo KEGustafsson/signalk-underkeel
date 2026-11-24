@@ -74,6 +74,12 @@ All notable changes to signalk-underkeel are documented here.
   unused, or lost to a restart, serves its region again in about a second where the build took
   minutes. `prepare` with `{ held: true }` (feature `held`) gives an index that already serves
   a region, or 404, and starts no build.
+- The planning index a build replaces is kept on disk, up to four of them
+  (`<planning index>.kept/`), and read back when its region is asked for again while it is what
+  a build now would make. One index was held on disk, so a plan in one region, a plan in
+  another, then the first again built the first index twice: 53 s in the running server for a
+  region built the evening before, 2.8 s read back. A build that fails leaves the index it was
+  replacing to be read back.
 - A planning box's download tries a layer again when the WFS breaks a response off, as a
   corridor's does: a depth layer, for which a plan was refused, and the FTIA's lines and swept
   areas, without which the cell was written with no swept fairways and a plan that needs one
@@ -89,6 +95,14 @@ All notable changes to signalk-underkeel are documented here.
   root tiles than threads gives each root its own thread. The 830 km² box of a 13 nm trip
   (8 109 depth areas, 1.34 M vertices, leaf zoom 20, Jetson Orin, 4 threads): 21 s where it took
   62 s; one thread, 40 s where it took 89 s.
+- A Traficom WFS download is faster, for the same cell byte for byte. The strips under bridges
+  (`FAIRWAYGAP`) sampled every navigation line each 2 m and tested each sample against every
+  swept area of the box: 24.6 s of the 33.2 s a 30 km by 25 km box took. A sample is now tested
+  against the areas whose box its segment meets. The FTIA's lines and swept areas are read
+  beside the Traficom depths, not after them. That box (4 017 depth areas, 480 lines, 199 swept
+  areas, Jetson Orin): 7.1 s where it took 33.2 s, of which the network is about 6 s. The box
+  around the vessel is downloaded the same way. With the build, signalk-route-planner's first
+  plan of a 13 nm trip's region took 25 s where it took 52 s.
 - A corridor or box query visits fewer tiles for the same answer: a split tile that can add
   nothing to what the walk has found (no shallower depth, no higher P, no wider σ, no flag or
   cell not yet seen) is not descended, unless a block of the index under it is not loaded, where

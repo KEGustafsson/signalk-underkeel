@@ -142,3 +142,20 @@ export async function fetchSweptAreas(d: WfsDownload, bbox: Bbox): Promise<WfsFe
     return [];
   }
 }
+
+/**
+ * The FTIA's navigation lines and swept areas of the download's box, read from now on; `stop`
+ * ends the reads when the depths fail, whose error is then the download's.
+ */
+export function fairwayLayers(d: WfsDownload): {
+  read: Promise<[unknown[] | undefined, WfsFeature[]]>;
+  stop: (reason: unknown) => void;
+} {
+  const failed = new AbortController();
+  const signal = d.signal ? AbortSignal.any([d.signal, failed.signal]) : failed.signal;
+  const own = { ...d, signal };
+  const read = Promise.all([fetchLines(own, d.bbox), fetchSweptAreas(own, d.bbox)]);
+  // Awaited after the depths: a rejection before that, or after `stop`, is not left unhandled.
+  read.catch(() => undefined);
+  return { read, stop: (reason) => failed.abort(reason) };
+}
