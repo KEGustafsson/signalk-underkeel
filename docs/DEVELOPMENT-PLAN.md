@@ -1324,10 +1324,15 @@ keep the full reasons.
 5. A corridor that reaches land fails the leg, flagged `LAND`. A leg whose own line lies over
    land is flagged `LAND_CROSSED` too (`spatial/land-line.ts`), unless that land is at the leg's
    own end: the land tiles the line runs over from an end without a gap, each within twice its
-   own width of that end (a tile counts at most 20 m wide). A boat alongside a quay lies in the
-   land tile the shore is drawn in, and a planner lets a short leg from a berth carry `LAND`
-   (signalk-route-planner's berth leg); the same leg through a breakwater to the water behind
-   it carries `LAND_CROSSED`, which no planner takes. A leg across ±180° with land in its
+   own width of that end (a tile counts at most 20 m wide), or within 1.5 times the way from
+   the end to the nearest water and one tile more. A boat alongside a quay lies in the land tile
+   the shore is drawn in, a point put on land leaves it about the nearest way, and a planner
+   lets a short leg from a berth carry `LAND` (signalk-route-planner's berth leg); the same leg
+   through a breakwater to the water behind it carries `LAND_CROSSED`, which no planner takes.
+   The nearest water is looked for within 500 m, nearest tile first; a tile no chart covers or
+   whose block is not loaded counts as water, so the end's own land is never longer for it.
+   Without that, a destination clicked 30–40 m inside Stenskär's shore, once the Traficom shore
+   was drawn at 5 m, had no berth leg the check did not flag as crossing land, and no plan. A leg across ±180° with land in its
    corridor is flagged without the walk.
 
 **Response:**
