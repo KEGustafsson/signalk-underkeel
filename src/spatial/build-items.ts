@@ -36,11 +36,14 @@ export const pluginBuild = (leafZoom: number): { leafZoom: number; edgeZoom: num
 export const deepestZoom = (opts: Pick<BuildOptions, "leafZoom" | "edgeZoom">): number =>
   Math.max(opts.leafZoom, opts.edgeZoom ?? opts.leafZoom);
 
-/** The zoom a tile stops splitting at: the edge zoom across a swept area's edge, else the leaf. */
+/**
+ * The zoom a tile stops splitting at: the edge zoom across a swept area's edge or a shore in a
+ * cell that charts no land (`edge`), else the leaf.
+ */
 export const stopZoom = (
-  sweptEdge: boolean,
+  edge: boolean,
   opts: Pick<BuildOptions, "leafZoom" | "edgeZoom">
-): number => (sweptEdge ? deepestZoom(opts) : opts.leafZoom);
+): number => (edge ? deepestZoom(opts) : opts.leafZoom);
 
 export interface BuildOptions {
   minZoom: number;

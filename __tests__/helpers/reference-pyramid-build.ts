@@ -365,7 +365,29 @@ function isArea(h: Hit): boolean {
  * one no depth area reaches, is NO_DATA: a sounding's burn disc does not
  * make it water.
  */
-function uniformValues(a: Analysis, rect: Rect, opts: BuildOptions): NodeValues {
+/**
+ * Whether a shore crosses the leaf (`src/spatial/shore.ts`): in a cell that charts no land its
+ * depth areas reach the leaf and, together, leave part of it open. The areas are those reaching
+ * the tile two zooms above the leaf (`above`) when the leaf's own are all of that cell, as the
+ * build gathers them there, and every edge of each is walked for the leaf.
+ */
+function shoreLeaf(a: Analysis, rect: Rect, above: Hit[] | undefined): boolean {
+  const areas = a.hits.filter(isArea);
+  if (a.advisoryCell === undefined || areas.length === 0 || areas.some((h) => h.full)) {
+    return false;
+  }
+  const from =
+    above !== undefined && areas.every((h) => h.item.f.advisory === true) ? above : areas;
+  return (
+    !from.some((h) => h.full) &&
+    !areasCoverRect(
+      from.map((h) => h.item.f.geom),
+      inWorld(rect)
+    )
+  );
+}
+
+function uniformValues(a: Analysis, rect: Rect, opts: BuildOptions, shore = false): NodeValues {
   let dMin = Infinity;
   let cellRef = -1;
   for (const h of a.hits) {
@@ -384,8 +406,9 @@ function uniformValues(a: Analysis, rect: Rect, opts: BuildOptions): NodeValues 
     (unsurveyed.length > 0 ? FLAGS.NO_COVERAGE : 0);
   const area = a.hits.some(isArea);
   // An advisory cell has no land objects: where no depth area reaches, the
-  // tile is land, since the gap may hold a skerry left out.
-  if (a.advisoryCell !== undefined && !area) {
+  // tile is land, since the gap may hold a skerry left out, and so is a leaf
+  // its depth areas leave part open (`shoreLeaf`).
+  if (a.advisoryCell !== undefined && (!area || shore)) {
     return { dMin: -Infinity, sigmaD: 0, sigmaP: 0, flags, cellRef: a.advisoryCell };
   }
   if (!area || dMin === Infinity || unsurveyed.some((h) => h.full)) {
@@ -514,7 +537,8 @@ function evaluate(
   z: number,
   x: number,
   y: number,
-  items: Item[]
+  items: Item[],
+  shoreAreas?: Hit[]
 ): Evaluated {
   const rect = tileRect(z, x, y);
   const box = opts.within;
@@ -526,11 +550,16 @@ function evaluate(
   }
   const tileGround = (rect.maxX - rect.minX) / groundToMercator(1, maxAbsLat(rect));
   const a = analyse(all, rect, tileGround);
+  // The advisory depth areas reaching the tile two zooms above the leaf, for the leaves under it.
+  const above =
+    shoreAreas === undefined && z >= opts.leafZoom - 2
+      ? all.filter((h) => isArea(h) && h.item.f.advisory === true)
+      : shoreAreas;
   // Tiles across the box's edge or its area's split to the leaf zoom.
   const across = (r: Rect) => interiorsMeet(rect, r) && !inside(r, rect);
   const edge = box !== undefined && area !== undefined && (across(box) || across(area));
   if (z >= opts.leafZoom || (!edge && (!a.needsSplit || z >= a.finest))) {
-    const built = uniformValues(a, rect, opts);
+    const built = uniformValues(a, rect, opts, z >= opts.leafZoom && shoreLeaf(a, rect, above));
     const v =
       box && !inside(box, rect) ? { ...built, flags: built.flags | FLAGS.NO_COVERAGE } : built;
     const position = chartPosition(a.hits, v, opts);
@@ -546,7 +575,7 @@ function evaluate(
     [0, 1],
     [1, 1]
   ] as const) {
-    const child = evaluate(store, opts, z + 1, 2 * x + dx, 2 * y + dy, passed);
+    const child = evaluate(store, opts, z + 1, 2 * x + dx, 2 * y + dy, passed, above);
     v = combine(v, child.v);
     position = {
       surveySigmaP: Math.max(position.surveySigmaP, child.position.surveySigmaP),

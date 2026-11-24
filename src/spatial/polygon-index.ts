@@ -47,7 +47,7 @@ interface EdgeGrid {
 }
 
 /** A ring as x0, y0, x1, y1, …: 16 bytes a vertex, where an [x, y] array per vertex took 50–70. */
-interface RingIndex {
+export interface RingIndex {
   xy: Float64Array;
   n: number;
   box: Rect;
@@ -465,7 +465,7 @@ function edgeTo(ri: RingIndex, i: number, each: (a: XY, b: XY) => boolean): bool
 }
 
 /** The ring's edges filed in the cells `r` grown by `margin` reaches; false once `each` stops. */
-function ringEdgesNear(
+export function ringEdgesNear(
   ri: RingIndex,
   r: Rect,
   margin: number,

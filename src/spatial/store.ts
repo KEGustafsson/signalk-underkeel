@@ -43,11 +43,13 @@ import {
  * the chart's drawing; version 10: an M_CSCL area's drawing σ applied only on the leaves the
  * area reaches; version 11: coverage and quality zones covering a tile across seams no wider
  * than SEAM_TOLERANCE; version 12: a cell's depth areas give way to its dredged areas covering a
- * tile), so an index built under older rules is rebuilt rather than reused.
+ * tile; version 13: in a cell that charts no land, a tile its depth areas leave part open splits
+ * to the edge zoom and is land), so an index built under older rules is rebuilt rather than
+ * reused.
  */
 
 const MAGIC = "underkeel-pyramid";
-export const PYRAMID_VERSION = 12;
+export const PYRAMID_VERSION = 13;
 
 export interface PyramidHeader extends BlockLayout {
   magic: string;

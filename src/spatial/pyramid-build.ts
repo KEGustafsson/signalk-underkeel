@@ -1,35 +1,26 @@
 import type { Rect } from "../foundation/geo";
 import {
   emptyRect,
-  expandRect,
   extendRect,
   groundToMercator,
-  MERCATOR_HALF_WORLD,
   maxAbsLat,
   rectContainsRect,
   rectsOverlap,
   tileRange,
   tileRect
 } from "../foundation/geo";
-import { areasCover } from "../foundation/area-cover";
-import { geomContainsRect, geomRectDistance } from "../foundation/geometry";
 import type { ChartFeature, DepthFeature, QualityFeature } from "../ingest/features";
 import type { BuildOptions, Item } from "./build-items";
 import { buildArea, DEFAULT_BUILD, deepestZoom, prepareItems, stopZoom } from "./build-items";
 import type { ChartPosition, NodeColumns, NodeValues } from "./node-store";
 import { combine, EMPTY, FLAGS, joinPosition, NO_DATA, NodeStore } from "./node-store";
-import {
-  coverAreas,
-  FULL,
-  MISS,
-  polygonsContainRect,
-  polygonsRectDistance,
-  polygonsRectRelation
-} from "./polygon-index";
-import { REACH_SLACK } from "./pyramid";
 import { chartPosition, NO_POSITION } from "./build-position";
 import { dredgedCells, giveWay, isDredgedArea, sweptDepth, tileFlags } from "./give-way";
 import { sigmaFor, SWEPT_SIGMA_D } from "./quality";
+import type { ShoreIn, Tile } from "./shore";
+import { SHORE_ABOVE, shoreAbove, shoreHere, shoreIn, shoreTiles } from "./shore";
+import type { Hit } from "./tile-hits";
+import { classify, hitsCover, isArea } from "./tile-hits";
 
 /**
  * Builds the min-depth pyramid top-down (plan §4.3). A tile is subdivided
@@ -38,71 +29,6 @@ import { sigmaFor, SWEPT_SIGMA_D } from "./quality";
  * feature touching the tile counts, so a leaf is never deeper than any
  * feature that reaches it.
  */
-
-interface Hit {
-  item: Item;
-  full: boolean;
-}
-
-/** Containment is tested this far, in Mercator metres, inside the world's ±180° edge. */
-const WORLD_EDGE_INSET = 1e-3;
-
-/**
- * The tile as containment sees it. Nothing lies past ±180°, so a cell whose
- * edge runs along it holds a tile on that edge; read as is, the shared edge
- * left every leaf there uncovered. A real gap past 180° is still found by
- * queries, which walk the tiles at the other end of the world.
- */
-function inWorld(rect: Rect): Rect {
-  const edge = MERCATOR_HALF_WORLD - WORLD_EDGE_INSET;
-  return {
-    minX: Math.max(rect.minX, -edge),
-    minY: rect.minY,
-    maxX: Math.min(rect.maxX, edge),
-    maxY: rect.maxY
-  };
-}
-
-function rectDistance(item: Item, rect: Rect, limit: number): number {
-  return item.shape
-    ? polygonsRectDistance(item.shape, rect, limit)
-    : geomRectDistance(item.f.geom, rect, limit);
-}
-
-function containsRect(item: Item, rect: Rect): boolean {
-  return item.shape ? polygonsContainRect(item.shape, rect) : geomContainsRect(item.f.geom, rect);
-}
-
-function classify(items: Item[], rect: Rect): Hit[] {
-  const scale = groundToMercator(1, maxAbsLat(rect));
-  const world = inWorld(rect);
-  // Away from ±180° containment sees the tile itself, so one pass decides both tests.
-  const onePass = world.minX === rect.minX && world.maxX === rect.maxX;
-  const hits: Hit[] = [];
-  for (const item of items) {
-    if (item.full) {
-      hits.push({ item, full: true });
-      continue;
-    }
-    const r = item.radius * scale;
-    if (!rectsOverlap(expandRect(rect, r), item.bbox)) {
-      continue;
-    }
-    if (item.shape && item.radius === 0 && onePass) {
-      const rel = polygonsRectRelation(item.shape, rect);
-      if (rel !== MISS) {
-        hits.push({ item, full: rel === FULL });
-      }
-      continue;
-    }
-    // The same slack as the query walk, so a tile at the disc's edge is never lost to rounding.
-    if (rectDistance(item, rect, r * REACH_SLACK) > r * REACH_SLACK) {
-      continue;
-    }
-    hits.push({ item, full: item.radius === 0 && containsRect(item, world) });
-  }
-  return hits;
-}
 
 function depthOf(f: ChartFeature): number | undefined {
   return f.role === "depth" || f.role === "swept" ? f.depth : undefined;
@@ -125,6 +51,11 @@ interface Analysis {
   dredgedCover: boolean;
   /** The depth sweeps guarantee over the whole tile (`sweptDepth`), if they cover it. */
   sweptCover: number | undefined;
+  /**
+   * A shore crosses the tile (`shore.ts`): its depth areas, in a cell that charts no land, and
+   * their edges in it. The tile splits past the leaf, and is land where it stops.
+   */
+  shore: ShoreIn<Hit> | undefined;
 }
 
 /** Ground metres around the equator: a tile of zoom z is this / 2^z across, or less. */
@@ -172,11 +103,6 @@ function qualityEdge(hits: Hit[]): boolean {
  */
 const BLUR_RATIO = 8;
 
-/** `areasCoverRect` over the hits' areas, through their indexed polygons. */
-function hitsCover(hits: Hit[], rect: Rect): boolean {
-  return areasCover(coverAreas(hits.flatMap((h) => h.item.shape ?? [])), inWorld(rect));
-}
-
 /**
  * Highest usage band whose coverage holds the whole tile, by one polygon
  * or by adjacent cells of the band meeting along a shared edge.
@@ -189,7 +115,13 @@ function coveredBand(coverage: Hit[], rect: Rect): number | undefined {
   });
 }
 
-function analyse(all: Hit[], rect: Rect, tileGround: number): Analysis {
+function analyse(
+  all: Hit[],
+  rect: Rect,
+  tileGround: number,
+  /** At or past the leaf zoom: the shore gathered above the tile, undefined when none was. */
+  leaf: { above: ShoreIn<Hit> | null | undefined } | undefined
+): Analysis {
   const coverage = all.filter((h) => h.item.f.role === "coverage");
   const bandFull = coveredBand(coverage, rect);
   const floor = bandFull ?? -Infinity;
@@ -215,10 +147,20 @@ function analyse(all: Hit[], rect: Rect, tileGround: number): Analysis {
   const areaEdge =
     sweptEdge ||
     hits.some((h) => (h.item.f.role === "swept" || h.item.f.role === "unsurveyed") && !h.full);
-  const needsSplit =
-    bandFull === undefined || coverageEdge || depthEdge || areaEdge || qualityEdge(hits);
   const advisoryCell = coverage.find((h) => h.item.f.band === bandFull && h.item.f.advisory)?.item.f
     .cellRef;
+  // Above the leaf zoom a tile its depth areas leave part open splits for its depth's edge.
+  const shore =
+    leaf && advisoryCell !== undefined
+      ? shoreIn(reaching.filter(isArea), rect, leaf.above, hitsCover)
+      : undefined;
+  const needsSplit =
+    bandFull === undefined ||
+    coverageEdge ||
+    depthEdge ||
+    areaEdge ||
+    shore !== undefined ||
+    qualityEdge(hits);
   let finest = -Infinity;
   for (const h of hits) {
     finest = Math.max(finest, splitZoom(h.item.f));
@@ -237,7 +179,8 @@ function analyse(all: Hit[], rect: Rect, tileGround: number): Analysis {
     finest,
     sweptEdge,
     dredgedCover,
-    sweptCover
+    sweptCover,
+    shore
   };
 }
 
@@ -329,11 +272,6 @@ function sigmas(
   return { sigmaP, sigmaD };
 }
 
-function isArea(h: Hit): boolean {
-  const f = h.item.f;
-  return f.role === "depth" && !f.hazard && f.geom.type === "polygon";
-}
-
 /**
  * Conservative values for a tile from every feature that reaches it. A
  * leaf only partly inside coverage, or partly in an unsurveyed area, keeps
@@ -366,8 +304,9 @@ function uniformValues(a: Analysis, rect: Rect, opts: BuildOptions): NodeValues 
     (unsurveyed.length > 0 ? FLAGS.NO_COVERAGE : 0);
   const area = a.hits.some(isArea);
   // An advisory cell has no land objects: where no depth area reaches, the
-  // tile is land, since the gap may hold a skerry left out.
-  if (a.advisoryCell !== undefined && !area) {
+  // tile is land, since the gap may hold a skerry left out. So is a tile its
+  // depth areas leave part open (`shore.ts`): land of any width stays land.
+  if (a.advisoryCell !== undefined && (!area || a.shore)) {
     return { dMin: -Infinity, sigmaD: 0, sigmaP: 0, flags, cellRef: a.advisoryCell };
   }
   if (!area || dMin === Infinity || unsurveyed.some((h) => h.full)) {
@@ -418,6 +357,91 @@ const reaches = (rect: Rect, r: Rect): boolean =>
 /** `rect` holds ground on both sides of an edge of `r`. */
 const straddles = (rect: Rect, r: Rect): boolean => reaches(rect, r) && !rectContainsRect(r, rect);
 
+/** `values` as tile `t` holds them: past the box with NO_COVERAGE. */
+function boxed(values: NodeValues, box: Box | undefined, t: Tile): NodeValues {
+  // Past the box a tile keeps its depth and σ, so it still spreads its risk into the box.
+  return box && !rectContainsRect(box.inner, tileRect(...t))
+    ? { ...values, flags: values.flags | FLAGS.NO_COVERAGE }
+    : values;
+}
+
+/** Stores tile `t` as a leaf with `values`, read from the features `a` holds. */
+function leaf(
+  store: NodeStore,
+  opts: BuildOptions,
+  box: Box | undefined,
+  t: Tile,
+  a: Analysis,
+  values: NodeValues
+): Evaluated {
+  const v = boxed(values, box, t);
+  const position = chartPosition(a.hits, v, opts);
+  store.add(...t, v, false, position);
+  return { v, position };
+}
+
+/** Stores tile `t` as split into `children`: the shallowest depth, widest σ and every flag. */
+function split(store: NodeStore, t: Tile, children: Evaluated[]): Evaluated {
+  let v = EMPTY;
+  let position = NO_POSITION;
+  for (const child of children) {
+    v = combine(v, child.v);
+    position = joinPosition(position, child.position);
+  }
+  store.add(...t, v, true, position);
+  return { v, position };
+}
+
+const CHILDREN = [
+  [0, 0],
+  [1, 0],
+  [0, 1],
+  [1, 1]
+] as const;
+
+/** The tiles under a shore leaf (`shore.ts`, `shoreTiles`): land, or the leaf's own reading. */
+function shoreLeaf(
+  store: NodeStore,
+  opts: BuildOptions,
+  box: Box | undefined,
+  t: Tile,
+  a: Analysis,
+  shore: ShoreIn<Hit>
+): Evaluated {
+  const rect = tileRect(...t);
+  const land = uniformValues(a, rect, opts);
+  const water = uniformValues({ ...a, shore: undefined }, rect, opts);
+  // A tile's chart position follows from the leaf's features and its values: found once each.
+  const positions = new Map<number, ChartPosition>();
+  const put = (tile: Tile, isLand: boolean): Evaluated => {
+    const v = boxed(isLand ? land : water, box, tile);
+    const key = (isLand ? 1 : 0) + (v.flags & FLAGS.NO_COVERAGE);
+    const position = positions.get(key) ?? chartPosition(a.hits, v, opts);
+    positions.set(key, position);
+    store.add(...tile, v, false, position);
+    return { v, position };
+  };
+  return shoreTiles(
+    t,
+    deepestZoom(opts),
+    (z, x, y) => shoreHere(shore, tileRect(z, x, y), hitsCover),
+    { leaf: put, split: (tile, children) => split(store, tile, children) }
+  );
+}
+
+/**
+ * A tile across the edge of the box or of its area splits to the leaf zoom, whatever its
+ * scale: only a leaf may hold ground on both sides. No coarser tile then puts water in
+ * the box under NO_COVERAGE, or carries a value far past the area from cells not read there.
+ */
+const acrossEdge = (box: Box, rect: Rect): boolean =>
+  straddles(rect, box.inner) || straddles(rect, box.area);
+
+/** Whether the tile at zoom `z` is stored as one value: at its stop zoom, or nothing to split for. */
+const stops = (a: Analysis, z: number, opts: BuildOptions, edge: boolean): boolean =>
+  z >= stopZoom(a.sweptEdge || a.shore !== undefined, opts) ||
+  (!edge && (!a.needsSplit || z >= a.finest));
+
 function evaluate(
   store: NodeStore,
   opts: BuildOptions,
@@ -426,7 +450,8 @@ function evaluate(
   x: number,
   y: number,
   items: Item[],
-  take?: TakeTile
+  take?: TakeTile,
+  shore?: ShoreIn<Hit> | null
 ): Evaluated {
   const rect = tileRect(z, x, y);
   const taken = take?.(store, z, x, y, rect, items);
@@ -440,37 +465,27 @@ function evaluate(
     return { v: NO_DATA, position: NO_POSITION };
   }
   const tileGround = (rect.maxX - rect.minX) / groundToMercator(1, maxAbsLat(rect));
-  const a = analyse(all, rect, tileGround);
-  // A tile across the edge of the box or of its area splits to the leaf zoom, whatever its
-  // scale: only a leaf may hold ground on both sides. No coarser tile then puts water in
-  // the box under NO_COVERAGE, or carries a value far past the area from cells not read there.
-  const edge = box !== undefined && (straddles(rect, box.inner) || straddles(rect, box.area));
-  if (z >= stopZoom(a.sweptEdge, opts) || (!edge && (!a.needsSplit || z >= a.finest))) {
-    const values = uniformValues(a, rect, opts);
-    // Past the box a tile keeps its depth and σ, so it still spreads its risk into the box.
-    const v =
-      box && !rectContainsRect(box.inner, rect)
-        ? { ...values, flags: values.flags | FLAGS.NO_COVERAGE }
-        : values;
-    const position = chartPosition(a.hits, v, opts);
-    store.add(z, x, y, v, false, position);
-    return { v, position };
+  // The shore is gathered once, SHORE_ABOVE the leaf zoom, for every leaf under the tile.
+  const above =
+    shore === undefined && z >= opts.leafZoom - SHORE_ABOVE
+      ? shoreAbove(all.filter(isArea), rect, hitsCover)
+      : shore;
+  const a = analyse(all, rect, tileGround, z >= opts.leafZoom ? { above } : undefined);
+  if (stops(a, z, opts, box !== undefined && acrossEdge(box, rect))) {
+    return leaf(store, opts, box, [z, x, y], a, uniformValues(a, rect, opts));
+  }
+  // A swept area's edge in the tile too: every tile under it is read from its own features.
+  if (a.shore && !a.sweptEdge) {
+    return shoreLeaf(store, opts, box, [z, x, y], a, a.shore);
   }
   const passed = forChildren(all, a);
-  let v = EMPTY;
-  let position = NO_POSITION;
-  for (const [dx, dy] of [
-    [0, 0],
-    [1, 0],
-    [0, 1],
-    [1, 1]
-  ] as const) {
-    const child = evaluate(store, opts, box, z + 1, 2 * x + dx, 2 * y + dy, passed, take);
-    v = combine(v, child.v);
-    position = joinPosition(position, child.position);
-  }
-  store.add(z, x, y, v, true, position);
-  return { v, position };
+  return split(
+    store,
+    [z, x, y],
+    CHILDREN.map(([dx, dy]) =>
+      evaluate(store, opts, box, z + 1, 2 * x + dx, 2 * y + dy, passed, take, above)
+    )
+  );
 }
 
 export type { BuildOptions } from "./build-items";
