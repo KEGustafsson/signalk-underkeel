@@ -7,6 +7,8 @@ import { publicReason } from "./foundation/public-text";
 import type { DatumUse } from "./ingest/datum";
 import { isLowWaterDatum } from "./model/water-level";
 import { selfValue } from "./nav-inputs";
+import { unproxied } from "./charts-provider-wfs";
+import { FTIA_WFS_URL } from "./ingest/wfs";
 import { runningProviders } from "./shared-enc";
 
 /**
@@ -110,7 +112,28 @@ export function suggestedSource(datums: readonly DatumFact[]): "fmi" | "signalk-
   return high.some((d) => d.fmi) ? "fmi" : "signalk-tide";
 }
 
+/**
+ * Why the Traficom WFS is read directly though Charts Provider's WFS proxy runs: the proxy does
+ * not keep the WFS servers this plugin reads, which an administrator adds in Charts Provider's
+ * WFS Data tab. Empty when it keeps them, the WFS is off, or no proxy runs.
+ */
+export function wfsProxyNote(s: PluginState): string {
+  const wfs = s.config?.wfs;
+  if (!wfs || wfs.viaChartsProvider === false) {
+    return "";
+  }
+  const missing = unproxied([wfs.url, FTIA_WFS_URL]);
+  return missing.length === 0
+    ? ""
+    : `; Charts Provider's WFS proxy does not keep ${missing.join(" and ")}: add them as sources answering by box, margin 0.12, in its WFS Data tab, so each area is downloaded once`;
+}
+
 function chartsCheck(s: PluginState, facts: SetupFacts): SetupCheck {
+  const check = chartsState(s, facts);
+  return { ...check, text: check.text + wfsProxyNote(s) };
+}
+
+function chartsState(s: PluginState, facts: SetupFacts): SetupCheck {
   if (facts.cells > 0) {
     // With no provider chosen no ENC is read, as a cells directory dropped by the version 3
     // migration leaves it: said for as long as none is chosen.
