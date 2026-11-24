@@ -127,6 +127,12 @@ All notable changes to signalk-underkeel are documented here.
 
 ### Fixed
 
+- A leg from a point put on land to the water, the nearest way, was flagged `LAND_CROSSED` when
+  the point lay more than two tiles in from the shore (about 10 m on the Traficom WFS cell): a
+  destination clicked 30–40 m inside Stenskär's shore had no berth leg and no plan. The land at
+  a leg's end is now its own as far as 1.5 times the way from the end to the nearest water and
+  one tile more; the same leg through a breakwater from beside it is still flagged.
+
 - Land narrower than a tile was water in the Traficom WFS cell. The cell has no land objects, so
   its land is what the depth areas leave open, and a tile is one value: a leaf the areas reached
   and left part open read at their depth. A harbour breakwater at Pargas (60.2785° N 22.2868° E), 8–10 m wide, read 0 m, and a route planned at the lowest risk left the harbour through it. A leaf its

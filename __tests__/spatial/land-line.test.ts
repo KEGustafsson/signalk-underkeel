@@ -73,9 +73,17 @@ describe("a leg's own line over land", () => {
     expect(crossesLand(store, at(-152), at(-110))).toBe(false);
   });
 
-  test("from farther inland it crosses the land between: such a point is not at a berth", () => {
-    expect(crossesLand(store, at(-175), at(-110))).toBe(true);
-    expect(crossesLand(store, at(-260), at(-110))).toBe(true);
+  test("from a point put on land farther in, the nearest way off it crosses none", () => {
+    // 25 m and 110 m in from the quay's face, out to the basin straight east: the nearest water.
+    expect(crossesLand(store, at(-175), at(-110))).toBe(false);
+    expect(crossesLand(store, at(-260), at(-110))).toBe(false);
+    expect(crossesLand(store, at(-110), at(-260))).toBe(false);
+  });
+
+  test("from a point put on land, a way over much more land than the nearest way crosses it", () => {
+    // 25 m in, but leaving the land 215 m down the quay.
+    expect(crossesLand(store, at(-175), at(-140, -300))).toBe(true);
+    expect(crossesLand(store, at(-140, -300), at(-175))).toBe(true);
   });
 
   test("from a boat alongside the breakwater, through it to the water behind, crosses it", () => {
@@ -119,7 +127,7 @@ describe("with the index's blocks not loaded", () => {
       [at(-40), at(50)],
       [at(-2), at(40)],
       [at(-10), at(16)],
-      [at(-260), at(-110)],
+      [at(-175), at(-140, -300)],
       [at(-40, -70), at(50, 90)]
     ];
     expect(lines.map(([a, b]) => crossesLand(whole, a, b))).toEqual(lines.map(() => true));

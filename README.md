@@ -575,8 +575,8 @@ The Traficom WFS cell has no land objects: its land is what its depth areas leav
 depth areas reach and leave part open splits to the same finer zoom, and a tile there that they do
 not cover is land, so a breakwater or a skerry narrower than a 19 m tile is land and not water at
 the depth beside it. A route check flags a leg whose corridor reaches land `LAND`, and one whose own
-line crosses land `LAND_CROSSED` as well; land at the leg's own end, a quay the boat lies alongside,
-is not crossed.
+line crosses land `LAND_CROSSED` as well; land at the leg's own end, a quay the boat lies alongside
+or the shore a point was put on, is not crossed while the leg leaves it about the nearest way.
 
 Underway, on a leg of the active route in swept water, the live fix is held to the leg's room, how
 far the swept water reaches past the hull: twice its σ wider than the room, or a failing integrity
