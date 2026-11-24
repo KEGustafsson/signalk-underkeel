@@ -6,14 +6,13 @@ import type { DatumUse } from "./ingest/datum";
 import { datumUses } from "./ingest/datum";
 import type { FetchLike } from "./model/fmi";
 import { FmiProvider } from "./model/fmi";
+import { IntervalLevels } from "./model/interval-levels";
 import type { AreaLevels } from "./model/level-regimes";
 import type { WaterLevel } from "./model/uncertainty";
 import type { ProviderHealth, WaterLevelProvider } from "./model/water-level";
 import {
   lowerLevel,
-  highestWaterLevel,
   higherLevel,
-  lowestWaterLevel,
   manualProvider,
   resolveWaterLevel,
   SignalKTideProvider,
@@ -69,6 +68,8 @@ export class WaterLevelService {
   private readonly provider: WaterLevelProvider | undefined;
   private datums: DatumUse[];
   private readonly mapped = new WeakMap<readonly CellInfo[], DatumUse[]>();
+  /** The level over an interval, found once while the source's data stands. */
+  private readonly intervals = new IntervalLevels();
   private lastFetch = -Infinity;
 
   constructor(
@@ -149,13 +150,16 @@ export class WaterLevelService {
     const datums = cells ? this.datumsOf(cells) : this.datums;
     let out: WaterLevel | undefined;
     for (const p of at) {
-      out = lowerLevel(out, lowestWaterLevel(this.provider, datums, p, start, end, now));
+      out = lowerLevel(out, this.intervals.lowest(this.provider, datums, p, start, end, now));
     }
     const reach = area ? this.provider?.reach?.() : undefined;
     if (reach && mayMeet(at, reach.centre, reach.metres)) {
-      out = lowerLevel(out, lowestWaterLevel(this.provider, datums, reach.centre, start, end, now));
+      out = lowerLevel(
+        out,
+        this.intervals.lowest(this.provider, datums, reach.centre, start, end, now)
+      );
     }
-    return out ?? lowestWaterLevel(this.provider, datums, undefined, start, end, now);
+    return out ?? this.intervals.lowest(this.provider, datums, undefined, start, end, now);
   }
 
   /**
@@ -173,16 +177,16 @@ export class WaterLevelService {
     const datums = cells ? this.datumsOf(cells) : this.datums;
     let out: WaterLevel | undefined;
     for (const p of at) {
-      out = higherLevel(out, highestWaterLevel(this.provider, datums, p, start, end, now));
+      out = higherLevel(out, this.intervals.highest(this.provider, datums, p, start, end, now));
     }
     const reach = area ? this.provider?.reach?.() : undefined;
     if (reach && mayMeet(at, reach.centre, reach.metres)) {
       out = higherLevel(
         out,
-        highestWaterLevel(this.provider, datums, reach.centre, start, end, now)
+        this.intervals.highest(this.provider, datums, reach.centre, start, end, now)
       );
     }
-    return out ?? highestWaterLevel(this.provider, datums, undefined, start, end, now);
+    return out ?? this.intervals.highest(this.provider, datums, undefined, start, end, now);
   }
 
   /** The datum uses of another index's cells (a planning box), mapped once per catalogue. */

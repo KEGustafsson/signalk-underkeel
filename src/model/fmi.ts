@@ -166,6 +166,7 @@ export class FmiProvider implements WaterLevelProvider {
   private forecast?: Forecast;
   private observation?: Observation;
   private error?: string;
+  private fetches = 0;
   private inFlight?: Promise<void>;
   private readonly controller = new AbortController();
 
@@ -231,6 +232,7 @@ export class FmiProvider implements WaterLevelProvider {
       return;
     }
     this.forecast = { fetchedAt: now, position, series };
+    this.fetches++;
     this.error = undefined;
     this.observation =
       observation.status === "fulfilled" && observation.value !== undefined
@@ -292,6 +294,11 @@ export class FmiProvider implements WaterLevelProvider {
    */
   reach(): LevelReach | undefined {
     return this.forecast && { centre: this.forecast.position, metres: FORECAST_REACH_METRES };
+  }
+
+  /** Counts the forecasts taken: levelAt reads nothing but the last one and its observation. */
+  revision(): number {
+    return this.fetches;
   }
 
   /** The forecast points in [start, end], where the interpolated level turns. */

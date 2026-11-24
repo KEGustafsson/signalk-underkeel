@@ -56,6 +56,12 @@ export interface WaterLevelProvider {
    * varies otherwise must bound a box's interior too.
    */
   reach?(): LevelReach | undefined;
+  /**
+   * A count that changes whenever levelAt or health may answer otherwise, apart from data
+   * growing stale: with it, the level over an interval is found once and kept until it changes
+   * (`interval-levels.ts`). Absent, nothing is kept.
+   */
+  revision?(): number;
 }
 
 /** With no usable water level the engine works at chart datum with this σ. */
@@ -168,6 +174,11 @@ function unusable(p: WaterLevelProvider, now: number): string | undefined {
     return `water level from ${p.id} is ${Math.round(age / 60000)} min old`;
   }
   return undefined;
+}
+
+/** Whether the provider's data can be used at `now`: healthy and not stale. */
+export function usable(p: WaterLevelProvider, now: number): boolean {
+  return unusable(p, now) === undefined;
 }
 
 /** Why `p` has no level at `position` and `t`: past its reach, or no value for the time. */
