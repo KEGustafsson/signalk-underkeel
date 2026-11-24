@@ -51,6 +51,12 @@ length 12 m and beam 4 m; the water level is set manually to +0.2 m.
 The chart data is not in this repository; only the screenshots are. Each map screenshot repeats
 the attribution and the not-for-navigation notice in its footer.
 
+The admin page, the setup steps and three of the Freeboard screenshots in §13 (Open setup, the
+setup steps in the panel, the route-check legs) are newer: Signal K server 2.37.0 and
+Freeboard-SK 3.5.0, with the Traficom WFS read through Charts Provider's WFS proxy and given
+CATZOC A1, a vessel of draft 0.9 m and beam 2.5 m with a 0.1 m margin, and the water level set
+manually to +0.2 m. Freeboard draws the same Traficom S-57 WMS as the background chart.
+
 ## 2. The whole picture
 
 ```mermaid
@@ -81,7 +87,8 @@ look-ahead, a corridor around each leg for a route check, or a map tile for the 
 
 ![Plugin configuration in the Signal K admin UI](images/how-it-works/config.png)
 
-This screenshot is from before 0.5.0: since then the **Charts provider** pulldown stands where it shows **ENC cells directory**.
+Here no chart provider is chosen and the depths come from the Traficom WFS feature, read
+through Charts Provider's WFS proxy; the setup check at the top says what is still missing.
 
 The setup steps, opened with **Open setup** in Freeboard's Under-keel details panel, ask for the
 same essentials in three steps:
@@ -111,7 +118,7 @@ The draft comes from **Boat**, or else from Signal K `design.draft.maximum`; len
 `design.beam`. Without a draft the engine stays `unknown`. The water level comes from the
 source picked under **Water level** (section 8).
 
-The index is built at the first start, in a worker thread so the server keeps running, and
+The index is built at the first start, in a child process so the server keeps running, and
 saved under the plugin data directory; until it is ready the engine is `off` with the reason
 `building chart index`. Later starts load the saved index (a large one in the background,
 `off` with `loading chart index` meanwhile) unless a cell was added or removed, or a cell's
@@ -772,7 +779,7 @@ data is not for navigational purposes**: Traficom licenses it for non-navigation
 flowchart TD
   P[vessel position, checked periodically] --> D{more than half the box radius from<br/>the box centre, or the edge ahead<br/>closer than a rebuild's run?}
   D -- no --> KEEP[keep the current index]
-  D -- yes, and no download<br/>in the last minute or so --> W[in a worker thread: download the box<br/>centred ahead along the course<br/>DepthArea_A, DredgedArea_A, Sounding_P]
+  D -- yes, and no download<br/>in the last minute or so --> W[in a child process: download the box<br/>centred ahead along the course<br/>DepthArea_A, DredgedArea_A, Sounding_P]
   W --> B[rebuild the index in the same process, copying from the saved index<br/>the tiles whose chart features and box state are unchanged]
   B --> S[swap the new index in;<br/>the look-ahead keeps running]
   W -- fails --> E[keep the old index, report the error,<br/>retry after a longer back-off]
@@ -842,8 +849,11 @@ flowchart TD
 ## 13. In Freeboard
 
 The plugin serves its own Freeboard UI through the Plotter Extensions API, so Freeboard itself
-needs no change. The screenshots use a Freeboard-SK 3.4.0-beta.1 build with the Traficom WMS
-chart, on the route from the Nauvo fairway west to Stenskär harbour at 7 kn, with a 1.8 m draft.
+needs no change. The chart-list, look-ahead and risk screenshots use a Freeboard-SK
+3.4.0-beta.1 build with the Traficom WMS chart, on a route from the Nauvo fairway west to
+Stenskär harbour at 7 kn, with a 1.8 m draft. The panel and setup screenshots use Freeboard-SK
+3.5.0 with the same chart, on the route signalk-route-planner plans from the 272° leading line
+east of Gullkrona to Stenskär harbour, sailed at 6 kn with a 0.9 m draft (§1).
 
 | Where in Freeboard                     | What the plugin adds                                                                                                                                                                                                  |
 | -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -870,15 +880,16 @@ Traficom chart with paper-chart symbols._
 
 ![Freeboard: Open setup at the bottom of the Under-keel details panel](images/how-it-works/freeboard-open-setup.jpg)
 
-_North of Stenskär on the 272° leading line, heading west at 7 kn with a 1.8 m draft. Here the
-depths come from the plugin's Traficom WFS feature, not from an ENC cell, so the state stays
-`alert`: water only the WFS covers is never `normal`. The details panel ends with **Open
-setup**._
+_South of Gullkrona on the 272° leading line, heading west at 6 kn with a 0.9 m draft, the
+look-ahead warns of the 0 m area at the Korsskär beacon ahead of the turn. The depths come from
+the plugin's Traficom WFS feature, not from an ENC cell, so water only the WFS covers is never
+`normal`. The details panel ends with **Open setup**._
 
 ![Freeboard: the three setup steps in the details panel](images/how-it-works/freeboard-setup-steps.jpg)
 
 _**Open setup** loads the three steps into the same panel; the link at the top goes back to the
-details. The draft field is empty, so Signal K's `design.draft.maximum`, 1.8 m, applies._
+details. The draft and margin come from the plugin settings, 0.9 m and 0.1 m; the hint under the
+draft says what Signal K's `design.draft.maximum` holds._
 
 ### What it shows
 
@@ -895,10 +906,13 @@ the chart._
 
 ![Freeboard: the details panel with the route-check legs](images/how-it-works/freeboard-panel.jpg)
 
-_The details panel lists every leg of each route on the chart. Legs 5 and 6 fail on a 1 m
-sounding about 60 m off the track: its 50 m survey-category-B position uncertainty reaches the
-10 m cross-track corridor. The legs west of the fairway fail because the open data has a
-0–3 m depth area in the channel, which counts as 0 m._
+_The boat 50 m before the route's turn south into the Stenskär channel, heading along the leg.
+The details panel lists every leg of each route on the chart. Every leg fails at the route
+check's 30 m cross-track corridor: the WFS lines these narrow channels with 0–3 m depth areas,
+which count as 0 m, and with gaps no depth area covers, which count as land.
+signalk-route-planner plans such passages at the harbour corridor, the hull on its line, so
+the same legs passed there. In the channel the look-ahead reaches the land beside the boat and
+raises `alarm`._
 
 The widget and the panel use Freeboard's depth unit. On a host that lacks a capability, the
 page says what is missing: no Signal K stream on the widget, or no shared routes in the panel.
