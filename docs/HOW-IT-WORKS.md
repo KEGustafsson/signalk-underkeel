@@ -779,7 +779,7 @@ data is not for navigational purposes**: Traficom licenses it for non-navigation
 flowchart TD
   P[vessel position, checked periodically] --> D{more than half the box radius from<br/>the box centre, or the edge ahead<br/>closer than a rebuild's run?}
   D -- no --> KEEP[keep the current index]
-  D -- yes, and no download<br/>in the last minute or so --> W[in a child process: download the box<br/>centred ahead along the course<br/>DepthArea_A, DredgedArea_A, Sounding_P]
+  D -- yes --> W[in a child process: download the WFS<br/>depth layers for a box ahead along the course]
   W --> B[rebuild the index in the same process, copying from the saved index<br/>the tiles whose chart features and box state are unchanged]
   B --> S[swap the new index in;<br/>the look-ahead keeps running]
   W -- fails --> E[keep the old index, report the error,<br/>retry after a longer back-off]

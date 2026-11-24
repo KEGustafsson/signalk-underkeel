@@ -82,7 +82,7 @@ cd signalk-underkeel
 npm install
 npm pack                       # builds lib/ and writes signalk-underkeel-<version>.tgz
 cd ~/.signalk
-npm install /path/to/signalk-underkeel/signalk-underkeel-<version>.tgz
+npm install /path/to/signalk-underkeel/signalk-underkeel-*.tgz   # the tarball npm pack wrote
 ```
 
 Restart the server, then enable **Under-Keel Awareness** under _Server → Plugin Config_ in the
