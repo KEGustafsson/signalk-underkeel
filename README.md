@@ -80,9 +80,9 @@ that is not released yet, build a package from this repository and install that 
 git clone https://github.com/KEGustafsson/signalk-underkeel.git
 cd signalk-underkeel
 npm install
-npm pack                       # builds lib/ and writes signalk-underkeel-<version>.tgz
+TGZ="$PWD/$(npm pack | tail -n 1)"   # builds lib/; npm pack prints the tarball's name last
 cd ~/.signalk
-npm install /path/to/signalk-underkeel/signalk-underkeel-*.tgz   # the tarball npm pack wrote
+npm install "$TGZ"
 ```
 
 Restart the server, then enable **Under-Keel Awareness** under _Server → Plugin Config_ in the
