@@ -234,6 +234,31 @@ describe("water level over areas", () => {
     );
   });
 
+  test("positions on one side of the reach ask once: the level every position's own folds to", async () => {
+    const s = await fmiAtKemi(true, (k) => 20 - 10 * (k + 2));
+    const places: LonLat[] = [KEMI, [24.6, 65.7], [24.4, 65.6], VAASA, [21.6, 63.1]];
+    await fc.assert(
+      fc.asyncProperty(
+        fc.array(fc.constantFrom(...places), { minLength: 1, maxLength: 6 }),
+        fc.integer({ min: 0, max: 12 }),
+        (at, hours) => {
+          const end = NOW + hours * HOUR;
+          const low = at.map((p) => s.over(NOW, end, [p], NOW));
+          const high = at.map((p) => s.highest(NOW, end, [p], NOW));
+          const fold = (ls: typeof low, pick: (a: number, b: number) => number) =>
+            ls.reduce((a, b) => {
+              const base = a.degraded === undefined && b.degraded !== undefined ? b : a;
+              return { ...base, h: pick(a.h, b.h), sigma: Math.max(a.sigma, b.sigma) };
+            });
+          expect(s.over(NOW, end, at, NOW)).toEqual(fold(low, Math.min));
+          expect(s.highest(NOW, end, at, NOW)).toEqual(fold(high, Math.max));
+          return Promise.resolve();
+        }
+      ),
+      { numRuns: 100 }
+    );
+  });
+
   test("beyond the forecast's reach the reason names the distance, not a missing time", async () => {
     const s = await fmiAtKemi();
     expect(s.now(VAASA, NOW).degraded).toBe(

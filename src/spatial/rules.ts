@@ -23,8 +23,14 @@ export const RULES_VERSION = 3;
 export class RuleIndex {
   private readonly grid = new Map<string, number[]>();
   private readonly bounds: Rect[];
+  /**
+   * The object classes the features are of: a box or leg near none a check reads (an index of
+   * leading lines alone, say) asks the grid nothing for that check.
+   */
+  readonly classes: ReadonlySet<string>;
 
   constructor(private readonly all: readonly RuleFeature[]) {
+    this.classes = new Set(all.map((f) => f.objectClass));
     this.bounds = all.map((f) => geomBounds(f.geom));
     this.bounds.forEach((b, i) => {
       for (const key of keys(b)) {

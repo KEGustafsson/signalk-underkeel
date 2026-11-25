@@ -1,6 +1,7 @@
 import type { RouteCheckInput } from "../../src/engine/route-check";
 import { checkFootprint, checkRoute, corridorRing } from "../../src/engine/route-check";
 import { departureWindow } from "../../src/engine/departure-window";
+import { checkRules } from "../../src/engine/rule-check";
 import { rhumbCourse } from "../../src/engine/corridor";
 import { highestWaterLevel } from "../../src/model/water-level";
 import { vesselFor } from "../../src/route-service";
@@ -378,8 +379,17 @@ describe("what a planner keeps to", () => {
       { objectClass: "ACHARE", geom: OVER, cellRef: 0 },
       { objectClass: "NAVLINE", geom: ACROSS, cellRef: 0, twoWay: true, designDraft: 2.4 }
     ]);
-    // The leg is just what it is without them.
+    // The leg is just what it is without them, and so is a box over them.
     expect(leg(index, input({}, 30))).toEqual(leg(withRules([]), input({}, 30)));
+    expect(index.rules.classes).toEqual(new Set(["NAVLNE", "ACHARE", "NAVLINE"]));
+    const box: LonLat[] = [
+      [22.01, 60.0],
+      [22.03, 60.0],
+      [22.03, 60.02],
+      [22.01, 60.02],
+      [22.01, 60.0]
+    ];
+    expect(checkRules(index, [box], { airHeight: 30 })).toEqual({ status: "ok", flags: [] });
     const objects = chartObjects(index, [22.0, 60.0], [22.05, 60.02]);
     expect(objects.map((o) => o.class).sort()).toEqual(["ACHARE", "NAVLINE", "NAVLNE"]);
     expect(objects.find((o) => o.class === "NAVLINE")).toMatchObject({
