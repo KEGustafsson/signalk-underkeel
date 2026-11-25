@@ -87,6 +87,10 @@ All notable changes to signalk-underkeel are documented here.
   corridor's does: a depth layer, for which a plan was refused, and the FTIA's lines and swept
   areas, without which the cell was written with no swept fairways and a plan that needs one
   found no way.
+- The App Store lists signalk-charts-provider-simple as recommended (`signalk.recommends` in
+  `package.json`): the ENC cells and the local WFS proxy come from it; the Traficom WFS depths
+  work without it. Its App Store icon (`signalk.appIcon`) is a hull and keel over the seabed, the water
+  under the keel marked green (`public/icon.svg`).
 
 ### Changed
 

@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 64 64" role="img" aria-label="Under-Keel Awareness">
+  <title>Under-Keel Awareness</title>
+  <defs>
+    <clipPath id="tile"><rect width="64" height="64" rx="14"/></clipPath>
+    <linearGradient id="sea" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#cfe8f5"/>
+      <stop offset="1" stop-color="#6fa9cf"/>
+    </linearGradient>
+  </defs>
+  <g clip-path="url(#tile)">
+    <rect width="64" height="64" fill="url(#sea)"/>
+    <rect width="64" height="15" fill="#eaf5fb"/>
+    <path d="M0 15 Q8 12.5 16 15 T32 15 T48 15 T64 15" fill="none" stroke="#ffffff" stroke-width="1.6"/>
+    <path d="M9 13 L55 13 C53 19.5 47 22.5 39 23.5 L35 23.5 L34.5 34 C34.3 36 29.7 36 29.5 34 L29 23.5 L23 23 C16 22 11 19 9 13 Z" fill="#14324d"/>
+    <path d="M-4 52 C8 47 18 54 30 50 S52 45 68 50 L68 68 L-4 68 Z" fill="#d9c58c" stroke="#9a8644" stroke-width="1.4"/>
+    <line x1="32" y1="39.5" x2="32" y2="46.5" stroke="#1f8f43" stroke-width="2.8" stroke-linecap="round"/>
+    <path d="M28.6 40.6 L32 37 L35.4 40.6 Z M28.6 45.4 L32 49 L35.4 45.4 Z" fill="#1f8f43"/>
+  </g>
+</svg>

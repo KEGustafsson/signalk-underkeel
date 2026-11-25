@@ -24,6 +24,10 @@
   ],
   "signalk": {
     "displayName": "Under-Keel Awareness",
+    "appIcon": "./public/icon.svg",
+    "recommends": [
+      "signalk-charts-provider-simple"
+    ],
     "screenshots": [
       "./docs/images/how-it-works/combo-pic.jpg",
       "./docs/images/how-it-works/freeboard-risk.jpg",
