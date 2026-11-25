@@ -72,18 +72,11 @@ Reference hardware is a Raspberry Pi 4.
 
 ## Install
 
-The plugin is not yet in the npm registry or the Signal K App Store. Build a package from this
-repository and install it into the Signal K server's configuration directory (usually
-`~/.signalk`):
-
-```sh
-git clone https://github.com/KEGustafsson/signalk-underkeel.git
-cd signalk-underkeel
-npm install
-npm pack                       # builds lib/ and writes signalk-underkeel-<version>.tgz
-cd ~/.signalk
-npm install /path/to/signalk-underkeel/signalk-underkeel-0.1.0.tgz
-```
+Install **Under-Keel Awareness** from the Signal K App Store, or run `npm install
+signalk-underkeel` in the server's configuration directory (usually `~/.signalk`). To run code
+that is not released yet, run `npm install` and then `npm pack` in a clone of this repository:
+`npm pack` builds `lib/` and writes the package as a `.tgz` file, which `npm install` with that
+file's path then installs in the server's configuration directory.
 
 Restart the server, then enable **Under-Keel Awareness** under _Server → Plugin Config_ in the
 Signal K admin UI. Its one runtime dependency is gdal3.js (about 40 MB), which reads the S-57
@@ -582,8 +575,8 @@ line crosses land `LAND_CROSSED` as well; land at the leg's own end, a quay the 
 or the shore a point was put on, is not crossed while the leg leaves it about the nearest way.
 
 Underway, on a leg of the active route in swept water, the live fix is held to the leg's room, how
-far the swept water reaches past the hull: twice its σ wider than the room, or a failing integrity
-check, raises `notifications.navigation.underKeel.pilotage` at `warn`, to steer by the marks and
+far the swept water reaches past the hull: kp times its σ (2σ by default) wider than the room, or
+a failing integrity check, raises `notifications.navigation.underKeel.pilotage` at `warn`, to steer by the marks and
 slow down.
 
 A trip longer than a planning box holds is planned in a corridor. With the Traficom WFS depth

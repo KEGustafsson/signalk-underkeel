@@ -9,7 +9,7 @@ All notable changes to signalk-underkeel are documented here.
 - Swept fairways: with the FTIA's lines, the Traficom WFS cell takes the FTIA's fairway areas at
   their swept depth as dredged areas, and a cell's depth areas give way to its dredged areas where
   they cover a tile; tiles across their edges split two zooms finer than the leaf zoom. The
-  index is rebuilt once (pyramid version 12).
+  index is rebuilt once (pyramid version 13, with the shore fix below).
 - Gaps a swept fairway leaves under a bridge get a strip along its navigation line, at most 10 m
   each side, at the line's safe clearance depth (`haraussyvyys`; its design draft where it states
   none), never deeper than the sweeps it reaches into, where the line and those sweeps state one

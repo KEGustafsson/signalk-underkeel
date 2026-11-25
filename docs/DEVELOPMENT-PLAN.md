@@ -1259,7 +1259,7 @@ pulled only on change.
 | POST            | `/query`                     | point or polygon UKC with explanation (cursor readout, popovers)                                    |
 | GET             | `/tiles/ukc/{z}/{x}/{y}.pbf` | vector tiles: cells classed by P at the water level valid at each tile (§4.5) and the current draft |
 | GET             | `/tiles/ukc/changes`         | the served tiles to fetch again since a cursor (§4.14)                                              |
-| GET/PUT         | `/vessel`                    | vessel model                                                                                        |
+| GET             | `/ukc-style.json`            | MapLibre style for the UKC tiles                                                                    |
 | GET/POST/DELETE | `/acks`                      | acknowledged passages                                                                               |
 | GET/POST        | `/settings`                  | admin only: configuration, what the plugin sees and setup checks; `POST` a patch, then a restart    |
 | GET             | `/livechart/discrepancies`   | suspected shoals                                                                                    |
