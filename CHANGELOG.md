@@ -89,7 +89,8 @@ All notable changes to signalk-underkeel are documented here.
   found no way.
 - The App Store lists signalk-charts-provider-simple as recommended (`signalk.recommends` in
   `package.json`): the ENC cells and the local WFS proxy come from it; the Traficom WFS depths
-  work without it.
+  work without it. Its App Store icon (`signalk.appIcon`) is a hull and keel over the seabed, the water
+  under the keel marked green (`public/icon.svg`).
 
 ### Changed
 

@@ -24,6 +24,7 @@
   ],
   "signalk": {
     "displayName": "Under-Keel Awareness",
+    "appIcon": "./public/icon.svg",
     "recommends": [
       "signalk-charts-provider-simple"
     ],
