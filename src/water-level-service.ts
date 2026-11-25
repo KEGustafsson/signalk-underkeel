@@ -128,6 +128,24 @@ export class WaterLevelService {
   }
 
   /**
+   * `at` less each position whose level is one an earlier one has (`IntervalLevels.sideOf`):
+   * folding a level in twice changes nothing, so a ring's corners ask once where they all lie
+   * within the source's reach.
+   */
+  private distinct(at: readonly LonLat[], now: number): readonly LonLat[] {
+    const seen = new Set<number>();
+    return at.filter((p) => {
+      const k = this.intervals.sideOf(this.provider, p, now);
+      if (k === undefined) {
+        return true;
+      }
+      const fresh = !seen.has(k);
+      seen.add(k);
+      return fresh;
+    });
+  }
+
+  /**
    * The lowest level over [start, end] (epoch ms) at any of `at`, for
    * route checks; a fallback at any position makes it degraded, at no more
    * water than the lowest level found elsewhere. FMI answers only within
@@ -149,7 +167,7 @@ export class WaterLevelService {
   ): WaterLevel {
     const datums = cells ? this.datumsOf(cells) : this.datums;
     let out: WaterLevel | undefined;
-    for (const p of at) {
+    for (const p of this.distinct(at, now)) {
       out = lowerLevel(out, this.intervals.lowest(this.provider, datums, p, start, end, now));
     }
     const reach = area ? this.provider?.reach?.() : undefined;
@@ -176,7 +194,7 @@ export class WaterLevelService {
   ): WaterLevel {
     const datums = cells ? this.datumsOf(cells) : this.datums;
     let out: WaterLevel | undefined;
-    for (const p of at) {
+    for (const p of this.distinct(at, now)) {
       out = higherLevel(out, this.intervals.highest(this.provider, datums, p, start, end, now));
     }
     const reach = area ? this.provider?.reach?.() : undefined;

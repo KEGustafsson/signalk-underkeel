@@ -51,6 +51,15 @@ export class IntervalLevels {
   /** `highestWaterLevel`, kept. */
   highest: Find = (...q) => this.found("high", highestWaterLevel, q);
 
+  /**
+   * Where `position` lies for `p` when its level is kept (0 with none, 1 within its reach, 2
+   * beyond it): two positions on the same side have the same level over any interval. Undefined
+   * when `p` is asked every time.
+   */
+  sideOf(p: WaterLevelProvider | undefined, position: LonLat, now: number): number | undefined {
+    return p && p.revision?.() !== undefined && usable(p, now) ? side(p, position) : undefined;
+  }
+
   private idOf(uses: readonly DatumUse[]): number {
     let id = this.ids.get(uses);
     if (id === undefined) {
