@@ -74,17 +74,9 @@ Reference hardware is a Raspberry Pi 4.
 
 Install **Under-Keel Awareness** from the Signal K App Store, or run `npm install
 signalk-underkeel` in the server's configuration directory (usually `~/.signalk`). To run code
-that is not released yet, build a package from this repository and install that instead:
-
-```sh
-git clone https://github.com/KEGustafsson/signalk-underkeel.git
-cd signalk-underkeel
-npm install
-npm pack                       # builds lib/ and writes signalk-underkeel-<version>.tgz
-TGZ="$PWD/signalk-underkeel-$(node -p 'require("./package.json").version').tgz"
-cd ~/.signalk
-npm install "$TGZ"
-```
+that is not released yet, run `npm install` and then `npm pack` in a clone of this repository:
+`npm pack` builds `lib/` and writes the package as a `.tgz` file, which `npm install` with that
+file's path then installs in the server's configuration directory.
 
 Restart the server, then enable **Under-Keel Awareness** under _Server → Plugin Config_ in the
 Signal K admin UI. Its one runtime dependency is gdal3.js (about 40 MB), which reads the S-57
