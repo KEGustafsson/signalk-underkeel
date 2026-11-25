@@ -80,7 +80,8 @@ that is not released yet, build a package from this repository and install that 
 git clone https://github.com/KEGustafsson/signalk-underkeel.git
 cd signalk-underkeel
 npm install
-TGZ="$PWD/$(npm pack | tail -n 1)"   # builds lib/; npm pack prints the tarball's name last
+npm pack                       # builds lib/ and writes signalk-underkeel-<version>.tgz
+TGZ="$PWD/signalk-underkeel-$(node -p 'require("./package.json").version').tgz"
 cd ~/.signalk
 npm install "$TGZ"
 ```
