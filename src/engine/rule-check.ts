@@ -195,15 +195,15 @@ export function checkRules(
   rings: readonly (readonly LonLat[])[],
   w: RuleWindow
 ): RuleVerdict {
-  // Without an air height nothing overhead is read: its geometry is not tested either.
-  const overhead = (f: RuleFeature): boolean =>
-    (OVERHEAD_CLASSES as readonly string[]).includes(f.objectClass);
-  // A preference (a leading line, an anchorage) is the planner's: no verdict reads it.
-  const found = met(
-    index,
-    rings,
-    (f) => !PREFERENCES.has(f.objectClass) && (w.airHeight !== undefined || !overhead(f))
-  );
+  // A preference (a leading line, an anchorage) is the planner's: no verdict reads it. Without
+  // an air height nothing overhead is read: its geometry is not tested either.
+  const reads = (objectClass: string): boolean =>
+    !PREFERENCES.has(objectClass) &&
+    (w.airHeight !== undefined || !(OVERHEAD_CLASSES as readonly string[]).includes(objectClass));
+  // An index holding no feature of a class read here meets none: the rings are not looked up.
+  const found = [...index.rules.classes].some(reads)
+    ? met(index, rings, (f) => reads(f.objectClass))
+    : [];
   let status: RuleStatus = "ok";
   const flags = new Set<string>();
   let hw: WaterLevel | undefined;

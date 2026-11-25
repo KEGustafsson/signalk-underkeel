@@ -55,7 +55,7 @@ export interface StripSpan extends StripHold {
  * disagree.
  */
 function stripsNear(index: ChartIndex, r: Rect): Strip[] {
-  if (index.rules.size === 0) {
+  if (!index.rules.classes.has(FAIRWAY_GAP)) {
     return [];
   }
   return index.rules.near(r).flatMap((f): Strip[] => {
@@ -170,7 +170,7 @@ function joined(spans: StripSpan[]): StripSpan[] {
  * the leg's great circle strays from its rhumb line, as `legCorridors` widens it.
  */
 export function stripSpans(index: ChartIndex, a: LonLat, b: LonLat, r: number): StripSpan[] {
-  if (index.rules.size === 0) {
+  if (!index.rules.classes.has(FAIRWAY_GAP)) {
     return [];
   }
   const from = toMercator(a[0], a[1]);
@@ -189,6 +189,9 @@ export function stripSpans(index: ChartIndex, a: LonLat, b: LonLat, r: number): 
 
 /** The strip holding the whole of `ring`, a box's footprint, when one does. */
 export function stripHolding(index: ChartIndex, ring: readonly LonLat[]): StripHold | undefined {
+  if (!index.rules.classes.has(FAIRWAY_GAP)) {
+    return undefined;
+  }
   const merc = ring.map((p) => toMercator(p[0], p[1]));
   const box = emptyRect();
   merc.forEach((p) => {
