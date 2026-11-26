@@ -9,7 +9,7 @@ import type { CellInfo } from "./ingest/cells";
 import { parseCatalogue } from "./ingest/cells";
 import type { CellScan } from "./ingest/cell-source";
 import { currentInfo, readCell, scanCellSources } from "./ingest/cell-source";
-import { advisoryName, isAdvisorySource, keptStamps, WFS_SOURCE } from "./ingest/advisory";
+import { isAdvisorySource, keptStamps, lackingNote, staleNote } from "./ingest/advisory";
 import { readCellInfo } from "./ingest/cell-reader";
 import { readBox } from "./spatial/build-box";
 import type { BuildBox } from "./spatial/build-box";
@@ -439,7 +439,7 @@ function missingReason(cfg: PluginConfig, indexDir: string): string {
 
 /**
  * `refused`, why the saved index is not used even with nothing to build another from: it holds
- * WFS depths and that source is off, or it records an ENC source and none is set now.
+ * advisory depths whose source is off, or it records an ENC source and none is set now.
  * `mismatch`, why the saved index is not used as is: none is saved, those, the source is on
  * and the saved index lacks its cell, or the index was saved by an older version of its
  * pyramid or hazard file.
@@ -450,22 +450,22 @@ function savedMatches(
   saved: readonly CellInfo[] | undefined,
   extraDirs: string[]
 ): { refused: string | undefined; mismatch: string | undefined } {
-  const holds = (source: string): boolean => saved?.some((c) => c.source === source) ?? false;
-  const stale = holds(WFS_SOURCE) && !cfg.wfs;
-  const lacking = extraDirs.map((d) => readCellInfo(d).source ?? WFS_SOURCE).find((s) => !holds(s));
+  const stale = staleNote(cfg, saved);
+  const sources = extraDirs.map((d) => readCellInfo(d).source);
+  const lacking = lackingNote(sources, saved);
   const dropped = saved && sourceDropped(cfg, indexDir);
   const mismatch =
     saved === undefined
       ? `no index saved in ${indexDir}`
       : stale
-        ? "the saved one holds Traficom WFS depths and that source is off"
+        ? `the saved one ${stale}`
         : !savedIndexIsCurrent(indexDir)
           ? "the saved one is from an older index version or its header is damaged"
           : lacking !== undefined
-            ? `the saved one lacks the ${advisoryName(lacking)} cell`
+            ? `the saved one ${lacking}`
             : dropped;
   const refused = stale
-    ? "the saved index holds Traficom WFS depths and that source is off; choose the charts provider"
+    ? `the saved index ${stale}; choose the charts provider`
     : dropped && extraDirs.length === 0
       ? `not using the saved index: ${dropped}; choose the charts provider`
       : undefined;

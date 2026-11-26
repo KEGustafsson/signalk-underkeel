@@ -57,6 +57,26 @@ class Reader {
     }
   }
 
+  /** A two's-complement int64 varint, as `int_value` holds a negative number. */
+  int64(): number {
+    let value = 0n;
+    let shift = 0n;
+    for (;;) {
+      if (this.pos >= this.end) {
+        throw new Error("vector tile: truncated varint");
+      }
+      const b = this.buf[this.pos++] as number;
+      value |= BigInt(b & 0x7f) << shift;
+      if (b < 0x80) {
+        return Number(BigInt.asIntN(64, value));
+      }
+      shift += 7n;
+      if (shift > 63n) {
+        throw new Error("vector tile: varint too long");
+      }
+    }
+  }
+
   /** A length-delimited field's bytes, as a reader of their own. */
   sub(): Reader {
     const length = this.varint();
@@ -75,9 +95,9 @@ class Reader {
     return new TextDecoder().decode(this.buf.subarray(r.pos, r.end));
   }
 
-  packed(): number[] {
+  /** A packed field's values, appended to `out`: a repeated field may come in several parts. */
+  packed(out: number[] = []): number[] {
     const r = this.sub();
-    const out: number[] = [];
     while (r.pos < r.end) {
       out.push(r.varint());
     }
@@ -110,12 +130,14 @@ class Reader {
         this.varint();
         return;
       case WIRE_FIXED64:
+        this.within(8);
         this.pos += 8;
         return;
       case WIRE_BYTES:
         this.sub();
         return;
       case WIRE_FIXED32:
+        this.within(4);
         this.pos += 4;
         return;
       default:
@@ -130,26 +152,29 @@ class Reader {
 
 const unzigzag = (n: number): number => (n % 2 === 1 ? -(n + 1) / 2 : n / 2);
 
+/** The readers of a `Value`'s fields, by tag (field × 8 + wire type). */
+const VALUE_READERS: ReadonlyMap<number, (r: Reader) => unknown> = new Map<
+  number,
+  (r: Reader) => unknown
+>([
+  [1 * 8 + WIRE_BYTES, (r: Reader) => r.string()],
+  [2 * 8 + WIRE_FIXED32, (r: Reader) => r.fixed32Float()],
+  [3 * 8 + WIRE_FIXED64, (r: Reader) => r.fixed64Double()],
+  [4 * 8 + WIRE_VARINT, (r: Reader) => r.int64()],
+  [5 * 8 + WIRE_VARINT, (r: Reader) => r.varint()],
+  [6 * 8 + WIRE_VARINT, (r: Reader) => unzigzag(r.varint())],
+  [7 * 8 + WIRE_VARINT, (r: Reader) => r.varint() !== 0]
+]);
+
 function readValue(r: Reader): unknown {
   let value: unknown;
   while (r.more) {
     const tag = r.varint();
-    const field = Math.floor(tag / 8);
-    const wire = tag % 8;
-    if (field === 1 && wire === WIRE_BYTES) {
-      value = r.string();
-    } else if (field === 2 && wire === WIRE_FIXED32) {
-      value = r.fixed32Float();
-    } else if (field === 3 && wire === WIRE_FIXED64) {
-      value = r.fixed64Double();
-    } else if ((field === 4 || field === 5) && wire === WIRE_VARINT) {
-      value = r.varint();
-    } else if (field === 6 && wire === WIRE_VARINT) {
-      value = unzigzag(r.varint());
-    } else if (field === 7 && wire === WIRE_VARINT) {
-      value = r.varint() !== 0;
+    const read = VALUE_READERS.get(tag);
+    if (read) {
+      value = read(r);
     } else {
-      r.skip(wire);
+      r.skip(tag % 8);
     }
   }
   return value;
@@ -168,11 +193,11 @@ function readFeature(r: Reader): RawFeature {
     const field = Math.floor(tag / 8);
     const wire = tag % 8;
     if (field === 2 && wire === WIRE_BYTES) {
-      f.tags = r.packed();
+      r.packed(f.tags);
     } else if (field === 3 && wire === WIRE_VARINT) {
       f.type = r.varint();
     } else if (field === 4 && wire === WIRE_BYTES) {
-      f.geometry = r.packed();
+      r.packed(f.geometry);
     } else {
       r.skip(wire);
     }

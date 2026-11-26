@@ -8,5 +8,10 @@ describe("Open Data Charts configuration", () => {
     });
     expect(parseConfig({ openDataCharts: { catzoc: "Z" } }).openDataCharts?.catzoc).toBe(4);
     expect(parseConfig({ openDataCharts: { enabled: false } }).openDataCharts).toBeUndefined();
+    // A name the lookup object inherits is no quality.
+    expect(parseConfig({ openDataCharts: { catzoc: "constructor" } }).openDataCharts).toEqual({
+      catzoc: 4
+    });
+    expect(parseConfig({ wfs: { enabled: true, catzoc: "toString" } }).wfs?.catzoc).toBe(3);
   });
 });

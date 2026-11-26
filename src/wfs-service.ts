@@ -109,7 +109,7 @@ export class WfsService {
 
   constructor(private readonly deps: WfsServiceDeps) {
     this.box = this.readBox();
-    this.odc = new OdcBox(deps.dir, deps.odc);
+    this.odc = new OdcBox(deps.dir, deps.odc, deps.error);
   }
 
   /** Whether this box downloads Traficom WFS depths, not only builds ENC cells around the vessel. */
@@ -286,7 +286,7 @@ export class WfsService {
       !this.indexed ||
       this.deps.index() === undefined ||
       this.resize(b) ||
-      this.sourcesChanged(b) ||
+      this.sourcesChanged(b, now) ||
       haversine(pos, b.centre) > (b.radiusKm * 1000) / 2 ||
       this.edgeSoon(pos, b)
     );
@@ -311,8 +311,8 @@ export class WfsService {
   }
 
   /** Whether the box's own sources changed: the WFS survey quality, the Open Data Charts. */
-  private sourcesChanged(b: WfsBox): boolean {
-    return b.catzoc !== this.catzoc() || this.odc.changed(b.bbox, b);
+  private sourcesChanged(b: WfsBox, now: number): boolean {
+    return b.catzoc !== this.catzoc() || this.odc.changed(b.bbox, b, now);
   }
 
   private get label(): string {

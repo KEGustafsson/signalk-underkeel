@@ -434,10 +434,14 @@ coverage past the box get a `reason`. The build process posts its phase and coun
    `UK_SOURCE = open-data-charts`, so every tile from it carries `NOT_FOR_NAVIGATION` as the WFS
    cell's do: the look-ahead is never `normal` there (at most `alert`, with the Open Data Charts
    notice), route legs are never `ok`, and the overlay never draws `clear`. The box records the
-   charts it was built with (their ids and coverage) and is built again when they change, as
-   when a set is downloaded or removed; a torn or missing saved cell is read again from the
-   tiles at the first check, as the WFS cell is downloaded again. Planning boxes do not read them
-   yet.
+   charts it was built with (their ids and coverage) and the quality assumed, and is built again
+   when either changes, as when a set is downloaded or removed; a torn or missing saved cell is
+   read again from the tiles at the first check, as the WFS cell is downloaded again. A tile
+   read that fails never holds up the ENC and WFS depths: the box is built without the charts,
+   the error logged, and they are read again 5 minutes later. Each build stages its tiles in a
+   file of its own, so an aborted build's cleanup cannot remove the next one's. A saved index
+   holding their depths while the source is off is not used, as for the WFS. Planning boxes do
+   not read them yet.
 
 **S-57 object classes used:**
 

@@ -239,8 +239,16 @@ function parseWfs(w: Record<string, unknown>): WfsConfig | undefined {
     url: str(w.url) ?? DEFAULT_WFS_URL,
     viaChartsProvider: w.viaChartsProvider !== false,
     radiusKm: num(w.radiusKm, 10, WFS_LIMITS.minRadiusKm, WFS_LIMITS.maxRadiusKm),
-    catzoc: CATZOC_CODES[str(w.catzoc) ?? "B"] ?? 3
+    catzoc: catzocCode(w.catzoc, 3)
   };
+}
+
+/** The CATZOC code of a setting's letter; `fallback` for none or an unknown one. */
+function catzocCode(v: unknown, fallback: number): number {
+  const key = str(v);
+  return key !== undefined && Object.hasOwn(CATZOC_CODES, key)
+    ? (CATZOC_CODES[key] ?? fallback)
+    : fallback;
 }
 
 /** On unless turned off: the charts are read only where Charts Provider has them. */
@@ -248,7 +256,7 @@ function parseOdc(o: Record<string, unknown>): OdcConfig | undefined {
   if (o.enabled === false) {
     return undefined;
   }
-  return { catzoc: CATZOC_CODES[str(o.catzoc) ?? "C"] ?? 4 };
+  return { catzoc: catzocCode(o.catzoc, 4) };
 }
 
 function parseGrounding(g: Record<string, unknown>): GroundingOptions | undefined {

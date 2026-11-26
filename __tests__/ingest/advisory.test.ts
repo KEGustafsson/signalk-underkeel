@@ -2,7 +2,9 @@ import {
   advisoryNotice,
   isAdvisorySource,
   keptStamps,
+  lackingNote,
   licenceNotes,
+  staleNote,
   ODC_SOURCE,
   WFS_SOURCE
 } from "../../src/ingest/advisory";
@@ -34,6 +36,19 @@ describe("advisory sources", () => {
     expect(keptStamps(was, [enc], { wfs: {}, openDataCharts: {} })).toEqual([enc]);
     expect(keptStamps(was, [enc], {})).toEqual(was);
     expect(keptStamps(was, [enc, odc], { openDataCharts: {} })).toEqual([enc, odc, wfs]);
+  });
+
+  test("saved cells are stale while they hold a source that is off, or lack one in use", () => {
+    const cells = [{ source: ODC_SOURCE }, {}];
+    expect(staleNote({ wfs: {} }, cells)).toBe(
+      "holds Open Data Charts depths and that source is off"
+    );
+    expect(staleNote({ openDataCharts: {} }, [{ source: WFS_SOURCE }])).toBe(
+      "holds Traficom WFS depths and that source is off"
+    );
+    expect(staleNote({ openDataCharts: {} }, cells)).toBeUndefined();
+    expect(lackingNote([ODC_SOURCE, undefined], cells)).toBe("lacks the Traficom WFS cell");
+    expect(lackingNote([ODC_SOURCE], cells)).toBeUndefined();
   });
 
   test("the status says each source is not for navigation unless the reason already does", () => {

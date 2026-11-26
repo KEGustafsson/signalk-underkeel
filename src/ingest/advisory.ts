@@ -46,6 +46,37 @@ const NAMES: ReadonlyMap<string, string> = new Map([
 /** The name an advisory source goes by in a reason. */
 export const advisoryName = (source: string): string => NAMES.get(source) ?? source;
 
+/** The settings an advisory source is on with. */
+export interface AdvisorySettings {
+  wfs?: unknown;
+  openDataCharts?: unknown;
+}
+
+/** Whether advisory `source` is on in `cfg`. */
+export const advisoryOn = (cfg: AdvisorySettings, source: string): boolean =>
+  Boolean(source === WFS_SOURCE ? cfg.wfs : source === ODC_SOURCE && cfg.openDataCharts);
+
+const holds = (cells: readonly { source?: string }[] | undefined, source: string): boolean =>
+  cells?.some((c) => c.source === source) ?? false;
+
+/** Why `cells` are stale: they hold the depths of an advisory source that is off in `cfg`. */
+export function staleNote(
+  cfg: AdvisorySettings,
+  cells: readonly { source?: string }[] | undefined
+): string | undefined {
+  const off = [...ADVISORY_CELL_NAMES.keys()].find((s) => !advisoryOn(cfg, s) && holds(cells, s));
+  return off && `holds ${advisoryName(off)} depths and that source is off`;
+}
+
+/** Why `cells` are stale: they hold no cell of one of the advisory cells' `sources` (none: WFS). */
+export function lackingNote(
+  sources: readonly (string | undefined)[],
+  cells: readonly { source?: string }[] | undefined
+): string | undefined {
+  const lacking = sources.map((s) => s ?? WFS_SOURCE).find((s) => !holds(cells, s));
+  return lacking && `lacks the ${advisoryName(lacking)} cell`;
+}
+
 /**
  * A saved box's source stamps `was`, less those of the advisory cells `now` lacks while their
  * source is on in `cfg`: a cell left out of the start, torn or gone, is written again by the
@@ -55,18 +86,14 @@ export const advisoryName = (source: string): string => NAMES.get(source) ?? sou
 export function keptStamps(
   was: readonly string[],
   now: readonly string[],
-  cfg: { wfs?: unknown; openDataCharts?: unknown }
+  cfg: AdvisorySettings
 ): string[] {
-  const on = new Set([
-    ...(cfg.wfs ? [WFS_SOURCE] : []),
-    ...(cfg.openDataCharts ? [ODC_SOURCE] : [])
-  ]);
   const cellOf = (key: string): string | undefined =>
     [...ADVISORY_CELL_NAMES].find(([, name]) => key.startsWith(`${name} edition `))?.[0];
   const present = new Set(now.map(cellOf));
   return was.filter((k) => {
     const source = cellOf(k);
-    return source === undefined || present.has(source) || !on.has(source);
+    return source === undefined || present.has(source) || !advisoryOn(cfg, source);
   });
 }
 

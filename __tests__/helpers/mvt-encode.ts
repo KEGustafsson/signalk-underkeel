@@ -3,7 +3,8 @@ import type { TileId } from "../../src/ingest/mvt-decode";
 /**
  * A Mapbox Vector Tile 2.1 encoder for tests: layers of points, lines and polygons given in
  * longitude and latitude, as tippecanoe writes the Open Data Charts tiles. Numbers that are
- * whole go out as uint or sint values, others as doubles; strings and booleans as such.
+ * whole go out as uint or sint values, others as doubles, bigints as int64; strings and
+ * booleans as such.
  */
 
 export type LonLatPoint = [number, number];
@@ -147,6 +148,17 @@ function value(v: unknown): Uint8Array {
     w.string(1, v);
   } else if (typeof v === "boolean") {
     w.tag(7, 0).varint(v ? 1 : 0);
+  } else if (typeof v === "bigint") {
+    // As int_value: a negative number in ten bytes of two's complement.
+    let n = BigInt.asUintN(64, v);
+    w.tag(4, 0);
+    const bytes: number[] = [];
+    while (n >= 0x80n) {
+      bytes.push(Number(n & 0x7fn) | 0x80);
+      n >>= 7n;
+    }
+    bytes.push(Number(n));
+    w.raw(Uint8Array.from(bytes));
   } else if (typeof v === "number" && Number.isInteger(v)) {
     if (v >= 0) {
       w.tag(5, 0).varint(v);

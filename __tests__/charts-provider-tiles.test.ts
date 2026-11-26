@@ -92,6 +92,22 @@ describe("Open Data Charts through Charts Provider's chartTiles", () => {
     );
   });
 
+  test("an abort while a read is pending writes no tile and rejects", async () => {
+    const controller = new AbortController();
+    const tiles = odcTilesOf(() => [
+      {
+        charts: () => [chart()],
+        getTile: () => {
+          controller.abort();
+          return Promise.resolve(Uint8Array.from([1]));
+        }
+      }
+    ]);
+    const file = path.join(TMP, "pending.bin");
+    await expect(tiles.stage(BOX, file, controller.signal)).rejects.toThrow("aborted");
+    expect(readStagedTiles(file)).toEqual([]);
+  });
+
   test("the latest offer of each setter is followed, and forgotten when watching stops", () => {
     let deliver: (h: ({ setter?: string; value: unknown } | undefined)[]) => void = () => {};
     let names: string[] = [];

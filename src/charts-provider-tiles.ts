@@ -156,16 +156,21 @@ export function odcTilesOf(current: () => readonly ChartTilesApi[]): OdcTiles {
       if (charts.length === 0) {
         return 0;
       }
+      const halt = (): void => {
+        if (signal.aborted) {
+          throw new Error("aborted");
+        }
+      };
       const fd = fs.openSync(file, "w");
       let count = 0;
       try {
         let since = 0;
         for (const chart of charts) {
           for (const t of tilesToRead(bbox, chart.covered)) {
-            if (signal.aborted) {
-              throw new Error("aborted");
-            }
+            halt();
             const data = await chart.offer.getTile(chart.id, t.z, t.x, t.y);
+            // An abort while the read was pending must not write its tile.
+            halt();
             if (data instanceof Uint8Array && data.length > 0) {
               writeStagedTile(fd, { ...t, data });
               count++;
@@ -176,6 +181,7 @@ export function odcTilesOf(current: () => readonly ChartTilesApi[]): OdcTiles {
             }
           }
         }
+        halt();
       } finally {
         fs.closeSync(fd);
       }

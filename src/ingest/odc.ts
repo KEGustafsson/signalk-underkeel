@@ -121,8 +121,14 @@ export function coverageTiles(coverage: unknown): TileId[] {
  * answers a missing tile from its nearest ancestor, a region overview at a smaller scale.
  */
 export function tilesToRead(bbox: Bbox, covered: readonly TileId[], z = ODC_ZOOM): TileId[] {
+  const byZoom = new Map<number, Set<string>>();
+  for (const c of covered) {
+    if (c.z <= z) {
+      byZoom.set(c.z, (byZoom.get(c.z) ?? new Set()).add(`${c.x}/${c.y}`));
+    }
+  }
   const inside = (x: number, y: number): boolean =>
-    covered.some((c) => c.z <= z && x >> (z - c.z) === c.x && y >> (z - c.z) === c.y);
+    [...byZoom].some(([cz, set]) => set.has(`${x >> (z - cz)}/${y >> (z - cz)}`));
   const out: TileId[] = [];
   const [w, s, e, n] = bbox;
   for (let y = tileY(n, z); y <= tileY(s, z); y++) {

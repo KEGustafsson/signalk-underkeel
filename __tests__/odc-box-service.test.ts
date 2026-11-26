@@ -25,11 +25,19 @@ const POS: LonLat = [(W + E) / 2, (S + N) / 2];
 
 /** Charts Provider's Open Data Charts as the box service sees them, one tile per box. */
 function fakeOdc() {
-  const odc = { key: "odc-a 9/248/178" as string | undefined, staged: [] as Bbox[] };
+  const odc = {
+    key: "odc-a 9/248/178" as string | undefined,
+    staged: [] as Bbox[],
+    fail: false
+  };
   const tiles: OdcTiles = {
     key: () => odc.key,
     stage: (bbox, file) => {
       odc.staged.push(bbox);
+      if (odc.fail) {
+        fs.writeFileSync(file, "torn");
+        return Promise.reject(new Error("tile store busy"));
+      }
       const fd = fs.openSync(file, "w");
       writeStagedTile(fd, {
         ...TILE,
@@ -44,9 +52,10 @@ function fakeOdc() {
   return { odc, tiles };
 }
 
-function harness(tiles: OdcTiles) {
+function harness(tiles: OdcTiles, catzoc = 4) {
   const t = { now: 1_800_000_000_000, index: undefined as ChartIndex | undefined };
   const built: string[][] = [];
+  const errors: string[] = [];
   const build: IndexBuilder = (job) => {
     built.push(job.dirs);
     return Promise.resolve({ catalogue: { version: 1, cells: [] } } as unknown as ChartIndex);
@@ -67,12 +76,21 @@ function harness(tiles: OdcTiles) {
     onIndex: (i) => {
       t.index = i;
     },
-    odc: { tiles, catzoc: 4 },
-    error: (m) => {
-      throw new Error(m);
-    }
+    odc: { tiles, catzoc },
+    error: (m) => errors.push(m)
   };
-  return { t, built, service: new WfsService(deps) };
+  return { t, built, errors, service: new WfsService(deps) };
+}
+
+/** As a real build leaves it: the index directory records the box it was built in. */
+function indexedIn(h: ReturnType<typeof harness>): void {
+  const indexDir = path.join(TMP, "index");
+  fs.mkdirSync(indexDir, { recursive: true });
+  const bbox = h.service.status().box?.bbox;
+  fs.writeFileSync(
+    path.join(indexDir, "box.json"),
+    JSON.stringify({ version: 1, bbox, sources: [] })
+  );
 }
 
 beforeEach(() => {
@@ -90,8 +108,57 @@ describe("Open Data Charts in the box around the vessel", () => {
     expect(odc.staged).toHaveLength(1);
     expect(h.built).toEqual([[ENC, ODC_DIR]]);
     expect(fs.existsSync(path.join(ODC_DIR, "SOUNDG.geojson"))).toBe(true);
-    expect(fs.existsSync(path.join(TMP, "odc-tiles.bin"))).toBe(false);
-    expect(h.service.status().box).toMatchObject({ odc: odc.key, odcTiles: 1 });
+    expect(fs.readdirSync(TMP).filter((n) => n.startsWith("odc-tiles"))).toEqual([]);
+    expect(h.service.status().box).toMatchObject({ odc: odc.key, odcTiles: 1, odcCatzoc: 4 });
+    expect(h.errors).toEqual([]);
+  });
+
+  test("a failed tile read still builds the ENC, and the charts are read again 5 min later", async () => {
+    const { odc, tiles } = fakeOdc();
+    odc.fail = true;
+    const h = harness(tiles);
+    await h.service.check();
+    expect(h.built).toEqual([[ENC]]);
+    expect(h.errors).toEqual([
+      expect.stringMatching(/Open Data Charts tiles not read: tile store busy/)
+    ]);
+    expect(h.service.status().box?.odc).toBeUndefined();
+    expect(fs.readdirSync(TMP).filter((n) => n.startsWith("odc-tiles"))).toEqual([]);
+    odc.fail = false;
+    h.t.now += 120_000;
+    await h.service.check();
+    expect(h.built).toHaveLength(1);
+    h.t.now += 240_000;
+    await h.service.check();
+    expect(h.built).toEqual([[ENC], [ENC, ODC_DIR]]);
+  });
+
+  test("a new assumed survey quality builds the box again, after a restart too", async () => {
+    const { tiles } = fakeOdc();
+    const first = harness(tiles);
+    await first.service.check();
+    indexedIn(first);
+    const same = harness(tiles);
+    same.t.index = first.t.index;
+    await same.service.check();
+    expect(same.built).toEqual([]);
+    const again = harness(tiles, 6);
+    again.t.index = first.t.index;
+    await again.service.check();
+    expect(again.built).toEqual([[ENC, ODC_DIR]]);
+    expect(again.service.status().box?.odcCatzoc).toBe(6);
+  });
+
+  test("a box no chart covers is not rebuilt over the survey quality", async () => {
+    const { odc, tiles } = fakeOdc();
+    odc.key = undefined;
+    const first = harness(tiles);
+    await first.service.check();
+    indexedIn(first);
+    const again = harness(tiles, 6);
+    again.t.index = first.t.index;
+    await again.service.check();
+    expect(again.built).toEqual([]);
   });
 
   test("the box is built again once the charts meeting it change, not before", async () => {
@@ -122,6 +189,11 @@ describe("Open Data Charts in the box around the vessel", () => {
     const first = harness(tiles);
     await first.service.check();
     expect(harness(tiles).service.savedCells()).toEqual([ODC_DIR]);
+    indexedIn(first);
+    const kept = harness(tiles);
+    kept.t.index = first.t.index;
+    await kept.service.check();
+    expect(kept.built).toEqual([]);
     fs.writeFileSync(path.join(ODC_DIR, "DSID.geojson"), "");
     const again = harness(tiles);
     expect(again.service.savedCells()).toEqual([]);

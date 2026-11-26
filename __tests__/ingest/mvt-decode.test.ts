@@ -75,8 +75,40 @@ describe("vector tile decoding", () => {
     expect(decodeTile(new Uint8Array(gzipSync(tile)), ID)).toEqual(decodeTile(tile, ID));
   });
 
+  test("a negative int64 value reads as its signed number", () => {
+    const signed = encodeTile(ID, {
+      SOUNDG: [{ point: [at(0.5, 0.5)], properties: { DEPTH: -3n, BIG: 2n ** 40n } }]
+    });
+    expect(decodeTile(signed, ID).get("SOUNDG")?.[0]?.properties).toEqual({
+      DEPTH: -3,
+      BIG: 2 ** 40
+    });
+  });
+
+  test("a geometry sent in two packed parts reads as one, in wire order", () => {
+    const feature = [0x18, 0x01, 0x22, 0x01, 0x09, 0x22, 0x02, 0x14, 0x28];
+    const layer = [
+      0x78,
+      0x02,
+      0x0a,
+      0x01,
+      0x4c,
+      0x12,
+      feature.length,
+      ...feature,
+      0x28,
+      0x80,
+      0x20
+    ];
+    const [point] = decodeTile(Uint8Array.from([0x1a, layer.length, ...layer]), ID).get("L") ?? [];
+    near(point?.geometry?.coordinates, [W + ((E - W) * 10) / 4096, N - ((N - S) * 20) / 4096]);
+  });
+
   test("a body that is not a whole vector tile throws", () => {
     expect(() => decodeTile(tile.subarray(0, tile.length - 7), ID)).toThrow(/vector tile/);
     expect(() => decodeTile(Uint8Array.from([0x1a, 0x05, 0x0f]), ID)).toThrow(/vector tile/);
+    // Unknown fixed-width fields cut short.
+    expect(() => decodeTile(Uint8Array.from([0x09, 1, 2, 3]), ID)).toThrow(/vector tile/);
+    expect(() => decodeTile(Uint8Array.from([0x0d, 1, 2]), ID)).toThrow(/vector tile/);
   });
 });

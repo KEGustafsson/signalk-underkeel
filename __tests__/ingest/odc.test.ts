@@ -116,7 +116,12 @@ describe("the Open Data Charts cell", () => {
     expect(layers.DEPARE?.features).toHaveLength(2);
     for (const [i, f] of (layers.DEPARE?.features ?? []).entries()) {
       const [w, s, e, n] = tileBbox(i === 0 ? A : B);
-      const ring = (f.geometry?.coordinates as LonLatPoint[][][])[0]?.[0] ?? [];
+      expect(f.geometry?.type).toBe("MultiPolygon");
+      const ring = (f.geometry?.coordinates as LonLatPoint[][][])[0]?.[0];
+      if (!ring) {
+        throw new Error("no exterior ring");
+      }
+      expect(ring.length).toBeGreaterThanOrEqual(4);
       for (const [lon, lat] of ring) {
         expect(lon).toBeGreaterThanOrEqual(w - 1e-9);
         expect(lon).toBeLessThanOrEqual(e + 1e-9);
