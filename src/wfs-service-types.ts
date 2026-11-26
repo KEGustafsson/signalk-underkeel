@@ -3,6 +3,7 @@ import type { WfsConfig } from "./config";
 import type { WfsRefresher } from "./build-process";
 import type { BoxRebuild, BoxSizing } from "./box-status";
 import type { BoxWarmer } from "./cell-warm";
+import type { OdcRecord, OdcSource } from "./odc-box";
 import type { Bbox } from "./ingest/wfs";
 import type { Clock } from "./monitor";
 import type { ChartIndex } from "./spatial/chart-index";
@@ -10,7 +11,7 @@ import type { ChartIndex } from "./spatial/chart-index";
 /** The types of the box service (`wfs-service.ts`). */
 
 /** The box in use, as saved in `<data dir>/wfs/box.json`. */
-export interface WfsBox {
+export interface WfsBox extends OdcRecord {
   bbox: Bbox;
   centre: LonLat;
   radiusKm: number;
@@ -81,6 +82,8 @@ export interface WfsServiceDeps {
   onIndex: (index: ChartIndex, changed?: Bbox[]) => void | Promise<void>;
   /** Fills the cell cache between builds (`cell-warm.ts`); none when absent. */
   warm?: BoxWarmer;
+  /** Open Data Charts depths for the box, with the CATZOC assumed for them; none when off. */
+  odc?: OdcSource;
   error: (message: string) => void;
 }
 

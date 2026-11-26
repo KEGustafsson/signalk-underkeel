@@ -22,7 +22,7 @@ import type { VesselModel } from "./model/vessel";
 import { resolveVessel } from "./model/vessel";
 import type { ChartIndex } from "./spatial/chart-index";
 import { isPending, noIndexReason } from "./box-status";
-import { WFS_NOTICE } from "./ingest/wfs";
+import { licenceNotes } from "./ingest/advisory";
 import type { WaterLevelStatus } from "./water-level-service";
 import { WaterLevelService } from "./water-level-service";
 import { ChangeNotifier, groundingNotification, integrityUpdate } from "./notifications";
@@ -434,8 +434,8 @@ export class Monitor {
       this.indexReason,
       this.escape.skipped,
       boxNote,
-      // The WFS licence allows non-navigational use only; say so while it is on.
-      this.config.wfs && r.reason !== WFS_NOTICE ? WFS_NOTICE : undefined
+      // Neither the WFS licence nor Open Data Charts allow navigational use; say so.
+      ...licenceNotes(this.config, this.index?.catalogue.cells, r.reason)
     ];
     this.status.status(notes.filter((n) => n !== undefined).join(" · "), now);
   }

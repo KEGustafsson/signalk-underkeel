@@ -16,7 +16,7 @@ import {
   sharedEncApi
 } from "./shared-enc";
 import type { Bbox } from "./ingest/wfs";
-import { WFS_SOURCE } from "./ingest/wfs";
+import { isAdvisorySource } from "./ingest/advisory";
 import { startLivechart } from "./livechart-service";
 import { cellsNear } from "./livechart/rebind";
 import type { FetchLike } from "./model/fmi";
@@ -27,6 +27,8 @@ import type { BoxWarmer, WarmJob, Warming } from "./cell-warm";
 import { boxWarmer, startWarming } from "./cell-warm";
 import { inThreadSurveyor, workerSurveyor } from "./build-process";
 import { PlanningBoxes } from "./planning-box";
+import type { OdcTiles } from "./charts-provider-tiles";
+import { chartsProviderOdc } from "./charts-provider-tiles";
 import type { AreaRequests, EncBoxConfig, IndexBuilder } from "./wfs-service";
 import {
   inThreadRefresher,
@@ -44,14 +46,18 @@ export interface WfsWiring {
   config: PluginConfig;
   fetch: FetchLike;
   build: IndexBuilder;
+  /** Open Data Charts tiles; Charts Provider's (`chartsProviderOdc`) when absent. */
+  odcTiles?: OdcTiles;
 }
 
 const pause = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
-/** The catalogues list the same cells in the same order, the WFS cell aside. */
+/** The catalogues list the same cells in the same order, the cells of the box's own sources aside. */
 function sameCells(a: ChartIndex, b: ChartIndex): boolean {
   const key = (i: ChartIndex) =>
-    i.catalogue.cells.map((c) => (c.source === WFS_SOURCE ? WFS_SOURCE : JSON.stringify(c)));
+    i.catalogue.cells.map((c) =>
+      isAdvisorySource(c.source) ? String(c.source) : JSON.stringify(c)
+    );
   return key(a).join("\n") === key(b).join("\n");
 }
 
@@ -305,6 +311,9 @@ export function startWfs(
     maxRadiusKm: w.config.boxMaxRadiusKm || autoCapKm(workerHeapLimitMb()),
     onIndex: (index, changed) => useIndex(w, index, changed),
     warm,
+    ...(w.config.openDataCharts
+      ? { odc: { tiles: w.odcTiles ?? chartsProviderOdc, catzoc: w.config.openDataCharts.catzoc } }
+      : {}),
     error: (m) => {
       w.app.error(m);
       // With no index in use the failure is why the look-ahead is off: an error, not "waiting",

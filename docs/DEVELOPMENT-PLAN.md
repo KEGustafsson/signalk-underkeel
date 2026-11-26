@@ -412,6 +412,32 @@ coverage past the box get a `reason`. The build process posts its phase and coun
    whose `verdat` does not map to the water-level source is rejected with a reason on
    `/status`. A used cell sets the leaf to `min(current dMin, dShoal)` (flag `CSB_ADJUSTED`),
    never raises it, and never adds coverage.
+5. **Open Data Charts** (decision, 2026-11-26). Vector charts that
+   [open-data-charts](https://github.com/dirkwa/open-data-charts) builds from open data (national
+   surveys and depth models, EMODnet, OpenStreetMap) for waters without free official ENC, as one
+   MBTiles of S-57 layers per z9 tile, not for navigation. signalk-charts-provider-simple
+   downloads them as chart sets and offers their tiles in-process through its `chartTiles`
+   PropertyValue, whose `charts()` (2.26 and later) marks the charts put together from an Open
+   Data Charts set and lists the z9 tiles each fills (`coverage`); a secured server needs no
+   token. On by default, as it reads only what the user downloaded there. For each box (the WFS
+   box or the ENC box; none for a whole build) the main thread reads the z15 tiles of those
+   charts that meet the box inside their coverage, about 700 for a 10 km box at 50° N, yielding
+   every 32, and stages them in one file; the box's child process decodes them (Mapbox Vector
+   Tile 2.1, `ingest/mvt-decode.ts`), cuts each tile's features to the tile so its buffer is read
+   once, and writes them as one cell directory, `OD1ODC01`, in the layer layout of the WFS cell
+   (`ingest/odc.ts`). Past a chart's coverage Charts Provider answers a missing tile from its
+   nearest ancestor, a smaller-scale overview, so only covered tiles are read. From z15 a unit
+   holds every feature it draws deeper and drops no polygon as tiny. The cell is band 1, so
+   every ENC cell wins where both cover; its coverage is the tiles read; its survey quality an
+   assumed CATZOC (configurable, default C, since the charts mix surveys with 100 m depth
+   models); it states no datum, so it is read on an unknown datum (§4.5). It carries
+   `UK_SOURCE = open-data-charts`, so every tile from it carries `NOT_FOR_NAVIGATION` as the WFS
+   cell's do: the look-ahead is never `normal` there (at most `alert`, with the Open Data Charts
+   notice), route legs are never `ok`, and the overlay never draws `clear`. The box records the
+   charts it was built with (their ids and coverage) and is built again when they change, as
+   when a set is downloaded or removed; a torn or missing saved cell is read again from the
+   tiles at the first check, as the WFS cell is downloaded again. Planning boxes do not read them
+   yet.
 
 **S-57 object classes used:**
 

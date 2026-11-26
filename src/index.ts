@@ -41,6 +41,7 @@ import {
   withSharedCells
 } from "./shared-enc";
 import { watchChartsProviderWfs } from "./charts-provider-wfs";
+import { watchChartTiles } from "./charts-provider-tiles";
 import fs from "fs";
 import path from "path";
 
@@ -262,9 +263,11 @@ export = function underkeel(
       const migration = migrateConfig(options);
       persistMigration(app, options, migration);
       const config = withSharedCells(parseConfig(migration.config), app.getDataDirPath());
+      unregister?.();
+      unregister = both(watchChartTiles(app), watchChartsProviderWfs(app));
       const wfs = startBox({ app, clock, state, config, fetch, build });
       const planning = startPlanningBoxes({ app, clock, state, config, fetch, build }, wfs);
-      const plan = planIndex(config, app.getDataDirPath(), wfs?.savedCell() ? [wfs.cellDir] : []);
+      const plan = planIndex(config, app.getDataDirPath(), wfs?.savedCells() ?? []);
       const load = "load" in plan ? noteSharedCells(plan.load, config) : pendingLoad(plan);
       const monitor = new Monitor(app, PLUGIN_ID, config, load.index, load.reason, clock, fetch);
       const acks = new AckStore(path.join(app.getDataDirPath(), "acks.json"));
@@ -298,11 +301,7 @@ export = function underkeel(
       shared = watchAtStart(app, clock, state, plan, restart && (() => restart(migration.config)));
       mountAssets(app);
       app.registerResourceProvider(manifestProvider(VERSION));
-      unregister?.();
-      unregister = both(
-        registerPlanningApi(planningApiOf(app, clock, state)),
-        watchChartsProviderWfs(app)
-      );
+      unregister = both(unregister, registerPlanningApi(planningApiOf(app, clock, state)));
     },
 
     stop(): void {

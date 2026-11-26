@@ -92,7 +92,13 @@ export function classify(
  * without course and speed only the vessel's own footprint is checked
  * (`unknown`), and a fallback water level is published as an alert.
  */
-export function degrade(c: Verdict, m: Motion, wl: WaterLevel, fps: FootprintResult[]): Verdict {
+export function degrade(
+  c: Verdict,
+  m: Motion,
+  wl: WaterLevel,
+  fps: FootprintResult[],
+  notice = WFS_NOTICE
+): Verdict {
   if (c.state !== "normal") {
     return c;
   }
@@ -108,7 +114,7 @@ export function degrade(c: Verdict, m: Motion, wl: WaterLevel, fps: FootprintRes
   }
   // Depths from an advisory source lack rocks and survey quality: never normal.
   if (fps.some((f) => f.flags & FLAGS.NOT_FOR_NAVIGATION)) {
-    return { ...c, state: "alert", reason: WFS_NOTICE };
+    return { ...c, state: "alert", reason: notice };
   }
   if (!m.moving) {
     return { ...c, reason: "low speed: only the current position is checked" };

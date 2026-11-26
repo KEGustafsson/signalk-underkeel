@@ -8,6 +8,7 @@ import { gnssSigma } from "../model/position";
 import type { DynamicsOptions, VesselModel } from "../model/vessel";
 import { vesselTerms } from "../model/vessel";
 import type { ChartIndex } from "../spatial/chart-index";
+import { advisoryNotice } from "../ingest/advisory";
 import { flagNames } from "../spatial/node-store";
 import type { RiskTile } from "../spatial/pyramid";
 import { footprintGeom, mercatorBuffer, minDepthOver } from "../spatial/pyramid";
@@ -433,6 +434,19 @@ export function escapeFor(
     : null;
 }
 
+/** Each catalogue's advisory notice, worked out once per index rather than every tick. */
+const notices = new WeakMap<ChartIndex["catalogue"], string>();
+
+function noticeOf(index: ChartIndex): string {
+  const { catalogue } = index;
+  let notice = notices.get(catalogue);
+  if (notice === undefined) {
+    notice = advisoryNotice(catalogue.cells.map((c) => c.source));
+    notices.set(catalogue, notice);
+  }
+  return notice;
+}
+
 export function evaluateLookahead(
   nav: NavState,
   inputs: LookaheadInputs,
@@ -458,7 +472,7 @@ export function evaluateLookahead(
     footprint(t, u.origin, tracks, m, u.vessel, u.chart, s, opts, stop, spanOf(from, u.step))
   );
   const fps = scored.footprints;
-  const assessed = degrade(classify(fps, opts, scored), m, wl, fps);
+  const assessed = degrade(classify(fps, opts, scored), m, wl, fps, noticeOf(u.chart));
   const verdict = u.capped
     ? uncertainPosition(assessed, s.sigmaPos, inputs.positionReason)
     : assessed;

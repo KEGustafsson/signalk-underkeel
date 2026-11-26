@@ -1,7 +1,8 @@
 import { EARTH_RADIUS } from "./foundation/geo";
 import { cellSources } from "./index-loader";
 import type { Bbox } from "./ingest/wfs";
-import { bboxProblem, WFS_SOURCE } from "./ingest/wfs";
+import { bboxProblem } from "./ingest/wfs";
+import { isAdvisorySource } from "./ingest/advisory";
 import type { BoxJobDeps } from "./wfs-worker";
 import { growBbox } from "./spatial/build-box";
 import { MAX_CHART_BUFFER } from "./spatial/chart-position";
@@ -60,7 +61,7 @@ export function boxMeasure(
   const wfs = "url" in deps.config;
   // The cells the build reads: those of the index in use, and any S-57 cell in cellsDir now.
   const cells =
-    deps.index()?.catalogue.cells.some((c) => c.source !== WFS_SOURCE) === true ||
+    deps.index()?.catalogue.cells.some((c) => !isAdvisorySource(c.source)) === true ||
     (parts !== undefined && cellSources(deps.cellsDir).length > 0);
   const corridor = parts !== undefined && wfs && !cells;
   const km2 = corridor ? parts.reduce((sum, p) => sum + bboxKm2(p), 0) : bboxKm2(bbox);

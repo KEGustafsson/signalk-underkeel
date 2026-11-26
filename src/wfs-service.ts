@@ -10,6 +10,7 @@ import type { RunningBuild } from "./box-status";
 import { refreshJob } from "./wfs-worker";
 import { boxSummary, phaseText, rebuildStatus } from "./box-status";
 import { readCellInfo } from "./ingest/cell-reader";
+import { OdcBox } from "./odc-box";
 import type { Bbox } from "./ingest/wfs";
 import {
   boxAround,
@@ -104,9 +105,11 @@ export class WfsService {
   private rebuild?: RunningBuild;
   /** Lowered for this run when a box ran its build out of memory. */
   private ceilingKm?: number;
+  private readonly odc: OdcBox;
 
   constructor(private readonly deps: WfsServiceDeps) {
     this.box = this.readBox();
+    this.odc = new OdcBox(deps.dir, deps.odc);
   }
 
   /** Whether this box downloads Traficom WFS depths, not only builds ENC cells around the vessel. */
@@ -121,6 +124,13 @@ export class WfsService {
 
   get cellDir(): string {
     return path.join(this.deps.dir, WFS_CELL_NAME);
+  }
+
+  /** The saved cells a start builds or checks the saved index with: the WFS and ODC cells. */
+  savedCells(): string[] {
+    const odc = this.odc.saved(this.box);
+    this.cellLost ||= odc.lost;
+    return [this.savedCell(), odc.dir].filter((d): d is string => d !== undefined);
   }
 
   /**
@@ -276,7 +286,7 @@ export class WfsService {
       !this.indexed ||
       this.deps.index() === undefined ||
       this.resize(b) ||
-      b.catzoc !== this.catzoc() ||
+      this.sourcesChanged(b) ||
       haversine(pos, b.centre) > (b.radiusKm * 1000) / 2 ||
       this.edgeSoon(pos, b)
     );
@@ -298,6 +308,11 @@ export class WfsService {
     const reach = Math.max(look, Math.min(look + EDGE_BAND, (b.radiusKm * 1000) / 2));
     const travel = (m.sog * REFRESH_MARGIN * this.refreshMs()) / 1000;
     return edgeAhead(pos, m.cog, b.bbox) < travel + reach;
+  }
+
+  /** Whether the box's own sources changed: the WFS survey quality, the Open Data Charts. */
+  private sourcesChanged(b: WfsBox): boolean {
+    return b.catzoc !== this.catzoc() || this.odc.changed(b.bbox, b);
   }
 
   private get label(): string {
@@ -409,14 +424,17 @@ export class WfsService {
       const centre = this.centreAhead(pos, radiusKm, run.estimateMs ?? this.refreshMs());
       const bbox = boxAround(centre, radiusKm);
       this.announce(bbox, now);
-      const { index, features } = await this.deps.refresh(
-        refreshJob(this.deps, this.cellDir, bbox, now),
-        controller.signal,
-        (progress) => {
-          if (this.rebuild === run) {
-            run.progress = progress;
+      const odc = await this.odc.stage(bbox, now, controller.signal);
+      const { index, features } = await OdcBox.whileStaged(odc, () =>
+        this.deps.refresh(
+          refreshJob(this.deps, this.cellDir, bbox, now, undefined, odc.job),
+          controller.signal,
+          (progress) => {
+            if (this.rebuild === run) {
+              run.progress = progress;
+            }
           }
-        }
+        )
       );
       const box: WfsBox = {
         bbox,
@@ -425,7 +443,8 @@ export class WfsService {
         catzoc: this.catzoc(),
         fetchedAt: new Date(now).toISOString(),
         features,
-        durationMs: this.deps.clock.now() - now
+        durationMs: this.deps.clock.now() - now,
+        ...OdcBox.record(odc)
       };
       fs.writeFileSync(path.join(this.deps.dir, "box.json"), JSON.stringify(box));
       this.box = box;

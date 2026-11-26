@@ -7,7 +7,7 @@ import type { RuleFeature } from "./rule-features";
 import { parseRuleLayer, RULE_LAYERS } from "./rule-features";
 import type { GeoJsonFeatureCollection } from "./s57-geojson";
 import { parseLayer, POSITION_LAYER, S57_LAYERS } from "./s57-geojson";
-import { WFS_SOURCE } from "./wfs";
+import { isAdvisorySource } from "./advisory";
 
 /**
  * Reads one cell from its GeoJSON layers: a directory holding `<LAYER>.geojson` files
@@ -136,7 +136,7 @@ export function readCellLayers(
     );
   }
   const info: CellInfo = { ...partial, band };
-  const advisory = info.source === WFS_SOURCE ? true : undefined;
+  const advisory = isAdvisorySource(info.source) ? true : undefined;
   // Without the positional quality an approximate shoreline cannot be told
   // from a surveyed one, so the shoreline keeps the survey's σ.
   const topoSigma =

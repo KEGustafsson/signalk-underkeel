@@ -5,7 +5,7 @@ import { usableMemory } from "./foundation/memory";
 import type { WfsFetch } from "./ingest/wfs";
 import { downloadWfsCell } from "./ingest/wfs";
 import type { WfsCounts, WfsJob, WfsReply } from "./wfs-worker";
-import { NO_FEATURES, refreshBuild, refreshCells } from "./wfs-worker";
+import { NO_FEATURES, refreshBuild, refreshCells, writeOdc } from "./wfs-worker";
 import type { BuildProgress } from "./spatial/build-progress";
 import { isProgress } from "./spatial/build-progress";
 import type { BuildJob, BuildReply } from "./spatial/build-worker";
@@ -227,6 +227,7 @@ export function inThreadRefresher(fetch: WfsFetch, build: IndexBuilder): WfsRefr
     const features = job.download
       ? await downloadWfsCell({ ...job.download, now: new Date(job.download.now), fetch, signal })
       : NO_FEATURES;
+    writeOdc(job);
     await readsSettled(job.build.indexDir);
     return { index: await build(refreshBuild(job, cells), signal, progress), features };
   };

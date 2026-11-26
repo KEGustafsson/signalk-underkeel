@@ -189,18 +189,28 @@ const WFS_FIELDS = {
   viaChartsProvider: { type: "boolean", title: "Via Charts Provider's WFS proxy", default: true }
 };
 
+const ODC_FIELDS = {
+  catzoc: {
+    ...WFS_FIELDS.catzoc,
+    title: "Survey quality to assume (the charts state none)",
+    default: "C",
+    description:
+      "Sets each sounding's danger radius (2 × position σ: B 50 m, C 500 m, U 1000 m) and the depth σ. The charts mix surveys with depth models of 100 m cells; C suits that mix, U is the most cautious."
+  }
+};
+
 const GROUNDING_FIELDS = {
   imuPath: { type: "string", title: "Longitudinal acceleration path (m/s²), optional" },
   decelThreshold: { type: "number", title: "Deceleration spike at or above (m/s²)", default: 2 }
 };
 
 /** An optional feature: an Enabled box that shows the feature's fields when ticked. */
-function feature(title: string, fields: Json, description?: string): Json {
+function feature(title: string, fields: Json, description?: string, on = false): Json {
   return {
     type: "object",
     title,
     ...(description ? { description } : {}),
-    properties: { enabled: { type: "boolean", title: "Enabled", default: false } },
+    properties: { enabled: { type: "boolean", title: "Enabled", default: on } },
     dependencies: whenOn("enabled", fields)
   };
 }
@@ -364,6 +374,12 @@ export function adminSchema(hints: SchemaHints = {}): Json {
         "Traficom WFS depths (not for navigational purposes)",
         WFS_FIELDS,
         "Downloads Traficom INSPIRE WFS depth areas and soundings around the vessel and fills gaps between ENC cells. Licensed for non-navigational use only; it has no rocks, wrecks or survey quality, so water it alone covers is never shown as clear and the look-ahead is never normal there. Needs internet."
+      ),
+      openDataCharts: feature(
+        "Open Data Charts depths (not for navigation)",
+        ODC_FIELDS,
+        "Reads the depths of the Open Data Charts sets Charts Provider has downloaded, where no ENC cell covers, around the vessel. Built from open data and not for navigation, so water they alone cover is never shown as clear and the look-ahead is never normal there. Read for the box around the vessel only: with Index box around the vessel at 0 and the Traficom WFS off they are not read.",
+        true
       ),
       groundingDetector: feature(
         "Grounding detector (raises notifications.grounding)",

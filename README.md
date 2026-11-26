@@ -111,7 +111,8 @@ chart set "Around the vessel" and the index is rebuilt with them. Where the vess
 chart coverage, the reason says what the charts provider answered: it is downloading the
 area, it has no ENC for this area (with its reason, such as no free ENC covering it), it is
 not running, or it is too old to be asked. Traficom WFS depths (below) are downloaded
-whatever ENC the charts provider has, and with none at all.
+whatever ENC the charts provider has, and with none at all; Open Data Charts depths (below)
+are read from the sets downloaded in its Open Data Charts tab, also with no ENC.
 The cells are
 read in place with GDAL compiled to WebAssembly
 (gdal3.js), which the plugin installs with it, and the updates are applied as they are read.
@@ -185,7 +186,7 @@ There are two places to set the plugin up, and both write the same configuration
 | Boat              | draft (empty uses Signal K `design.draft.maximum`) and safety margin under the keel (0 m); only the keel's lowest point counts, and waves are added on top (below) |
 | Water level       | source (`none`, `manual`, `signalk-tide`, `fmi`, see below); only the chosen source's fields are shown                                                             |
 | Warnings          | Early, Balanced or Late, in the table below                                                                                                                        |
-| Optional features | living chart (own soundings), Traficom WFS depths, grounding detector; each off until enabled                                                                      |
+| Optional features | living chart (own soundings), Traficom WFS depths, Open Data Charts depths (on), grounding detector; the others off until enabled                                  |
 
 | Warning style      | Looks ahead | Alert at | Warn at, within | Alarm at, within | Alarm on negative mean UKC |
 | ------------------ | ----------- | -------- | --------------- | ---------------- | -------------------------- |
@@ -217,7 +218,7 @@ Expert settings, with their defaults:
 | Water level  | manual height and σ; FMI refresh (600 s); chart-datum mappings for FMI                                                                                                                                                                 |
 | Route check  | planning speed (2.5 m/s), cross-track limit (30 m), accepted P(UKC < 0) (1 %)                                                                                                                                                          |
 | Living chart | depth path and transducer offsets; Signal K notes for suspected shoals; CSB export metadata                                                                                                                                            |
-| Other        | mooring zones (Signal K region ids); grounding detector acceleration path and threshold (2 m/s²); Traficom WFS survey quality (B) and box half-width (10 km)                                                                           |
+| Other        | mooring zones (Signal K region ids); grounding detector acceleration path and threshold (2 m/s²); Traficom WFS survey quality (B) and box half-width (10 km); Open Data Charts survey quality (C)                                      |
 
 The saved configuration carries a version, `configVersion`. At the first start after an update
 from a configuration without one, the plugin keeps a copy as `config-v1.json` in its data
@@ -329,6 +330,17 @@ example, `Monitoring: unknown — position stale`. Each value is sent when it ch
   plugin reads that it does not keep, and how to add them. The WFS is read
   directly, bypassing that store, when the setting is off, Charts Provider runs no proxy or does
   not keep that WFS, or asking it for the proxy fails.
+- **Open Data Charts depths** (on by default). The
+  [Open Data Charts](https://github.com/dirkwa/open-data-charts) sets downloaded in
+  signalk-charts-provider-simple's Open Data Charts tab (2.26.0 or later) are read for the box
+  around the vessel: depth areas, soundings, rocks, wrecks, obstructions and land, built from
+  open data for waters without free official ENC. They are **not for navigation**: water only
+  they cover is at most `alert`, never `ok` in a route check and never `clear` on the overlay.
+  Every ENC cell takes precedence wherever it covers the water; the charts, read as band 1, fill
+  only what ENC leaves. Their survey quality is an assumed CATZOC (C by default). Nothing is
+  downloaded by the plugin and no token is needed: Charts Provider hands the tiles over in the
+  server. They are read for the box only, so not with **Index box around the vessel** at 0 and
+  the Traficom WFS off.
 
 ## Guarantees
 

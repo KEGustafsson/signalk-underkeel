@@ -2,8 +2,11 @@ import { isMainThread } from "worker_threads";
 import type { WfsConfig } from "./config";
 import { cellSources, cellsMissing, savedCatalogue, sourceKeys } from "./index-loader";
 import type { EncReader } from "./ingest/enc-read-process";
+import type { OdcCellJob } from "./ingest/odc";
+import { writeOdcCell } from "./ingest/odc";
 import type { Bbox, WfsDownload, WfsFetch } from "./ingest/wfs";
-import { downloadWfsCell, FTIA_WFS_URL, WFS_SOURCE } from "./ingest/wfs";
+import { downloadWfsCell, FTIA_WFS_URL } from "./ingest/wfs";
+import { isAdvisorySource } from "./ingest/advisory";
 import type { ChartIndex } from "./spatial/chart-index";
 import { readBox } from "./spatial/build-box";
 import { reportProgress } from "./spatial/build-progress";
@@ -22,6 +25,8 @@ import { wfsUrl } from "./charts-provider-wfs";
 export interface WfsJob {
   /** Absent for a box of ENC cells alone: the index is rebuilt around the vessel only. */
   download?: Omit<WfsDownload, "fetch" | "signal" | "now"> & { now: string };
+  /** The Open Data Charts tiles staged for the box, written as its cell before the build. */
+  odc?: OdcCellJob;
   /** The S-57 cells found under it are built ahead of `build.dirs`. */
   cellsDir?: string;
   /**
@@ -52,19 +57,21 @@ export interface BoxJobDeps {
 
 /**
  * The refresh of the box `bbox`, started at `now`, with its WFS cell kept in `cellDir`; with
- * `parts` (a corridor within `bbox`), the cell covers them alone.
+ * `parts` (a corridor within `bbox`), the cell covers them alone. With `odc`, the Open Data
+ * Charts tiles staged for the box are its cell too.
  */
 export function refreshJob(
   deps: BoxJobDeps,
   cellDir: string,
   bbox: Bbox,
   now: number,
-  parts?: readonly Bbox[]
+  parts?: readonly Bbox[],
+  odc?: OdcCellJob
 ): WfsJob {
   const { config, inBox, cellsDir } = deps;
   const wfs = "url" in config ? config : undefined;
-  // With WFS depths alone in use an empty cells directory loses nothing.
-  const cells = deps.index()?.catalogue.cells.some((c) => c.source !== WFS_SOURCE);
+  // With advisory depths alone in use an empty cells directory loses nothing.
+  const cells = deps.index()?.catalogue.cells.some((c) => !isAdvisorySource(c.source));
   return {
     download: wfs && {
       url: wfsUrl(wfs.url, wfs.viaChartsProvider),
@@ -77,12 +84,13 @@ export function refreshJob(
       linesUrl: wfsUrl(FTIA_WFS_URL, wfs.viaChartsProvider)
     },
     cellsDir,
-    // WFS depths are built whatever ENC the charts provider has, but an index of charted
-    // hazards is kept while its cells are away, not replaced by depths alone.
-    cellsRequired: !wfs || cells === true,
+    ...(odc && { odc }),
+    // WFS and Open Data Charts depths are built whatever ENC the charts provider has, but an
+    // index of charted hazards is kept while its cells are away, not replaced by depths alone.
+    cellsRequired: (!wfs && !odc) || cells === true,
     box: inBox ? bbox : undefined,
     build: {
-      dirs: wfs ? [cellDir] : [],
+      dirs: [...(wfs ? [cellDir] : []), ...(odc ? [odc.dir] : [])],
       leafZoom: deps.leafZoom,
       indexDir: deps.indexDir,
       ...(deps.cacheDir === undefined ? {} : { cacheDir: deps.cacheDir }),
@@ -129,6 +137,13 @@ export function refreshBuild(job: WfsJob, cells: string[]): BuildJob {
   return changed && !readBox(build.indexDir) ? { ...build, changed } : build;
 }
 
+/** Writes the Open Data Charts cell of `job`, when it has one, before its build. */
+export function writeOdc(job: WfsJob): void {
+  if (job.odc) {
+    writeOdcCell(job.odc);
+  }
+}
+
 export async function runWfsJob(
   job: WfsJob,
   fetch: WfsFetch,
@@ -142,6 +157,7 @@ export async function runWfsJob(
   const features = job.download
     ? await downloadWfsCell({ ...job.download, now: new Date(job.download.now), fetch, signal })
     : NO_FEATURES;
+  writeOdc(job);
   return { ...(await runBuild(refreshBuild(job, cells), reader)), features };
 }
 
