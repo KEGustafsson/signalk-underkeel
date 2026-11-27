@@ -73,6 +73,8 @@ export function refreshJob(
   const wfs = "url" in config ? config : undefined;
   // With advisory depths alone in use an empty cells directory loses nothing.
   const cells = deps.index()?.catalogue.cells.some((c) => !isAdvisorySource(c.source));
+  // Both cells are written again, so past a box neither keeps its saved roots.
+  const dirs = [...(wfs ? [cellDir] : []), ...(odc ? [odc.dir] : [])];
   return {
     download: wfs && {
       url: wfsUrl(wfs.url, wfs.viaChartsProvider),
@@ -91,12 +93,12 @@ export function refreshJob(
     cellsRequired: (!wfs && !odc) || cells === true,
     box: inBox ? bbox : undefined,
     build: {
-      dirs: [...(wfs ? [cellDir] : []), ...(odc ? [odc.dir] : [])],
+      dirs,
       leafZoom: deps.leafZoom,
       indexDir: deps.indexDir,
       ...(deps.cacheDir === undefined ? {} : { cacheDir: deps.cacheDir }),
       source: deps.source,
-      ...(inBox ? {} : { changed: [cellDir] })
+      ...(inBox ? {} : { changed: dirs })
     }
   };
 }
