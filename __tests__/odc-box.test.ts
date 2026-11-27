@@ -40,17 +40,22 @@ describe("the Open Data Charts box cell", () => {
     expect(box.changed(BOX, OdcBox.record(staged), 540_000)).toBe(true);
   });
 
-  test("a staging file of this process is kept however old; a crashed one's is removed", async () => {
-    const old = (Date.now() - 2 * 3_600_000) / 1000;
+  test("staging files of this or another live process are kept; a gone one's are removed", async () => {
     const own = path.join(TMP, `odc-tiles-${process.pid}-999999.bin`);
-    const crashed = path.join(TMP, "odc-tiles-1-1.bin");
-    for (const f of [own, crashed]) {
+    const live = path.join(TMP, `odc-tiles-${process.ppid}-1.bin`);
+    // Above any pid_max, so no such process.
+    const gone = path.join(TMP, "odc-tiles-99999999-1.bin");
+    const other = path.join(TMP, "odc-tiles-notes.txt");
+    for (const f of [own, live, gone, other]) {
       fs.writeFileSync(f, "");
-      fs.utimesSync(f, old, old);
     }
     const box = new OdcBox(TMP, { catzoc: 4, tiles: tiles(() => Promise.resolve(0)) });
     expect(await box.stage(BOX, 0, signal)).toEqual({ key: KEY, catzoc: 4 });
-    expect(fs.existsSync(own)).toBe(true);
-    expect(fs.existsSync(crashed)).toBe(false);
+    expect([own, live, gone, other].map((f) => fs.existsSync(f))).toEqual([
+      true,
+      true,
+      false,
+      true
+    ]);
   });
 });

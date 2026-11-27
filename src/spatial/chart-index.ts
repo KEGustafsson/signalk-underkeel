@@ -251,7 +251,8 @@ const STAGING_WRITER = /^(\d+)-(\d+)-/;
  */
 const MOVED_ASIDE = /^(?:\d+(?:-\d+-[0-9a-f]+)?|[0-9a-f]{8})$/;
 
-function isAlive(pid: number): boolean {
+/** Whether process `pid` runs, as far as this process can tell. */
+export function isAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;

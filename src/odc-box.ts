@@ -5,6 +5,7 @@ import { readCellInfo } from "./ingest/cell-reader";
 import type { OdcCellJob } from "./ingest/odc";
 import { ODC_CELL_NAME } from "./ingest/odc";
 import type { Bbox } from "./ingest/wfs";
+import { isAlive } from "./spatial/chart-index";
 
 /**
  * The Open Data Charts cell of the box around the vessel (`ingest/odc.ts`): which charts meet
@@ -37,12 +38,10 @@ export interface OdcStage {
 
 /** After a failed read the box is built without the charts, and read again after this, ms. */
 const RETRY_MS = 300_000;
-/** Staging files a crash left behind are removed once this old, ms. */
-const STALE_STAGING_MS = 3_600_000;
-const STAGING = /^odc-tiles-.*\.bin$/;
+/** A staging file's name: the process that wrote it, and its build. */
+const STAGING = /^odc-tiles-(\d+)-\d+\.bin$/;
 
 let staged = 0;
-const ownStaging = (): string => `odc-tiles-${process.pid}-`;
 
 export class OdcBox {
   /** Until when a box built without the charts after a failed read stays as it is. */
@@ -105,7 +104,7 @@ export class OdcBox {
     }
     this.removeStale();
     // Its own name, so an aborted build's cleanup cannot remove the next build's tiles.
-    const tiles = path.join(this.dir, `${ownStaging()}${++staged}.bin`);
+    const tiles = path.join(this.dir, `odc-tiles-${process.pid}-${++staged}.bin`);
     let count: number;
     try {
       count = await this.source.tiles.stage(bbox, tiles, signal);
@@ -135,22 +134,15 @@ export class OdcBox {
   }
 
   /**
-   * Removes the staging files a crashed process left. This process's own are left alone, as an
-   * aborted build may still be reading one. File times are the system clock's, so they are
-   * compared with it.
+   * Removes the staging files of processes that no longer run. This process's own and those of
+   * a live process are left alone, as a build, aborted or not, may still be reading one: the
+   * data directory is not known to belong to one server process.
    */
   private removeStale(): void {
-    const now = Date.now();
-    const own = ownStaging();
-    const left = fs.readdirSync(this.dir).filter((n) => STAGING.test(n) && !n.startsWith(own));
-    for (const name of left) {
-      const file = path.join(this.dir, name);
-      try {
-        if (now - fs.statSync(file).mtimeMs > STALE_STAGING_MS) {
-          fs.rmSync(file, { force: true });
-        }
-      } catch {
-        // Removed meanwhile by its own build.
+    for (const name of fs.readdirSync(this.dir)) {
+      const pid = Number(STAGING.exec(name)?.[1]);
+      if (Number.isInteger(pid) && pid !== process.pid && !isAlive(pid)) {
+        fs.rmSync(path.join(this.dir, name), { force: true });
       }
     }
   }
