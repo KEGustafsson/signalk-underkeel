@@ -155,7 +155,11 @@ export function writeOdc(job: WfsJob): { job: WfsJob; odc?: OdcCounts } {
   } catch (err) {
     const dir = job.odc.dir;
     const dirs = job.build.dirs.filter((d) => d !== dir);
-    fs.rmSync(dir, { recursive: true, force: true });
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // A cell left behind is out of the build all the same; the next refresh writes it again.
+    }
     const odc = { tiles: 0, features: 0, skipped: 0, error: (err as Error).message };
     return { job: { ...job, build: { ...job.build, dirs } }, odc };
   }

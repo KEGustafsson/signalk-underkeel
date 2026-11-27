@@ -3,12 +3,13 @@ import os from "os";
 import path from "path";
 import type { Bbox } from "../src/ingest/wfs";
 import type { BoxJobDeps } from "../src/wfs-worker";
-import { refreshJob } from "../src/wfs-worker";
+import { refreshJob, writeOdc } from "../src/wfs-worker";
 
-/** The Open Data Charts cell in a refresh's build is rebuilt past a box. */
+/** The Open Data Charts cell in a refresh's build: rebuilt past a box, dropped when unwritable. */
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "underkeel-refresh-odc-"));
 afterAll(() => fs.rmSync(TMP, { recursive: true, force: true }));
+afterEach(() => jest.restoreAllMocks());
 
 const BBOX: Bbox = [174, -23, 175, -22];
 const WFS_DIR = path.join(TMP, "FI1WFS01");
@@ -47,5 +48,17 @@ describe("a whole-index refresh", () => {
     expect(refreshJob(deps(true, true), WFS_DIR, BBOX, 0, undefined, odc()).build.changed).toBe(
       undefined
     );
+  });
+});
+
+describe("an Open Data Charts cell that cannot be written", () => {
+  test("is left out of the build even when its directory cannot be removed", () => {
+    const job = refreshJob(deps(false, true), WFS_DIR, BBOX, 0, undefined, odc());
+    jest.spyOn(fs, "rmSync").mockImplementation(() => {
+      throw new Error("EBUSY");
+    });
+    const written = writeOdc(job);
+    expect(written.job.build.dirs).toEqual([WFS_DIR]);
+    expect(written.odc?.error).toBeDefined();
   });
 });
