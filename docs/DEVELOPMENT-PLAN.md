@@ -420,7 +420,7 @@ coverage past the box get a `reason`. The build process posts its phase and coun
    downloads them as chart sets and offers their tiles in-process through its `chartTiles`
    PropertyValue, whose `charts()` (2.26 and later) marks the charts put together from an Open
    Data Charts set and lists the z9 tiles each fills (`coverage`); a secured server needs no
-   token. On by default, as it reads only what the user downloaded there. For each box (the WFS
+   token. On by default, as it reads only what the user downloaded there. With no ENC source chosen and the WFS off, the box around the vessel is built from these charts alone, as in waters with no free official ENC. For each box (the WFS
    box or the ENC box; none for a whole build) the main thread reads the z15 tiles of those
    charts that meet the box inside their coverage, about 700 for a 10 km box at 50° N, yielding
    every 32, and stages them in one file; the box's child process decodes them (Mapbox Vector

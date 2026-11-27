@@ -112,14 +112,16 @@ function freshMotion(w: WfsWiring): { sog: number; cog: number } | undefined {
 
 /**
  * The box kept around the vessel: the Traficom WFS box when that source is on, else a box
- * the ENC cells alone are built in; none when `boxRadiusKm` is 0 and the WFS is off.
+ * the ENC cells, the Open Data Charts or both are built in, so the charts are read with no
+ * ENC source too, as where no official ENC is free; none when `boxRadiusKm` is 0 and the WFS
+ * is off.
  */
 export function startBox(w: WfsWiring): WfsService | undefined {
-  const { wfs, cellsDir, boxRadiusKm } = w.config;
+  const { wfs, cellsDir, boxRadiusKm, openDataCharts } = w.config;
   if (wfs) {
     return startWfs(w, wfs);
   }
-  return cellsDir && boxRadiusKm > 0
+  return (cellsDir || openDataCharts) && boxRadiusKm > 0
     ? startWfs(w, { radiusKm: boxRadiusKm }, "chart-box")
     : undefined;
 }

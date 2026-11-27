@@ -378,7 +378,7 @@ export function adminSchema(hints: SchemaHints = {}): Json {
       openDataCharts: feature(
         "Open Data Charts depths (not for navigation)",
         ODC_FIELDS,
-        "Reads the depths of the Open Data Charts sets Charts Provider has downloaded, where no ENC cell covers, around the vessel. Built from open data and not for navigation, so water they alone cover is never shown as clear and the look-ahead is never normal there. Read for the box around the vessel only: with Index box around the vessel at 0 and the Traficom WFS off they are not read.",
+        "Reads the depths of the Open Data Charts sets Charts Provider has downloaded, where no ENC cell covers, around the vessel. Built from open data and not for navigation, so water they alone cover is never shown as clear and the look-ahead is never normal there. Read for the box around the vessel only, with or without an ENC source: with Index box around the vessel at 0 and the Traficom WFS off they are not read.",
         true
       ),
       groundingDetector: feature(
