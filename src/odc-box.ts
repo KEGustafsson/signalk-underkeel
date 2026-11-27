@@ -2,10 +2,11 @@ import fs from "fs";
 import path from "path";
 import type { OdcTiles } from "./charts-provider-tiles";
 import { readCellInfo } from "./ingest/cell-reader";
-import type { OdcCellJob } from "./ingest/odc";
+import type { OdcCellJob, OdcCounts } from "./ingest/odc";
 import { ODC_CELL_NAME } from "./ingest/odc";
 import type { Bbox } from "./ingest/wfs";
 import { isAlive } from "./spatial/chart-index";
+import { spoken } from "./engine/chart-box";
 
 /**
  * The Open Data Charts cell of the box around the vessel (`ingest/odc.ts`): which charts meet
@@ -34,10 +35,16 @@ export interface OdcStage {
   job?: OdcCellJob;
   count?: number;
   catzoc?: number;
+  /** Why the tiles could not be read: the box is built without them. */
+  failed?: string;
 }
 
-/** After a failed read the box is built without the charts, and read again after this, ms. */
+/**
+ * After a failed read the box is built without the charts, and read again this long after it
+ * is handed over, ms; doubled after each failure in a row, up to MAX_RETRY_MS.
+ */
 const RETRY_MS = 300_000;
+const MAX_RETRY_MS = 3_600_000;
 /** A staging file's name: the process that wrote it, and its build. */
 const STAGING = /^odc-tiles-(\d+)-\d+\.bin$/;
 
@@ -46,6 +53,10 @@ let staged = 0;
 export class OdcBox {
   /** Until when a box built without the charts after a failed read stays as it is. */
   private retryAt = -Infinity;
+  /** Failed reads in a row. */
+  private failures = 0;
+  /** What went wrong with the last read, for the status; none after a clean one. */
+  private problem?: string;
 
   constructor(
     private readonly dir: string,
@@ -79,17 +90,30 @@ export class OdcBox {
 
   /**
    * Whether the charts meeting the box, or the quality assumed for them, differ from those it
-   * was built with; after a failed read, only once the retry wait is over.
+   * was built with; after a failed read, only once the retry wait is over. While the charts
+   * cannot be known (Charts Provider not started yet, or its list unreadable) the box stays.
    */
   changed(box: Bbox, record: OdcRecord, now: number): boolean {
-    if (!this.source) {
+    const key = this.source?.tiles.key(box);
+    if (!this.source || key === undefined) {
       return false;
     }
-    const key = this.source.tiles.key(box);
-    if (key !== record.odc) {
+    const charts = key ?? undefined;
+    if (charts !== record.odc) {
       return record.odc !== undefined || now >= this.retryAt;
     }
-    return key !== undefined && record.odcCatzoc !== this.source.catzoc;
+    return charts !== undefined && record.odcCatzoc !== this.source.catzoc;
+  }
+
+  /** What the status says of the last read, when something went wrong with it. */
+  note(now: number): string | undefined {
+    if (this.problem === undefined) {
+      return undefined;
+    }
+    const wait = this.retryAt - now;
+    return wait > 0 && Number.isFinite(wait)
+      ? `${this.problem} (read again in ${spoken(wait)})`
+      : this.problem;
   }
 
   /**
@@ -99,7 +123,7 @@ export class OdcBox {
    */
   async stage(bbox: Bbox, now: number, signal: AbortSignal): Promise<OdcStage> {
     const key = this.source?.tiles.key(bbox);
-    if (!this.source || key === undefined) {
+    if (!this.source || key === null) {
       return {};
     }
     this.removeStale();
@@ -113,15 +137,16 @@ export class OdcBox {
       if (signal.aborted) {
         throw err;
       }
-      // From the failure: the reads before it may have taken a while.
-      this.retryAt = this.clock() + RETRY_MS;
-      this.error(`Open Data Charts tiles not read: ${(err as Error).message}`);
-      return {};
+      const failed = (err as Error).message;
+      this.problem = `Open Data Charts not read: ${failed}`;
+      this.error(this.problem);
+      return { failed };
     }
     const catzoc = this.source.catzoc;
     if (count === 0) {
       fs.rmSync(tiles, { force: true });
-      return { key, catzoc };
+      // No chart known when staging began: nothing to record.
+      return key === undefined ? {} : { key, catzoc };
     }
     const job: OdcCellJob = {
       tiles,
@@ -130,7 +155,7 @@ export class OdcBox {
       now: new Date(now).toISOString(),
       catzoc
     };
-    return { key, job, count, catzoc };
+    return { key: key ?? this.source.tiles.key(bbox) ?? undefined, job, count, catzoc };
   }
 
   /**
@@ -147,8 +172,26 @@ export class OdcBox {
     }
   }
 
-  /** What the box built with `stage` records. */
-  static record(stage: OdcStage): OdcRecord {
+  /**
+   * What the box built with `stage` records, once built; `read` is what the build process made
+   * of the tiles. After a failed read the box records no charts and waits before reading them
+   * again, from now, since a build takes minutes: longer after each failure in a row.
+   */
+  built(stage: OdcStage, read: OdcCounts | undefined): OdcRecord {
+    // A cell the build process could not write, or with no tile that decoded, holds nothing.
+    const failed = stage.failed ?? (read?.tiles === 0 ? read.error : undefined);
+    if (failed !== undefined) {
+      this.failures++;
+      const wait = Math.min(RETRY_MS * 2 ** (this.failures - 1), MAX_RETRY_MS);
+      this.retryAt = this.clock() + wait;
+      this.problem = `Open Data Charts not read: ${failed}`;
+      return {};
+    }
+    this.failures = 0;
+    this.retryAt = -Infinity;
+    this.problem = read?.skipped
+      ? `Open Data Charts: ${read.skipped} tile(s) left out, unreadable: ${read.error}`
+      : undefined;
     return {
       ...(stage.key === undefined ? {} : { odc: stage.key }),
       ...(stage.count === undefined ? {} : { odcTiles: stage.count }),

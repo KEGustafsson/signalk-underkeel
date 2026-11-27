@@ -69,6 +69,10 @@ export interface StagedTile extends TileId {
 export interface OdcCounts {
   tiles: number;
   features: number;
+  /** Tiles that did not decode, left out of the cell and its coverage. */
+  skipped: number;
+  /** Why the first of them did not, or why no cell was written at all. */
+  error?: string;
 }
 
 const lonOf = (x: number, z: number): number => (x / 2 ** z) * 360 - 180;
@@ -344,6 +348,43 @@ const ring = ([w, s, e, n]: Bbox): number[][][] => [
   ]
 ];
 
+/** Each tile's features cut to the tile and `bbox`, by layer; a tile that does not decode is left out. */
+function readTiles(tiles: readonly StagedTile[], bbox: Bbox) {
+  const byLayer = new Map<string, GeoJsonFeature[]>();
+  const read: TileId[] = [];
+  const counts: OdcCounts = { tiles: 0, features: 0, skipped: 0 };
+  for (const tile of tiles) {
+    const box = intersect(tileBbox(tile), bbox);
+    if (!box) {
+      continue;
+    }
+    let decoded: Map<string, GeoJsonFeature[]>;
+    try {
+      decoded = decodeTile(tile.data, tile, ODC_LAYERS);
+    } catch (err) {
+      // Left out with no coverage, so one bad tile never holds up the rest of the box.
+      counts.skipped++;
+      counts.error ??= `Open Data Charts tile ${tile.z}/${tile.x}/${tile.y}: ${(err as Error).message}`;
+      continue;
+    }
+    read.push(tile);
+    for (const [name, list] of decoded) {
+      const layer = AS_DEPTH_AREA.has(name) ? "DEPARE" : name;
+      const out = byLayer.get(layer) ?? [];
+      for (const f of list) {
+        const clipped = clipFeature(f, box);
+        if (clipped) {
+          out.push(clipped);
+          counts.features++;
+        }
+      }
+      byLayer.set(layer, out);
+    }
+  }
+  counts.tiles = read.length;
+  return { byLayer, read, counts };
+}
+
 /**
  * The cell's GeoJSON layers from `tiles`, each tile's features cut to the tile and `bbox`, so
  * the buffer a tile carries past its edge is read once, from the tile it belongs to. With
@@ -356,39 +397,7 @@ export function odcCellLayers(
   fetchedAt: Date,
   catzoc = 6
 ): { layers: Record<string, GeoJsonFeatureCollection>; counts: OdcCounts } {
-  const byLayer = new Map<string, GeoJsonFeature[]>();
-  const read: TileId[] = [];
-  let features = 0;
-  for (const tile of tiles) {
-    const box = intersect(tileBbox(tile), bbox);
-    if (!box) {
-      continue;
-    }
-    let decoded: Map<string, GeoJsonFeature[]>;
-    try {
-      decoded = decodeTile(tile.data, tile, ODC_LAYERS);
-    } catch (err) {
-      throw new Error(
-        `Open Data Charts tile ${tile.z}/${tile.x}/${tile.y}: ${(err as Error).message}`,
-        {
-          cause: err
-        }
-      );
-    }
-    read.push(tile);
-    for (const [name, list] of decoded) {
-      const layer = AS_DEPTH_AREA.has(name) ? "DEPARE" : name;
-      const out = byLayer.get(layer) ?? [];
-      for (const f of list) {
-        const clipped = clipFeature(f, box);
-        if (clipped) {
-          out.push(clipped);
-          features++;
-        }
-      }
-      byLayer.set(layer, out);
-    }
-  }
+  const { byLayer, read, counts } = readTiles(tiles, bbox);
   const parts = coverageParts(read, bbox);
   const layers: Record<string, GeoJsonFeatureCollection> = {
     DSID: collection([
@@ -424,7 +433,7 @@ export function odcCellLayers(
   for (const [layer, list] of byLayer) {
     layers[layer] = collection(list);
   }
-  return { layers, counts: { tiles: read.length, features } };
+  return { layers, counts };
 }
 
 /** What the build process needs to write the cell: the staged tiles and where the cell goes. */

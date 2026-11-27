@@ -107,6 +107,8 @@ export function boxSummary(s: {
   sizing: BoxSizing;
   input: SizingInput;
   ceilingKm?: number;
+  /** What went wrong reading the Open Data Charts (`OdcBox.note`). */
+  odc?: string;
 }): string | undefined {
   const parts: string[] = [];
   if (s.rebuild) {
@@ -117,6 +119,9 @@ export function boxSummary(s: {
   }
   if (s.ceilingKm !== undefined) {
     parts.push(`chart box limited to ${s.ceilingKm} km: a larger one ran out of memory`);
+  }
+  if (s.odc !== undefined) {
+    parts.push(s.odc);
   }
   return parts.length > 0 ? parts.join("; ") : undefined;
 }

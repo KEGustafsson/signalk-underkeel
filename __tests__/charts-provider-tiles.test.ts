@@ -48,6 +48,8 @@ describe("Open Data Charts through Charts Provider's chartTiles", () => {
       chart({ id: "enc", openDataSet: undefined }),
       chart({ id: "raster", format: "png" }),
       chart({ id: "overview", maxzoom: 12 }),
+      // Without a stated maxzoom a z15 read may be an ancestor's re-slice, not the chart's own.
+      chart({ id: "no-maxzoom", maxzoom: undefined }),
       chart({ id: "far", bounds: [10, 50, 11, 51] }),
       chart({ id: "no-coverage", coverage: undefined })
     ];
@@ -60,12 +62,70 @@ describe("Open Data Charts through Charts Provider's chartTiles", () => {
     expect(odcCharts([offer(charts), broken], BOX).map((c) => c.id)).toEqual(["a", "b"]);
   });
 
-  test("the key names the charts and their tiles, and none while no chart meets the box", () => {
+  test("the key names the charts and their tiles: null when none meets the box, undefined when unknown", () => {
     const charts: TilesChart[] = [chart()];
-    const tiles = odcTilesOf(() => [offer(charts)]);
+    let offers: ChartTilesApi[] = [offer(charts)];
+    const tiles = odcTilesOf(() => offers);
     expect(tiles.key(BOX)).toBe(`odc-france-atlantic 9/${A.x >> 6}/${A.y >> 6}`);
     charts.pop();
+    expect(tiles.key(BOX)).toBeNull();
+    offers = [];
     expect(tiles.key(BOX)).toBeUndefined();
+    offers = [
+      {
+        charts: () => {
+          throw new Error("not ready");
+        },
+        getTile: () => Promise.resolve(null)
+      }
+    ];
+    expect(tiles.key(BOX)).toBeUndefined();
+  });
+
+  test("a read that never settles fails the staging after its timeout and leaves no timer", async () => {
+    jest.useFakeTimers();
+    try {
+      const hung: ChartTilesApi = {
+        charts: () => [chart()],
+        getTile: () => new Promise<never>(() => undefined)
+      };
+      const tiles = odcTilesOf(() => [hung], { tileMs: 10_000, totalMs: 300_000 });
+      const staging = tiles.stage(BOX, path.join(TMP, "hung.bin"), new AbortController().signal);
+      const settled = expect(staging).rejects.toThrow(`tile 15/${A.x}/${A.y} timed out after 10 s`);
+      await jest.advanceTimersByTimeAsync(10_000);
+      await settled;
+      expect(jest.getTimerCount()).toBe(0);
+
+      const controller = new AbortController();
+      const stopped = tiles.stage(BOX, path.join(TMP, "hung2.bin"), controller.signal);
+      const aborted = expect(stopped).rejects.toThrow("aborted");
+      controller.abort();
+      await aborted;
+      expect(jest.getTimerCount()).toBe(0);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test("staging that runs past its cap fails", async () => {
+    let now = 0;
+    const spy = jest.spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      const slow: ChartTilesApi = {
+        charts: () => [chart()],
+        getTile: () => {
+          now += 400_000;
+          return Promise.resolve(Uint8Array.from([1]));
+        }
+      };
+      const big: Bbox = [W - 0.01, S + 1e-5, E - 1e-5, N - 1e-5];
+      const tiles = odcTilesOf(() => [slow], { tileMs: 10_000, totalMs: 300_000 });
+      await expect(
+        tiles.stage(big, path.join(TMP, "slow.bin"), new AbortController().signal)
+      ).rejects.toThrow("staging took over 300 s");
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   test("staging reads the box's covered z15 tiles and writes those with a body", async () => {

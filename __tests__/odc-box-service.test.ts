@@ -26,7 +26,7 @@ const POS: LonLat = [(W + E) / 2, (S + N) / 2];
 /** Charts Provider's Open Data Charts as the box service sees them, one tile per box. */
 function fakeOdc() {
   const odc = {
-    key: "odc-a 9/248/178" as string | undefined,
+    key: "odc-a 9/248/178" as string | null | undefined,
     staged: [] as Bbox[],
     fail: false
   };
@@ -119,10 +119,13 @@ describe("Open Data Charts in the box around the vessel", () => {
     const h = harness(tiles);
     await h.service.check();
     expect(h.built).toEqual([[ENC]]);
-    expect(h.errors).toEqual([
-      expect.stringMatching(/Open Data Charts tiles not read: tile store busy/)
-    ]);
+    expect(h.errors).toEqual(["Open Data Charts not read: tile store busy"]);
     expect(h.service.status().box?.odc).toBeUndefined();
+    // Told in the box's status line, which the plugin status and the look-ahead's box view show.
+    expect(h.service.status().summary).toBe(
+      "Open Data Charts not read: tile store busy (read again in 5 min)"
+    );
+    expect(h.service.view().summary).toBe(h.service.status().summary);
     expect(fs.readdirSync(TMP).filter((n) => n.startsWith("odc-tiles"))).toEqual([]);
     odc.fail = false;
     h.t.now += 120_000;
@@ -131,6 +134,38 @@ describe("Open Data Charts in the box around the vessel", () => {
     h.t.now += 240_000;
     await h.service.check();
     expect(h.built).toEqual([[ENC], [ENC, ODC_DIR]]);
+    expect(h.service.status().summary).toBeUndefined();
+  });
+
+  test("a start before Charts Provider offers its tiles keeps the saved box", async () => {
+    const { odc, tiles } = fakeOdc();
+    const first = harness(tiles);
+    await first.service.check();
+    indexedIn(first);
+    odc.key = undefined;
+    const restarted = harness(tiles);
+    restarted.t.index = first.t.index;
+    await restarted.service.check();
+    odc.key = "odc-a 9/248/178";
+    restarted.t.now += 120_000;
+    await restarted.service.check();
+    expect(restarted.built).toEqual([]);
+  });
+
+  test("an Open Data Charts cell the build cannot write leaves the box with the ENC alone", async () => {
+    const { odc } = fakeOdc();
+    const torn: OdcTiles = {
+      key: () => odc.key,
+      stage: (_bbox, file) => {
+        fs.writeFileSync(file, "torn");
+        return Promise.resolve(1);
+      }
+    };
+    const h = harness(torn);
+    await h.service.check();
+    expect(h.built).toEqual([[ENC]]);
+    expect(h.service.status().box?.odcTiles).toBeUndefined();
+    expect(h.service.status().summary).toMatch(/^Open Data Charts not read: /);
   });
 
   test("a new assumed survey quality builds the box again, after a restart too", async () => {
@@ -151,7 +186,7 @@ describe("Open Data Charts in the box around the vessel", () => {
 
   test("a box no chart covers is not rebuilt over the survey quality", async () => {
     const { odc, tiles } = fakeOdc();
-    odc.key = undefined;
+    odc.key = null;
     const first = harness(tiles);
     await first.service.check();
     indexedIn(first);
@@ -176,7 +211,7 @@ describe("Open Data Charts in the box around the vessel", () => {
 
   test("with no chart over the box only the ENC is built", async () => {
     const { odc, tiles } = fakeOdc();
-    odc.key = undefined;
+    odc.key = null;
     const h = harness(tiles);
     await h.service.check();
     expect(odc.staged).toHaveLength(0);

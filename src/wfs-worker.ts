@@ -1,8 +1,9 @@
+import fs from "fs";
 import { isMainThread } from "worker_threads";
 import type { WfsConfig } from "./config";
 import { cellSources, cellsMissing, savedCatalogue, sourceKeys } from "./index-loader";
 import type { EncReader } from "./ingest/enc-read-process";
-import type { OdcCellJob } from "./ingest/odc";
+import type { OdcCellJob, OdcCounts } from "./ingest/odc";
 import { writeOdcCell } from "./ingest/odc";
 import type { Bbox, WfsDownload, WfsFetch } from "./ingest/wfs";
 import { downloadWfsCell, FTIA_WFS_URL } from "./ingest/wfs";
@@ -106,6 +107,7 @@ export const NO_FEATURES: WfsCounts = { depthAreas: 0, dredgedAreas: 0, sounding
 
 export interface WfsReply extends BuildReply {
   features?: WfsCounts;
+  odc?: OdcCounts;
 }
 
 /**
@@ -137,10 +139,23 @@ export function refreshBuild(job: WfsJob, cells: string[]): BuildJob {
   return changed && !readBox(build.indexDir) ? { ...build, changed } : build;
 }
 
-/** Writes the Open Data Charts cell of `job`, when it has one, before its build. */
-export function writeOdc(job: WfsJob): void {
-  if (job.odc) {
-    writeOdcCell(job.odc);
+/**
+ * Writes the Open Data Charts cell of `job`, when it has one, before its build; the job to
+ * build. A cell that cannot be written is left out of the build, so the box is built with the
+ * ENC and WFS depths alone, as when the tiles could not be read.
+ */
+export function writeOdc(job: WfsJob): { job: WfsJob; odc?: OdcCounts } {
+  if (!job.odc) {
+    return { job };
+  }
+  try {
+    return { job, odc: writeOdcCell(job.odc) };
+  } catch (err) {
+    const dir = job.odc.dir;
+    const dirs = job.build.dirs.filter((d) => d !== dir);
+    fs.rmSync(dir, { recursive: true, force: true });
+    const odc = { tiles: 0, features: 0, skipped: 0, error: (err as Error).message };
+    return { job: { ...job, build: { ...job.build, dirs } }, odc };
   }
 }
 
@@ -149,7 +164,7 @@ export async function runWfsJob(
   fetch: WfsFetch,
   signal?: AbortSignal,
   reader?: EncReader
-): Promise<{ staging: string; index: IndexParts; features: WfsCounts }> {
+): Promise<{ staging: string; index: IndexParts; features: WfsCounts; odc?: OdcCounts }> {
   const cells = refreshCells(job);
   if (job.download) {
     reportProgress({ phase: "download" });
@@ -157,8 +172,9 @@ export async function runWfsJob(
   const features = job.download
     ? await downloadWfsCell({ ...job.download, now: new Date(job.download.now), fetch, signal })
     : NO_FEATURES;
-  writeOdc(job);
-  return { ...(await runBuild(refreshBuild(job, cells), reader)), features };
+  const written = writeOdc(job);
+  const built = await runBuild(refreshBuild(written.job, cells), reader);
+  return { ...built, features, ...(written.odc && { odc: written.odc }) };
 }
 
 if (isMainThread && require.main === module && process.send) {
@@ -166,7 +182,8 @@ if (isMainThread && require.main === module && process.send) {
     (job: WfsJob, reader) =>
       runWfsJob(job, globalThis.fetch, undefined, reader).then((r): WfsReply => ({
         ...builtReply(r),
-        features: r.features
+        features: r.features,
+        ...(r.odc && { odc: r.odc })
       })),
     (job) => job.build.heapMb,
     (job) => job.lowPriority === true

@@ -205,7 +205,8 @@ export class WfsService {
     const input = this.sizingInput();
     const sizing = { ...nextSize(input, this.box?.radiusKm), capKm: input.capKm, sog: input.sog };
     const lastMs = this.box?.durationMs;
-    const summary = boxSummary({ rebuild, lastMs, sizing, input, ceilingKm: this.ceilingKm });
+    const odc = this.odc.note(this.deps.clock.now());
+    const summary = boxSummary({ rebuild, lastMs, sizing, input, ceilingKm: this.ceilingKm, odc });
     return {
       notice: WFS_NOTICE,
       box: this.box,
@@ -425,7 +426,11 @@ export class WfsService {
       const bbox = boxAround(centre, radiusKm);
       this.announce(bbox, now);
       const odc = await this.odc.stage(bbox, now, controller.signal);
-      const { index, features } = await OdcBox.whileStaged(odc, () =>
+      const {
+        index,
+        features,
+        odc: read
+      } = await OdcBox.whileStaged(odc, () =>
         this.deps.refresh(
           refreshJob(this.deps, this.cellDir, bbox, now, undefined, odc.job),
           controller.signal,
@@ -444,7 +449,7 @@ export class WfsService {
         fetchedAt: new Date(now).toISOString(),
         features,
         durationMs: this.deps.clock.now() - now,
-        ...OdcBox.record(odc)
+        ...this.odc.built(odc, read)
       };
       fs.writeFileSync(path.join(this.deps.dir, "box.json"), JSON.stringify(box));
       this.box = box;

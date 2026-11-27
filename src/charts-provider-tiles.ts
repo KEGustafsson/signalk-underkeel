@@ -58,13 +58,17 @@ interface OdcChart {
 const isBbox = (b: unknown): b is Bbox =>
   Array.isArray(b) && b.length === 4 && b.every((v) => typeof v === "number" && Number.isFinite(v));
 
-/** Whether `c` is an Open Data Charts vector chart reaching ODC_ZOOM that may meet `bbox`. */
+/**
+ * Whether `c` is an Open Data Charts vector chart stating that it reaches ODC_ZOOM, so its z15
+ * tiles are its own, that may meet `bbox`.
+ */
 function meets(c: Partial<TilesChart> | null | undefined, bbox: Bbox): c is TilesChart {
   return (
     typeof c?.id === "string" &&
     typeof c.openDataSet === "string" &&
     c.format === "pbf" &&
-    !(typeof c.maxzoom === "number" && c.maxzoom < ODC_ZOOM) &&
+    typeof c.maxzoom === "number" &&
+    c.maxzoom >= ODC_ZOOM &&
     !(isBbox(c.bounds) && !intersect(c.bounds, bbox))
   );
 }
@@ -112,16 +116,50 @@ const YIELD_EVERY = 32;
 
 const pause = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
+/**
+ * How long one tile read, and staging as a whole, may take, ms. Charts Provider reads its
+ * files in-process in milliseconds; one that hangs must not hold up the box.
+ */
+export interface StageLimits {
+  tileMs: number;
+  totalMs: number;
+}
+
+const STAGE_LIMITS: StageLimits = { tileMs: 10_000, totalMs: 300_000 };
+
+/** `read`, rejected once `ms` pass or `signal` aborts first; leaves no timer behind. */
+async function within<T>(
+  read: Promise<T>,
+  ms: number,
+  signal: AbortSignal,
+  what: string
+): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  let onAbort = (): void => undefined;
+  const stop = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what} timed out after ${ms / 1000} s`)), ms);
+    onAbort = () => reject(new Error("aborted"));
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([read, stop]);
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", onAbort);
+  }
+}
+
 /** The box service's view of Open Data Charts (`WfsService`). */
 export interface OdcTiles {
   /**
-   * What the charts meeting `bbox` are now, to compare with the box's: undefined while there
-   * are none, so a box built before Charts Provider started is rebuilt once its charts are in.
+   * What the charts meeting `bbox` are now, to compare with the box's: null when the offers
+   * list none, undefined while that cannot be known (no offer followed yet, as before Charts
+   * Provider has started, or a list that cannot be read).
    */
-  key(bbox: Bbox): string | undefined;
+  key(bbox: Bbox): string | null | undefined;
   /**
    * Writes the tiles of `bbox` the charts cover to `file`; how many, 0 when none. Rejects
-   * when `signal` aborts, a read fails or a chart list cannot be read.
+   * when `signal` aborts, a read fails or takes too long, or a chart list cannot be read.
    */
   stage(bbox: Bbox, file: string, signal: AbortSignal): Promise<number>;
 }
@@ -154,15 +192,25 @@ export function watchChartTiles(app: PropertyValues): () => void {
 }
 
 /** The view over the offers `current()` gives at each call. */
-export function odcTilesOf(current: () => readonly ChartTilesApi[]): OdcTiles {
+export function odcTilesOf(
+  current: () => readonly ChartTilesApi[],
+  limits: StageLimits = STAGE_LIMITS
+): OdcTiles {
   return {
     key: (bbox) => {
-      const charts = odcCharts(current(), bbox);
-      return charts.length === 0
-        ? undefined
-        : charts
-            .map((c) => `${c.id} ${c.covered.map((t) => `${t.z}/${t.x}/${t.y}`).join(",")}`)
-            .join("\n");
+      const offered = current();
+      let charts: OdcChart[];
+      try {
+        charts = odcCharts(offered, bbox, true);
+      } catch {
+        return undefined;
+      }
+      if (charts.length === 0) {
+        return offered.length === 0 ? undefined : null;
+      }
+      return charts
+        .map((c) => `${c.id} ${c.covered.map((t) => `${t.z}/${t.x}/${t.y}`).join(",")}`)
+        .join("\n");
     },
     stage: async (bbox, file, signal) => {
       const charts = odcCharts(current(), bbox, true);
@@ -174,6 +222,7 @@ export function odcTilesOf(current: () => readonly ChartTilesApi[]): OdcTiles {
           throw new Error("aborted");
         }
       };
+      const deadline = Date.now() + limits.totalMs;
       const fd = fs.openSync(file, "w");
       let count = 0;
       try {
@@ -181,7 +230,16 @@ export function odcTilesOf(current: () => readonly ChartTilesApi[]): OdcTiles {
         for (const chart of charts) {
           for (const t of tilesToRead(bbox, chart.covered)) {
             halt();
-            const data = await chart.offer.getTile(chart.id, t.z, t.x, t.y);
+            const left = deadline - Date.now();
+            if (left <= 0) {
+              throw new Error(`staging took over ${limits.totalMs / 1000} s`);
+            }
+            const data = await within(
+              chart.offer.getTile(chart.id, t.z, t.x, t.y),
+              Math.min(limits.tileMs, left),
+              signal,
+              `tile ${t.z}/${t.x}/${t.y}`
+            );
             // An abort while the read was pending must not write its tile.
             halt();
             if (data instanceof Uint8Array && data.length > 0) {

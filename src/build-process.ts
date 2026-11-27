@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { forkLimited, killGroup } from "./foundation/child-process";
 import { usableMemory } from "./foundation/memory";
+import type { OdcCounts } from "./ingest/odc";
 import type { WfsFetch } from "./ingest/wfs";
 import { downloadWfsCell } from "./ingest/wfs";
 import type { WfsCounts, WfsJob, WfsReply } from "./wfs-worker";
@@ -36,7 +37,7 @@ export type WfsRefresher = (
   job: WfsJob,
   signal: AbortSignal,
   progress?: OnProgress
-) => Promise<{ index: ChartIndex; features: WfsCounts }>;
+) => Promise<{ index: ChartIndex; features: WfsCounts; odc?: OdcCounts }>;
 
 /** Settles once every build process aborted so far has exited. */
 let exits: Promise<unknown> = Promise.resolve();
@@ -193,7 +194,8 @@ export const workerRefresher: WfsRefresher = async (job, signal, progress) => {
   const { indexDir } = job.build;
   const m = await runBuildProcess<WfsReply>(script, data, signal, indexDir, heapMb, progress);
   const features = m.features ?? NO_FEATURES;
-  return { index: await commit(job.build.indexDir, m, signal), features };
+  const index = await commit(job.build.indexDir, m, signal);
+  return { index, features, ...(m.odc && { odc: m.odc }) };
 };
 
 /** A depth survey in a child process from the compiled `lib/survey-worker.js`. */
@@ -227,8 +229,9 @@ export function inThreadRefresher(fetch: WfsFetch, build: IndexBuilder): WfsRefr
     const features = job.download
       ? await downloadWfsCell({ ...job.download, now: new Date(job.download.now), fetch, signal })
       : NO_FEATURES;
-    writeOdc(job);
+    const written = writeOdc(job);
     await readsSettled(job.build.indexDir);
-    return { index: await build(refreshBuild(job, cells), signal, progress), features };
+    const index = await build(refreshBuild(written.job, cells), signal, progress);
+    return { index, features, ...(written.odc && { odc: written.odc }) };
   };
 }

@@ -146,10 +146,20 @@ describe("the Open Data Charts cell", () => {
     expect(odcCellLayers(staged(), half, new Date(0)).layers.M_QUAL?.features).toEqual([]);
   });
 
-  test("a tile that is not a vector tile fails the cell with its address", () => {
-    expect(() =>
-      odcCellLayers([{ ...A, data: Uint8Array.from([0x1a, 0x09]) }], box, new Date(0))
-    ).toThrow(`Open Data Charts tile 15/${A.x}/${A.y}`);
+  test("a tile that is not a vector tile is left out with no coverage, the rest read, and told", () => {
+    const [, good] = staged();
+    if (!good) {
+      throw new Error("no tile");
+    }
+    const tiles = [{ ...A, data: Uint8Array.from([0x1a, 0x09]) }, good];
+    const { layers, counts } = odcCellLayers(tiles, box, new Date(0));
+    expect(counts).toMatchObject({ tiles: 1, skipped: 1 });
+    expect(counts.error).toContain(`Open Data Charts tile 15/${A.x}/${A.y}`);
+    expect(layers.M_COVR?.features).toHaveLength(1);
+    const [w] = tileBbox(B);
+    const covr = layers.M_COVR?.features[0]?.geometry?.coordinates as LonLatPoint[][];
+    expect(Math.min(...(covr[0] ?? []).map(([lon]) => lon))).toBeCloseTo(w, 9);
+    expect(layers.SOUNDG?.features).toHaveLength(1);
   });
 
   test("the cell written reads as an advisory band-1 cell on no stated datum", () => {
@@ -160,7 +170,8 @@ describe("the Open Data Charts cell", () => {
     const dir = path.join(TMP, ODC_CELL_NAME);
     expect(writeOdcCell({ tiles, dir, bbox: box, now: new Date(0).toISOString() })).toEqual({
       tiles: 2,
-      features: 4
+      features: 4,
+      skipped: 0
     });
     const cell = readCellDirectory(dir, 0);
     expect(cell.info).toMatchObject({ name: ODC_CELL_NAME, band: 1, source: ODC_SOURCE });

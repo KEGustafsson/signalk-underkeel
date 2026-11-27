@@ -17,27 +17,81 @@ function tiles(stage: OdcTiles["stage"]): OdcTiles {
 }
 
 describe("the Open Data Charts box cell", () => {
-  test("after a failed read the charts are read again 5 minutes after the failure", async () => {
+  test("after failed reads the charts wait from the handover, longer each time, until one succeeds", async () => {
     let clock = 0;
+    let fail = true;
     const errors: string[] = [];
     const box = new OdcBox(
       TMP,
       {
         catzoc: 4,
-        tiles: tiles(() => {
-          // The reads before the failure took 4 minutes.
-          clock = 240_000;
-          return Promise.reject(new Error("tile store busy"));
+        tiles: tiles((_bbox, file) => {
+          if (fail) {
+            return Promise.reject(new Error("tile store busy"));
+          }
+          fs.writeFileSync(file, "tiles");
+          return Promise.resolve(1);
         })
       },
       (m) => errors.push(m),
       () => clock
     );
-    const staged = await box.stage(BOX, 0, signal);
-    expect(staged).toEqual({});
-    expect(errors).toHaveLength(1);
-    expect(box.changed(BOX, OdcBox.record(staged), 539_999)).toBe(false);
-    expect(box.changed(BOX, OdcBox.record(staged), 540_000)).toBe(true);
+    const waits: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      const staged = await box.stage(BOX, clock, signal);
+      expect(staged.failed).toBe("tile store busy");
+      // The build without the charts takes 12 minutes before it is handed over.
+      clock += 720_000;
+      const record = box.built(staged, undefined);
+      expect(record).toEqual({});
+      const handedOver = clock;
+      while (!box.changed(BOX, record, clock)) {
+        clock += 60_000;
+      }
+      waits.push(clock - handedOver);
+    }
+    expect(waits).toEqual([300_000, 600_000, 1_200_000]);
+    expect(errors).toHaveLength(3);
+    expect(box.note(clock)).toBe("Open Data Charts not read: tile store busy");
+
+    fail = false;
+    const staged = await box.stage(BOX, clock, signal);
+    const record = box.built(staged, { tiles: 1, features: 3, skipped: 0 });
+    await OdcBox.whileStaged(staged, () => Promise.resolve());
+    expect(record).toEqual({ odc: KEY, odcTiles: 1, odcCatzoc: 4 });
+    expect(box.note(clock)).toBeUndefined();
+    fail = true;
+    const again = await box.stage(BOX, clock, signal);
+    box.built(again, undefined);
+    expect(box.note(clock)).toBe(
+      "Open Data Charts not read: tile store busy (read again in 5 min)"
+    );
+  });
+
+  test("tiles left out as unreadable are told, and a cell with none readable is a failed read", () => {
+    const box = new OdcBox(TMP, { catzoc: 4, tiles: tiles(() => Promise.resolve(0)) });
+    const stage = { key: KEY, count: 2, catzoc: 4 };
+    expect(
+      box.built(stage, { tiles: 1, features: 1, skipped: 1, error: "tile 15/1/2: bad" })
+    ).toEqual({ odc: KEY, odcTiles: 2, odcCatzoc: 4 });
+    expect(box.note(0)).toBe("Open Data Charts: 1 tile(s) left out, unreadable: tile 15/1/2: bad");
+    expect(box.built(stage, { tiles: 0, features: 0, skipped: 0, error: "disk full" })).toEqual({});
+    expect(box.note(0)).toMatch(/^Open Data Charts not read: disk full/);
+  });
+
+  test("while the charts cannot be known the box stays; only charts gone rebuild it", () => {
+    let key: string | null | undefined;
+    const box = new OdcBox(TMP, {
+      catzoc: 4,
+      tiles: { key: () => key, stage: () => Promise.resolve(0) }
+    });
+    const record = { odc: KEY, odcTiles: 4, odcCatzoc: 4 };
+    // No offer yet after a restart, or a list that cannot be read.
+    expect(box.changed(BOX, record, 0)).toBe(false);
+    key = KEY;
+    expect(box.changed(BOX, record, 0)).toBe(false);
+    key = null;
+    expect(box.changed(BOX, record, 0)).toBe(true);
   });
 
   test("an aborted build's cleanup leaves the staging of the build that replaced it", async () => {
