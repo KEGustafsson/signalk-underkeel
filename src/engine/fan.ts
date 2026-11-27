@@ -203,6 +203,7 @@ export function footprint(
     risk: r.maxRisk,
     uncovered: !examined || (r.flags & FLAGS.NO_COVERAGE) !== 0,
     flags: r.flags,
+    cellRefs: r.cellRefs,
     sigmaP: r.sigmaP,
     riskTile: r.riskTile,
     partial: certainStops && r.maxRisk >= 1 && r.coveredDMin === -Infinity && r.dMin === -Infinity

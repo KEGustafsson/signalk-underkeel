@@ -2,6 +2,18 @@
 
 All notable changes to signalk-underkeel are documented here.
 
+## [Unreleased]
+
+### Added
+
+- Open Data Charts depths (on by default): the Open Data Charts sets downloaded in
+  signalk-charts-provider-simple (2.26.0 or later) are read for the box around the vessel through
+  its `chartTiles` PropertyValue, in the server and with no token, and built as a band-1 cell
+  every ENC cell takes precedence over. They are not for navigation: water only they cover is at
+  most `alert` with their notice, never `ok` in a route check and never `clear` on the overlay.
+  Survey quality is an assumed CATZOC, C by default (**Open Data Charts depths** in the
+  settings). The box is built again when the charts meeting it change.
+
 ## [0.8.0] - 2026-11-25
 
 ### Added

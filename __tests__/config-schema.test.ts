@@ -33,6 +33,7 @@ describe("admin form", () => {
       "warningStyle",
       "livechart.enabled",
       "wfs.enabled",
+      "openDataCharts.enabled",
       "groundingDetector.enabled",
       "showExpert"
     ]);
@@ -41,13 +42,14 @@ describe("admin form", () => {
   test("the flat schema holds every setting once, without showExpert", () => {
     const all = fields(SCHEMA as Schema);
     expect(new Set(all).size).toBe(all.length);
-    expect(all).toHaveLength(55);
+    expect(all).toHaveLength(57);
     expect(all).not.toContain("showExpert");
     for (const f of [
       "waterLevel.height",
       "waterLevel.datums",
       "livechart.sounderModel",
       "wfs.url",
+      "openDataCharts.catzoc",
       "groundingDetector.imuPath",
       "lookahead.certainWithin",
       "routeCheck.probability",

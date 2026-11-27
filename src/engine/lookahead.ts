@@ -9,6 +9,7 @@ import type { DynamicsOptions, VesselModel } from "../model/vessel";
 import { vesselTerms } from "../model/vessel";
 import type { ChartIndex } from "../spatial/chart-index";
 import { flagNames } from "../spatial/node-store";
+import { noticeOf } from "./advisory-notice";
 import type { RiskTile } from "../spatial/pyramid";
 import { footprintGeom, mercatorBuffer, minDepthOver } from "../spatial/pyramid";
 import { DEFAULT_BUILD } from "../spatial/pyramid-build";
@@ -144,6 +145,8 @@ export interface FootprintResult {
   /** Part of the footprint has no chart coverage. */
   uncovered: boolean;
   flags: number;
+  /** Catalogue indices of the cells that set the tiles it read. */
+  cellRefs?: readonly number[];
   /** Widest source σP the footprint touched, metres. */
   sigmaP: number;
   riskTile?: RiskTile;
@@ -458,7 +461,7 @@ export function evaluateLookahead(
     footprint(t, u.origin, tracks, m, u.vessel, u.chart, s, opts, stop, spanOf(from, u.step))
   );
   const fps = scored.footprints;
-  const assessed = degrade(classify(fps, opts, scored), m, wl, fps);
+  const assessed = degrade(classify(fps, opts, scored), m, wl, fps, noticeOf(u.chart, fps));
   const verdict = u.capped
     ? uncertainPosition(assessed, s.sigmaPos, inputs.positionReason)
     : assessed;

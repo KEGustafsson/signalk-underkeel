@@ -3,16 +3,14 @@ import path from "path";
 import { MAX_POSITION_BUFFER } from "./engine/fan";
 import type { LonLat } from "./foundation/geo";
 import { haversine, project } from "./foundation/geo";
-import type { WfsConfig } from "./config";
 import type { SizingInput } from "./box-sizing";
 import { buildMsAt, fits, nextSize, STEP_KM } from "./box-sizing";
-import type { WfsRefresher } from "./build-process";
 import type { ChartBoxView } from "./engine/chart-box";
-import type { BoxRebuild, BoxSizing, RunningBuild } from "./box-status";
-import type { BoxWarmer } from "./cell-warm";
+import type { RunningBuild } from "./box-status";
 import { refreshJob } from "./wfs-worker";
 import { boxSummary, phaseText, rebuildStatus } from "./box-status";
 import { readCellInfo } from "./ingest/cell-reader";
+import { OdcBox } from "./odc-box";
 import type { Bbox } from "./ingest/wfs";
 import {
   boxAround,
@@ -22,12 +20,12 @@ import {
   WFS_NOTICE,
   WFS_SOURCE
 } from "./ingest/wfs";
-import type { Clock } from "./monitor";
 import { AREA_ERROR_RETRY_MS } from "./shared-enc";
 import { readBox } from "./spatial/build-box";
 import { MAX_CHART_BUFFER } from "./spatial/chart-position";
 import type { ChartIndex } from "./spatial/chart-index";
 import { indexDirProblem } from "./spatial/chart-index";
+import type { WfsBox, WfsServiceDeps, WfsStatus } from "./wfs-service-types";
 
 export type { IndexBuilder, OnProgress, WfsRefresher } from "./build-process";
 export {
@@ -37,6 +35,13 @@ export {
   workerHeapLimitMb,
   workerRefresher
 } from "./build-process";
+export type {
+  AreaRequests,
+  EncBoxConfig,
+  WfsBox,
+  WfsServiceDeps,
+  WfsStatus
+} from "./wfs-service-types";
 
 /**
  * Keeps a Traficom WFS box around the vessel (plan §4.2). When the vessel
@@ -47,81 +52,6 @@ export {
  * index stays in use. At speed the box grows (`box-sizing.ts`); the builds run in child
  * processes (`build-process.ts`).
  */
-
-/** The box in use, as saved in `<data dir>/wfs/box.json`. */
-export interface WfsBox {
-  bbox: Bbox;
-  centre: LonLat;
-  radiusKm: number;
-  /** Absent for a box of ENC cells alone. */
-  catzoc?: number;
-  fetchedAt: string;
-  features: { depthAreas: number; dredgedAreas: number; soundings: number };
-  /** How long its download and index build took; the next box is planned on it. */
-  durationMs?: number;
-}
-
-export interface WfsStatus {
-  notice: string;
-  box?: WfsBox;
-  busy: boolean;
-  lastError?: string;
-  rebuild?: BoxRebuild;
-  sizing: BoxSizing;
-  /** One line on the rebuild and the box size, for the plugin status and the panel. */
-  summary?: string;
-}
-
-/** A box of ENC cells around the vessel, with no WFS download. */
-export interface EncBoxConfig {
-  radiusKm: number;
-}
-
-export interface WfsServiceDeps {
-  config: WfsConfig | EncBoxConfig;
-  /** `<data dir>/wfs`, or the ENC box's directory: holds box.json and any WFS cell. */
-  dir: string;
-  indexDir: string;
-  /** The cell cache the builds use (`BuildJob.cacheDir`); none when absent. */
-  cacheDir?: string;
-  /** The ENC source the cells come from (`BuildJob.source`); none when absent. */
-  source?: string;
-  /**
-   * The charts provider, asked for the cells of each box a refresh starts building, and what
-   * it last answered (`wfs-wiring.ts`).
-   */
-  area?: AreaRequests;
-  leafZoom: number;
-  /**
-   * The S-57 cells directory, scanned by the refresh off the event loop; its cells are built
-   * before the WFS cell so they keep their catalogue order.
-   */
-  cellsDir?: string;
-  /** Builds the ENC cells in the box too (plan §4.2), not whole. */
-  inBox: boolean;
-  /** The index in use; with none, a refresh is due whatever the saved box says. */
-  index: () => ChartIndex | undefined;
-  refresh: WfsRefresher;
-  clock: Pick<Clock, "now" | "setInterval" | "clearInterval">;
-  position: () => LonLat | undefined;
-  /** Fresh speed (m/s) and course (radians) over ground, when both are known. */
-  motion: () => { sog: number; cog: number } | undefined;
-  /** The look-ahead's reach: `distance`, or `minHorizon` seconds at the current speed. */
-  lookahead: { distance: number; minHorizon: number };
-  /**
-   * The radius the box may grow to at speed (`box-sizing.ts`), km; it never shrinks below
-   * `config.radiusKm`. Without it the box keeps the configured radius.
-   */
-  maxRadiusKm?: number;
-  /**
-   * Hands a rebuilt index over. `changed` holds the boxes of the index in use and the new
-   * one when this service built both, so only the WFS cell differs between them.
-   */
-  onIndex: (index: ChartIndex, changed?: Bbox[]) => void | Promise<void>;
-  /** Fills the cell cache between builds (`cell-warm.ts`); none when absent. */
-  warm?: BoxWarmer;
-  error: (message: string) => void;
-}
 
 /** Position checks; a download is due only when the vessel has left the inner half of the box. */
 const CHECK_EVERY_MS = 10_000;
@@ -147,14 +77,6 @@ const EDGE_BAND = MAX_POSITION_BUFFER + MAX_CHART_BUFFER;
 
 const sameBbox = (a: Bbox | undefined, b: Bbox | undefined): boolean =>
   a !== undefined && b !== undefined && a.every((v, i) => v === b[i]);
-
-/** Asks the charts provider for each new box's cells, and says what it last answered. */
-export interface AreaRequests {
-  /** Asks for `bbox`'s cells; says when to ask about it again, ms, or undefined for never. */
-  ask: (bbox: Bbox) => number | undefined;
-  /** What the provider last said, as a no-coverage reason gives it; undefined before asking. */
-  note: () => string | undefined;
-}
 
 const OUT_OF_MEMORY = /heap limit/;
 
@@ -183,9 +105,11 @@ export class WfsService {
   private rebuild?: RunningBuild;
   /** Lowered for this run when a box ran its build out of memory. */
   private ceilingKm?: number;
+  private readonly odc: OdcBox;
 
   constructor(private readonly deps: WfsServiceDeps) {
     this.box = this.readBox();
+    this.odc = new OdcBox(deps.dir, deps.odc, deps.error, () => deps.clock.now());
   }
 
   /** Whether this box downloads Traficom WFS depths, not only builds ENC cells around the vessel. */
@@ -200,6 +124,13 @@ export class WfsService {
 
   get cellDir(): string {
     return path.join(this.deps.dir, WFS_CELL_NAME);
+  }
+
+  /** The saved cells a start builds or checks the saved index with: the WFS and ODC cells. */
+  savedCells(): string[] {
+    const odc = this.odc.saved(this.box);
+    this.cellLost ||= odc.lost;
+    return [this.savedCell(), odc.dir].filter((d): d is string => d !== undefined);
   }
 
   /**
@@ -274,7 +205,8 @@ export class WfsService {
     const input = this.sizingInput();
     const sizing = { ...nextSize(input, this.box?.radiusKm), capKm: input.capKm, sog: input.sog };
     const lastMs = this.box?.durationMs;
-    const summary = boxSummary({ rebuild, lastMs, sizing, input, ceilingKm: this.ceilingKm });
+    const odc = this.odc.note(this.deps.clock.now());
+    const summary = boxSummary({ rebuild, lastMs, sizing, input, ceilingKm: this.ceilingKm, odc });
     return {
       notice: WFS_NOTICE,
       box: this.box,
@@ -355,7 +287,7 @@ export class WfsService {
       !this.indexed ||
       this.deps.index() === undefined ||
       this.resize(b) ||
-      b.catzoc !== this.catzoc() ||
+      this.sourcesChanged(b, now) ||
       haversine(pos, b.centre) > (b.radiusKm * 1000) / 2 ||
       this.edgeSoon(pos, b)
     );
@@ -377,6 +309,11 @@ export class WfsService {
     const reach = Math.max(look, Math.min(look + EDGE_BAND, (b.radiusKm * 1000) / 2));
     const travel = (m.sog * REFRESH_MARGIN * this.refreshMs()) / 1000;
     return edgeAhead(pos, m.cog, b.bbox) < travel + reach;
+  }
+
+  /** Whether the box's own sources changed: the WFS survey quality, the Open Data Charts. */
+  private sourcesChanged(b: WfsBox, now: number): boolean {
+    return b.catzoc !== this.catzoc() || this.odc.changed(b.bbox, b, now);
   }
 
   private get label(): string {
@@ -488,14 +425,21 @@ export class WfsService {
       const centre = this.centreAhead(pos, radiusKm, run.estimateMs ?? this.refreshMs());
       const bbox = boxAround(centre, radiusKm);
       this.announce(bbox, now);
-      const { index, features } = await this.deps.refresh(
-        refreshJob(this.deps, this.cellDir, bbox, now),
-        controller.signal,
-        (progress) => {
-          if (this.rebuild === run) {
-            run.progress = progress;
+      const odc = await this.odc.stage(bbox, now, controller.signal);
+      const {
+        index,
+        features,
+        odc: read
+      } = await OdcBox.whileStaged(odc, () =>
+        this.deps.refresh(
+          refreshJob(this.deps, this.cellDir, bbox, now, undefined, odc.job),
+          controller.signal,
+          (progress) => {
+            if (this.rebuild === run) {
+              run.progress = progress;
+            }
           }
-        }
+        )
       );
       const box: WfsBox = {
         bbox,
@@ -504,7 +448,8 @@ export class WfsService {
         catzoc: this.catzoc(),
         fetchedAt: new Date(now).toISOString(),
         features,
-        durationMs: this.deps.clock.now() - now
+        durationMs: this.deps.clock.now() - now,
+        ...this.odc.built(odc, read)
       };
       fs.writeFileSync(path.join(this.deps.dir, "box.json"), JSON.stringify(box));
       this.box = box;

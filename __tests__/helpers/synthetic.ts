@@ -30,10 +30,15 @@ export function boxRing([w, s, e, n]: Box): LonLat[] {
 interface Common {
   cellRef?: number;
   band?: number;
+  advisory?: boolean;
 }
 
 function base(c: Common) {
-  return { cellRef: c.cellRef ?? 0, band: c.band ?? 5 };
+  return {
+    cellRef: c.cellRef ?? 0,
+    band: c.band ?? 5,
+    ...(c.advisory === true ? { advisory: true } : {})
+  };
 }
 
 export function coverage(box: Box, c: Common = {}): CoverageFeature {

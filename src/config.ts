@@ -64,6 +64,8 @@ export interface PluginConfig {
   groundingDetector?: GroundingOptions;
   /** Undefined when the Traficom WFS depth source is off. */
   wfs?: WfsConfig;
+  /** Undefined when Open Data Charts depths are off (`ingest/odc.ts`). */
+  openDataCharts?: OdcConfig;
   routeCheck: {
     /** Planning speed when a request gives none, m/s. */
     speed: number;
@@ -89,6 +91,11 @@ export interface WfsConfig {
   /** Half-width of the box downloaded around the vessel, km. */
   radiusKm: number;
   /** CATZOC assumed for WFS depths, 1–6; the WFS states none. */
+  catzoc: number;
+}
+
+export interface OdcConfig {
+  /** CATZOC assumed for Open Data Charts depths, 1–6; the charts state none. */
   catzoc: number;
 }
 
@@ -232,8 +239,25 @@ function parseWfs(w: Record<string, unknown>): WfsConfig | undefined {
     url: str(w.url) ?? DEFAULT_WFS_URL,
     viaChartsProvider: w.viaChartsProvider !== false,
     radiusKm: num(w.radiusKm, 10, WFS_LIMITS.minRadiusKm, WFS_LIMITS.maxRadiusKm),
-    catzoc: CATZOC_CODES[str(w.catzoc) ?? "B"] ?? 3
+    catzoc: catzocCode(w.catzoc, 3)
   };
+}
+
+/** The CATZOC code of a setting's letter; `fallback` for none or an unknown one. */
+function catzocCode(v: unknown, fallback: number): number {
+  const key = str(v);
+  return key !== undefined && Object.hasOwn(CATZOC_CODES, key)
+    ? (CATZOC_CODES[key] ?? fallback)
+    : fallback;
+}
+
+/** On unless turned off: the charts are read only where Charts Provider has them. */
+function parseOdc(v: unknown): OdcConfig | undefined {
+  const o = record(v);
+  if (v === false || o.enabled === false) {
+    return undefined;
+  }
+  return { catzoc: catzocCode(o.catzoc, 4) };
 }
 
 function parseGrounding(g: Record<string, unknown>): GroundingOptions | undefined {
@@ -280,6 +304,7 @@ export function parseConfig(raw: unknown): PluginConfig {
       .filter((id): id is string => id !== undefined),
     groundingDetector: parseGrounding(record(r.groundingDetector)),
     wfs: parseWfs(record(r.wfs)),
+    openDataCharts: parseOdc(r.openDataCharts),
     routeCheck: {
       speed: num(rc.speed, DEFAULT_ROUTE_CHECK.speed, LIMITS.minSpeed, LIMITS.maxSpeed),
       xteLimit: num(rc.xteLimit, DEFAULT_ROUTE_CHECK.xteLimit, 0, LIMITS.maxXte),

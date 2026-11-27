@@ -398,7 +398,8 @@ coverage past the box get a `reason`. The build process posts its phase and coun
    from the index in use, only the living-chart cells within 1 km and one cell of the old or
    new box are re-judged: the chart prior of any other cell reads the same tiles in both; a
    property test checks that this equals re-judging every cell. The box is one cell
-   of usage band 1, so every ENC cell wins where both cover. Water no depth area reaches is
+   named as usage band 1 but ranked below every band, so every ENC cell, a band-1 overview
+   included, wins where both cover (advisory rank, below). Water no depth area reaches is
    land, however narrow (§4.3, the shore of a cell that charts no land). Survey quality is an assumed CATZOC (configurable, default B). Every tile from the cell
    carries `NOT_FOR_NAVIGATION`: the look-ahead is never `normal` there (at most `alert`, with
    the licence notice), route legs are never `ok`, and the overlay never draws `clear`.
@@ -412,6 +413,44 @@ coverage past the box get a `reason`. The build process posts its phase and coun
    whose `verdat` does not map to the water-level source is rejected with a reason on
    `/status`. A used cell sets the leaf to `min(current dMin, dShoal)` (flag `CSB_ADJUSTED`),
    never raises it, and never adds coverage.
+5. **Open Data Charts** (decision, 2026-11-26). Vector charts that
+   [open-data-charts](https://github.com/dirkwa/open-data-charts) builds from open data (national
+   surveys and depth models, EMODnet, OpenStreetMap) for waters without free official ENC, as one
+   MBTiles of S-57 layers per z9 tile, not for navigation. signalk-charts-provider-simple
+   downloads them as chart sets and offers their tiles in-process through its `chartTiles`
+   PropertyValue, whose `charts()` (2.26 and later) marks the charts put together from an Open
+   Data Charts set and lists the z9 tiles each fills (`coverage`); a secured server needs no
+   token. On by default, as it reads only what the user downloaded there. With no ENC source chosen and the WFS off, the box around the vessel is built from these charts alone, as in waters with no free official ENC. For each box (the WFS
+   box or the ENC box; none for a whole build) the main thread reads the z15 tiles of those
+   charts that meet the box inside their coverage, about 700 for a 10 km box at 50° N, yielding
+   every 32, and stages them in one file; the box's child process decodes them (Mapbox Vector
+   Tile 2.1, `ingest/mvt-decode.ts`), cuts each tile's features to the tile so its buffer is read
+   once, and writes them as one cell directory, `OD1ODC01`, in the layer layout of the WFS cell
+   (`ingest/odc.ts`). Its dredged and swept areas are written as plain depth areas: open data's are no authority's guarantee, so they only add caution and never displace another depth area or carry a sweep's σ, unlike the WFS's swept fairways. Past a chart's coverage Charts Provider answers a missing tile from its
+   nearest ancestor, a smaller-scale overview re-sliced to the tile asked for, so only covered
+   tiles of charts that state a maxzoom of 15 or more are read. From z15 a unit
+   holds every feature it draws deeper and drops no polygon as tiny. The cell is named as band 1 and
+   ranked with the WFS cell below every band, so every ENC cell wins where both cover; its coverage is the tiles read; its survey quality an
+   assumed CATZOC (configurable, default C, since the charts mix surveys with 100 m depth
+   models); it states no datum, so it is read on an unknown datum (§4.5). It carries
+   `UK_SOURCE = open-data-charts`, so every tile from it carries `NOT_FOR_NAVIGATION` as the WFS
+   cell's do: the look-ahead is never `normal` there (at most `alert`, with the Open Data Charts
+   notice), route legs are never `ok`, and the overlay never draws `clear`. The box records the
+   charts it was built with (their ids, coverage and revision, which Charts Provider 2.27 and later gives from the chart file's size and time; without one they are read again after 7 days) and the quality assumed, and is built again
+   when either changes, as when a set is downloaded or removed; a torn or missing saved cell is
+   read again from the tiles at the first check, as the WFS cell is downloaded again. A tile
+   read that fails or takes over 10 s, staging past 5 minutes, or a cell the build process
+   cannot write never holds up the ENC and WFS depths: the box is built without the charts, the
+   error logged and shown in the box's status line (plugin status, `/status`), and they are
+   read again 5 minutes after that box is handed over, 10, 20 and up to 60 after further
+   failures in a row; a clean read resets the wait. A tile that does not decode is left out
+   with no coverage, the rest of the cell read, and the status says so. While the charts cannot
+   be known (Charts Provider not started yet, or its list unreadable) the box stays as it is;
+   only an offer listing none meeting the box counts as the charts removed. Each build stages its
+   tiles in a file of its own, so an aborted build's cleanup cannot remove the next one's;
+   another process's staging files are removed only once it no longer runs. A saved index
+   holding their depths while the source is off is not used, as for the WFS. Planning boxes do
+   not read them yet.
 
 **S-57 object classes used:**
 
@@ -437,6 +476,13 @@ to fill gaps. A cell's band is the third character of its name, else its `DSID_I
 1:90 000, coastal to 1:350 000, general to 1:1 500 000, overview beyond). Inland ENC cells
 carry navigational purpose 7 in both, outside 1–6; Rijkswaterstaat's, at 1:2 000, are
 berthing. A cell with none of the three is rejected (issue #50).
+
+**Advisory rank (decision, 2026-11-27, invariant 1).** Precedence is decided by rank, not band:
+an ENC cell ranks by its band, an advisory cell (the Traficom WFS, Open Data Charts) below
+every band. Where any ENC cell covers a tile, band-1 overview cells included, the advisory
+cells drop out as a smaller scale does, and the tile carries no `NOT_FOR_NAVIGATION`. Where
+only advisory cells cover, they share the lowest rank: all of them count and the shallowest
+depth wins. Cell names, `CellInfo.band` and the 1–6 check stay as they are.
 
 **Output:** the index (§4.3), plus `cells.json` recording edition, update number, issue date,
 datum and the cell's files' hash. The chart edition is stamped onto every route-check result, so

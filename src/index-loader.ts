@@ -9,7 +9,8 @@ import type { CellInfo } from "./ingest/cells";
 import { parseCatalogue } from "./ingest/cells";
 import type { CellScan } from "./ingest/cell-source";
 import { currentInfo, readCell, scanCellSources } from "./ingest/cell-source";
-import { WFS_CELL_NAME, WFS_SOURCE } from "./ingest/wfs";
+import { isAdvisorySource, keptStamps, lackingNote, staleNote } from "./ingest/advisory";
+import { readCellInfo } from "./ingest/cell-reader";
 import { readBox } from "./spatial/build-box";
 import type { BuildBox } from "./spatial/build-box";
 import type { BuildJob } from "./spatial/build-worker";
@@ -108,7 +109,7 @@ export function cellsMissing(
   return (
     Boolean(cellsDir) &&
     found.length === 0 &&
-    (cells?.some((c) => c.source !== WFS_SOURCE) ?? false)
+    (cells?.some((c) => !isAdvisorySource(c.source)) ?? false)
   );
 }
 
@@ -330,9 +331,6 @@ export function sourceKeys(dirs: readonly string[]): string[] {
   return dirs.map(sourceKey).sort();
 }
 
-/** The Traficom WFS cell's stamp among a box's sources. */
-const isWfsKey = (key: string): boolean => key.startsWith(`${WFS_CELL_NAME} edition `);
-
 const boxWaiting = (indexDir: string, notes: string[]): IndexPlan => ({
   load: withNotes({ indexDir, built: false, reason: BOX_WAITING_REASON }, notes)
 });
@@ -377,9 +375,7 @@ function boxPlan(
     return boxWaiting(indexDir, p.notes);
   }
   const sources = keys();
-  // A WFS cell left out of the start, torn or gone, is downloaded again by the box service;
-  // the saved index still holds its depths meanwhile.
-  const was = sources.some(isWfsKey) ? box.sources : box.sources.filter((k) => !isWfsKey(k));
+  const was = keptStamps(box.sources, sources, cfg);
   const sameCells = sources.join("\n") === was.join("\n");
   const sameZoom = box.leafZoom === cfg.leafZoom;
   if (!p.mismatch && !cfg.rebuildIndex && sameCells && sameZoom) {
@@ -443,7 +439,7 @@ function missingReason(cfg: PluginConfig, indexDir: string): string {
 
 /**
  * `refused`, why the saved index is not used even with nothing to build another from: it holds
- * WFS depths and that source is off, or it records an ENC source and none is set now.
+ * advisory depths whose source is off, or it records an ENC source and none is set now.
  * `mismatch`, why the saved index is not used as is: none is saved, those, the source is on
  * and the saved index lacks its cell, or the index was saved by an older version of its
  * pyramid or hazard file.
@@ -454,21 +450,22 @@ function savedMatches(
   saved: readonly CellInfo[] | undefined,
   extraDirs: string[]
 ): { refused: string | undefined; mismatch: string | undefined } {
-  const holds = saved?.some((c) => c.source === WFS_SOURCE) ?? false;
-  const stale = holds && !cfg.wfs;
+  const stale = staleNote(cfg, saved);
+  const sources = extraDirs.map((d) => readCellInfo(d).source);
+  const lacking = lackingNote(sources, saved);
   const dropped = saved && sourceDropped(cfg, indexDir);
   const mismatch =
     saved === undefined
       ? `no index saved in ${indexDir}`
       : stale
-        ? "the saved one holds Traficom WFS depths and that source is off"
+        ? `the saved one ${stale}`
         : !savedIndexIsCurrent(indexDir)
           ? "the saved one is from an older index version or its header is damaged"
-          : extraDirs.length > 0 && !holds
-            ? "the saved one lacks the Traficom WFS cell"
+          : lacking !== undefined
+            ? `the saved one ${lacking}`
             : dropped;
   const refused = stale
-    ? "the saved index holds Traficom WFS depths and that source is off; choose the charts provider"
+    ? `the saved index ${stale}; choose the charts provider`
     : dropped && extraDirs.length === 0
       ? `not using the saved index: ${dropped}; choose the charts provider`
       : undefined;
@@ -502,7 +499,7 @@ function cellsChange(
     return undefined;
   }
   const was = saved
-    .filter((c) => c.source !== WFS_SOURCE)
+    .filter((c) => !isAdvisorySource(c.source))
     .map(cellKey)
     .sort();
   const now = [...keys()].sort();

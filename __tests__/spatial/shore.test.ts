@@ -130,9 +130,9 @@ describe("the shore of a cell that charts no land, wherever it lies", () => {
     expect(depthAt(store, east(8 + PAST_EDGE_TILE), AT[1]).depth).toBe(5);
   });
 
-  test("a lower band's area the leaf leaves out does not close the gap above", () => {
-    // Band 5 covers the breakwater's leaf but not the whole tile two zooms up, where a band 3
-    // cell all water over the same ground holds the gap.
+  test("advisory cells of any band share one rank: another's area over the gap is water", () => {
+    // A band 5 cell covers the breakwater's leaf but not the whole tile two zooms up; a band 3
+    // cell all water over the same ground counts beside it, as the WFS beside Open Data Charts.
     const p = toMercator(east(4), AT[1]);
     const up = tileAt(LEAF - 2, p[0], p[1]);
     const leaf = tileAt(LEAF, p[0], p[1]);
@@ -154,7 +154,7 @@ describe("the shore of a cell that charts no land, wherever it lies", () => {
       ],
       ZOOMS
     );
-    expect(depthAt(store, east(4), AT[1]).depth).toBe(-Infinity);
+    expect(depthAt(store, east(4), AT[1]).depth).toBe(5);
   });
 
   test("its land is land beyond the buffer too, not the depth the areas drew", () => {
