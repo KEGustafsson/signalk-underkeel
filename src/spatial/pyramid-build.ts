@@ -36,11 +36,11 @@ function depthOf(f: ChartFeature): number | undefined {
 
 interface Analysis {
   hits: Hit[];
-  /** Highest usage band whose coverage holds the whole tile. */
+  /** Highest rank (`rank`) whose coverage holds the whole tile. */
   bandFull: number | undefined;
   /** A larger-scale cell's coverage boundary crosses the tile. */
   coverageEdge: boolean;
-  /** Catalogue index of the covering cell when it is advisory (Traficom WFS). */
+  /** Catalogue index of the covering cell when it is advisory (Traficom WFS, Open Data Charts). */
   advisoryCell: number | undefined;
   needsSplit: boolean;
   /** The deepest zoom a feature here is drawn finely enough for (`splitZoom`). */
@@ -104,13 +104,19 @@ function qualityEdge(hits: Hit[]): boolean {
 const BLUR_RATIO = 8;
 
 /**
- * Highest usage band whose coverage holds the whole tile, by one polygon
+ * The precedence of a hit's cell: its usage band, or below every band for an advisory cell
+ * (Traficom WFS, Open Data Charts), so any official ENC cell covering a tile takes it over.
+ */
+const rank = (h: Hit): number => (h.item.f.advisory === true ? 0 : h.item.f.band);
+
+/**
+ * Highest rank whose coverage holds the whole tile, by one polygon
  * or by adjacent cells of the band meeting along a shared edge.
  */
 function coveredBand(coverage: Hit[], rect: Rect): number | undefined {
-  const bands = [...new Set(coverage.map((h) => h.item.f.band))].sort((a, b) => b - a);
+  const bands = [...new Set(coverage.map(rank))].sort((a, b) => b - a);
   return bands.find((band) => {
-    const inBand = coverage.filter((h) => h.item.f.band === band);
+    const inBand = coverage.filter((h) => rank(h) === band);
     return inBand.some((h) => h.full) || (inBand.length > 1 && hitsCover(inBand, rect));
   });
 }
@@ -125,9 +131,9 @@ function analyse(
   const coverage = all.filter((h) => h.item.f.role === "coverage");
   const bandFull = coveredBand(coverage, rect);
   const floor = bandFull ?? -Infinity;
-  const coverageEdge = coverage.some((h) => h.item.f.band > floor);
+  const coverageEdge = coverage.some((h) => rank(h) > floor);
   // Lower-band cells are only gap fillers: once a larger scale covers the tile they drop out.
-  const reaching = all.filter((h) => h.item.f.role !== "coverage" && h.item.f.band >= floor);
+  const reaching = all.filter((h) => h.item.f.role !== "coverage" && rank(h) >= floor);
   const covers = (own: Hit[]): boolean => hitsCover(own, rect);
   const hits = giveWay(reaching, covers);
   // Dredged all over, by one area or by several meeting along a seam: DREDGED.
@@ -147,14 +153,12 @@ function analyse(
   const areaEdge =
     sweptEdge ||
     hits.some((h) => (h.item.f.role === "swept" || h.item.f.role === "unsurveyed") && !h.full);
-  const advisoryCell = coverage.find((h) => h.item.f.band === bandFull && h.item.f.advisory)?.item.f
+  const advisoryCell = coverage.find((h) => rank(h) === bandFull && h.item.f.advisory)?.item.f
     .cellRef;
   // Above the leaf zoom a tile its depth areas leave part open splits for its depth's edge.
-  // The shore gathered above holds the areas of every band: read here only when none dropped out.
-  const dropped = all.some((h) => isArea(h) && h.item.f.advisory === true && h.item.f.band < floor);
   const shore =
     leaf && advisoryCell !== undefined
-      ? shoreIn(reaching.filter(isArea), rect, dropped ? undefined : leaf.above, hitsCover)
+      ? shoreIn(reaching.filter(isArea), rect, leaf.above, hitsCover)
       : undefined;
   const needsSplit =
     bandFull === undefined ||
@@ -168,7 +172,7 @@ function analyse(
     finest = Math.max(finest, splitZoom(h.item.f));
   }
   for (const h of coverage) {
-    if (h.item.f.band >= floor) {
+    if (rank(h) >= floor) {
       finest = Math.max(finest, splitZoom(h.item.f));
     }
   }

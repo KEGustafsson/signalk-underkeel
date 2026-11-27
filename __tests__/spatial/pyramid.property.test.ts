@@ -182,21 +182,30 @@ const mosaic = fc.record({
   fineBase: uniform(0, 40),
   fineAreas: fc.array(fc.tuple(boxArb, uniform(0, 25)), { maxLength: 3 }),
   coarseAreas: fc.array(fc.tuple(boxArb, uniform(0, 25)), { maxLength: 3 }),
-  buffer: uniform(0, MAX_BUFFER)
+  buffer: uniform(0, MAX_BUFFER),
+  // An advisory coarse cell (Traficom WFS, Open Data Charts) sits below an ENC cell of any band.
+  bands: fc.oneof(
+    fc.constant({ fine: 5, coarse: 3, advisory: false }),
+    fc
+      .tuple(fc.integer({ min: 1, max: 6 }), fc.integer({ min: 1, max: 6 }))
+      .map(([fine, coarse]) => ({ fine, coarse, advisory: true }))
+  )
 });
 
 describe("usage-band mosaic (property)", () => {
-  test("the covering band's features bound the answer", () => {
+  test("the covering band's features bound the answer, an ENC cell's over an advisory cell's", () => {
     fc.assert(
-      fc.property(mosaic, ({ layout, fineBase, fineAreas, coarseAreas, buffer }) => {
+      fc.property(mosaic, ({ layout, fineBase, fineAreas, coarseAreas, buffer, bands }) => {
         const { side, fine, query } = layout;
+        const coarseCell = { band: bands.coarse, cellRef: 1, advisory: bands.advisory };
+        const fineCell = { band: bands.fine, cellRef: 0 };
         const features = [
-          ...basin(DOMAIN, BASE_DEPTH, { band: 3, cellRef: 1 }),
-          ...coarseAreas.map(([b, d]) => area(b, d, { band: 3, cellRef: 1 })),
-          coverage(fine, { band: 5, cellRef: 0 }),
-          quality(fine, 1, { band: 5, cellRef: 0 }),
-          area(fine, fineBase, { band: 5, cellRef: 0 }),
-          ...fineAreas.map(([b, d]) => area(b, d, { band: 5, cellRef: 0 }))
+          ...basin(DOMAIN, BASE_DEPTH, coarseCell),
+          ...coarseAreas.map(([b, d]) => area(b, d, coarseCell)),
+          coverage(fine, fineCell),
+          quality(fine, 1, fineCell),
+          area(fine, fineBase, fineCell),
+          ...fineAreas.map(([b, d]) => area(b, d, fineCell))
         ];
         const store = buildPyramid(features, { minZoom: 13, leafZoom: 17 });
         const isPoint = query[0] === query[2] && query[1] === query[3];

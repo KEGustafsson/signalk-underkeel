@@ -201,14 +201,17 @@ function qualityEdge(hits: Hit[]): boolean {
  */
 const BLUR_RATIO = 8;
 
+/** A cell's precedence: its usage band, or below every band for an advisory cell. */
+const rank = (h: Hit): number => (h.item.f.advisory === true ? 0 : h.item.f.band);
+
 /**
- * Highest usage band whose coverage holds the whole tile, by one polygon
- * or by adjacent cells of the band meeting along a shared edge.
+ * Highest rank whose coverage holds the whole tile, by one polygon
+ * or by adjacent cells of the rank meeting along a shared edge.
  */
 function coveredBand(coverage: Hit[], rect: Rect): number | undefined {
-  const bands = [...new Set(coverage.map((h) => h.item.f.band))].sort((a, b) => b - a);
+  const bands = [...new Set(coverage.map(rank))].sort((a, b) => b - a);
   return bands.find((band) => {
-    const inBand = coverage.filter((h) => h.item.f.band === band);
+    const inBand = coverage.filter((h) => rank(h) === band);
     return (
       inBand.some((h) => h.full) ||
       (inBand.length > 1 &&
@@ -224,9 +227,9 @@ function analyse(all: Hit[], rect: Rect, tileGround: number): Analysis {
   const coverage = all.filter((h) => h.item.f.role === "coverage");
   const bandFull = coveredBand(coverage, rect);
   const floor = bandFull ?? -Infinity;
-  const coverageEdge = coverage.some((h) => h.item.f.band > floor);
+  const coverageEdge = coverage.some((h) => rank(h) > floor);
   // Lower-band cells are only gap fillers: once a larger scale covers the tile they drop out.
-  const hits = all.filter((h) => h.item.f.role !== "coverage" && h.item.f.band >= floor);
+  const hits = all.filter((h) => h.item.f.role !== "coverage" && rank(h) >= floor);
   const shallowest = minFullDepth(hits);
   const depthEdge = hits.some((h) => {
     const d = depthOf(h.item.f);
@@ -237,7 +240,7 @@ function analyse(all: Hit[], rect: Rect, tileGround: number): Analysis {
   );
   const needsSplit =
     bandFull === undefined || coverageEdge || depthEdge || areaEdge || qualityEdge(hits);
-  const advisoryCell = coverage.find((h) => h.item.f.band === bandFull && h.item.f.advisory)?.item.f
+  const advisoryCell = coverage.find((h) => rank(h) === bandFull && h.item.f.advisory)?.item.f
     .cellRef;
   // A tile no wider than 1 mm at the finest compilation scale here resolves all it draws.
   const zoomOf = (f: ChartFeature) =>
@@ -245,7 +248,7 @@ function analyse(all: Hit[], rect: Rect, tileGround: number): Analysis {
   const finest = Math.max(
     -Infinity,
     ...hits.map((h) => zoomOf(h.item.f)),
-    ...coverage.filter((h) => h.item.f.band >= floor).map((h) => zoomOf(h.item.f))
+    ...coverage.filter((h) => rank(h) >= floor).map((h) => zoomOf(h.item.f))
   );
   return { hits, bandFull, shallowest, coverageEdge, advisoryCell, needsSplit, finest };
 }

@@ -398,7 +398,8 @@ coverage past the box get a `reason`. The build process posts its phase and coun
    from the index in use, only the living-chart cells within 1 km and one cell of the old or
    new box are re-judged: the chart prior of any other cell reads the same tiles in both; a
    property test checks that this equals re-judging every cell. The box is one cell
-   of usage band 1, so every ENC cell wins where both cover. Water no depth area reaches is
+   named as usage band 1 but ranked below every band, so every ENC cell, a band-1 overview
+   included, wins where both cover (advisory rank, below). Water no depth area reaches is
    land, however narrow (§4.3, the shore of a cell that charts no land). Survey quality is an assumed CATZOC (configurable, default B). Every tile from the cell
    carries `NOT_FOR_NAVIGATION`: the look-ahead is never `normal` there (at most `alert`, with
    the licence notice), route legs are never `ok`, and the overlay never draws `clear`.
@@ -427,8 +428,8 @@ coverage past the box get a `reason`. The build process posts its phase and coun
    once, and writes them as one cell directory, `OD1ODC01`, in the layer layout of the WFS cell
    (`ingest/odc.ts`). Past a chart's coverage Charts Provider answers a missing tile from its
    nearest ancestor, a smaller-scale overview, so only covered tiles are read. From z15 a unit
-   holds every feature it draws deeper and drops no polygon as tiny. The cell is band 1, so
-   every ENC cell wins where both cover; its coverage is the tiles read; its survey quality an
+   holds every feature it draws deeper and drops no polygon as tiny. The cell is named as band 1 and
+   ranked with the WFS cell below every band, so every ENC cell wins where both cover; its coverage is the tiles read; its survey quality an
    assumed CATZOC (configurable, default C, since the charts mix surveys with 100 m depth
    models); it states no datum, so it is read on an unknown datum (§4.5). It carries
    `UK_SOURCE = open-data-charts`, so every tile from it carries `NOT_FOR_NAVIGATION` as the WFS
@@ -468,6 +469,13 @@ to fill gaps. A cell's band is the third character of its name, else its `DSID_I
 1:90 000, coastal to 1:350 000, general to 1:1 500 000, overview beyond). Inland ENC cells
 carry navigational purpose 7 in both, outside 1–6; Rijkswaterstaat's, at 1:2 000, are
 berthing. A cell with none of the three is rejected (issue #50).
+
+**Advisory rank (decision, 2026-11-27, invariant 1).** Precedence is decided by rank, not band:
+an ENC cell ranks by its band, an advisory cell (the Traficom WFS, Open Data Charts) below
+every band. Where any ENC cell covers a tile, band-1 overview cells included, the advisory
+cells drop out as a smaller scale does, and the tile carries no `NOT_FOR_NAVIGATION`. Where
+only advisory cells cover, they share the lowest rank: all of them count and the shallowest
+depth wins. Cell names, `CellInfo.band` and the 1–6 check stay as they are.
 
 **Output:** the index (§4.3), plus `cells.json` recording edition, update number, issue date,
 datum and the cell's files' hash. The chart edition is stamped onto every route-check result, so
