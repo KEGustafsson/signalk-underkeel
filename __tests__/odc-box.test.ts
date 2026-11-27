@@ -58,7 +58,7 @@ describe("the Open Data Charts box cell", () => {
     const staged = await box.stage(BOX, clock, signal);
     const record = box.built(staged, { tiles: 1, features: 3, skipped: 0 });
     await OdcBox.whileStaged(staged, () => Promise.resolve());
-    expect(record).toEqual({ odc: KEY, odcTiles: 1, odcCatzoc: 4 });
+    expect(record).toEqual({ odc: KEY, odcTiles: 1, odcCatzoc: 4, odcAt: clock });
     expect(box.note(clock)).toBeUndefined();
     fail = true;
     const again = await box.stage(BOX, clock, signal);
@@ -73,10 +73,24 @@ describe("the Open Data Charts box cell", () => {
     const stage = { key: KEY, count: 2, catzoc: 4 };
     expect(
       box.built(stage, { tiles: 1, features: 1, skipped: 1, error: "tile 15/1/2: bad" })
-    ).toEqual({ odc: KEY, odcTiles: 2, odcCatzoc: 4 });
+    ).toMatchObject({ odc: KEY, odcTiles: 2, odcCatzoc: 4 });
     expect(box.note(0)).toBe("Open Data Charts: 1 tile(s) left out, unreadable: tile 15/1/2: bad");
     expect(box.built(stage, { tiles: 0, features: 0, skipped: 0, error: "disk full" })).toEqual({});
     expect(box.note(0)).toMatch(/^Open Data Charts not read: disk full/);
+  });
+
+  test("charts that state no revision are read again after 7 days; a revised one only when it changes", () => {
+    let unrevised = true;
+    const box = new OdcBox(TMP, {
+      catzoc: 4,
+      tiles: { key: () => KEY, unrevised: () => unrevised, stage: () => Promise.resolve(0) }
+    });
+    const record = { odc: KEY, odcTiles: 4, odcCatzoc: 4, odcAt: 0 };
+    const WEEK = 7 * 86_400_000;
+    expect(box.changed(BOX, record, WEEK - 1)).toBe(false);
+    expect(box.changed(BOX, record, WEEK)).toBe(true);
+    unrevised = false;
+    expect(box.changed(BOX, record, 10 * WEEK)).toBe(false);
   });
 
   test("while the charts cannot be known the box stays; only charts gone rebuild it", () => {

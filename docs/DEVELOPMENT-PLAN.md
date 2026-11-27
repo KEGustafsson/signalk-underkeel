@@ -436,7 +436,7 @@ coverage past the box get a `reason`. The build process posts its phase and coun
    `UK_SOURCE = open-data-charts`, so every tile from it carries `NOT_FOR_NAVIGATION` as the WFS
    cell's do: the look-ahead is never `normal` there (at most `alert`, with the Open Data Charts
    notice), route legs are never `ok`, and the overlay never draws `clear`. The box records the
-   charts it was built with (their ids and coverage) and the quality assumed, and is built again
+   charts it was built with (their ids, coverage and revision, which Charts Provider 2.27 and later gives from the chart file's size and time; without one they are read again after 7 days) and the quality assumed, and is built again
    when either changes, as when a set is downloaded or removed; a torn or missing saved cell is
    read again from the tiles at the first check, as the WFS cell is downloaded again. A tile
    read that fails or takes over 10 s, staging past 5 minutes, or a cell the build process

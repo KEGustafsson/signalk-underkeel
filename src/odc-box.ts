@@ -27,6 +27,8 @@ export interface OdcRecord {
   odcTiles?: number;
   /** The CATZOC assumed for them, with `odc`. */
   odcCatzoc?: number;
+  /** When they were read, ms. */
+  odcAt?: number;
 }
 
 /** The tiles staged for one build: the job writing them, how many, and the charts' key. */
@@ -45,6 +47,11 @@ export interface OdcStage {
  */
 const RETRY_MS = 300_000;
 const MAX_RETRY_MS = 3_600_000;
+/**
+ * How long charts that state no revision are kept before they are read again, ms: a set
+ * downloaded again under the same id and coverage is otherwise never read.
+ */
+const UNREVISED_MS = 7 * 86_400_000;
 /** A staging file's name: the process that wrote it, and its build. */
 const STAGING = /^odc-tiles-(\d+)-\d+\.bin$/;
 
@@ -102,7 +109,18 @@ export class OdcBox {
     if (charts !== record.odc) {
       return record.odc !== undefined || now >= this.retryAt;
     }
-    return charts !== undefined && record.odcCatzoc !== this.source.catzoc;
+    return (
+      charts !== undefined &&
+      (record.odcCatzoc !== this.source.catzoc || this.aged(box, record, now))
+    );
+  }
+
+  /** Whether charts that state no revision were read longer ago than UNREVISED_MS. */
+  private aged(box: Bbox, record: OdcRecord, now: number): boolean {
+    return (
+      this.source?.tiles.unrevised?.(box) === true &&
+      now - (record.odcAt ?? -Infinity) >= UNREVISED_MS
+    );
   }
 
   /** What the status says of the last read, when something went wrong with it. */
@@ -193,7 +211,7 @@ export class OdcBox {
       ? `Open Data Charts: ${read.skipped} tile(s) left out, unreadable: ${read.error}`
       : undefined;
     return {
-      ...(stage.key === undefined ? {} : { odc: stage.key }),
+      ...(stage.key === undefined ? {} : { odc: stage.key, odcAt: this.clock() }),
       ...(stage.count === undefined ? {} : { odcTiles: stage.count }),
       ...(stage.catzoc === undefined ? {} : { odcCatzoc: stage.catzoc })
     };

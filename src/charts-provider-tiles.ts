@@ -22,6 +22,8 @@ export interface TilesChart {
   maxzoom?: number;
   coverage?: unknown;
   openDataSet?: string;
+  /** Changes whenever the chart's file does (Charts Provider 2.27 and later). */
+  revision?: string;
 }
 
 /** The part of Charts Provider's `ChartTiles` used here. */
@@ -53,6 +55,7 @@ interface OdcChart {
   offer: ChartTilesApi;
   id: string;
   covered: TileId[];
+  revision?: string;
 }
 
 const isBbox = (b: unknown): b is Bbox =>
@@ -104,7 +107,8 @@ export function odcCharts(
       }
       const covered = coverageTiles(c.coverage);
       if (covered.length > 0) {
-        out.push({ offer, id: c.id, covered });
+        const revision = typeof c.revision === "string" ? c.revision : undefined;
+        out.push({ offer, id: c.id, covered, ...(revision !== undefined && { revision }) });
       }
     }
   }
@@ -158,6 +162,11 @@ export interface OdcTiles {
    */
   key(bbox: Bbox): string | null | undefined;
   /**
+   * Whether a chart meeting `bbox` states no revision (a Charts Provider before 2.27), so a set
+   * downloaded again under the same id and coverage cannot be told from the one read.
+   */
+  unrevised?(bbox: Bbox): boolean;
+  /**
    * Writes the tiles of `bbox` the charts cover to `file`; how many, 0 when none. Rejects
    * when `signal` aborts, a read fails or takes too long, or a chart list cannot be read.
    */
@@ -209,8 +218,18 @@ export function odcTilesOf(
         return offered.length === 0 ? undefined : null;
       }
       return charts
-        .map((c) => `${c.id} ${c.covered.map((t) => `${t.z}/${t.x}/${t.y}`).join(",")}`)
+        .map((c) => {
+          const tiles = c.covered.map((t) => `${t.z}/${t.x}/${t.y}`).join(",");
+          return c.revision === undefined ? `${c.id} ${tiles}` : `${c.id}@${c.revision} ${tiles}`;
+        })
         .join("\n");
+    },
+    unrevised: (bbox) => {
+      try {
+        return odcCharts(current(), bbox, true).some((c) => c.revision === undefined);
+      } catch {
+        return false;
+      }
     },
     stage: async (bbox, file, signal) => {
       const charts = odcCharts(current(), bbox, true);

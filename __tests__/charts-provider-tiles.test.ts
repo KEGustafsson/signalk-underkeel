@@ -82,6 +82,22 @@ describe("Open Data Charts through Charts Provider's chartTiles", () => {
     expect(tiles.key(BOX)).toBeUndefined();
   });
 
+  test("a chart's revision is in the key, so a set downloaded again under its id reads again", () => {
+    let revision: string | undefined;
+    const tiles = odcTilesOf(() => [
+      offer([chart({ ...(revision !== undefined && { revision }) })])
+    ]);
+    const before = tiles.key(BOX);
+    expect(tiles.unrevised?.(BOX)).toBe(true);
+    revision = "1024-1800000000000";
+    const first = tiles.key(BOX);
+    expect(tiles.unrevised?.(BOX)).toBe(false);
+    expect(first).not.toBe(before);
+    expect(tiles.key(BOX)).toBe(first);
+    revision = "2048-1800000600000";
+    expect(tiles.key(BOX)).not.toBe(first);
+  });
+
   test("a read that never settles fails the staging after its timeout and leaves no timer", async () => {
     jest.useFakeTimers();
     try {
