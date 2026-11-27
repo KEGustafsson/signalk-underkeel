@@ -6,9 +6,9 @@ import type { NavState } from "../../src/engine/lookahead";
 import { checkRoute } from "../../src/engine/route-check";
 import type { ReadCell } from "../../src/ingest/cell-reader";
 import { readCellDirectory } from "../../src/ingest/cell-reader";
-import { tileBbox, writeOdcCell, writeStagedTile } from "../../src/ingest/odc";
+import { ODC_NOTICE, tileBbox, writeOdcCell, writeStagedTile } from "../../src/ingest/odc";
 import type { Bbox } from "../../src/ingest/wfs";
-import { toCellLayers, writeCell } from "../../src/ingest/wfs";
+import { toCellLayers, WFS_NOTICE, writeCell } from "../../src/ingest/wfs";
 import { DEFAULT_DYNAMICS } from "../../src/model/vessel";
 import type { ChartIndex } from "../../src/spatial/chart-index";
 import { buildChartIndex } from "../../src/spatial/chart-index";
@@ -66,7 +66,7 @@ function encCell(): ReadCell {
   return readCellDirectory(dir, 0);
 }
 
-function odcCell(cellRef: number): ReadCell {
+function odcCell(cellRef: number, depth = ODC_DEPTH): ReadCell {
   const tiles = path.join(TMP, "odc-tiles.bin");
   const pad = (E - W) / 20;
   const fd = fs.openSync(tiles, "w");
@@ -76,7 +76,7 @@ function odcCell(cellRef: number): ReadCell {
       DEPARE: [
         {
           polygon: [[ring([W - pad, S - pad, E + pad, N + pad])]],
-          properties: { DRVAL1: ODC_DEPTH, DRVAL2: ODC_DEPTH + 5 }
+          properties: { DRVAL1: depth, DRVAL2: depth + 5 }
         }
       ]
     })
@@ -87,9 +87,8 @@ function odcCell(cellRef: number): ReadCell {
   return readCellDirectory(dir, cellRef);
 }
 
-function wfsCell(cellRef: number): ReadCell {
+function wfsCell(cellRef: number, box: Bbox = [W, S, E, N], depth = WFS_DEPTH): ReadCell {
   const dir = path.join(TMP, "FI1WFS01");
-  const box: Bbox = [W, S, E, N];
   writeCell(
     dir,
     toCellLayers(
@@ -97,7 +96,7 @@ function wfsCell(cellRef: number): ReadCell {
         depthAreas: [
           feature(
             { type: "Polygon", coordinates: [ring(box)] },
-            { DRVAL1: String(WFS_DEPTH), DRVAL2: String(WFS_DEPTH + 5), IDENTIFIER: "FI 1" }
+            { DRVAL1: String(depth), DRVAL2: String(depth + 5), IDENTIFIER: "FI 1" }
           )
         ],
         dredgedAreas: [],
@@ -181,5 +180,19 @@ describe("Open Data Charts beside the Traficom WFS, no ENC", () => {
     expect(water.dMin).toBe(Math.min(ODC_DEPTH, WFS_DEPTH));
     expect(water.flags & FLAGS.NOT_FOR_NAVIGATION).toBeTruthy();
     expect(evaluateLookahead(nav(0.5, 0.5), ctx(KEEL), index, NOW).state).not.toBe("normal");
+  });
+});
+
+describe("the look-ahead's notice over advisory water", () => {
+  // Open Data Charts over the tile alone; the WFS from its middle to the end of the next tile.
+  const index = build(() => [odcCell(0, 20), wfsCell(1, [lon(0.5), S, lon(2), N], 20)]);
+  const reason = (x: number) => evaluateLookahead(nav(x, 0.5), ctx(KEEL), index, NOW).reason;
+
+  test("names only the sources whose water the footprint reads", () => {
+    expect(reason(0.2)).toBe(ODC_NOTICE);
+    expect(reason(1.5)).toBe(WFS_NOTICE);
+    const both = reason(0.75);
+    expect(both).toContain(ODC_NOTICE);
+    expect(both).toContain(WFS_NOTICE);
   });
 });
