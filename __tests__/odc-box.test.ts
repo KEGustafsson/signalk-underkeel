@@ -40,6 +40,31 @@ describe("the Open Data Charts box cell", () => {
     expect(box.changed(BOX, OdcBox.record(staged), 540_000)).toBe(true);
   });
 
+  test("an aborted build's cleanup leaves the staging of the build that replaced it", async () => {
+    const box = new OdcBox(TMP, {
+      catzoc: 4,
+      tiles: tiles((_bbox, file) => {
+        fs.writeFileSync(file, "tiles");
+        return Promise.resolve(1);
+      })
+    });
+    const aborted = new AbortController();
+    const first = await box.stage(BOX, 0, aborted.signal);
+    let release = (): void => undefined;
+    const running = OdcBox.whileStaged(
+      first,
+      () => new Promise<void>((resolve) => (release = resolve))
+    );
+    aborted.abort();
+    // The replacement stages while the aborted build has not settled yet.
+    const second = await box.stage(BOX, 0, signal);
+    release();
+    await running;
+    expect(first.job?.tiles).not.toBe(second.job?.tiles);
+    expect(fs.existsSync(first.job?.tiles ?? "")).toBe(false);
+    expect(fs.readFileSync(second.job?.tiles ?? "", "utf8")).toBe("tiles");
+  });
+
   test("staging files of this or another live process are kept; a gone one's are removed", async () => {
     const own = path.join(TMP, `odc-tiles-${process.pid}-999999.bin`);
     const live = path.join(TMP, `odc-tiles-${process.ppid}-1.bin`);
