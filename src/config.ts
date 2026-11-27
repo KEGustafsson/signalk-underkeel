@@ -252,8 +252,9 @@ function catzocCode(v: unknown, fallback: number): number {
 }
 
 /** On unless turned off: the charts are read only where Charts Provider has them. */
-function parseOdc(o: Record<string, unknown>): OdcConfig | undefined {
-  if (o.enabled === false) {
+function parseOdc(v: unknown): OdcConfig | undefined {
+  const o = record(v);
+  if (v === false || o.enabled === false) {
     return undefined;
   }
   return { catzoc: catzocCode(o.catzoc, 4) };
@@ -303,7 +304,7 @@ export function parseConfig(raw: unknown): PluginConfig {
       .filter((id): id is string => id !== undefined),
     groundingDetector: parseGrounding(record(r.groundingDetector)),
     wfs: parseWfs(record(r.wfs)),
-    openDataCharts: parseOdc(record(r.openDataCharts)),
+    openDataCharts: parseOdc(r.openDataCharts),
     routeCheck: {
       speed: num(rc.speed, DEFAULT_ROUTE_CHECK.speed, LIMITS.minSpeed, LIMITS.maxSpeed),
       xteLimit: num(rc.xteLimit, DEFAULT_ROUTE_CHECK.xteLimit, 0, LIMITS.maxXte),
