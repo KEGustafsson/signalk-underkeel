@@ -109,7 +109,7 @@ export class WfsService {
 
   constructor(private readonly deps: WfsServiceDeps) {
     this.box = this.readBox();
-    this.odc = new OdcBox(deps.dir, deps.odc, deps.error);
+    this.odc = new OdcBox(deps.dir, deps.odc, deps.error, () => deps.clock.now());
   }
 
   /** Whether this box downloads Traficom WFS depths, not only builds ENC cells around the vessel. */

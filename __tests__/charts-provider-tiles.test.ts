@@ -83,6 +83,24 @@ describe("Open Data Charts through Charts Provider's chartTiles", () => {
     expect(await empty.stage(BOX, file, new AbortController().signal)).toBe(0);
   });
 
+  test("a chart list that cannot be read when staging fails the staging, not reads none", async () => {
+    let calls = 0;
+    const flaky: ChartTilesApi = {
+      charts: () => {
+        if (++calls > 1) {
+          throw new Error("charts reloading");
+        }
+        return [chart()];
+      },
+      getTile: () => Promise.resolve(Uint8Array.from([1]))
+    };
+    const tiles = odcTilesOf(() => [flaky]);
+    expect(tiles.key(BOX)).toBeDefined();
+    await expect(
+      tiles.stage(BOX, path.join(TMP, "flaky.bin"), new AbortController().signal)
+    ).rejects.toThrow("charts reloading");
+  });
+
   test("an aborted staging rejects", async () => {
     const controller = new AbortController();
     controller.abort();

@@ -58,31 +58,44 @@ interface OdcChart {
 const isBbox = (b: unknown): b is Bbox =>
   Array.isArray(b) && b.length === 4 && b.every((v) => typeof v === "number" && Number.isFinite(v));
 
+/** Whether `c` is an Open Data Charts vector chart reaching ODC_ZOOM that may meet `bbox`. */
+function meets(c: Partial<TilesChart> | null | undefined, bbox: Bbox): c is TilesChart {
+  return (
+    typeof c?.id === "string" &&
+    typeof c.openDataSet === "string" &&
+    c.format === "pbf" &&
+    !(typeof c.maxzoom === "number" && c.maxzoom < ODC_ZOOM) &&
+    !(isBbox(c.bounds) && !intersect(c.bounds, bbox))
+  );
+}
+
 /**
  * The Open Data Charts charts of `offers` meeting `bbox`, in a fixed order: vector charts that
  * reach ODC_ZOOM and state the tiles they fill (`coverage`), since only there is a tile read
- * known to be the chart's own data. A list that cannot be read counts as none.
+ * known to be the chart's own data. A list that cannot be read counts as none, or with
+ * `strict` throws.
  */
-export function odcCharts(offers: readonly ChartTilesApi[], bbox: Bbox): OdcChart[] {
+export function odcCharts(
+  offers: readonly ChartTilesApi[],
+  bbox: Bbox,
+  strict = false
+): OdcChart[] {
   const out: OdcChart[] = [];
   for (const offer of offers) {
     let charts: unknown;
     try {
       charts = offer.charts();
-    } catch {
+    } catch (err) {
+      if (strict) {
+        throw err;
+      }
       continue;
     }
     if (!Array.isArray(charts)) {
       continue;
     }
     for (const c of charts as Partial<TilesChart>[]) {
-      if (
-        typeof c?.id !== "string" ||
-        typeof c.openDataSet !== "string" ||
-        c.format !== "pbf" ||
-        (typeof c.maxzoom === "number" && c.maxzoom < ODC_ZOOM) ||
-        (isBbox(c.bounds) && !intersect(c.bounds, bbox))
-      ) {
+      if (!meets(c, bbox)) {
         continue;
       }
       const covered = coverageTiles(c.coverage);
@@ -108,7 +121,7 @@ export interface OdcTiles {
   key(bbox: Bbox): string | undefined;
   /**
    * Writes the tiles of `bbox` the charts cover to `file`; how many, 0 when none. Rejects
-   * when `signal` aborts.
+   * when `signal` aborts, a read fails or a chart list cannot be read.
    */
   stage(bbox: Bbox, file: string, signal: AbortSignal): Promise<number>;
 }
@@ -152,7 +165,7 @@ export function odcTilesOf(current: () => readonly ChartTilesApi[]): OdcTiles {
             .join("\n");
     },
     stage: async (bbox, file, signal) => {
-      const charts = odcCharts(current(), bbox);
+      const charts = odcCharts(current(), bbox, true);
       if (charts.length === 0) {
         return 0;
       }

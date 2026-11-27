@@ -438,10 +438,11 @@ coverage past the box get a `reason`. The build process posts its phase and coun
    when either changes, as when a set is downloaded or removed; a torn or missing saved cell is
    read again from the tiles at the first check, as the WFS cell is downloaded again. A tile
    read that fails never holds up the ENC and WFS depths: the box is built without the charts,
-   the error logged, and they are read again 5 minutes later. Each build stages its tiles in a
-   file of its own, so an aborted build's cleanup cannot remove the next one's. A saved index
-   holding their depths while the source is off is not used, as for the WFS. Planning boxes do
-   not read them yet.
+   the error logged, and they are read again 5 minutes after the failure. Each build stages its
+   tiles in a file of its own, so an aborted build's cleanup cannot remove the next one's;
+   staging files of a crashed process are removed once an hour old, this process's never. A
+   saved index holding their depths while the source is off is not used, as for the WFS.
+   Planning boxes do not read them yet.
 
 **S-57 object classes used:**
 

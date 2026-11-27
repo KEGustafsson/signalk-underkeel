@@ -42,6 +42,7 @@ const STALE_STAGING_MS = 3_600_000;
 const STAGING = /^odc-tiles-.*\.bin$/;
 
 let staged = 0;
+const ownStaging = (): string => `odc-tiles-${process.pid}-`;
 
 export class OdcBox {
   /** Until when a box built without the charts after a failed read stays as it is. */
@@ -50,7 +51,8 @@ export class OdcBox {
   constructor(
     private readonly dir: string,
     private readonly source: OdcSource | undefined,
-    private readonly error: (message: string) => void = () => undefined
+    private readonly error: (message: string) => void = () => undefined,
+    private readonly clock: () => number = Date.now
   ) {}
 
   get cellDir(): string {
@@ -103,7 +105,7 @@ export class OdcBox {
     }
     this.removeStale();
     // Its own name, so an aborted build's cleanup cannot remove the next build's tiles.
-    const tiles = path.join(this.dir, `odc-tiles-${process.pid}-${++staged}.bin`);
+    const tiles = path.join(this.dir, `${ownStaging()}${++staged}.bin`);
     let count: number;
     try {
       count = await this.source.tiles.stage(bbox, tiles, signal);
@@ -112,7 +114,8 @@ export class OdcBox {
       if (signal.aborted) {
         throw err;
       }
-      this.retryAt = now + RETRY_MS;
+      // From the failure: the reads before it may have taken a while.
+      this.retryAt = this.clock() + RETRY_MS;
       this.error(`Open Data Charts tiles not read: ${(err as Error).message}`);
       return {};
     }
@@ -131,10 +134,16 @@ export class OdcBox {
     return { key, job, count, catzoc };
   }
 
-  /** File times are the system clock's, so they are compared with it. */
+  /**
+   * Removes the staging files a crashed process left. This process's own are left alone, as an
+   * aborted build may still be reading one. File times are the system clock's, so they are
+   * compared with it.
+   */
   private removeStale(): void {
     const now = Date.now();
-    for (const name of fs.readdirSync(this.dir).filter((n) => STAGING.test(n))) {
+    const own = ownStaging();
+    const left = fs.readdirSync(this.dir).filter((n) => STAGING.test(n) && !n.startsWith(own));
+    for (const name of left) {
       const file = path.join(this.dir, name);
       try {
         if (now - fs.statSync(file).mtimeMs > STALE_STAGING_MS) {
