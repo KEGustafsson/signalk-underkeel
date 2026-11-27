@@ -426,7 +426,7 @@ coverage past the box get a `reason`. The build process posts its phase and coun
    every 32, and stages them in one file; the box's child process decodes them (Mapbox Vector
    Tile 2.1, `ingest/mvt-decode.ts`), cuts each tile's features to the tile so its buffer is read
    once, and writes them as one cell directory, `OD1ODC01`, in the layer layout of the WFS cell
-   (`ingest/odc.ts`). Past a chart's coverage Charts Provider answers a missing tile from its
+   (`ingest/odc.ts`). Its dredged and swept areas are written as plain depth areas: open data's are no authority's guarantee, so they only add caution and never displace another depth area or carry a sweep's σ, unlike the WFS's swept fairways. Past a chart's coverage Charts Provider answers a missing tile from its
    nearest ancestor, a smaller-scale overview, so only covered tiles are read. From z15 a unit
    holds every feature it draws deeper and drops no polygon as tiny. The cell is named as band 1 and
    ranked with the WFS cell below every band, so every ENC cell wins where both cover; its coverage is the tiles read; its survey quality an

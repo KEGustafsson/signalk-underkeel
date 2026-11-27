@@ -174,3 +174,41 @@ describe("Open Data Charts depths are advisory", () => {
     );
   });
 });
+
+describe("Open Data Charts dredged and swept areas", () => {
+  const dir = path.join(TMP, "dredged", ODC_CELL_NAME);
+  const tiles = path.join(TMP, "dredged-tiles.bin");
+  const [w, s, e, n] = tileBbox(WEST);
+  const frac = (fx: number, fy: number): LonLatPoint => [w + (e - w) * fx, s + (n - s) * fy];
+  const part = (fw: number, fe: number): LonLatPoint[] => [
+    frac(fw, 0.2),
+    frac(fe, 0.2),
+    frac(fe, 0.8),
+    frac(fw, 0.8),
+    frac(fw, 0.2)
+  ];
+  fs.mkdirSync(path.dirname(dir), { recursive: true });
+  const fd = fs.openSync(tiles, "w");
+  writeStagedTile(fd, {
+    ...WEST,
+    data: encodeTile(WEST, {
+      DEPARE: [{ polygon: [[square([w, s, e, n])]], properties: { DRVAL1: 0, DRVAL2: 2 } }],
+      DRGARE: [{ polygon: [[part(0.1, 0.4)]], properties: { DRVAL1: 5 } }],
+      SWPARE: [{ polygon: [[part(0.6, 0.9)]], properties: { DRVAL1: 5 } }]
+    })
+  });
+  fs.closeSync(fd);
+  writeOdcCell({ tiles, dir, bbox: [w, s, e, n], now: new Date(NOW).toISOString(), catzoc: 4 });
+  const index = buildChartIndex([readCellDirectory(dir, 0)], { minZoom: 12, leafZoom: 18 });
+  const over = (fx: number) =>
+    minDepthOver(index.pyramid, footprintGeom([[w + (e - w) * fx, s + (n - s) * 0.5]]));
+
+  test("only add caution: the depth area under them still reads, with no dredged or swept guarantee", () => {
+    for (const fx of [0.25, 0.75]) {
+      const leaf = over(fx);
+      expect(leaf.dMin).toBe(0);
+      expect(leaf.flags & (FLAGS.DREDGED | FLAGS.SWEPT)).toBe(0);
+      expect(leaf.sigmaD).toBeGreaterThan(0.1);
+    }
+  });
+});

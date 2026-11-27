@@ -53,6 +53,13 @@ export const ODC_LAYERS: ReadonlySet<string> = new Set([
   "UNSARE"
 ]);
 
+/**
+ * Layers written as plain depth areas: open data's dredged and swept areas are no authority's
+ * guarantee, so they only add caution (the shallowest depth wins) and never displace another
+ * depth area or carry the sweep's σ, as the Traficom WFS's swept fairways do.
+ */
+const AS_DEPTH_AREA: ReadonlySet<string> = new Set(["DRGARE", "SWPARE"]);
+
 /** A tile as Charts Provider served it, and where it lies. */
 export interface StagedTile extends TileId {
   data: Uint8Array;
@@ -369,7 +376,8 @@ export function odcCellLayers(
       );
     }
     read.push(tile);
-    for (const [layer, list] of decoded) {
+    for (const [name, list] of decoded) {
+      const layer = AS_DEPTH_AREA.has(name) ? "DEPARE" : name;
       const out = byLayer.get(layer) ?? [];
       for (const f of list) {
         const clipped = clipFeature(f, box);
